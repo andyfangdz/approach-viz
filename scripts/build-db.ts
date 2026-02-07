@@ -104,9 +104,14 @@ function main() {
   if (fs.existsSync(DB_PATH)) {
     fs.unlinkSync(DB_PATH);
   }
+  const sidecarWal = `${DB_PATH}-wal`;
+  const sidecarShm = `${DB_PATH}-shm`;
+  if (fs.existsSync(sidecarWal)) fs.unlinkSync(sidecarWal);
+  if (fs.existsSync(sidecarShm)) fs.unlinkSync(sidecarShm);
 
   const db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
+  // Keep runtime reads simple in serverless/read-only filesystems.
+  db.pragma('journal_mode = DELETE');
   db.pragma('synchronous = NORMAL');
 
   db.exec(`
