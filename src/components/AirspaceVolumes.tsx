@@ -136,6 +136,9 @@ function AirspaceVolume({
 }
 
 export function AirspaceVolumes({ features, refLat, refLon }: AirspaceVolumesProps) {
+  console.log('AirspaceVolumes rendering with', features.length, 'features:', 
+    features.map(f => `${f.class}:${f.name}`).join(', '));
+  
   return (
     <group>
       {features.map((feature, i) => (
