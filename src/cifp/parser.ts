@@ -279,10 +279,12 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       
       const altitude = parseAltitude(altitudeStr);
       
-      const holdCourseRaw = isHold ? rest.slice(70, 74).trim() : '';
-      const holdDistanceRaw = isHold ? rest.slice(74, 78).trim() : '';
-      const holdCourse = holdCourseRaw ? parseInt(holdCourseRaw, 10) / 10 : undefined;
-      const holdDistance = holdDistanceRaw ? parseInt(holdDistanceRaw, 10) / 10 : undefined;
+      const courseRaw = rest.slice(70, 74).trim();
+      const distanceRaw = rest.slice(74, 78).trim();
+      const course = courseRaw ? parseInt(courseRaw, 10) / 10 : undefined;
+      const distance = distanceRaw ? parseInt(distanceRaw, 10) / 10 : undefined;
+      const holdCourse = isHold ? course : undefined;
+      const holdDistance = isHold ? distance : undefined;
       const holdTurnDirectionRaw = isHold ? rest.slice(43, 44).trim() : '';
       const holdTurnDirection = holdTurnDirectionRaw === 'L' || holdTurnDirectionRaw === 'R'
         ? holdTurnDirectionRaw
@@ -295,6 +297,8 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
         pathTerminator,
         altitude: altitude?.value,
         altitudeConstraint: altitude?.constraint,
+        course,
+        distance,
         holdCourse,
         holdDistance,
         holdTurnDirection,

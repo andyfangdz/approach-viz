@@ -176,21 +176,23 @@ function VerticalLine({
 
 function HoldPattern({
   leg,
+  altitudeOverride,
   waypoints,
   refLat,
   refLon,
   color
 }: {
   leg: ApproachLeg;
+  altitudeOverride: number;
   waypoints: Map<string, Waypoint>;
   refLat: number;
   refLon: number;
   color: string;
 }) {
   const wp = resolveWaypoint(waypoints, leg.waypointId);
-  const altitude = leg.altitude ?? 0;
-  const heading = leg.holdCourse ?? 0;
-  const holdDistance = leg.holdDistance ?? 4;
+  const altitude = altitudeOverride;
+  const heading = leg.holdCourse ?? leg.course ?? 0;
+  const holdDistance = leg.holdDistance ?? leg.distance ?? 4;
   const turnDirection = leg.holdTurnDirection ?? 'R';
 
   const points = useMemo(() => {
@@ -391,8 +393,23 @@ export function ApproachPath({ approach, waypoints, airport }: ApproachPathProps
     [allLegs, waypoints, refLat, refLon]
   );
 
+  const holdAltitudes = useMemo(() => {
+    const sorted = [...allLegs].sort((a, b) => a.sequence - b.sequence);
+    const altitudes = new Map<ApproachLeg, number>();
+    let lastAltitude = airport.elevation;
+    for (const leg of sorted) {
+      if (leg.altitude && leg.altitude > 0) {
+        lastAltitude = leg.altitude;
+      }
+      if (isHoldLeg(leg)) {
+        altitudes.set(leg, lastAltitude);
+      }
+    }
+    return altitudes;
+  }, [allLegs, airport.elevation]);
+
   const holdLegs = useMemo(
-    () => allLegs.filter(leg => isHoldLeg(leg) && leg.altitude),
+    () => allLegs.filter(leg => isHoldLeg(leg)),
     [allLegs]
   );
 
@@ -450,6 +467,7 @@ export function ApproachPath({ approach, waypoints, airport }: ApproachPathProps
         <HoldPattern
           key={`hold-${leg.sequence}-${leg.waypointId}`}
           leg={leg}
+          altitudeOverride={holdAltitudes.get(leg) ?? leg.altitude ?? airport.elevation}
           waypoints={waypoints}
           refLat={refLat}
           refLon={refLon}
