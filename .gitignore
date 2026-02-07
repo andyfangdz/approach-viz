@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.vite/
+*.log
+
+# Large data files - download from FAA
+data/cifp/FAACIFP18
+data/cifp/*.pdf
+data/cifp/*.zip
+data/cifp/*.xlsx
+data/airspace/
+
+# Keep these in public for deployment, but they're generated
+public/data/
