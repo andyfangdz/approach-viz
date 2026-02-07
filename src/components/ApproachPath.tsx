@@ -49,10 +49,8 @@ function WaypointMarker({
 }: { 
   position: [number, number, number]; 
   name: string; 
-  altitude?: number;
+  altitude: number;
 }) {
-  const altText = altitude ? ` ${altitude}'` : '';
-  
   return (
     <group position={position}>
       {/* Sphere marker */}
@@ -79,7 +77,7 @@ function WaypointMarker({
           pointerEvents: 'none'
         }}
       >
-        {name}{altText}
+        {name} {altitude}'
       </Html>
     </group>
   );
@@ -107,8 +105,8 @@ function VerticalLine({
   );
 }
 
-// Path segment (tube along waypoints)
-function PathSegment({
+// Path segment (tube along waypoints) - NO waypoint markers here
+function PathTube({
   legs,
   waypoints,
   refLat,
@@ -121,28 +119,25 @@ function PathSegment({
   refLon: number;
   color: string;
 }) {
-  const { points, waypointData, verticalLines } = useMemo(() => {
+  const { points, verticalLines } = useMemo(() => {
     const pts: THREE.Vector3[] = [];
-    const wpData: { position: [number, number, number]; name: string; altitude?: number }[] = [];
     const vLines: { x: number; y: number; z: number }[] = [];
 
     for (const leg of legs) {
+      // Skip legs without valid altitude (they're just procedure markers)
+      if (!leg.altitude || leg.altitude <= 0) continue;
+      
       const wp = waypoints.get(leg.waypointId);
       if (!wp) continue;
 
       const pos = latLonToLocal(wp.lat, wp.lon, refLat, refLon);
-      const y = altToY(leg.altitude || 0);
+      const y = altToY(leg.altitude);
 
       pts.push(new THREE.Vector3(pos.x, y, pos.z));
-      wpData.push({
-        position: [pos.x, y, pos.z],
-        name: wp.name,
-        altitude: leg.altitude
-      });
       vLines.push({ x: pos.x, y, z: pos.z });
     }
 
-    return { points: pts, waypointData: wpData, verticalLines: vLines };
+    return { points: pts, verticalLines: vLines };
   }, [legs, waypoints, refLat, refLon]);
 
   const tubeGeometry = useMemo(() => {
@@ -165,16 +160,6 @@ function PathSegment({
           opacity={0.9}
         />
       </mesh>
-
-      {/* Waypoint markers */}
-      {waypointData.map((wp, i) => (
-        <WaypointMarker
-          key={`${wp.name}-${i}`}
-          position={wp.position}
-          name={wp.name}
-          altitude={wp.altitude}
-        />
-      ))}
 
       {/* Vertical lines */}
       {verticalLines.map((line, i) => (
@@ -235,18 +220,87 @@ function AirportMarker({
   );
 }
 
+// Collect unique waypoint positions from all legs
+interface UniqueWaypoint {
+  key: string;
+  name: string;
+  altitude: number;
+  x: number;
+  z: number;
+}
+
+function collectUniqueWaypoints(
+  allLegs: ApproachLeg[],
+  waypoints: Map<string, Waypoint>,
+  refLat: number,
+  refLon: number
+): UniqueWaypoint[] {
+  const seen = new Map<string, UniqueWaypoint>();
+  
+  for (const leg of allLegs) {
+    // Skip legs without valid altitude
+    if (!leg.altitude || leg.altitude <= 0) continue;
+    
+    const wp = waypoints.get(leg.waypointId);
+    if (!wp) continue;
+    
+    // Key by waypoint name + altitude (same waypoint at different altitudes = different markers)
+    const key = `${wp.name}-${leg.altitude}`;
+    
+    if (!seen.has(key)) {
+      const pos = latLonToLocal(wp.lat, wp.lon, refLat, refLon);
+      seen.set(key, {
+        key,
+        name: wp.name,
+        altitude: leg.altitude,
+        x: pos.x,
+        z: pos.z
+      });
+    }
+  }
+  
+  return Array.from(seen.values());
+}
+
 export function ApproachPath({ approach, waypoints, airport }: ApproachPathProps) {
   const refLat = airport.lat;
   const refLon = airport.lon;
+
+  // Collect all legs from all segments
+  const allLegs = useMemo(() => {
+    const legs: ApproachLeg[] = [];
+    legs.push(...approach.finalLegs);
+    for (const [, transitionLegs] of approach.transitions) {
+      legs.push(...transitionLegs);
+    }
+    legs.push(...approach.missedLegs);
+    return legs;
+  }, [approach]);
+
+  // Get unique waypoints to render markers
+  const uniqueWaypoints = useMemo(
+    () => collectUniqueWaypoints(allLegs, waypoints, refLat, refLon),
+    [allLegs, waypoints, refLat, refLon]
+  );
 
   return (
     <group>
       {/* Airport marker */}
       <AirportMarker airport={airport} refLat={refLat} refLon={refLon} />
 
-      {/* Final approach */}
+      {/* Unique waypoint markers */}
+      {uniqueWaypoints.map((wp) => (
+        <WaypointMarker
+          key={wp.key}
+          position={[wp.x, altToY(wp.altitude), wp.z]}
+          name={wp.name}
+          altitude={wp.altitude}
+        />
+      ))}
+
+      {/* Final approach path */}
       {approach.finalLegs.length > 0 && (
-        <PathSegment
+        <PathTube
           legs={approach.finalLegs}
           waypoints={waypoints}
           refLat={refLat}
@@ -255,9 +309,9 @@ export function ApproachPath({ approach, waypoints, airport }: ApproachPathProps
         />
       )}
 
-      {/* Transitions */}
+      {/* Transition paths */}
       {Array.from(approach.transitions.entries()).map(([name, legs]) => (
-        <PathSegment
+        <PathTube
           key={name}
           legs={legs}
           waypoints={waypoints}
@@ -267,9 +321,9 @@ export function ApproachPath({ approach, waypoints, airport }: ApproachPathProps
         />
       ))}
 
-      {/* Missed approach */}
+      {/* Missed approach path */}
       {approach.missedLegs.length > 0 && (
-        <PathSegment
+        <PathTube
           legs={approach.missedLegs}
           waypoints={waypoints}
           refLat={refLat}
