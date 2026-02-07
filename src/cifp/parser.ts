@@ -209,6 +209,24 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
         });
       }
     }
+
+    // Enroute waypoints/navaids (section D/E)
+    if (sectionCode === 'D' || sectionCode === 'E') {
+      const waypointId = rest.slice(13, 18).trim();
+      const latStr = rest.slice(32, 41);
+      const lonStr = rest.slice(41, 51);
+      const name = rest.slice(98, 123).trim();
+
+      if (waypointId && latStr && lonStr && !data.waypoints.has(waypointId)) {
+        data.waypoints.set(waypointId, {
+          id: waypointId,
+          name: name || waypointId,
+          lat: parseDMS(latStr),
+          lon: parseDMS(lonStr),
+          type: 'enroute'
+        });
+      }
+    }
   }
   
   // Second pass: collect approach procedures

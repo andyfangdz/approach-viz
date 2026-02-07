@@ -42,6 +42,14 @@ function altToY(altFeet: number): number {
   return altFeet * ALTITUDE_SCALE * VERTICAL_EXAGGERATION;
 }
 
+function resolveWaypoint(waypoints: Map<string, Waypoint>, waypointId: string): Waypoint | undefined {
+  if (waypoints.has(waypointId)) {
+    return waypoints.get(waypointId);
+  }
+  const fallbackId = waypointId.split('_').pop() || waypointId;
+  return waypoints.get(fallbackId);
+}
+
 function isHoldLeg(leg: ApproachLeg): boolean {
   return ['HM', 'HF', 'HA'].includes(leg.pathTerminator);
 }
@@ -179,7 +187,7 @@ function HoldPattern({
   refLon: number;
   color: string;
 }) {
-  const wp = waypoints.get(leg.waypointId);
+  const wp = resolveWaypoint(waypoints, leg.waypointId);
   const altitude = leg.altitude ?? 0;
   const heading = leg.holdCourse ?? 0;
   const holdDistance = leg.holdDistance ?? 4;
@@ -227,7 +235,7 @@ function PathTube({
       // Skip legs without valid altitude (they're just procedure markers)
       if (!leg.altitude || leg.altitude <= 0) continue;
       
-      const wp = waypoints.get(leg.waypointId);
+      const wp = resolveWaypoint(waypoints, leg.waypointId);
       if (!wp) continue;
 
       const pos = latLonToLocal(wp.lat, wp.lon, refLat, refLon);
@@ -341,7 +349,7 @@ function collectUniqueWaypoints(
     // Skip legs without valid altitude
     if (!leg.altitude || leg.altitude <= 0) continue;
     
-    const wp = waypoints.get(leg.waypointId);
+    const wp = resolveWaypoint(waypoints, leg.waypointId);
     if (!wp) continue;
     
     // Key by waypoint name + altitude (same waypoint at different altitudes = different markers)
