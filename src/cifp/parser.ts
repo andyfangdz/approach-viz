@@ -20,6 +20,8 @@ export interface ApproachLeg {
   altitudeConstraint?: '+' | '-' | 'at' | 'between';
   course?: number;
   distance?: number;
+  holdCourse?: number;
+  holdDistance?: number;
   isInitialFix: boolean;
   isFinalFix: boolean;
   isMissedApproach: boolean;
@@ -227,6 +229,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const pathTerminator = rest.slice(47, 49).trim();
       const altitudeStr = rest.slice(84, 89);
       const isInitialFix = rest.slice(42, 44).trim() === 'IF';
+      const isHold = pathTerminator.startsWith('H');
       
       // Parse fix coordinates if available
       const descCode = rest.slice(39, 43);
@@ -257,6 +260,11 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       
       const altitude = parseAltitude(altitudeStr);
       
+      const holdCourseRaw = isHold ? rest.slice(70, 74).trim() : '';
+      const holdDistanceRaw = isHold ? rest.slice(74, 78).trim() : '';
+      const holdCourse = holdCourseRaw ? parseInt(holdCourseRaw, 10) / 10 : undefined;
+      const holdDistance = holdDistanceRaw ? parseInt(holdDistanceRaw, 10) / 10 : undefined;
+
       const leg: ApproachLeg = {
         sequence: seqNum,
         waypointId: `${airportId}_${waypointId}`,
@@ -264,6 +272,8 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
         pathTerminator,
         altitude: altitude?.value,
         altitudeConstraint: altitude?.constraint,
+        holdCourse,
+        holdDistance,
         isInitialFix,
         isFinalFix: rest.slice(43, 44) === 'E',
         isMissedApproach
