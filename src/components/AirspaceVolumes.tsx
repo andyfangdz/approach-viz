@@ -64,10 +64,12 @@ function AirspaceVolume({
         const [lon, lat] = ring[i];
         const pos = latLonToLocal(lat, lon, refLat, refLon);
 
+        // Use -pos.z because Shape Y becomes World Z after rotateX(-PI/2),
+        // but the Shape's Y-up convention inverts our Z direction
         if (i === 0) {
-          shape.moveTo(pos.x, pos.z);
+          shape.moveTo(pos.x, -pos.z);
         } else {
-          shape.lineTo(pos.x, pos.z);
+          shape.lineTo(pos.x, -pos.z);
         }
       }
 
