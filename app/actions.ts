@@ -1,0 +1,467 @@
+'use server';
+
+import type { Airport, Approach } from '@/src/cifp/parser';
+import { getDb } from '@/lib/db';
+import type {
+  AirspaceFeature,
+  AirportOption,
+  ApproachOption,
+  MinimumsSummary,
+  SceneData,
+  SerializedApproach
+} from '@/lib/types';
+
+const DEFAULT_AIRPORT_ID = 'KCDW';
+const NEARBY_AIRPORT_RADIUS_NM = 20;
+const AIRSPACE_RADIUS_NM = 30;
+
+interface AirportRow {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  elevation: number;
+  mag_var: number;
+}
+
+interface RunwayRow {
+  airport_id: string;
+  id: string;
+  lat: number;
+  lon: number;
+}
+
+interface WaypointRow {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  type: 'terminal' | 'enroute' | 'runway';
+}
+
+interface ApproachRow {
+  airport_id: string;
+  procedure_id: string;
+  type: string;
+  runway: string;
+  data_json: string;
+}
+
+interface MinimaRow {
+  airport_id: string;
+  approach_name: string;
+  runway: string | null;
+  types_json: string;
+  minimums_json: string;
+  cycle: string;
+}
+
+interface AirspaceRow {
+  class: string;
+  name: string;
+  lower_alt: number;
+  upper_alt: number;
+  coordinates_json: string;
+}
+
+interface MinimumsValue {
+  altitude: string;
+  rvr: string | null;
+  visibility: string | null;
+}
+
+interface ApproachMinimums {
+  minimums_type: string;
+  cat_a: MinimumsValue | 'NA' | null;
+  cat_b: MinimumsValue | 'NA' | null;
+  cat_c: MinimumsValue | 'NA' | null;
+  cat_d: MinimumsValue | 'NA' | null;
+}
+
+interface ExternalApproach {
+  name: string;
+  types: string[];
+  runway: string | null;
+  minimums: ApproachMinimums[];
+}
+
+function latLonDistanceNm(fromLat: number, fromLon: number, toLat: number, toLon: number): number {
+  const dLat = (toLat - fromLat) * 60;
+  const dLon = (toLon - fromLon) * 60 * Math.cos((fromLat * Math.PI) / 180);
+  return Math.hypot(dLat, dLon);
+}
+
+function rowToAirport(row: AirportRow): Airport {
+  return {
+    id: row.id,
+    name: row.name,
+    lat: row.lat,
+    lon: row.lon,
+    elevation: row.elevation,
+    magVar: row.mag_var
+  };
+}
+
+function rowToApproachOption(row: ApproachRow): ApproachOption {
+  return {
+    procedureId: row.procedure_id,
+    type: row.type,
+    runway: row.runway
+  };
+}
+
+function deserializeApproach(row: ApproachRow): SerializedApproach {
+  const parsed = JSON.parse(row.data_json) as SerializedApproach;
+  return {
+    ...parsed,
+    transitions: Array.isArray(parsed.transitions) ? parsed.transitions : []
+  };
+}
+
+function normalizeRunwayKey(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const match = raw.toUpperCase().match(/(\d{1,2})([LRC]?)/);
+  if (!match) return null;
+  return `${match[1].padStart(2, '0')}${match[2] || ''}`;
+}
+
+function parseProcedureRunway(runway: string): { runwayKey: string | null; variant: string } {
+  const cleaned = runway.toUpperCase().replace(/\s+/g, '');
+  const match = cleaned.match(/^(\d{1,2}[LRC]?)(?:-?([A-Z]))?$/);
+  if (!match) {
+    return { runwayKey: normalizeRunwayKey(cleaned), variant: '' };
+  }
+  return {
+    runwayKey: normalizeRunwayKey(match[1]),
+    variant: match[2] || ''
+  };
+}
+
+function parseApproachNameVariant(name: string): string {
+  const match = name.toUpperCase().match(/\b([XYZ])\s+RWY\b/);
+  return match ? match[1] : '';
+}
+
+function getTypeMatchScore(currentApproachType: string, externalApproach: ExternalApproach): number {
+  const current = currentApproachType.toUpperCase();
+  const external = `${externalApproach.name} ${(externalApproach.types || []).join(' ')}`.toUpperCase();
+
+  if (current.includes('RNAV/RNP') || current.includes('RNP')) {
+    if (external.includes('RNP')) return 4;
+    if (external.includes('RNAV')) return 2;
+    return 0;
+  }
+  if (current === 'RNAV') return external.includes('RNAV') ? 3 : 0;
+  if (current === 'ILS') return external.includes('ILS') ? 3 : 0;
+  if (current === 'LOC') return external.includes('LOC') ? 3 : 0;
+  if (current === 'VOR') return external.includes('VOR') ? 3 : 0;
+  return 1;
+}
+
+function parseMinimumAltitude(value: MinimumsValue | 'NA' | null): number | null {
+  if (!value || value === 'NA') return null;
+  const match = value.altitude.match(/\d+/);
+  if (!match) return null;
+  const parsed = parseInt(match[0], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getCategoryAAltitude(minimums: ApproachMinimums): number | null {
+  return parseMinimumAltitude(minimums.cat_a);
+}
+
+function isDecisionAltitudeType(minimumsType: string): boolean {
+  return /(LPV|VNAV|RNP|ILS|GLS|LP\+V|GBAS|PAR)/i.test(minimumsType);
+}
+
+function resolveExternalApproach(airportApproaches: ExternalApproach[], approach: Approach): ExternalApproach | null {
+  const { runwayKey, variant } = parseProcedureRunway(approach.runway);
+  if (!runwayKey) return null;
+
+  const runwayCandidates = airportApproaches.filter((candidate) => (
+    normalizeRunwayKey(candidate.runway ?? candidate.name) === runwayKey
+  ));
+
+  if (runwayCandidates.length === 0) return null;
+
+  const scored = runwayCandidates
+    .map((candidate) => {
+      const candidateVariant = parseApproachNameVariant(candidate.name);
+      const variantScore = variant
+        ? (candidateVariant === variant ? 4 : 0)
+        : (candidateVariant ? 0 : 1);
+      const typeScore = getTypeMatchScore(approach.type, candidate);
+      return { candidate, score: variantScore + typeScore };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return scored[0]?.candidate ?? null;
+}
+
+function deriveMinimumsSummary(minimaRows: MinimaRow[], approach: SerializedApproach | null): MinimumsSummary | null {
+  if (!approach || minimaRows.length === 0) return null;
+
+  const airportApproaches: ExternalApproach[] = minimaRows.map((row) => ({
+    name: row.approach_name,
+    runway: row.runway,
+    types: JSON.parse(row.types_json || '[]') as string[],
+    minimums: JSON.parse(row.minimums_json || '[]') as ApproachMinimums[]
+  }));
+
+  const pseudoApproach: Approach = {
+    airportId: approach.airportId,
+    procedureId: approach.procedureId,
+    type: approach.type,
+    runway: approach.runway,
+    transitions: new Map(approach.transitions),
+    finalLegs: approach.finalLegs,
+    missedLegs: approach.missedLegs
+  };
+
+  const externalApproach = resolveExternalApproach(airportApproaches, pseudoApproach);
+  if (!externalApproach) return null;
+
+  let bestDa: { altitude: number; type: string } | undefined;
+  let bestMda: { altitude: number; type: string } | undefined;
+
+  for (const minima of externalApproach.minimums || []) {
+    const altitude = getCategoryAAltitude(minima);
+    if (altitude === null) continue;
+
+    if (isDecisionAltitudeType(minima.minimums_type)) {
+      if (!bestDa || altitude < bestDa.altitude) {
+        bestDa = { altitude, type: minima.minimums_type };
+      }
+    } else if (!bestMda || altitude < bestMda.altitude) {
+      bestMda = { altitude, type: minima.minimums_type };
+    }
+  }
+
+  return {
+    sourceApproachName: externalApproach.name,
+    cycle: minimaRows[0]?.cycle || '',
+    daCatA: bestDa,
+    mdaCatA: bestMda
+  };
+}
+
+function collectWaypointIds(approach: SerializedApproach): string[] {
+  const ids = new Set<string>();
+  const pushId = (value: string | undefined) => {
+    if (!value) return;
+    ids.add(value);
+    const fallback = value.includes('_') ? value.split('_').pop() : value;
+    if (fallback && fallback !== value) ids.add(fallback);
+  };
+
+  const addLegs = (legs: typeof approach.finalLegs) => {
+    for (const leg of legs) {
+      pushId(leg.waypointId);
+      pushId(leg.rfCenterWaypointId);
+    }
+  };
+
+  addLegs(approach.finalLegs);
+  addLegs(approach.missedLegs);
+  for (const [, legs] of approach.transitions) {
+    addLegs(legs);
+  }
+
+  return Array.from(ids);
+}
+
+function selectAirport(db: ReturnType<typeof getDb>, airportId: string): AirportRow | null {
+  const normalized = airportId.trim().toUpperCase();
+  const byId = db
+    .prepare('SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?')
+    .get(normalized) as AirportRow | undefined;
+  if (byId) return byId;
+
+  const fallback = db
+    .prepare('SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?')
+    .get(DEFAULT_AIRPORT_ID) as AirportRow | undefined;
+  if (fallback) return fallback;
+
+  return db
+    .prepare('SELECT id, name, lat, lon, elevation, mag_var FROM airports ORDER BY id LIMIT 1')
+    .get() as AirportRow | undefined || null;
+}
+
+function loadRunwayMap(db: ReturnType<typeof getDb>, airportIds: string[]): Map<string, Array<{ id: string; lat: number; lon: number }>> {
+  if (airportIds.length === 0) return new Map();
+  const placeholders = airportIds.map(() => '?').join(',');
+  const rows = db
+    .prepare(`SELECT airport_id, id, lat, lon FROM runways WHERE airport_id IN (${placeholders}) ORDER BY airport_id, id`)
+    .all(...airportIds) as RunwayRow[];
+
+  const byAirport = new Map<string, Array<{ id: string; lat: number; lon: number }>>();
+  for (const row of rows) {
+    if (!byAirport.has(row.airport_id)) {
+      byAirport.set(row.airport_id, []);
+    }
+    byAirport.get(row.airport_id)!.push({ id: row.id, lat: row.lat, lon: row.lon });
+  }
+  return byAirport;
+}
+
+function loadAirspaceForAirport(db: ReturnType<typeof getDb>, airport: Airport): AirspaceFeature[] {
+  const latRadius = AIRSPACE_RADIUS_NM / 60;
+  const lonRadius = AIRSPACE_RADIUS_NM / (60 * Math.max(0.2, Math.cos((airport.lat * Math.PI) / 180)));
+  const minLat = airport.lat - latRadius;
+  const maxLat = airport.lat + latRadius;
+  const minLon = airport.lon - lonRadius;
+  const maxLon = airport.lon + lonRadius;
+
+  const rows = db
+    .prepare(`
+      SELECT class, name, lower_alt, upper_alt, coordinates_json
+      FROM airspace
+      WHERE max_lat >= ? AND min_lat <= ? AND max_lon >= ? AND min_lon <= ?
+    `)
+    .all(minLat, maxLat, minLon, maxLon) as AirspaceRow[];
+
+  return rows
+    .map((row) => ({
+      type: 'CLASS',
+      class: row.class,
+      name: row.name,
+      lowerAlt: row.lower_alt,
+      upperAlt: row.upper_alt,
+      coordinates: JSON.parse(row.coordinates_json) as [number, number][][]
+    }))
+    .filter((feature) => {
+      for (const ring of feature.coordinates) {
+        for (const [lon, lat] of ring) {
+          const dist = latLonDistanceNm(airport.lat, airport.lon, lat, lon);
+          if (dist <= AIRSPACE_RADIUS_NM) {
+            return true;
+          }
+        }
+      }
+      return false;
+    });
+}
+
+export async function listAirportsAction(): Promise<AirportOption[]> {
+  const db = getDb();
+  const rows = db
+    .prepare('SELECT id, name FROM airports ORDER BY id')
+    .all() as Array<{ id: string; name: string }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    label: `${row.id} - ${row.name}`
+  }));
+}
+
+export async function loadSceneDataAction(requestedAirportId: string, requestedProcedureId = ''): Promise<SceneData> {
+  const db = getDb();
+  const airportRow = selectAirport(db, requestedAirportId);
+
+  if (!airportRow) {
+    return {
+      airport: null,
+      approaches: [],
+      selectedApproachId: '',
+      currentApproach: null,
+      waypoints: [],
+      runways: [],
+      nearbyAirports: [],
+      airspace: [],
+      minimumsSummary: null
+    };
+  }
+
+  const airport = rowToAirport(airportRow);
+
+  const approachRows = db
+    .prepare(`
+      SELECT airport_id, procedure_id, type, runway, data_json
+      FROM approaches
+      WHERE airport_id = ?
+      ORDER BY type, runway, procedure_id
+    `)
+    .all(airport.id) as ApproachRow[];
+
+  const approaches = approachRows.map(rowToApproachOption);
+  const selectedApproachId = approachRows.some((row) => row.procedure_id === requestedProcedureId)
+    ? requestedProcedureId
+    : (approachRows[0]?.procedure_id || '');
+
+  const selectedApproachRow = approachRows.find((row) => row.procedure_id === selectedApproachId) || null;
+  const currentApproach = selectedApproachRow ? deserializeApproach(selectedApproachRow) : null;
+
+  const runways = (db
+    .prepare('SELECT id, lat, lon FROM runways WHERE airport_id = ? ORDER BY id')
+    .all(airport.id) as Array<{ id: string; lat: number; lon: number }>);
+
+  let waypoints: WaypointRow[] = [];
+  if (currentApproach) {
+    const waypointIds = collectWaypointIds(currentApproach);
+    if (waypointIds.length > 0) {
+      const placeholders = waypointIds.map(() => '?').join(',');
+      waypoints = db
+        .prepare(`SELECT id, name, lat, lon, type FROM waypoints WHERE id IN (${placeholders})`)
+        .all(...waypointIds) as WaypointRow[];
+    }
+  }
+
+  const nearbyLatRadius = NEARBY_AIRPORT_RADIUS_NM / 60;
+  const nearbyLonRadius = NEARBY_AIRPORT_RADIUS_NM / (60 * Math.max(0.2, Math.cos((airport.lat * Math.PI) / 180)));
+  const nearbyRows = db
+    .prepare(`
+      SELECT id, name, lat, lon, elevation, mag_var
+      FROM airports
+      WHERE id <> ?
+        AND lat BETWEEN ? AND ?
+        AND lon BETWEEN ? AND ?
+    `)
+    .all(
+      airport.id,
+      airport.lat - nearbyLatRadius,
+      airport.lat + nearbyLatRadius,
+      airport.lon - nearbyLonRadius,
+      airport.lon + nearbyLonRadius
+    ) as AirportRow[];
+
+  const nearbyWithDistance = nearbyRows
+    .map((row) => ({
+      row,
+      distanceNm: latLonDistanceNm(airport.lat, airport.lon, row.lat, row.lon)
+    }))
+    .filter((item) => item.distanceNm <= NEARBY_AIRPORT_RADIUS_NM)
+    .sort((a, b) => a.distanceNm - b.distanceNm)
+    .slice(0, 12);
+
+  const nearbyAirportIds = nearbyWithDistance.map((item) => item.row.id);
+  const runwayMap = loadRunwayMap(db, [airport.id, ...nearbyAirportIds]);
+
+  const nearbyAirports = nearbyWithDistance
+    .map((item) => ({
+      airport: rowToAirport(item.row),
+      runways: runwayMap.get(item.row.id) || [],
+      distanceNm: item.distanceNm
+    }))
+    .filter((item) => item.runways.length > 0)
+    .slice(0, 8);
+
+  const minimaRows = db
+    .prepare(`
+      SELECT airport_id, approach_name, runway, types_json, minimums_json, cycle
+      FROM minima
+      WHERE airport_id = ?
+    `)
+    .all(airport.id) as MinimaRow[];
+
+  return {
+    airport,
+    approaches,
+    selectedApproachId,
+    currentApproach,
+    waypoints,
+    runways: runwayMap.get(airport.id) || runways,
+    nearbyAirports,
+    airspace: loadAirspaceForAirport(db, airport),
+    minimumsSummary: deriveMinimumsSummary(minimaRows, currentApproach)
+  };
+}

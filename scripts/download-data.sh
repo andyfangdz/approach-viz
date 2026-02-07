@@ -3,7 +3,7 @@ set -euo pipefail
 
 echo "📥 Downloading FAA CIFP data..."
 
-# Data goes in public/ so Vite serves it statically
+# Data goes in public/ so Next.js serves it statically
 DATA_DIR="public/data"
 CIFP_DIR="$DATA_DIR/cifp"
 AIRSPACE_DIR="$DATA_DIR/airspace"
@@ -75,67 +75,5 @@ fi
 echo "Fetching approach DB from $APPROACH_DB_URL..."
 curl -fsSL "$APPROACH_DB_URL" -o "$APPROACH_DB_DIR/approaches.json"
 echo "✅ Approach DB downloaded ($(wc -c < "$APPROACH_DB_DIR/approaches.json" | tr -d ' ') bytes)"
-
-# Keep a local subset to reduce browser payload while preserving full file for debugging.
-echo "Building supported-airports approach DB subset..."
-node - "$APPROACH_DB_DIR/approaches.json" "$APPROACH_DB_DIR/approaches_supported.json" <<'NODE'
-const fs = require('fs');
-
-const inputPath = process.argv[2];
-const outputPath = process.argv[3];
-const supportedAirports = [
-  'KCDW',
-  'KTEB',
-  'KMMU',
-  'KEWR',
-  'KRNO',
-  'KBDR',
-  'KDXR',
-  'KFOK',
-  'KFRG',
-  'KHPN',
-  'KHVN',
-  'KOXC',
-  'KPOU',
-  'KSMQ',
-  'KSWF',
-  'KTTN',
-  'KPNE',
-  'KCMA',
-  'KCNO',
-  'KCRQ',
-  'KEMT',
-  'KFUL',
-  'KHHR',
-  'KLGB',
-  'KMHV',
-  'KOXR',
-  'KPMD',
-  'KPOC',
-  'KRAL',
-  'KSBD',
-  'KSMO',
-  'KTOA',
-  'KVCV',
-  'KVNY',
-  'KWHP',
-  'KWJF'
-];
-
-const parsed = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
-const subset = {
-  dtpp_cycle_number: parsed.dtpp_cycle_number,
-  airports: {},
-};
-
-for (const airportId of supportedAirports) {
-  if (parsed.airports && parsed.airports[airportId]) {
-    subset.airports[airportId] = parsed.airports[airportId];
-  }
-}
-
-fs.writeFileSync(outputPath, JSON.stringify(subset));
-NODE
-echo "✅ Supported-airports DB written ($(wc -c < "$APPROACH_DB_DIR/approaches_supported.json" | tr -d ' ') bytes)"
 
 echo "🎉 All data downloaded successfully!"
