@@ -213,6 +213,11 @@ select:focus {
   box-shadow: 0 0 8px rgba(255, 68, 68, 0.5);
 }
 
+.legend-color.hold {
+  background: #6f7bff;
+  box-shadow: 0 0 8px rgba(111, 123, 255, 0.5);
+}
+
 .legend-color.airspace-b {
   background: rgba(0, 102, 255, 0.6);
 }
