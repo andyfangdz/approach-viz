@@ -52,23 +52,48 @@ function buildHoldPoints(
   holdDistanceNm: number,
   altitudeFeet: number
 ): [number, number, number][] {
-  const radius = Math.max(0.6, holdDistanceNm / 6);
-  const major = holdDistanceNm + 2 * radius;
-  const minor = 2 * radius;
-  const steps = 64;
+  const radius = Math.max(0.6, holdDistanceNm / 8);
+  const halfStraight = Math.max(0.6, holdDistanceNm / 2);
+  const arcSteps = 24;
+  const straightSteps = 12;
   const headingRad = (headingDeg * Math.PI) / 180;
   const forward = { x: Math.sin(headingRad), z: -Math.cos(headingRad) };
   const right = { x: Math.cos(headingRad), z: Math.sin(headingRad) };
   const y = altToY(altitudeFeet);
   const points: [number, number, number][] = [];
 
-  for (let i = 0; i <= steps; i += 1) {
-    const t = (i / steps) * Math.PI * 2;
-    const localX = Math.cos(t) * (major / 2);
-    const localY = Math.sin(t) * (minor / 2);
-    const x = center.x + forward.x * localX + right.x * localY;
-    const z = center.z + forward.z * localX + right.z * localY;
+  const pushLocal = (forwardOffset: number, rightOffset: number) => {
+    const x = center.x + forward.x * forwardOffset + right.x * rightOffset;
+    const z = center.z + forward.z * forwardOffset + right.z * rightOffset;
     points.push([x, y, z]);
+  };
+
+  pushLocal(halfStraight, radius);
+
+  for (let i = 0; i <= arcSteps; i += 1) {
+    const t = (i / arcSteps) * Math.PI;
+    const forwardOffset = halfStraight + radius * Math.sin(t);
+    const rightOffset = radius * Math.cos(t);
+    pushLocal(forwardOffset, rightOffset);
+  }
+
+  for (let i = 1; i <= straightSteps; i += 1) {
+    const t = i / straightSteps;
+    const forwardOffset = halfStraight - t * (2 * halfStraight);
+    pushLocal(forwardOffset, -radius);
+  }
+
+  for (let i = 0; i <= arcSteps; i += 1) {
+    const t = (i / arcSteps) * Math.PI;
+    const forwardOffset = -halfStraight - radius * Math.sin(t);
+    const rightOffset = -radius * Math.cos(t);
+    pushLocal(forwardOffset, rightOffset);
+  }
+
+  for (let i = 1; i <= straightSteps; i += 1) {
+    const t = i / straightSteps;
+    const forwardOffset = -halfStraight + t * (2 * halfStraight);
+    pushLocal(forwardOffset, radius);
   }
 
   return points;
