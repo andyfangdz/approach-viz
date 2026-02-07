@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "📥 Downloading FAA CIFP data..."
 
@@ -7,14 +7,22 @@ echo "📥 Downloading FAA CIFP data..."
 DATA_DIR="public/data"
 CIFP_DIR="$DATA_DIR/cifp"
 AIRSPACE_DIR="$DATA_DIR/airspace"
+APPROACH_DB_DIR="$DATA_DIR/approach-db"
 
-mkdir -p "$CIFP_DIR" "$AIRSPACE_DIR"
+mkdir -p "$CIFP_DIR" "$AIRSPACE_DIR" "$APPROACH_DB_DIR"
 
 # Download CIFP data (ARINC 424 format) - FAA uses dated zip archives
 # Scrape current CIFP URL from FAA download page
 CIFP_PAGE="https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/download/"
 echo "Finding current CIFP URL..."
-CIFP_ZIP_URL=$(curl -fsSL "$CIFP_PAGE" | grep -oP 'https://aeronav\.faa\.gov/Upload_313-d/cifp/CIFP_\d+\.zip' | head -1)
+PAGE_HTML="$(curl -fsSL "$CIFP_PAGE")"
+CIFP_URL_CANDIDATES="$(
+  printf '%s\n' "$PAGE_HTML" \
+    | grep -Eo 'https://aeronav\.faa\.gov/Upload_313-d/cifp/CIFP_[0-9]+\.zip' \
+    | sort -u \
+    || true
+)"
+CIFP_ZIP_URL="$(printf '%s\n' "$CIFP_URL_CANDIDATES" | sort | tail -1)"
 
 if [ -z "$CIFP_ZIP_URL" ]; then
   echo "❌ Could not find CIFP download URL"
@@ -40,5 +48,94 @@ echo "✅ Class C airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_c.geojson"
 echo "Fetching Class D airspace..."
 curl -fsSL "https://raw.githubusercontent.com/drnic/faa-airspace-data/master/class_d.geo.json" -o "$AIRSPACE_DIR/class_d.geojson"
 echo "✅ Class D airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_d.geojson" | tr -d ' ') bytes)"
+
+# Download instrument approach minimums from ammaraskar/faa-instrument-approach-db
+echo "Fetching FAA instrument approach database release..."
+APPROACH_DB_RELEASE_API="https://api.github.com/repos/ammaraskar/faa-instrument-approach-db/releases/latest"
+APPROACH_DB_URL="$(
+  curl -fsSL "$APPROACH_DB_RELEASE_API" \
+    | node -e '
+      let raw = "";
+      process.stdin.on("data", chunk => (raw += chunk));
+      process.stdin.on("end", () => {
+        const parsed = JSON.parse(raw);
+        const asset = (parsed.assets || []).find(item => item.name === "approaches.json");
+        if (asset && asset.browser_download_url) {
+          process.stdout.write(asset.browser_download_url);
+        }
+      });
+    '
+)"
+
+if [ -z "$APPROACH_DB_URL" ]; then
+  echo "❌ Could not find approaches.json release URL"
+  exit 1
+fi
+
+echo "Fetching approach DB from $APPROACH_DB_URL..."
+curl -fsSL "$APPROACH_DB_URL" -o "$APPROACH_DB_DIR/approaches.json"
+echo "✅ Approach DB downloaded ($(wc -c < "$APPROACH_DB_DIR/approaches.json" | tr -d ' ') bytes)"
+
+# Keep a local subset to reduce browser payload while preserving full file for debugging.
+echo "Building supported-airports approach DB subset..."
+node - "$APPROACH_DB_DIR/approaches.json" "$APPROACH_DB_DIR/approaches_supported.json" <<'NODE'
+const fs = require('fs');
+
+const inputPath = process.argv[2];
+const outputPath = process.argv[3];
+const supportedAirports = [
+  'KCDW',
+  'KTEB',
+  'KMMU',
+  'KEWR',
+  'KRNO',
+  'KBDR',
+  'KDXR',
+  'KFOK',
+  'KFRG',
+  'KHPN',
+  'KHVN',
+  'KOXC',
+  'KPOU',
+  'KSMQ',
+  'KSWF',
+  'KTTN',
+  'KPNE',
+  'KCMA',
+  'KCNO',
+  'KCRQ',
+  'KEMT',
+  'KFUL',
+  'KHHR',
+  'KLGB',
+  'KMHV',
+  'KOXR',
+  'KPMD',
+  'KPOC',
+  'KRAL',
+  'KSBD',
+  'KSMO',
+  'KTOA',
+  'KVCV',
+  'KVNY',
+  'KWHP',
+  'KWJF'
+];
+
+const parsed = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
+const subset = {
+  dtpp_cycle_number: parsed.dtpp_cycle_number,
+  airports: {},
+};
+
+for (const airportId of supportedAirports) {
+  if (parsed.airports && parsed.airports[airportId]) {
+    subset.airports[airportId] = parsed.airports[airportId];
+  }
+}
+
+fs.writeFileSync(outputPath, JSON.stringify(subset));
+NODE
+echo "✅ Supported-airports DB written ($(wc -c < "$APPROACH_DB_DIR/approaches_supported.json" | tr -d ' ') bytes)"
 
 echo "🎉 All data downloaded successfully!"

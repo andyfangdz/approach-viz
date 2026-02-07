@@ -89,6 +89,23 @@ header {
   letter-spacing: 0.5px;
 }
 
+.control-group.vertical-scale {
+  min-width: 220px;
+}
+
+.control-group.vertical-scale input[type="range"] {
+  width: 120px;
+  accent-color: var(--accent-cyan);
+}
+
+.control-value {
+  min-width: 42px;
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
 select {
   font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
@@ -166,7 +183,7 @@ select:focus {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 16px 20px;
-  min-width: 240px;
+  min-width: 300px;
   z-index: 10;
 }
 
@@ -218,6 +235,11 @@ select:focus {
   box-shadow: 0 0 8px rgba(111, 123, 255, 0.5);
 }
 
+.legend-color.terrain {
+  background: #2d8cff;
+  box-shadow: 0 0 8px rgba(45, 140, 255, 0.5);
+}
+
 .legend-color.airspace-b {
   background: rgba(0, 102, 255, 0.6);
 }
@@ -228,6 +250,41 @@ select:focus {
 
 .legend-color.airspace-d {
   background: rgba(0, 153, 255, 0.6);
+}
+
+.minimums-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.minimums-source {
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.minimums-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.minimums-value {
+  color: var(--accent-cyan);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.minimums-empty,
+.minimums-cycle {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
 }
 
 .help-panel {

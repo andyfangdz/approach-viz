@@ -23,6 +23,10 @@ export interface ApproachLeg {
   holdCourse?: number;
   holdDistance?: number;
   holdTurnDirection?: 'L' | 'R';
+  rfCenterWaypointId?: string;
+  rfTurnDirection?: 'L' | 'R';
+  verticalAngleDeg?: number;
+  isFinalApproachFix: boolean;
   isInitialFix: boolean;
   isFinalFix: boolean;
   isMissedApproach: boolean;
@@ -47,10 +51,17 @@ export interface Airport {
   magVar: number;
 }
 
+export interface RunwayThreshold {
+  id: string;
+  lat: number;
+  lon: number;
+}
+
 export interface CIFPData {
   airports: Map<string, Airport>;
   waypoints: Map<string, Waypoint>;
   approaches: Map<string, Approach[]>;
+  runways: Map<string, RunwayThreshold[]>;
 }
 
 // Parse DMS coordinates from CIFP format
@@ -85,16 +96,39 @@ function parseDMS(dms: string): number {
 // Parse altitude from CIFP format
 function parseAltitude(alt: string): { value: number; constraint?: '+' | '-' | 'at' } | null {
   if (!alt || alt.trim() === '') return null;
-  
-  const constraint = alt[0] as '+' | '-' | ' ';
-  const value = parseInt(alt.slice(1).trim());
-  
-  if (isNaN(value)) return null;
-  
+
+  const trimmed = alt.trim();
+  const explicitConstraint = trimmed[0];
+  const constraint: '+' | '-' | 'at' = explicitConstraint === '+'
+    ? '+'
+    : explicitConstraint === '-'
+      ? '-'
+      : 'at';
+
+  // Altitude fields can be either plain 5-digit values (e.g. 10000) or
+  // signed values with spacing (e.g. "+ 8500"). Parse the numeric portion
+  // without assuming the first character is always a constraint marker.
+  const digits = trimmed.replace(/[^\d]/g, '');
+  if (!digits) return null;
+  const value = parseInt(digits, 10);
+  if (!Number.isFinite(value)) return null;
+
   return {
     value, // ARINC 424 stores altitude in feet
-    constraint: constraint === '+' ? '+' : constraint === '-' ? '-' : 'at'
+    constraint
   };
+}
+
+function parseTenthsValue(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed || !/^-?\d+$/.test(trimmed)) {
+    return undefined;
+  }
+  const parsed = parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+  return parsed / 10;
 }
 
 // Parse a single CIFP line
@@ -157,7 +191,8 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
   const data: CIFPData = {
     airports: new Map(),
     waypoints: new Map(),
-    approaches: new Map()
+    approaches: new Map(),
+    runways: new Map()
   };
   
   // First pass: collect airports and waypoints
@@ -167,8 +202,14 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
     
     const { airportId, subsectionCode, sectionCode, rest } = parsed;
     
-    // Filter by airport if specified (keep enroute/navaid records available for fixes)
-    if (airportFilter && airportId !== airportFilter && sectionCode !== 'D' && sectionCode !== 'E') continue;
+    // Filter by airport if specified, but keep global context needed for rendering:
+    // - enroute/navaid fixes (D/E)
+    // - airport reference points and runway thresholds (P/A and P/G)
+    const keepGlobalContext =
+      sectionCode === 'D' ||
+      sectionCode === 'E' ||
+      (sectionCode === 'P' && (subsectionCode === 'A' || subsectionCode === 'G'));
+    if (airportFilter && airportId !== airportFilter && !keepGlobalContext) continue;
     
     // Airport reference (subsection A)
     // Only process base record (continuation = 0)
@@ -210,12 +251,42 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       }
     }
 
+    // Runway threshold reference points (subsection G)
+    if (subsectionCode === 'G' && rest.slice(21, 22) === '0') {
+      const runwayId = rest.slice(13, 18).trim();
+      const latStr = rest.slice(32, 41);
+      const lonStr = rest.slice(41, 51);
+
+      if (runwayId && latStr && lonStr) {
+        const lat = parseDMS(latStr);
+        const lon = parseDMS(lonStr);
+        const fullId = `${airportId}_${runwayId}`;
+
+        data.waypoints.set(fullId, {
+          id: fullId,
+          name: runwayId,
+          lat,
+          lon,
+          type: 'runway'
+        });
+
+        if (!data.runways.has(airportId)) {
+          data.runways.set(airportId, []);
+        }
+
+        const airportRunways = data.runways.get(airportId)!;
+        if (!airportRunways.some(rwy => rwy.id === runwayId)) {
+          airportRunways.push({ id: runwayId, lat, lon });
+        }
+      }
+    }
+
     // Enroute waypoints/navaids (section D/E)
     if (sectionCode === 'D' || sectionCode === 'E') {
       const waypointId = rest.slice(13, 18).trim();
       const latStr = rest.slice(32, 41);
       const lonStr = rest.slice(41, 51);
-      const name = rest.slice(98, 123).trim();
+      const name = (sectionCode === 'D' ? rest.slice(93, 123) : rest.slice(98, 123)).trim();
 
       if (waypointId && latStr && lonStr && !data.waypoints.has(waypointId)) {
         data.waypoints.set(waypointId, {
@@ -230,6 +301,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
   }
   
   // Second pass: collect approach procedures
+  const legIndex = new Map<string, ApproachLeg>();
   for (const line of lines) {
     const parsed = parseLine(line);
     if (!parsed) continue;
@@ -248,11 +320,25 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const pathTerminator = rest.slice(47, 49).trim();
       const altitudeStr = rest.slice(84, 89);
       const isInitialFix = rest.slice(42, 44).trim() === 'IF';
+      const isFinalApproachFix = rest.slice(42, 43) === 'F';
       const isHold = pathTerminator.startsWith('H');
+      const legKey = `${airportId}|${procedureId}|${transitionId}|${seqNum}|${waypointId}`;
+
+      // Continuation records (no path terminator) can carry vertical-path metadata.
+      if (!pathTerminator) {
+        const angleMatch = rest.match(/A(\d{3})/);
+        const indexedLeg = legIndex.get(legKey);
+        if (indexedLeg && angleMatch) {
+          const raw = parseInt(angleMatch[1], 10);
+          if (Number.isFinite(raw)) {
+            indexedLeg.verticalAngleDeg = raw / 10;
+          }
+        }
+        continue;
+      }
       
-      // Parse fix coordinates if available
-      const descCode = rest.slice(39, 43);
-      const isMissedApproach = rest.slice(42, 43) === 'M';
+      // Missed approach indicator can appear in adjacent descriptor slots.
+      const isMissedApproach = rest.slice(41, 42) === 'M' || rest.slice(42, 43) === 'M';
       
       const { type, runway } = getProcedureType(procedureId);
       
@@ -279,16 +365,23 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       
       const altitude = parseAltitude(altitudeStr);
       
-      const courseRaw = rest.slice(70, 74).trim();
-      const distanceRaw = rest.slice(74, 78).trim();
-      const course = courseRaw ? parseInt(courseRaw, 10) / 10 : undefined;
-      const distance = distanceRaw ? parseInt(distanceRaw, 10) / 10 : undefined;
+      const courseRaw = rest.slice(70, 74);
+      const distanceRaw = rest.slice(74, 78);
+      const course = parseTenthsValue(courseRaw);
+      const distance = parseTenthsValue(distanceRaw);
+      const isRfLeg = pathTerminator === 'RF';
       const holdCourse = isHold ? course : undefined;
       const holdDistance = isHold ? distance : undefined;
       const holdTurnDirectionRaw = isHold ? rest.slice(43, 44).trim() : '';
       const holdTurnDirection = holdTurnDirectionRaw === 'L' || holdTurnDirectionRaw === 'R'
         ? holdTurnDirectionRaw
         : undefined;
+      const rfTurnDirectionRaw = isRfLeg ? rest.slice(43, 44).trim() : '';
+      const rfTurnDirection = rfTurnDirectionRaw === 'L' || rfTurnDirectionRaw === 'R'
+        ? rfTurnDirectionRaw
+        : undefined;
+      const rfCenterFix = isRfLeg ? rest.slice(106, 111).trim() : '';
+      const rfCenterWaypointId = rfCenterFix ? `${airportId}_${rfCenterFix}` : undefined;
 
       const leg: ApproachLeg = {
         sequence: seqNum,
@@ -302,32 +395,49 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
         holdCourse,
         holdDistance,
         holdTurnDirection,
+        rfCenterWaypointId,
+        rfTurnDirection,
+        isFinalApproachFix,
         isInitialFix,
         isFinalFix: rest.slice(43, 44) === 'E',
         isMissedApproach
       };
       
       // Categorize the leg
-      if (isMissedApproach) {
-        approach.missedLegs.push(leg);
-      } else if (transitionId && transitionId !== 'L' && transitionId !== 'R') {
+      if (transitionId && transitionId !== 'L' && transitionId !== 'R') {
         // Named transition
         if (!approach.transitions.has(transitionId)) {
           approach.transitions.set(transitionId, []);
         }
         approach.transitions.get(transitionId)!.push(leg);
       } else {
-        // Final approach segment
+        // Core approach segment (split into final/missed in post-processing)
         approach.finalLegs.push(leg);
       }
+      legIndex.set(legKey, leg);
     }
   }
   
   // Sort legs by sequence number
   for (const [, approaches] of data.approaches) {
     for (const approach of approaches) {
-      approach.finalLegs.sort((a, b) => a.sequence - b.sequence);
-      approach.missedLegs.sort((a, b) => a.sequence - b.sequence);
+      const coreLegs = [...approach.finalLegs].sort((a, b) => a.sequence - b.sequence);
+      const missedStartIdx = coreLegs.findIndex(leg => leg.isMissedApproach);
+
+      if (missedStartIdx >= 0) {
+        approach.finalLegs = coreLegs.slice(0, missedStartIdx).map((leg) => ({
+          ...leg,
+          isMissedApproach: false
+        }));
+        approach.missedLegs = coreLegs.slice(missedStartIdx).map((leg) => ({
+          ...leg,
+          isMissedApproach: true
+        }));
+      } else {
+        approach.finalLegs = coreLegs;
+        approach.missedLegs = [];
+      }
+
       for (const [, legs] of approach.transitions) {
         legs.sort((a, b) => a.sequence - b.sequence);
       }

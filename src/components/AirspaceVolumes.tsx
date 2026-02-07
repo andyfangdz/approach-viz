@@ -7,7 +7,6 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 
 const ALTITUDE_SCALE = 1 / 6076.12;
-const VERTICAL_EXAGGERATION = 15;
 
 const COLORS: Record<string, number> = {
   B: 0x0066ff,
@@ -28,6 +27,7 @@ interface AirspaceVolumesProps {
   features: AirspaceFeature[];
   refLat: number;
   refLon: number;
+  verticalScale: number;
 }
 
 function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number) {
@@ -38,18 +38,20 @@ function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number)
   return { x, z };
 }
 
-function altToY(altFeet: number): number {
-  return altFeet * ALTITUDE_SCALE * VERTICAL_EXAGGERATION;
+function altToY(altFeet: number, verticalScale: number): number {
+  return altFeet * ALTITUDE_SCALE * verticalScale;
 }
 
 function AirspaceVolume({
   feature,
   refLat,
-  refLon
+  refLon,
+  verticalScale
 }: {
   feature: AirspaceFeature;
   refLat: number;
   refLon: number;
+  verticalScale: number;
 }) {
   const color = COLORS[feature.class];
   if (!color) return null;
@@ -74,8 +76,8 @@ function AirspaceVolume({
         }
       }
 
-      const lowerY = altToY(feature.lowerAlt);
-      const upperY = altToY(feature.upperAlt);
+      const lowerY = altToY(feature.lowerAlt, verticalScale);
+      const upperY = altToY(feature.upperAlt, verticalScale);
       const height = upperY - lowerY;
 
       if (height <= 0) continue;
@@ -110,7 +112,7 @@ function AirspaceVolume({
       geometry: mergedGeo,
       edgesGeometry: new THREE.EdgesGeometry(mergedGeo)
     };
-  }, [feature, refLat, refLon]);
+  }, [feature, refLat, refLon, verticalScale]);
 
   const wireframe = useMemo(() => {
     if (!edgesGeometry) return null;
@@ -138,7 +140,7 @@ function AirspaceVolume({
   );
 }
 
-export function AirspaceVolumes({ features, refLat, refLon }: AirspaceVolumesProps) {
+export function AirspaceVolumes({ features, refLat, refLon, verticalScale }: AirspaceVolumesProps) {
   return (
     <group>
       {features.map((feature, i) => (
@@ -147,6 +149,7 @@ export function AirspaceVolumes({ features, refLat, refLon }: AirspaceVolumesPro
           feature={feature}
           refLat={refLat}
           refLon={refLon}
+          verticalScale={verticalScale}
         />
       ))}
     </group>
