@@ -89,7 +89,7 @@ function parseAltitude(alt: string): { value: number; constraint?: '+' | '-' | '
   if (isNaN(value)) return null;
   
   return {
-    value: value * 10, // CIFP stores in 10s of feet
+    value, // ARINC 424 stores altitude in feet
     constraint: constraint === '+' ? '+' : constraint === '-' ? '-' : 'at'
   };
 }
