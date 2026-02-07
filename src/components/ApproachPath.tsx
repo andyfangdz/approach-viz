@@ -397,12 +397,18 @@ export function ApproachPath({ approach, waypoints, airport }: ApproachPathProps
     const sorted = [...allLegs].sort((a, b) => a.sequence - b.sequence);
     const altitudes = new Map<ApproachLeg, number>();
     let lastAltitude = airport.elevation;
-    for (const leg of sorted) {
+    for (let i = 0; i < sorted.length; i += 1) {
+      const leg = sorted[i];
       if (leg.altitude && leg.altitude > 0) {
         lastAltitude = leg.altitude;
       }
       if (isHoldLeg(leg)) {
-        altitudes.set(leg, lastAltitude);
+        let resolvedAltitude = leg.altitude ?? lastAltitude;
+        if (!leg.altitude && lastAltitude === airport.elevation) {
+          const nextAltitudeLeg = sorted.slice(i + 1).find(nextLeg => (nextLeg.altitude ?? 0) > 0);
+          resolvedAltitude = nextAltitudeLeg?.altitude ?? lastAltitude;
+        }
+        altitudes.set(leg, resolvedAltitude);
       }
     }
     return altitudes;
