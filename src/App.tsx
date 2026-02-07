@@ -223,6 +223,7 @@ export default function App() {
               
               {airport && airspace.length > 0 && (
                 <AirspaceVolumes
+                  key={`airspace-${airspace.length}-${airspace.map(a => a.name).join(',')}`}
                   features={airspace}
                   refLat={airport.lat}
                   refLon={airport.lon}
