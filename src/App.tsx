@@ -245,6 +245,10 @@ export default function App() {
               <span>Missed Approach</span>
             </div>
             <div className="legend-item">
+              <div className="legend-color hold" />
+              <span>Hold</span>
+            </div>
+            <div className="legend-item">
               <div className="legend-color airspace-b" />
               <span>Class B</span>
             </div>
