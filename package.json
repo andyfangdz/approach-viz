@@ -4,8 +4,9 @@
   "description": "3D visualization for instrument approach procedures",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "download-data": "bash scripts/download-data.sh",
+    "dev": "npm run download-data && vite",
+    "build": "npm run download-data && tsc && vite build",
     "preview": "vite preview"
   },
   "keywords": ["aviation", "instrument-approach", "cifp", "three.js"],

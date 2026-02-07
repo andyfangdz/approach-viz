@@ -1,14 +1,26 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Vite cache
 .vite/
-*.log
 
-# Large data files - download from FAA
-data/cifp/FAACIFP18
-data/cifp/*.pdf
-data/cifp/*.zip
-data/cifp/*.xlsx
-data/airspace/
-
-# Keep these in public for deployment, but they're generated
+# Data files (downloaded during build)
+data/
 public/data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
