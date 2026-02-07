@@ -145,7 +145,10 @@ export default function App() {
         const airspaceDebug = nearby.map(f => `${f.class}:${f.name}(${f.lowerAlt}-${f.upperAlt})`);
         console.log('Nearby airspace (' + nearby.length + '):', airspaceDebug.join(', '));
         
-        setAirspace(nearby);
+        // Debug: only show Class D for now to verify positioning
+        const filtered = nearby.filter(f => f.class === 'D');
+        console.log('Filtered to Class D:', filtered.length);
+        setAirspace(filtered);
       }
       
       setLoading(false);
