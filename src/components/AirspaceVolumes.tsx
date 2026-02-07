@@ -65,11 +65,13 @@ function AirspaceVolume({
         const pos = latLonToLocal(lat, lon, refLat, refLon);
 
         // With rotateX(+PI/2): Shape.Y → -World.Z
-        // We want worldZ = pos.z, so Shape.Y must be -pos.z
+        // pos.z = -dLat*60 (positive for south)
+        // We want worldZ = -pos.z (negative for south, since camera looks from +Z)
+        // So Shape.Y = pos.z → worldZ = -pos.z ✓
         if (i === 0) {
-          shape.moveTo(pos.x, -pos.z);
+          shape.moveTo(pos.x, pos.z);
         } else {
-          shape.lineTo(pos.x, -pos.z);
+          shape.lineTo(pos.x, pos.z);
         }
       }
 
