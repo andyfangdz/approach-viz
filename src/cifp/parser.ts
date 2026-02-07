@@ -167,8 +167,8 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
     
     const { airportId, subsectionCode, sectionCode, rest } = parsed;
     
-    // Filter by airport if specified
-    if (airportFilter && airportId !== airportFilter) continue;
+    // Filter by airport if specified (keep enroute/navaid records available for fixes)
+    if (airportFilter && airportId !== airportFilter && sectionCode !== 'D' && sectionCode !== 'E') continue;
     
     // Airport reference (subsection A)
     // Only process base record (continuation = 0)
