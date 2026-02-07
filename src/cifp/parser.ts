@@ -20,6 +20,9 @@ export interface ApproachLeg {
   altitudeConstraint?: '+' | '-' | 'at' | 'between';
   course?: number;
   distance?: number;
+  holdCourse?: number;
+  holdDistance?: number;
+  holdTurnDirection?: 'L' | 'R';
   isInitialFix: boolean;
   isFinalFix: boolean;
   isMissedApproach: boolean;
@@ -162,10 +165,10 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
     const parsed = parseLine(line);
     if (!parsed) continue;
     
-    const { airportId, subsectionCode, rest } = parsed;
+    const { airportId, subsectionCode, sectionCode, rest } = parsed;
     
-    // Filter by airport if specified
-    if (airportFilter && airportId !== airportFilter) continue;
+    // Filter by airport if specified (keep enroute/navaid records available for fixes)
+    if (airportFilter && airportId !== airportFilter && sectionCode !== 'D' && sectionCode !== 'E') continue;
     
     // Airport reference (subsection A)
     // Only process base record (continuation = 0)
@@ -206,6 +209,24 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
         });
       }
     }
+
+    // Enroute waypoints/navaids (section D/E)
+    if (sectionCode === 'D' || sectionCode === 'E') {
+      const waypointId = rest.slice(13, 18).trim();
+      const latStr = rest.slice(32, 41);
+      const lonStr = rest.slice(41, 51);
+      const name = rest.slice(98, 123).trim();
+
+      if (waypointId && latStr && lonStr && !data.waypoints.has(waypointId)) {
+        data.waypoints.set(waypointId, {
+          id: waypointId,
+          name: name || waypointId,
+          lat: parseDMS(latStr),
+          lon: parseDMS(lonStr),
+          type: 'enroute'
+        });
+      }
+    }
   }
   
   // Second pass: collect approach procedures
@@ -227,6 +248,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const pathTerminator = rest.slice(47, 49).trim();
       const altitudeStr = rest.slice(84, 89);
       const isInitialFix = rest.slice(42, 44).trim() === 'IF';
+      const isHold = pathTerminator.startsWith('H');
       
       // Parse fix coordinates if available
       const descCode = rest.slice(39, 43);
@@ -257,6 +279,17 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       
       const altitude = parseAltitude(altitudeStr);
       
+      const courseRaw = rest.slice(70, 74).trim();
+      const distanceRaw = rest.slice(74, 78).trim();
+      const course = courseRaw ? parseInt(courseRaw, 10) / 10 : undefined;
+      const distance = distanceRaw ? parseInt(distanceRaw, 10) / 10 : undefined;
+      const holdCourse = isHold ? course : undefined;
+      const holdDistance = isHold ? distance : undefined;
+      const holdTurnDirectionRaw = isHold ? rest.slice(43, 44).trim() : '';
+      const holdTurnDirection = holdTurnDirectionRaw === 'L' || holdTurnDirectionRaw === 'R'
+        ? holdTurnDirectionRaw
+        : undefined;
+
       const leg: ApproachLeg = {
         sequence: seqNum,
         waypointId: `${airportId}_${waypointId}`,
@@ -264,6 +297,11 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
         pathTerminator,
         altitude: altitude?.value,
         altitudeConstraint: altitude?.constraint,
+        course,
+        distance,
+        holdCourse,
+        holdDistance,
+        holdTurnDirection,
         isInitialFix,
         isFinalFix: rest.slice(43, 44) === 'E',
         isMissedApproach

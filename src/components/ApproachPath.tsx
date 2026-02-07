@@ -17,6 +17,7 @@ const COLORS = {
   approach: '#00ff88',
   transition: '#ffaa00',
   missed: '#ff4444',
+  hold: '#6f7bff',
   waypoint: '#ffffff',
   runway: '#ff00ff'
 };
@@ -39,6 +40,74 @@ function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number)
 // Convert altitude to Y coordinate
 function altToY(altFeet: number): number {
   return altFeet * ALTITUDE_SCALE * VERTICAL_EXAGGERATION;
+}
+
+function resolveWaypoint(waypoints: Map<string, Waypoint>, waypointId: string): Waypoint | undefined {
+  if (waypoints.has(waypointId)) {
+    return waypoints.get(waypointId);
+  }
+  const fallbackId = waypointId.split('_').pop() || waypointId;
+  return waypoints.get(fallbackId);
+}
+
+function isHoldLeg(leg: ApproachLeg): boolean {
+  return ['HM', 'HF', 'HA'].includes(leg.pathTerminator);
+}
+
+function buildHoldPoints(
+  center: { x: number; z: number },
+  headingDeg: number,
+  holdDistanceNm: number,
+  altitudeFeet: number,
+  turnDirection: 'L' | 'R'
+): [number, number, number][] {
+  const radius = Math.max(0.6, holdDistanceNm / 8);
+  const straightLength = Math.max(1.2, holdDistanceNm);
+  const arcSteps = 24;
+  const straightSteps = 12;
+  const turnSign = turnDirection === 'L' ? -1 : 1;
+  const offset = turnSign * radius;
+  const headingRad = (headingDeg * Math.PI) / 180;
+  const forward = { x: Math.sin(headingRad), z: -Math.cos(headingRad) };
+  const right = { x: Math.cos(headingRad), z: Math.sin(headingRad) };
+  const y = altToY(altitudeFeet);
+  const points: [number, number, number][] = [];
+
+  const pushLocal = (forwardOffset: number, rightOffset: number) => {
+    const x = center.x + forward.x * forwardOffset + right.x * rightOffset;
+    const z = center.z + forward.z * forwardOffset + right.z * rightOffset;
+    points.push([x, y, z]);
+  };
+
+  const pushArc = (centerForward: number, centerRight: number, startAngle: number, endAngle: number) => {
+    for (let i = 0; i <= arcSteps; i += 1) {
+      const t = startAngle + (i / arcSteps) * (endAngle - startAngle);
+      const forwardOffset = centerForward + radius * Math.cos(t);
+      const rightOffset = centerRight + radius * Math.sin(t);
+      pushLocal(forwardOffset, rightOffset);
+    }
+  };
+
+  const pushStraight = (
+    startForward: number,
+    endForward: number,
+    rightOffset: number,
+    includeStart: boolean
+  ) => {
+    for (let i = includeStart ? 0 : 1; i <= straightSteps; i += 1) {
+      const t = i / straightSteps;
+      const forwardOffset = startForward + t * (endForward - startForward);
+      pushLocal(forwardOffset, rightOffset);
+    }
+  };
+
+  pushLocal(0, 0);
+  pushArc(0, offset, -Math.PI / 2, Math.PI / 2);
+  pushStraight(0, -straightLength, 2 * offset, false);
+  pushArc(-straightLength, offset, Math.PI / 2, (3 * Math.PI) / 2);
+  pushStraight(-straightLength, 0, 0, false);
+
+  return points;
 }
 
 // Waypoint marker component
@@ -105,6 +174,47 @@ function VerticalLine({
   );
 }
 
+function HoldPattern({
+  leg,
+  altitudeOverride,
+  waypoints,
+  refLat,
+  refLon,
+  color
+}: {
+  leg: ApproachLeg;
+  altitudeOverride: number;
+  waypoints: Map<string, Waypoint>;
+  refLat: number;
+  refLon: number;
+  color: string;
+}) {
+  const wp = resolveWaypoint(waypoints, leg.waypointId);
+  const altitude = altitudeOverride;
+  const heading = leg.holdCourse ?? leg.course ?? 0;
+  const holdDistance = leg.holdDistance ?? leg.distance ?? 4;
+  const turnDirection = leg.holdTurnDirection ?? 'R';
+
+  const points = useMemo(() => {
+    if (!wp || altitude <= 0) return [];
+    const center = latLonToLocal(wp.lat, wp.lon, refLat, refLon);
+    return buildHoldPoints(center, heading, holdDistance, altitude, turnDirection);
+  }, [wp, altitude, heading, holdDistance, turnDirection, refLat, refLon]);
+
+  if (!wp || points.length === 0) return null;
+
+  return (
+    <Line
+      points={points}
+      color={color}
+      lineWidth={2}
+      dashed
+      dashSize={0.4}
+      gapSize={0.2}
+    />
+  );
+}
+
 // Path segment (tube along waypoints) - NO waypoint markers here
 function PathTube({
   legs,
@@ -127,7 +237,7 @@ function PathTube({
       // Skip legs without valid altitude (they're just procedure markers)
       if (!leg.altitude || leg.altitude <= 0) continue;
       
-      const wp = waypoints.get(leg.waypointId);
+      const wp = resolveWaypoint(waypoints, leg.waypointId);
       if (!wp) continue;
 
       const pos = latLonToLocal(wp.lat, wp.lon, refLat, refLon);
@@ -241,7 +351,7 @@ function collectUniqueWaypoints(
     // Skip legs without valid altitude
     if (!leg.altitude || leg.altitude <= 0) continue;
     
-    const wp = waypoints.get(leg.waypointId);
+    const wp = resolveWaypoint(waypoints, leg.waypointId);
     if (!wp) continue;
     
     // Key by waypoint name + altitude (same waypoint at different altitudes = different markers)
@@ -281,6 +391,32 @@ export function ApproachPath({ approach, waypoints, airport }: ApproachPathProps
   const uniqueWaypoints = useMemo(
     () => collectUniqueWaypoints(allLegs, waypoints, refLat, refLon),
     [allLegs, waypoints, refLat, refLon]
+  );
+
+  const holdAltitudes = useMemo(() => {
+    const sorted = [...allLegs].sort((a, b) => a.sequence - b.sequence);
+    const altitudes = new Map<ApproachLeg, number>();
+    let lastAltitude = airport.elevation;
+    for (let i = 0; i < sorted.length; i += 1) {
+      const leg = sorted[i];
+      if (leg.altitude && leg.altitude > 0) {
+        lastAltitude = leg.altitude;
+      }
+      if (isHoldLeg(leg)) {
+        let resolvedAltitude = leg.altitude ?? lastAltitude;
+        if (!leg.altitude && lastAltitude === airport.elevation) {
+          const nextAltitudeLeg = sorted.slice(i + 1).find(nextLeg => (nextLeg.altitude ?? 0) > 0);
+          resolvedAltitude = nextAltitudeLeg?.altitude ?? lastAltitude;
+        }
+        altitudes.set(leg, resolvedAltitude);
+      }
+    }
+    return altitudes;
+  }, [allLegs, airport.elevation]);
+
+  const holdLegs = useMemo(
+    () => allLegs.filter(leg => isHoldLeg(leg)),
+    [allLegs]
   );
 
   return (
@@ -331,6 +467,19 @@ export function ApproachPath({ approach, waypoints, airport }: ApproachPathProps
           color={COLORS.missed}
         />
       )}
+
+      {/* Hold patterns */}
+      {holdLegs.map((leg) => (
+        <HoldPattern
+          key={`hold-${leg.sequence}-${leg.waypointId}`}
+          leg={leg}
+          altitudeOverride={holdAltitudes.get(leg) ?? leg.altitude ?? airport.elevation}
+          waypoints={waypoints}
+          refLat={refLat}
+          refLon={refLon}
+          color={COLORS.hold}
+        />
+      ))}
     </group>
   );
 }
