@@ -55,10 +55,6 @@ function AirspaceVolume({
   if (!color) return null;
 
   const { geometry, edgesGeometry } = useMemo(() => {
-    const lowerY = altToY(feature.lowerAlt);
-    const upperY = altToY(feature.upperAlt);
-    console.log(`Creating ${feature.name}: floor=${feature.lowerAlt}ft (Y=${lowerY.toFixed(2)}), ceiling=${feature.upperAlt}ft (Y=${upperY.toFixed(2)})`);
-    
     const meshes: THREE.ExtrudeGeometry[] = [];
 
     for (const ring of feature.coordinates) {
@@ -140,9 +136,6 @@ function AirspaceVolume({
 }
 
 export function AirspaceVolumes({ features, refLat, refLon }: AirspaceVolumesProps) {
-  console.log('AirspaceVolumes rendering with', features.length, 'features:', 
-    features.map(f => `${f.class}:${f.name}`).join(', '));
-  
   return (
     <group>
       {features.map((feature, i) => (

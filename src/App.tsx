@@ -125,8 +125,6 @@ export default function App() {
       const airport = parsed.airports.get(selectedAirport);
       
       if (airport) {
-        console.log('Airport:', airport.id, 'at', airport.lat.toFixed(4), airport.lon.toFixed(4));
-        
         // Filter to ~30nm radius
         const nearby = airspaceData.filter(f => {
           for (const ring of f.coordinates) {
@@ -140,15 +138,7 @@ export default function App() {
           }
           return false;
         });
-        
-        // Debug: log nearby airspace
-        const airspaceDebug = nearby.map(f => `${f.class}:${f.name}(${f.lowerAlt}-${f.upperAlt})`);
-        console.log('Nearby airspace (' + nearby.length + '):', airspaceDebug.join(', '));
-        
-        // Debug: show NO airspace to confirm cylinders disappear
-        const filtered: AirspaceFeature[] = [];
-        console.log('Filtered to NONE:', filtered.length);
-        setAirspace(filtered);
+        setAirspace(nearby);
       }
       
       setLoading(false);
