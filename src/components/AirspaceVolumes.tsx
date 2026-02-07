@@ -87,10 +87,10 @@ function AirspaceVolume({
       };
 
       const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-      // Rotate so extrusion goes UP (Y+) instead of forward (Z+)
-      // rotateX(+PI/2) makes Z+ become Y+ (up)
-      geo.rotateX(Math.PI / 2);
-      // Now geometry spans from Y=0 (where shape was) to Y=height
+      // Rotate so extrusion goes UP (Y+)
+      // rotateX(-PI/2): localZ → +worldY (up)
+      geo.rotateX(-Math.PI / 2);
+      // After rotation, geometry spans worldY=0 to worldY=height
       // Translate so bottom is at lowerY
       geo.translate(0, lowerY, 0);
       meshes.push(geo);
