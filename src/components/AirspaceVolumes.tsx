@@ -64,14 +64,13 @@ function AirspaceVolume({
         const [lon, lat] = ring[i];
         const pos = latLonToLocal(lat, lon, refLat, refLon);
 
-        // With rotateX(+PI/2): Shape.Y → -World.Z
-        // pos.z = -dLat*60 (positive for south)
-        // We want worldZ = -pos.z (negative for south, since camera looks from +Z)
-        // So Shape.Y = pos.z → worldZ = -pos.z ✓
+        // With rotateX(-PI/2): localY → -worldZ
+        // So Shape.Y = -pos.z → worldZ = pos.z
+        // pos.z = -dLat*60, so south (dLat<0) has pos.z>0 → worldZ>0
         if (i === 0) {
-          shape.moveTo(pos.x, pos.z);
+          shape.moveTo(pos.x, -pos.z);
         } else {
-          shape.lineTo(pos.x, pos.z);
+          shape.lineTo(pos.x, -pos.z);
         }
       }
 
