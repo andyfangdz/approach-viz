@@ -141,12 +141,9 @@ export default function App() {
           return false;
         });
         
-        console.log('Nearby airspace:', nearby.map(f => ({
-          name: f.name,
-          class: f.class,
-          floor: f.lowerAlt,
-          ceiling: f.upperAlt
-        })));
+        // Debug: log nearby airspace
+        const airspaceDebug = nearby.map(f => `${f.class}:${f.name}(${f.lowerAlt}-${f.upperAlt})`);
+        console.log('Nearby airspace (' + nearby.length + '):', airspaceDebug.join(', '));
         
         setAirspace(nearby);
       }
