@@ -165,7 +165,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
     const parsed = parseLine(line);
     if (!parsed) continue;
     
-    const { airportId, subsectionCode, rest } = parsed;
+    const { airportId, subsectionCode, sectionCode, rest } = parsed;
     
     // Filter by airport if specified
     if (airportFilter && airportId !== airportFilter) continue;
