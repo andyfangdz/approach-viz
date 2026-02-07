@@ -125,6 +125,8 @@ export default function App() {
       const airport = parsed.airports.get(selectedAirport);
       
       if (airport) {
+        console.log('Airport:', airport.id, 'at', airport.lat.toFixed(4), airport.lon.toFixed(4));
+        
         // Filter to ~30nm radius
         const nearby = airspaceData.filter(f => {
           for (const ring of f.coordinates) {
@@ -138,6 +140,14 @@ export default function App() {
           }
           return false;
         });
+        
+        console.log('Nearby airspace:', nearby.map(f => ({
+          name: f.name,
+          class: f.class,
+          floor: f.lowerAlt,
+          ceiling: f.upperAlt
+        })));
+        
         setAirspace(nearby);
       }
       
