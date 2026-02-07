@@ -27,10 +27,18 @@ unzip -o -j "/tmp/cifp.zip" "FAACIFP18" -d "$CIFP_DIR"
 rm "/tmp/cifp.zip"
 echo "✅ CIFP data downloaded ($(wc -c < "$CIFP_DIR/FAACIFP18" | tr -d ' ') bytes)"
 
-# Download airspace boundaries (GeoJSON)
-AIRSPACE_URL="https://opendata.arcgis.com/api/v3/datasets/c6a62360338e408cb1512366ad61559e_0/downloads/data?format=geojson&spatialRefId=4326"
-echo "Fetching airspace from FAA..."
-curl -fsSL "$AIRSPACE_URL" -o "$AIRSPACE_DIR/airspace_boundary.geojson"
-echo "✅ Airspace data downloaded ($(wc -c < "$AIRSPACE_DIR/airspace_boundary.geojson" | tr -d ' ') bytes)"
+# Download US Class B/C/D airspace (from drnic/faa-airspace-data)
+# This source has proper altitude bands for approach visualization
+echo "Fetching Class B airspace..."
+curl -fsSL "https://raw.githubusercontent.com/drnic/faa-airspace-data/master/class_b.geo.json" -o "$AIRSPACE_DIR/class_b.geojson"
+echo "✅ Class B airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_b.geojson" | tr -d ' ') bytes)"
+
+echo "Fetching Class C airspace..."
+curl -fsSL "https://raw.githubusercontent.com/drnic/faa-airspace-data/master/class_c.geo.json" -o "$AIRSPACE_DIR/class_c.geojson"
+echo "✅ Class C airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_c.geojson" | tr -d ' ') bytes)"
+
+echo "Fetching Class D airspace..."
+curl -fsSL "https://raw.githubusercontent.com/drnic/faa-airspace-data/master/class_d.geo.json" -o "$AIRSPACE_DIR/class_d.geojson"
+echo "✅ Class D airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_d.geojson" | tr -d ' ') bytes)"
 
 echo "🎉 All data downloaded successfully!"

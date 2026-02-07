@@ -62,27 +62,46 @@ async function loadCIFPFile(): Promise<string> {
 }
 
 async function loadAirspaceData(): Promise<any[]> {
-  try {
-    const response = await fetch('/data/airspace/airspace_boundary.geojson');
-    if (response.ok) {
-      const data = await response.json();
-      return data.features
-        .filter((f: any) => f.properties.CLASS && ['B', 'C', 'D'].includes(f.properties.CLASS))
-        .map((f: any) => ({
-          type: f.properties.TYPE_CODE,
-          class: f.properties.CLASS,
-          name: f.properties.NAME,
-          lowerAlt: f.properties.LOWER_VAL || 0,
-          upperAlt: f.properties.UPPER_VAL || 10000,
-          coordinates: f.geometry.type === 'Polygon' 
-            ? f.geometry.coordinates 
-            : f.geometry.coordinates.flat()
-        }));
+  const allFeatures: any[] = [];
+  
+  // Load Class B, C, D airspace from separate files
+  const classes = [
+    { file: 'class_b.geojson', class: 'B' },
+    { file: 'class_c.geojson', class: 'C' },
+    { file: 'class_d.geojson', class: 'D' }
+  ];
+  
+  for (const { file, class: airspaceClass } of classes) {
+    try {
+      const response = await fetch(`/data/airspace/${file}`);
+      if (response.ok) {
+        const data = await response.json();
+        for (const f of data.features) {
+          // Parse altitude - can be "SFC" or a number
+          const parseAlt = (alt: string): number => {
+            if (!alt || alt === 'SFC') return 0;
+            return parseInt(alt) || 0;
+          };
+          
+          allFeatures.push({
+            type: 'CLASS',
+            class: airspaceClass,
+            name: f.properties.NAME || f.properties.AIRSPACE,
+            lowerAlt: parseAlt(f.properties.LOWALT),
+            upperAlt: parseAlt(f.properties.HIGHALT),
+            coordinates: f.geometry.type === 'Polygon' 
+              ? f.geometry.coordinates 
+              : f.geometry.coordinates.flat()
+          });
+        }
+        console.log(`Loaded ${data.features.length} Class ${airspaceClass} features`);
+      }
+    } catch (e) {
+      console.log(`No Class ${airspaceClass} airspace data available`);
     }
-  } catch (e) {
-    console.log('No airspace data available');
   }
-  return [];
+  
+  return allFeatures;
 }
 
 function populateApproachSelector(): void {
