@@ -44,6 +44,7 @@
 - FAA plate mesh is rendered at the selected airport elevation (scaled by vertical scale), not fixed at sea-level.
 - Satellite mode loads Google tiles directly on the client (no server-side imagery proxy).
 - Satellite mode requires `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and does not provide a runtime key-entry fallback UI.
+- Satellite mode should retry renderer initialization up to 3 times on runtime failures; after retries are exhausted, show an in-app error message and keep current surface mode (no automatic terrain fallback).
 - Satellite mode terrain is vertically aligned to the app's MSL altitude frame by offsetting tiles to the selected airport elevation.
 - Satellite mode applies EGM96 geoid separation per airport when converting MSL airport elevation to WGS84 ellipsoid height for the tile anchor transform.
 - Satellite mode uses a tighter tile error target (`~12`) to keep nearby airport surfaces readable.

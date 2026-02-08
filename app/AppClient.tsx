@@ -9,6 +9,7 @@ import { AirspaceVolumes } from '@/src/components/AirspaceVolumes';
 import { ApproachPath } from '@/src/components/ApproachPath';
 import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
 import { SatelliteSurface } from '@/src/components/SatelliteSurface';
+import { SceneErrorBoundary } from '@/src/components/SceneErrorBoundary';
 import { TerrainWireframe } from '@/src/components/TerrainWireframe';
 import type { AirportOption, SceneData } from '@/lib/types';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
@@ -16,6 +17,7 @@ import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
 const DEFAULT_VERTICAL_SCALE = 3;
 const MAX_PICKER_RESULTS = 80;
 const MOBILE_BREAKPOINT_PX = 900;
+const SATELLITE_MAX_RETRIES = 3;
 
 interface SelectOption {
   value: string;
@@ -203,6 +205,9 @@ export function AppClient({
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
+  const [satelliteRetryCount, setSatelliteRetryCount] = useState(0);
+  const [satelliteRetryNonce, setSatelliteRetryNonce] = useState(0);
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
@@ -258,6 +263,9 @@ export function AppClient({
     requestCounter.current = nextRequestId;
     setLoading(true);
     setErrorMessage('');
+    setSurfaceErrorMessage('');
+    setSatelliteRetryCount(0);
+    setSatelliteRetryNonce(0);
 
     startTransition(() => {
       loadSceneDataAction(airportId, procedureId)
@@ -340,6 +348,7 @@ export function AppClient({
   const showApproachPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
   const showSatelliteSurface = surfaceMode === 'satellite';
   const showTerrainSurface = surfaceMode === 'terrain' || (surfaceMode === 'plate' && !hasApproachPlate);
+  const activeErrorMessage = errorMessage || surfaceErrorMessage;
   const surfaceLegendClass = showApproachPlateSurface
     ? 'plate'
     : showSatelliteSurface
@@ -350,6 +359,30 @@ export function AppClient({
     : showSatelliteSurface
       ? 'Satellite Surface'
       : 'Terrain Wireframe';
+
+  const handleSurfaceButtonClick = (mode: 'terrain' | 'plate' | 'satellite') => {
+    setSurfaceErrorMessage('');
+    setSatelliteRetryCount(0);
+    setSatelliteRetryNonce(0);
+    setSurfaceMode(mode);
+  };
+  const handleSatelliteRuntimeError = (message: string, error?: Error) => {
+    console.error('Satellite surface rendering failed', error);
+    setSatelliteRetryCount((previousCount) => {
+      if (previousCount >= SATELLITE_MAX_RETRIES) {
+        return previousCount;
+      }
+      const nextCount = previousCount + 1;
+      if (nextCount >= SATELLITE_MAX_RETRIES) {
+        setSurfaceErrorMessage(
+          `Satellite surface failed after ${SATELLITE_MAX_RETRIES} attempts. ${message}`,
+        );
+      } else {
+        setSatelliteRetryNonce((nonce) => nonce + 1);
+      }
+      return nextCount;
+    });
+  };
 
   return (
     <div className="app">
@@ -460,21 +493,21 @@ export function AppClient({
                 <button
                   type="button"
                   className={`surface-toggle-button ${surfaceMode === 'terrain' ? 'active' : ''}`}
-                  onClick={() => setSurfaceMode('terrain')}
+                  onClick={() => handleSurfaceButtonClick('terrain')}
                 >
                   Terrain
                 </button>
                 <button
                   type="button"
                   className={`surface-toggle-button ${surfaceMode === 'plate' ? 'active' : ''}`}
-                  onClick={() => setSurfaceMode('plate')}
+                  onClick={() => handleSurfaceButtonClick('plate')}
                 >
                   FAA Plate
                 </button>
                 <button
                   type="button"
                   className={`surface-toggle-button ${surfaceMode === 'satellite' ? 'active' : ''}`}
-                  onClick={() => setSurfaceMode('satellite')}
+                  onClick={() => handleSurfaceButtonClick('satellite')}
                 >
                   Satellite
                 </button>
@@ -523,13 +556,29 @@ export function AppClient({
               )}
 
               {showSatelliteSurface && (
-                <SatelliteSurface
-                  refLat={airport.lat}
-                  refLon={airport.lon}
-                  airportElevationFeet={airport.elevation}
-                  geoidSeparationFeet={sceneData.geoidSeparationFeet}
-                  verticalScale={verticalScale}
-                />
+                <SceneErrorBoundary
+                  resetKey={`${airport.id}:${selectedApproach}:${surfaceMode}:${satelliteRetryNonce}`}
+                  onError={(error) => handleSatelliteRuntimeError('Satellite renderer crashed.', error)}
+                  fallback={(
+                    <Html center>
+                      <div className="loading-3d">
+                        {surfaceErrorMessage || `Retrying satellite (${satelliteRetryCount + 1}/${SATELLITE_MAX_RETRIES})...`}
+                      </div>
+                    </Html>
+                  )}
+                >
+                  {!surfaceErrorMessage && (
+                    <SatelliteSurface
+                      key={`${airport.id}:${selectedApproach}:${satelliteRetryNonce}`}
+                      refLat={airport.lat}
+                      refLon={airport.lon}
+                      airportElevationFeet={airport.elevation}
+                      geoidSeparationFeet={sceneData.geoidSeparationFeet}
+                      verticalScale={verticalScale}
+                      onRuntimeError={handleSatelliteRuntimeError}
+                    />
+                  )}
+                </SceneErrorBoundary>
               )}
 
               {contextApproach && (
@@ -653,13 +702,13 @@ export function AppClient({
           </div>
         </div>
 
-        {errorMessage && (
+        {activeErrorMessage && (
           <div className="help-panel">
-            <p>{errorMessage}</p>
+            <p>{activeErrorMessage}</p>
           </div>
         )}
 
-        {!errorMessage && (
+        {!activeErrorMessage && (
           <div className="help-panel">
             <p><kbd>Drag</kbd> Rotate view</p>
             <p><kbd>Scroll</kbd> Zoom in/out</p>

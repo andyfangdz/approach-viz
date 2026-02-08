@@ -1,5 +1,5 @@
 import { Html } from '@react-three/drei';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import {
   GLTFExtensionsPlugin,
   GoogleCloudAuthPlugin,
@@ -30,6 +30,7 @@ interface SatelliteSurfaceProps {
   airportElevationFeet: number;
   geoidSeparationFeet: number;
   verticalScale: number;
+  onRuntimeError?: (message: string, error?: Error) => void;
 }
 
 function computeEcefToLocalNmFrame(
@@ -75,22 +76,43 @@ export function SatelliteSurface({
   airportElevationFeet,
   geoidSeparationFeet,
   verticalScale,
+  onRuntimeError,
 }: SatelliteSurfaceProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+  const loadErrorCountRef = useRef(0);
+  const fatalErrorReportedRef = useRef(false);
+  const safeLat = Number.isFinite(refLat) ? refLat : 0;
+  const safeLon = Number.isFinite(refLon) ? refLon : 0;
+  const safeAirportElevationFeet = Number.isFinite(airportElevationFeet) ? airportElevationFeet : 0;
+  const safeGeoidSeparationFeet = Number.isFinite(geoidSeparationFeet) ? geoidSeparationFeet : 0;
 
   const ecefToLocal = useMemo(
     () =>
       computeEcefToLocalNmFrame(
-        refLat,
-        refLon,
-        (airportElevationFeet + geoidSeparationFeet) * FEET_TO_METERS,
+        safeLat,
+        safeLon,
+        (safeAirportElevationFeet + safeGeoidSeparationFeet) * FEET_TO_METERS,
       ),
-    [refLat, refLon, airportElevationFeet, geoidSeparationFeet],
+    [safeLat, safeLon, safeAirportElevationFeet, safeGeoidSeparationFeet],
   );
   const airportElevationY = useMemo(
-    () => airportElevationFeet * FEET_TO_NM * verticalScale,
-    [airportElevationFeet, verticalScale],
+    () => safeAirportElevationFeet * FEET_TO_NM * verticalScale,
+    [safeAirportElevationFeet, verticalScale],
   );
+  const rendererKey = useMemo(
+    () => `${apiKey}:${safeLat.toFixed(5)}:${safeLon.toFixed(5)}`,
+    [apiKey, safeLat, safeLon],
+  );
+  const handleLoadError = useCallback((event: { error: Error }) => {
+    loadErrorCountRef.current += 1;
+    // Ignore sporadic network/tile misses; fail over only when repeated quickly.
+    if (loadErrorCountRef.current < 16 || fatalErrorReportedRef.current) return;
+    fatalErrorReportedRef.current = true;
+    onRuntimeError?.('Satellite tiles failed repeatedly.', event.error);
+  }, [onRuntimeError]);
+  const handleTilesLoadEnd = useCallback(() => {
+    loadErrorCountRef.current = 0;
+  }, []);
 
   if (!apiKey) {
     return (
@@ -107,9 +129,11 @@ export function SatelliteSurface({
     >
       <group matrixAutoUpdate={false} matrix={ecefToLocal}>
         <TilesRenderer
-          key={apiKey}
+          key={rendererKey}
           url={`https://tile.googleapis.com/v1/3dtiles/root.json?key=${apiKey}`}
           errorTarget={SATELLITE_TILES_ERROR_TARGET}
+          onLoadError={handleLoadError}
+          onTilesLoadEnd={handleTilesLoadEnd}
         >
           <TilesPlugin
             plugin={GoogleCloudAuthPlugin}
