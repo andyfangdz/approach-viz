@@ -15,6 +15,7 @@
 - Download FAA/CIFP + airspace + approach minimums data: `npm run download-data`
 - Build local SQLite DB from downloaded sources: `npm run build-db`
 - Full data refresh (download + SQLite rebuild): `npm run prepare-data`
+- Run CIFP parser fixture tests: `npm run test:parser`
 - Dev server: `npm run dev`
 - Production build (also refreshes data): `npm run build`
 - Run production server: `npm run start`
@@ -53,10 +54,17 @@
 - FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
 - Missed-approach path rendering starts at the MAP using selected minimums DA (or MDA fallback), and the missed profile climbs immediately from MAP by interpolating toward the next higher published missed-leg altitude targets (non-descending); this does not change final-approach glidepath-to-runway depiction.
+- Missed-profile distance interpolation treats no-fix `CA` legs as short climb segments (distance estimated from climb requirement), preventing exaggerated straight-out segments before turns when a CA leg precedes turn-to-fix legs.
 - For missed segments with `CA` followed by `DF`, geometry is conditional:
 - non-climbing (or near-level) `CA` uses a local course-to-fix turn join from MAP for immediate turn behavior;
 - climbing `CA` renders a straight climb-out segment first, then turns toward the `DF` fix.
+- The `CA->DF` change of course is rendered with a curved course-to-fix join (not a hard corner), including cases with large heading reversal after climb-out.
+- `CA->DF` turn joins use a radius-constrained arc+tangent model with a minimum turn radius to avoid snap/instant-reversal geometry.
+- `CA->DF` turn direction is chosen from heading-to-fix bearing delta (preferred side), with opposite-side fallback only when the preferred geometry is infeasible.
+- When available, explicit turn direction published on the procedure leg descriptor (`L`/`R`, e.g. on `DF` legs) overrides geometric inference for `CA->DF` turn joins.
+- Curved `CA->DF` turn joins are applied only when `DF` leg turn direction is explicitly published; otherwise missed geometry remains straight/linear to avoid synthetic loops.
 - Missed `CA->DF` turn initiation points display altitude callouts (using resolved CA altitude) so turn altitude restrictions are visible in-scene.
+- Missed `CA->DF` turn initiation points display altitude callouts only for meaningful published CA climb constraints (not derived/interpolated profile altitudes).
 - Minimums selection prefers Cat A values when available; if Cat A is unavailable for a minima line, the app falls back to the lowest available category (B/C/D), displays that category in the minimums panel, and uses it for missed-approach start altitude.
 - RF and AF (DME arc) legs are rendered as arcs using published center fixes and turn direction.
 - CA legs without fix geometry are synthesized along published course, with length constrained by climb and capped relative to the next known-fix leg to avoid exaggerated runway-heading extensions before turns; non-climbing (or lower-altitude) CA legs use a very short stub so missed approaches can turn immediately.
@@ -89,8 +97,9 @@
 ## Validation Expectations
 When changing parser/render/data logic, run:
 1. `npm run prepare-data`
-2. `npm run build`
-3. Spot-check at least one procedure with:
+2. `npm run test:parser` (especially for `src/cifp/parser.ts` changes)
+3. `npm run build`
+4. Spot-check at least one procedure with:
 - RF leg(s)
 - AF/DME arc leg(s)
 - hold leg(s)
@@ -101,6 +110,8 @@ When changing parser/render/data logic, run:
 
 ## Files Frequently Touched
 - `src/cifp/parser.ts`
+- `src/cifp/parser.test.ts`
+- `src/cifp/__fixtures__/real-cifp-procedures.txt`
 - `src/components/ApproachPath.tsx`
 - `src/components/AirspaceVolumes.tsx`
 - `src/components/TerrainWireframe.tsx`

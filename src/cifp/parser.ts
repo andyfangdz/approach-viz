@@ -22,6 +22,7 @@ export interface ApproachLeg {
   distance?: number;
   holdCourse?: number;
   holdDistance?: number;
+  turnDirection?: 'L' | 'R';
   holdTurnDirection?: 'L' | 'R';
   rfCenterWaypointId?: string;
   rfTurnDirection?: 'L' | 'R';
@@ -395,17 +396,15 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const distanceRaw = rest.slice(74, 78);
       const course = parseTenthsValue(courseRaw);
       const distance = parseTenthsValue(distanceRaw);
+      const turnDirectionRaw = rest.slice(43, 44).trim();
+      const turnDirection = turnDirectionRaw === 'L' || turnDirectionRaw === 'R'
+        ? turnDirectionRaw
+        : undefined;
       const isArcLeg = pathTerminator === 'RF' || pathTerminator === 'AF';
       const holdCourse = isHold ? course : undefined;
       const holdDistance = isHold ? distance : undefined;
-      const holdTurnDirectionRaw = isHold ? rest.slice(43, 44).trim() : '';
-      const holdTurnDirection = holdTurnDirectionRaw === 'L' || holdTurnDirectionRaw === 'R'
-        ? holdTurnDirectionRaw
-        : undefined;
-      const rfTurnDirectionRaw = isArcLeg ? rest.slice(43, 44).trim() : '';
-      const rfTurnDirection = rfTurnDirectionRaw === 'L' || rfTurnDirectionRaw === 'R'
-        ? rfTurnDirectionRaw
-        : undefined;
+      const holdTurnDirection = isHold ? turnDirection : undefined;
+      const rfTurnDirection = isArcLeg ? turnDirection : undefined;
       const rfCenterFix = pathTerminator === 'RF'
         ? rest.slice(106, 111).trim()
         : pathTerminator === 'AF'
@@ -426,6 +425,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
         distance,
         holdCourse,
         holdDistance,
+        turnDirection,
         holdTurnDirection,
         rfCenterWaypointId,
         rfTurnDirection,

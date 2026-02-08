@@ -1,0 +1,115 @@
+SCANP PADQPAAADQ     0     075YHN57445926W152293820E014000079         1800018000C    MNAR    KODIAK                        069221909
+SCANP PADQPAFI26-Y ACINEK 010CINEKPAEA0E  A    IF                                             18000                 0 NS   069352201
+SCANP PADQPAFI26-Y ACINEK 020CHINIPAPC0EE BR   AF ODK PA      087201003590    D   + 01600                           0 NS   069362201
+SCANP PADQPAFI26-Y AHINBU 010HINBUPAPC0E  A    IF                                             18000                 0 NS   069372407
+SCANP PADQPAFI26-Y AHINBU 020         0        VI                     3035                                          0 NS   069382201
+SCANP PADQPAFI26-Y AHINBU 030CHINIPAPC0EE B    CF IADQPA      0780015625800024PI  + 01600                           0 NS   069392201
+SCANP PADQPAFI26-Y AJIMON 010JIMONPAEA0E  A    IF                                             18000                 0 NS   069402201
+SCANP PADQPAFI26-Y AJIMON 020CINEKPAEA0E   R   AF ODK PA      359001003440    D   + 02700                           0 NS   069412201
+SCANP PADQPAFI26-Y AJIMON 030CHINIPAPC0EE BR   AF ODK PA      087201003590    D   + 01600                           0 NS   069422201
+SCANP PADQPAFI26-Y AKODNE 010KODNEPAEA0E       IF                                             18000                 0 NS   069432201
+SCANP PADQPAFI26-Y AKODNE 020WITMIPAPC0E  A    TF                                 + 04200                           0 NS   069442201
+SCANP PADQPAFI26-Y AKODNE 030CHINIPAPC0EE BR   AF ODK PA      087201000046    D   + 01600                           0 NS   069452201
+SCANP PADQPAFI26-Y AODK   010ODK  PAD 0V       IF                                             18000                 0 NS   069462201
+SCANP PADQPAFI26-Y AODK   020JOSRAPAPC0EY      TF                                 + 03900                           0 NS   069472201
+SCANP PADQPAFI26-Y AODK   030JOSRAPAPC0EE AL   HF IADQPA      078000832580T010PI  + 01600                           0 NS   069482201
+SCANP PADQPAFI26-Y ARWO   010RWO  PADB0N       IF                                             18000                 0 NS   069492201
+SCANP PADQPAFI26-Y ARWO   020JOSRAPAPC0EY      TF                                 + 03900                           0 NS   069502201
+SCANP PADQPAFI26-Y ARWO   030JOSRAPAPC0EE AL   HF IADQPA      078000832580T010PI  + 01600                           0 NS   069512201
+SCANP PADQPAFI26-Y AWABAK 010WABAKPAEA0E  A    IF                                             18000                 0 NS   069522201
+SCANP PADQPAFI26-Y AWABAK 020CHINIPAPC0EE BR   AF ODK PA      087201000190    D   + 01600                           0 NS   069532201
+SCANP PADQPAFI26-Y I      010CHINIPAPC0E  I    IF IADQPA      07800156        PI  J 016000160018000                 0 NS   069542201
+SCANP PADQPAFI26-Y I      020JOSRAPAPC0E  F    CF IADQPA      0780008325800073PI  H 0160001600            ODK   PAD 0 NS   069552201
+SCANP PADQPAFI26-Y I      030REREEPAPC0EY M    CF IADQPA      0780003525800048PI    00547             -205          0 NS   069562201
+SCANP PADQPAFI26-Y I      040         0  M     CA                     2580        + 00479                           0 NS   069572201
+SCANP PADQPAFI26-Y I      050         0    L   VDYODK PA              06500100D                                     0 NS   069582201
+SCANP PADQPAFI26-Y I      060CINEKPAEA0EY  L   AF ODK PA      359001000815    D   + 05000                           0 NS   069592201
+SCANP PADQPAFI26-Y I      070CINEKPAEA0EE  R   HM                     1790T010    + 05000                           0 NS   069602201
+SUSAP 12N K6A12N     0     019YHN41003103W074441692W013000583         1800018000C    MNAR    AEROFLEX/ANDOVER              822342207
+SUSAP 12N K6FR03   AHOPED 010HOPEDK6PC0EE AR   HF                     04930040    + 03000     18000                 B PS   822412404
+SUSAP 12N K6FR03   AMUGZY 010MUGZYK6EA0E       IF                                             18000                 B PS   822422404
+SUSAP 12N K6FR03   AMUGZY 020PEPLEK6PC0E  A 010TF                                 + 03100                           B PS   822432404
+SUSAP 12N K6FR03   AMUGZY 030HOPEDK6PC0EE B 010TF                                 + 03000                           B PS   822442404
+SUSAP 12N K6FR03   ASAX   010SAX  K6D 0V       IF                                             18000                 B PS   822452404
+SUSAP 12N K6FR03   ASAX   020NOLAAK6PC0E  A 010TF                                 + 03000                           B PS   822462404
+SUSAP 12N K6FR03   ASAX   030HOPEDK6PC0EE B 010TF                                 + 03000                           B PS   822472404
+SUSAP 12N K6FR03   R      010HOPEDK6PC0E  I    IF                                 + 03000     18000                 B PS   822482404
+SUSAP 12N K6FR03   R      020LYARTK6PC1E  F 010TF                                 + 02300                 MANTU K6PCB PS   822492404
+SUSAP 12N K6FR03   R      020LYARTK6PC2WN          N          ALNAV                                                   PS   822502404
+SUSAP 12N K6FR03   R      021AXULEK6PC0E S  031TF                                 + 01820                           B PS   822512404
+SUSAP 12N K6FR03   R      030MANTUK6PC0EY M 031TF                                   00673              000          B PS   822522404
+SUSAP 12N K6FR03   R      040         0  M     CA                     0493        + 00983                           B PS   822532404
+SUSAP 12N K6FR03   R      050HOPEDK6PC0EY  L010DF                                 + 03000                           B PS   822542404
+SUSAP 12N K6FR03   R      060HOPEDK6PC0EE  R   HM                     04930040    + 03000                           B PS   822552404
+SUSAP KABQK2AABQ     0     137YHN35022015W106362974E011005355         1800018000C    MNAR    ALBUQUERQUE INTL SUNPORT      132091406
+SUSAP KABQK2FH21-Y ACADAT 010CADATK2PC0E  B    IF                                   09000     18000210              A-FS   137321310
+SUSAP KABQK2FH21-Y ACADAT 020CLIPSK2PC0E    010TF                                 + 07600                           A FS   137331310
+SUSAP KABQK2FH21-Y ACADAT 030KAGNEK2PC0EE   010TF                                 + 06600                           A FS   137341310
+SUSAP KABQK2FH21-Y AFOXRR 010FOXRRK2PC0E  B    IF                                   10000     18000210              A-FS   137351310
+SUSAP KABQK2FH21-Y AFOXRR 020BGEYEK2PC0E    010TF                                 + 08000          205              A-FS   137361310
+SUSAP KABQK2FH21-Y AFOXRR 030KEIFRK2PC0E   R010RF       0028000501    11090030    + 07200          205    CFDXH K2PCA-FS   137371310
+SUSAP KABQK2FH21-Y AFOXRR 040KAGNEK2PC0EE  R010RF       0028001109    15960024    + 06600                 CFDXH K2PCA FS   137381310
+SUSAP KABQK2FH21-Y ANODME 010NODMEK2EA0E  B    IF                                   09000     18000210              A-FS   137391210
+SUSAP KABQK2FH21-Y ANODME 020KEIFRK2PC0E    010TF                                 + 07200          205              A-FS   137401310
+SUSAP KABQK2FH21-Y ANODME 030KAGNEK2PC0EE  R010RF       0028001109    15960024    + 06600                 CFDXH K2PCA FS   137411310
+SUSAP KABQK2FH21-Y H      020KAGNEK2PC1E  F    IF                                 + 06600     18000       RW21  K2PGA FS   137421310
+SUSAP KABQK2FH21-Y H      020KAGNEK2PC2W                                                A031                          FS   137431310
+SUSAP KABQK2FH21-Y H      021TEENRK2PC0E R R031RF       0018901596    21380018    + 06030             -300CFDXG K2PCA FS   137441504
+SUSAP KABQK2FH21-Y H      030RW21 K2PG0GY M 031TF                                   05371             -300          A FS   137451210
+SUSAP KABQK2FH21-Y H      040HUMKUK2PC0E M  010TF                                                                   A FS   137461310
+SUSAP KABQK2FH21-Y H      050WAPMAK2PC0E   R010RF       0038102138    31530068                            CFDXF K2PCA FS   137471310
+SUSAP KABQK2FH21-Y H      060ABQ  K2D 0VY   010TF                                 + 08000                           A FS   137481210
+SUSAP KABQK2FH21-Y H      070ABQ  K2D 0VE  L   HM                     07900070    + 08000                           A FS   137491210
+SUSAP KASEK2AASE     0     080YHN39131876W106520564E009007838         1800018000C    MNAR    ASPEN-PITKIN COUNTY/SARDY FLD 238012308
+SUSAP KASEK2FRNV-F ADBL   010DBL  K2D 0VE AR   HF                     16640080    + 13700     18000                 B PC   239282111
+SUSAP KASEK2FRNV-F R      010DBL  K2D 0V  I    IF                                 + 13700     18000                 B PC   239292111
+SUSAP KASEK2FRNV-F R      011HEPEBK2PC0E    010TF                                 + 12900                           B PC   239302111
+SUSAP KASEK2FRNV-F R      020ALLIXK2PC0E  F 010TF                                 + 12200                 MAFMU K2PCB PC   239312111
+SUSAP KASEK2FRNV-F R      030MAFMUK2PC0EY M 031TF                                   08772             -649          B PC   239322111
+SUSAP KASEK2FRNV-F R      040         0  M     CA                     1664        + 08238                           B PC   239332111
+SUSAP KASEK2FRNV-F R      050LINDZK2EA0E   R010DF                                                  190              B-PC   239342111
+SUSAP KASEK2FRNV-F R      060GLENOK2EA0EY   010TF                                 + 14000                           B PC   239352111
+SUSAP KASEK2FRNV-F R      070GLENOK2EA0EE  L   HM                     06720080    + 14000                           B PC   239362111
+SUSAP KCDWK6ACDW     0     045YHN40523081W074165286W013000172         1800018000C    MNAR    ESSEX COUNTY                  463902109
+SUSAP KCDWK6FR04   ASAX   010SAX  K6D 0V       IF                                             18000                 A JS   464932001
+SUSAP KCDWK6FR04   ASAX   020YOVUNK6PC0EY   010TF                                 + 02700                           A JS   464942008
+SUSAP KCDWK6FR04   ASAX   030YOVUNK6PC0EE AR   HF                     04250040    + 02700                           A JS   464952001
+SUSAP KCDWK6FR04   ASBJ   010SBJ  K6D 0V  A    IF                                             18000                 A JS   464962001
+SUSAP KCDWK6FR04   ASBJ   020YOVUNK6PC0EE B 010TF                                 + 02700                           A JS   464972008
+SUSAP KCDWK6FR04   R      010YOVUNK6PC0E  I    IF                                 + 02700     18000                 A JS   464982001
+SUSAP KCDWK6FR04   R      020ZOGUDK6PC1E  F 010TF                                 + 02000                 RW04  K6PGA JS   464992008
+SUSAP KCDWK6FR04   R      020ZOGUDK6PC2WALP        N          ALNAV                                                   JS   465002001
+SUSAP KCDWK6FR04   R      021WISALK6PC0E S  031TF                                 + 01140                           A JS   465012008
+SUSAP KCDWK6FR04   R      030RW04 K6PG0GY M 031TF                                   00217              000          A JS   465022306
+SUSAP KCDWK6FR04   R      040         0  M     CA                     0426        + 00572                           A JS   465032001
+SUSAP KCDWK6FR04   R      050JIRBOK6PC0EY   010DF                                 + 02700                           A JS   465042001
+SUSAP KCDWK6FR04   R      060JIRBOK6PC0EE  R   HM                     22270040    + 02700                           A JS   465052001
+SUSAP KTEBK6ATEB     0     069YHN40510037W074033900W012000008         1800018000C    MNAR    TETERBORO                     295342504
+SUSAP KTEBK6FR06-Y AALIDA 010ALIDAK6PC0E  A    IF                                             18000                 A JS   298112601
+SUSAP KTEBK6FR06-Y AALIDA 020WAWAHK6PC0E    010TF                                 + 03000                           A JS   298122601
+SUSAP KTEBK6FR06-Y AALIDA 030VINGSK6PC0EE B 010TF                                   02000                           A JS   298132601
+SUSAP KTEBK6FR06-Y ACOATE 010COATEK6EA0E       IF                                             18000                 A JS   298140910
+SUSAP KTEBK6FR06-Y ACOATE 020ELIZEK6EA0E  A 010TF                                 + 03000                           A JS   298152601
+SUSAP KTEBK6FR06-Y ACOATE 030ALIDAK6PC0E    010TF                                 + 03000                           A JS   298162204
+SUSAP KTEBK6FR06-Y ACOATE 040WAWAHK6PC0E    010TF                                 + 03000                           A JS   298172601
+SUSAP KTEBK6FR06-Y ACOATE 050VINGSK6PC0EE B 010TF                                   02000                           A JS   298182601
+SUSAP KTEBK6FR06-Y AMALCN 010MALCNK6PC0E  A    IF                                             18000                 A JS   298192601
+SUSAP KTEBK6FR06-Y AMALCN 020VINGSK6PC0EE B 010TF                                   02000                           A JS   298202601
+SUSAP KTEBK6FR06-Y ASBJ   010SBJ  K6D 0V  A    IF                                             18000                 A JS   298212601
+SUSAP KTEBK6FR06-Y ASBJ   020MALCNK6PC0E    010TF                                 + 03000                           A JS   298222601
+SUSAP KTEBK6FR06-Y ASBJ   030VINGSK6PC0EE B 010TF                                   02000                           A JS   298232601
+SUSAP KTEBK6FR06-Y ASTW   010STW  K6D 0V       IF                                             18000                 A JS   298240910
+SUSAP KTEBK6FR06-Y ASTW   020ELIZEK6EA0E  A 010TF                                 + 03000                           A JS   298252601
+SUSAP KTEBK6FR06-Y ASTW   030ALIDAK6PC0E    010TF                                 + 03000                           A JS   298262204
+SUSAP KTEBK6FR06-Y ASTW   040WAWAHK6PC0E    010TF                                 + 03000                           A JS   298272601
+SUSAP KTEBK6FR06-Y ASTW   050VINGSK6PC0EE B 010TF                                   02000                           A JS   298282601
+SUSAP KTEBK6FR06-Y R      010VINGSK6PC0E  I    IF                                   02000     18000                 A JS   298292601
+SUSAP KTEBK6FR06-Y R      011LEESYK6PC0E    010TF                                 + 01700                           A JS   298302601
+SUSAP KTEBK6FR06-Y R      012DANDYK6PC0E    010TF                                   01300                           A JS   298312601
+SUSAP KTEBK6FR06-Y R      020TORBYK6PC1E  F 010TF                                 + 01300                 RW06  K6PGA JS   298322405
+SUSAP KTEBK6FR06-Y R      020TORBYK6PC2WALPV       N          ALNAV                                                   JS   298332405
+SUSAP KTEBK6FR06-Y R      030RW06 K6PG0GY M 031TF                                   00058             -300          A JS   298342204
+SUSAP KTEBK6FR06-Y R      040         0  M     CA                     0601        + 01000                           A JS   298352308
+SUSAP KTEBK6FR06-Y R      050TEBLEK6PC0E   L010DF                                 - 02000          200              A-JS   298362601
+SUSAP KTEBK6FR06-Y R      060UBUCKK6PC0EY   010TF                                 + 03000                           A JS   298372308
+SUSAP KTEBK6FR06-Y R      070UBUCKK6PC0EE  R   HM                     27180040    + 03000                           A JS   298382308

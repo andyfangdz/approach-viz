@@ -7,6 +7,7 @@
     "download-data": "bash scripts/download-data.sh",
     "build-db": "tsx scripts/build-db.ts",
     "prepare-data": "npm run download-data && npm run build-db",
+    "test:parser": "node --import tsx --test src/cifp/parser.test.ts",
     "dev": "npm run prepare-data && next dev",
     "build": "npm run prepare-data && next build",
     "start": "next start"

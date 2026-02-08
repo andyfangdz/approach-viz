@@ -11,6 +11,7 @@ import type { Approach, Waypoint, Airport, ApproachLeg, RunwayThreshold } from '
 // Scale factors
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 const MISSED_DEFAULT_CLIMB_FT_PER_NM = 200;
+const MIN_TURN_RADIUS_NM = 0.45;
 
 // Colors
 const COLORS = {
@@ -193,31 +194,133 @@ function buildRfArcPoints(
 function buildCourseToFixTurnPoints(
   start: THREE.Vector3,
   end: THREE.Vector3,
-  startHeadingDeg: number
+  startHeadingDeg: number,
+  explicitTurnDirection?: 'L' | 'R'
 ): THREE.Vector3[] {
   const dx = end.x - start.x;
   const dz = end.z - start.z;
   const horizontalDistance = Math.hypot(dx, dz);
-  if (horizontalDistance < 1e-4) {
-    return [end];
-  }
+  if (horizontalDistance < 1e-4) return [end];
 
   const startHeadingRad = (startHeadingDeg * Math.PI) / 180;
-  const startTangent = new THREE.Vector3(Math.sin(startHeadingRad), 0, -Math.cos(startHeadingRad)).normalize();
-  const endTangent = new THREE.Vector3(dx, 0, dz).normalize();
-  const handleLength = Math.min(horizontalDistance * 0.45, 1.5);
+  const headingDir = new THREE.Vector2(Math.sin(startHeadingRad), -Math.cos(startHeadingRad)).normalize();
+  // Scene frame is X=east, Z=south; right normal is a +90deg rotation in this frame.
+  const rightNormal = new THREE.Vector2(-headingDir.y, headingDir.x);
+  const leftNormal = rightNormal.clone().multiplyScalar(-1);
+  const end2 = new THREE.Vector2(end.x, end.z);
   const yDelta = end.y - start.y;
 
-  const p0 = start.clone();
-  const p1 = start.clone().addScaledVector(startTangent, handleLength);
-  p1.y = start.y + yDelta / 3;
-  const p2 = end.clone().addScaledVector(endTangent, -handleLength);
-  p2.y = start.y + (2 * yDelta) / 3;
-  const p3 = end.clone();
+  const buildCandidate = (turn: 'L' | 'R', radiusNm: number): { points: THREE.Vector3[]; score: number } | null => {
+    const normal = turn === 'R' ? rightNormal : leftNormal;
+    const center2 = new THREE.Vector2(start.x, start.z).addScaledVector(normal, radiusNm);
+    const centerToEnd = end2.clone().sub(center2);
+    const d = centerToEnd.length();
+    if (!(d > radiusNm + 1e-4)) return null;
 
-  const curve = new THREE.CubicBezierCurve3(p0, p1, p2, p3);
-  const steps = Math.max(8, Math.min(20, Math.ceil(horizontalDistance * 4)));
-  return curve.getPoints(steps).slice(1);
+    const phi = Math.atan2(centerToEnd.y, centerToEnd.x);
+    const alpha = Math.acos(Math.max(-1, Math.min(1, radiusNm / d)));
+    const candidateAngles = [phi + alpha, phi - alpha];
+    const startAngle = Math.atan2(start.z - center2.y, start.x - center2.x);
+
+    const normalizePositive = (value: number) => {
+      const twoPi = Math.PI * 2;
+      let wrapped = value % twoPi;
+      if (wrapped < 0) wrapped += twoPi;
+      return wrapped;
+    };
+
+    let best: { points: THREE.Vector3[]; score: number } | null = null;
+
+    for (const tangentAngle of candidateAngles) {
+      const tangent2 = new THREE.Vector2(
+        center2.x + Math.cos(tangentAngle) * radiusNm,
+        center2.y + Math.sin(tangentAngle) * radiusNm
+      );
+      const toEnd2 = end2.clone().sub(tangent2);
+      const lineDistance = toEnd2.length();
+      if (lineDistance < 1e-5) continue;
+      const lineDir = toEnd2.clone().multiplyScalar(1 / lineDistance);
+
+      // Scene frame uses +Z south; this flips clockwise/counter-clockwise
+      // compared to a standard +Y-up 2D plane for left/right interpretation.
+      const circleTangentDir = turn === 'R'
+        ? new THREE.Vector2(-Math.sin(tangentAngle), Math.cos(tangentAngle))
+        : new THREE.Vector2(Math.sin(tangentAngle), -Math.cos(tangentAngle));
+      const tangentAlignment = circleTangentDir.dot(lineDir);
+      if (tangentAlignment < 0.96) continue;
+
+      const arcDelta = turn === 'R'
+        ? normalizePositive(tangentAngle - startAngle)
+        : normalizePositive(startAngle - tangentAngle);
+      if (arcDelta < 1e-4) continue;
+
+      const arcLength = radiusNm * arcDelta;
+      const totalLength = arcLength + lineDistance;
+      const arcSteps = Math.max(8, Math.ceil(arcDelta / (Math.PI / 48))); // ~3.75deg
+      const lineSteps = Math.max(2, Math.ceil(lineDistance / 0.25));
+      const points: THREE.Vector3[] = [];
+
+      for (let step = 1; step <= arcSteps; step += 1) {
+        const t = step / arcSteps;
+        const angle = turn === 'R'
+          ? startAngle + arcDelta * t
+          : startAngle - arcDelta * t;
+        const x = center2.x + Math.cos(angle) * radiusNm;
+        const z = center2.y + Math.sin(angle) * radiusNm;
+        const traveled = arcLength * t;
+        const y = start.y + (traveled / totalLength) * yDelta;
+        points.push(new THREE.Vector3(x, y, z));
+      }
+
+      const tangentPoint = points[points.length - 1];
+      for (let step = 1; step <= lineSteps; step += 1) {
+        const t = step / lineSteps;
+        const x = tangentPoint.x + (end.x - tangentPoint.x) * t;
+        const z = tangentPoint.z + (end.z - tangentPoint.z) * t;
+        const traveled = arcLength + lineDistance * t;
+        const y = start.y + (traveled / totalLength) * yDelta;
+        points.push(new THREE.Vector3(x, y, z));
+      }
+
+      const score = arcDelta + lineDistance / Math.max(0.01, horizontalDistance);
+      if (!best || score < best.score) {
+        best = { points, score };
+      }
+    }
+
+    return best;
+  };
+
+  const desiredRadius = Math.min(1.2, Math.max(MIN_TURN_RADIUS_NM, horizontalDistance * 0.25));
+  const reducedRadius = Math.max(0.2, Math.min(desiredRadius, horizontalDistance * 0.2));
+
+  const normalizeSignedDeltaDeg = (delta: number) => {
+    let normalized = ((delta + 180) % 360 + 360) % 360 - 180;
+    if (normalized <= -180) normalized += 360;
+    return normalized;
+  };
+  const bearingToFixDeg = (Math.atan2(dx, -dz) * 180) / Math.PI;
+  const headingDelta = normalizeSignedDeltaDeg(bearingToFixDeg - startHeadingDeg);
+  const preferredTurn = explicitTurnDirection ?? (headingDelta >= 0 ? 'R' : 'L');
+
+  const tryTurns = (turn: 'L' | 'R') => [
+    buildCandidate(turn, desiredRadius),
+    buildCandidate(turn, reducedRadius)
+  ].filter((candidate): candidate is { points: THREE.Vector3[]; score: number } => Boolean(candidate));
+
+  const preferredCandidates = tryTurns(preferredTurn);
+  if (preferredCandidates.length > 0) {
+    preferredCandidates.sort((a, b) => a.score - b.score);
+    return preferredCandidates[0].points;
+  }
+
+  const fallbackCandidates = tryTurns(preferredTurn === 'L' ? 'R' : 'L');
+  if (fallbackCandidates.length > 0) {
+    fallbackCandidates.sort((a, b) => a.score - b.score);
+    return fallbackCandidates[0].points;
+  }
+
+  return [end];
 }
 
 function getHorizontalDistanceNm(
@@ -447,18 +550,44 @@ function resolveMissedApproachAltitudes(
     return adjusted;
   }
 
+  const provisionalAltitudes = new Array<number>(missedLegs.length).fill(computedStartAltitude);
+  for (let index = 1; index < missedLegs.length; index += 1) {
+    const publishedAltitude = missedLegs[index].altitude;
+    if (
+      typeof publishedAltitude === 'number' &&
+      Number.isFinite(publishedAltitude) &&
+      publishedAltitude > 0
+    ) {
+      provisionalAltitudes[index] = Math.max(provisionalAltitudes[index - 1], publishedAltitude);
+    } else {
+      provisionalAltitudes[index] = provisionalAltitudes[index - 1];
+    }
+  }
+
   const cumulativeDistanceNm = new Array<number>(missedLegs.length).fill(0);
   let cumulative = 0;
   for (let index = 1; index < missedLegs.length; index += 1) {
-    cumulative += getHorizontalDistanceNm(
-      missedLegs[index - 1],
-      missedLegs[index],
+    const previousLeg = missedLegs[index - 1];
+    const leg = missedLegs[index];
+    const legWp = resolveWaypoint(waypoints, leg.waypointId);
+    let segmentDistance = getHorizontalDistanceNm(
+      previousLeg,
+      leg,
       waypoints,
       refLat,
       refLon,
       index - 2 >= 0 ? missedLegs[index - 2] : undefined,
       index + 1 < missedLegs.length ? missedLegs[index + 1] : undefined
     );
+
+    if (leg.pathTerminator === 'CA' && !legWp) {
+      const climbDeltaFeet = provisionalAltitudes[index] - provisionalAltitudes[index - 1];
+      segmentDistance = climbDeltaFeet > 0
+        ? Math.max(0.2, Math.min(3, climbDeltaFeet / 200))
+        : 0.15;
+    }
+
+    cumulative += segmentDistance;
     cumulativeDistanceNm[index] = cumulative;
   }
 
@@ -773,11 +902,19 @@ function PathTube({
         const climbDistanceNm = climbDeltaFeet > 0 ? climbDeltaFeet / 200 : 0;
         const nextLeg = legIndex + 1 < legs.length ? legs[legIndex + 1] : undefined;
         const nextWp = nextLeg ? resolveWaypoint(waypoints, nextLeg.waypointId) : undefined;
-        if (nextLeg?.pathTerminator === 'DF' && nextWp && climbDeltaFeet <= 50) {
-          if (showTurnConstraintLabels) {
+        const publishedTurnAltitude = (
+          typeof leg.altitude === 'number' &&
+          Number.isFinite(leg.altitude) &&
+          leg.altitude > 0
+        ) ? leg.altitude : null;
+        const effectiveTurnConstraintAltitude = (
+          publishedTurnAltitude !== null && publishedTurnAltitude > lastPlottedAltitudeFeet + 25
+        ) ? publishedTurnAltitude : null;
+        if (nextLeg?.pathTerminator === 'DF' && nextWp && nextLeg.turnDirection && climbDeltaFeet <= 50) {
+          if (showTurnConstraintLabels && effectiveTurnConstraintAltitude !== null) {
             turnLabels.push({
               position: [lastPlottedPoint.x, y + 0.45, lastPlottedPoint.z],
-              text: `${Math.round(resolvedAltitude)}'`
+              text: `${Math.round(effectiveTurnConstraintAltitude)}'`
             });
           }
           // CA followed by DF is effectively a turn-to-fix transition. Avoid a
@@ -811,11 +948,14 @@ function PathTube({
           y,
           lastPlottedPoint.z - Math.cos(headingRad) * distanceNm
         );
-        if (nextLeg?.pathTerminator === 'DF' && showTurnConstraintLabels) {
-          turnLabels.push({
-            position: [currentPoint.x, currentPoint.y + 0.45, currentPoint.z],
-            text: `${Math.round(resolvedAltitude)}'`
-          });
+        if (nextLeg?.pathTerminator === 'DF' && nextWp && nextLeg.turnDirection) {
+          pendingCourseToFixTurnHeading = headingTrue;
+          if (showTurnConstraintLabels && effectiveTurnConstraintAltitude !== null) {
+            turnLabels.push({
+              position: [currentPoint.x, currentPoint.y + 0.45, currentPoint.z],
+              text: `${Math.round(effectiveTurnConstraintAltitude)}'`
+            });
+          }
         }
       }
 
@@ -823,7 +963,12 @@ function PathTube({
       const previousPoint = pts[pts.length - 1];
 
       if (previousPoint && pendingCourseToFixTurnHeading !== null && leg.pathTerminator === 'DF') {
-        for (const turnPoint of buildCourseToFixTurnPoints(previousPoint, currentPoint, pendingCourseToFixTurnHeading)) {
+        for (const turnPoint of buildCourseToFixTurnPoints(
+          previousPoint,
+          currentPoint,
+          pendingCourseToFixTurnHeading,
+          leg.turnDirection
+        )) {
           pushPoint(turnPoint);
         }
         pendingCourseToFixTurnHeading = null;
