@@ -116,6 +116,7 @@ When changing parser/render/data logic, run:
 - Verify legend remains concise for minima/plate-only procedures (geometry-unavailable status shown in minimums section, not as long legend copy).
 
 ## Files Frequently Touched
+- `README.md`
 - `.github/workflows/parser-tests.yml`
 - `src/cifp/parser.ts`
 - `src/cifp/parser.test.ts`
