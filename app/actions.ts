@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { meanSeaLevel } from 'egm96-universal';
 import type { Airport, Approach } from '@/src/cifp/parser';
 import { getDb } from '@/lib/db';
 import type {
@@ -17,6 +18,7 @@ const DEFAULT_AIRPORT_ID = 'KCDW';
 const NEARBY_AIRPORT_RADIUS_NM = 20;
 const AIRSPACE_RADIUS_NM = 30;
 const APPROACH_DB_PATH = path.join(process.cwd(), 'public', 'data', 'approach-db', 'approaches.json');
+const METERS_TO_FEET = 3.28084;
 
 interface AirportRow {
   id: string;
@@ -125,6 +127,14 @@ function rowToAirport(row: AirportRow): Airport {
     elevation: row.elevation,
     magVar: row.mag_var
   };
+}
+
+function computeGeoidSeparationFeet(lat: number, lon: number): number {
+  try {
+    return meanSeaLevel(lat, lon) * METERS_TO_FEET;
+  } catch {
+    return 0;
+  }
 }
 
 function rowToApproachOption(row: ApproachRow): ApproachOption {
@@ -575,6 +585,7 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
   if (!airportRow) {
     return {
       airport: null,
+      geoidSeparationFeet: 0,
       approaches: [],
       selectedApproachId: '',
       requestedProcedureNotInCifp: null,
@@ -589,6 +600,7 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
   }
 
   const airport = rowToAirport(airportRow);
+  const geoidSeparationFeet = computeGeoidSeparationFeet(airport.lat, airport.lon);
 
   const approachRows = db
     .prepare(`
@@ -683,6 +695,7 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
 
   return {
     airport,
+    geoidSeparationFeet,
     approaches,
     selectedApproachId,
     requestedProcedureNotInCifp,

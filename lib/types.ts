@@ -52,6 +52,7 @@ export interface NearbyAirport {
 
 export interface SceneData {
   airport: Airport | null;
+  geoidSeparationFeet: number;
   approaches: ApproachOption[];
   selectedApproachId: string;
   requestedProcedureNotInCifp: string | null;

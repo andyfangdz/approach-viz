@@ -22,8 +22,11 @@
   "dependencies": {
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
+    "@takram/three-geospatial": "^0.6.0",
     "@vercel/analytics": "^1.6.1",
+    "3d-tiles-renderer": "^0.4.21",
     "better-sqlite3": "^11.8.1",
+    "egm96-universal": "^1.1.1",
     "next": "^16.1.6",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.2.4",

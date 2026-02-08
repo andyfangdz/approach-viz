@@ -24,6 +24,7 @@
 - Airspace overlays: `drnic/faa-airspace-data` (`class_b`, `class_c`, `class_d`)
 - Approach minimums (MDA/DA): `ammaraskar/faa-instrument-approach-db` release asset `approaches.json`
 - FAA approach plates (PDF): `aeronav.faa.gov/d-tpp/<cycle>/<plate_file>` (fetched server-side via proxy route)
+- Terrain wireframe: Terrarium elevation tiles from `https://elevation-tiles-prod.s3.amazonaws.com/terrarium`
 
 ## Airport Coverage
 - Selector supports all airports present in parsed FAA CIFP data (not a fixed curated list).
@@ -37,8 +38,15 @@
   - terrain wireframe
   - Class B/C/D airspace volumes
 - Surface mode supports:
-  - `Terrain` (existing wireframe terrain)
+  - `Terrain` (existing Terrarium-based wireframe terrain grid)
   - `FAA Plate` (geo-located FAA approach plate mesh replacing terrain at selected approach)
+  - `Satellite` (Google Earth Photorealistic 3D Tiles rendered via `3d-tiles-renderer`, transformed into the app's local frame using `@takram/three-geospatial`)
+- FAA plate mesh is rendered at the selected airport elevation (scaled by vertical scale), not fixed at sea-level.
+- Satellite mode loads Google tiles directly on the client (no server-side imagery proxy).
+- Satellite mode requires `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and does not provide a runtime key-entry fallback UI.
+- Satellite mode terrain is vertically aligned to the app's MSL altitude frame by offsetting tiles to the selected airport elevation.
+- Satellite mode applies EGM96 geoid separation per airport when converting MSL airport elevation to WGS84 ellipsoid height for the tile anchor transform.
+- Satellite mode uses a tighter tile error target (`~12`) to keep nearby airport surfaces readable.
 - FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
 - RF and AF (DME arc) legs are rendered as arcs using published center fixes and turn direction.
@@ -50,7 +58,7 @@
 - Selection is encoded in path format:
   - `/<AIRPORT>/<PROCEDURE_ID>`
 - Surface mode is encoded in query params:
-  - `?surface=terrain` or `?surface=plate`
+  - `?surface=terrain`, `?surface=plate`, or `?surface=satellite`
 
 ## Mobile UI Defaults
 - On small screens (`<=900px`), selectors are collapsed by default.
@@ -86,6 +94,7 @@ When changing parser/render/data logic, run:
 - `src/components/AirspaceVolumes.tsx`
 - `src/components/TerrainWireframe.tsx`
 - `src/components/ApproachPlateSurface.tsx`
+- `src/components/SatelliteSurface.tsx`
 - `app/AppClient.tsx`
 - `app/actions.ts`
 - `app/layout.tsx`

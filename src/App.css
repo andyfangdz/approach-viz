@@ -327,6 +327,11 @@ textarea,
   box-shadow: 0 0 8px rgba(244, 211, 94, 0.5);
 }
 
+.legend-color.satellite {
+  background: #8ac926;
+  box-shadow: 0 0 8px rgba(138, 201, 38, 0.55);
+}
+
 .legend-color.airspace-b {
   background: rgba(0, 102, 255, 0.6);
 }

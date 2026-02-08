@@ -5,6 +5,7 @@ import type { ApproachPlate } from '@/lib/types';
 
 const PLATE_RENDER_SCALE = 2;
 const SURFACE_OFFSET_NM = -0.002;
+const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 const PDF_WORKER_SRC = new URL('pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url).toString();
 
 interface GeoControlPoint {
@@ -24,6 +25,8 @@ interface ApproachPlateSurfaceProps {
   plate: ApproachPlate;
   refLat: number;
   refLon: number;
+  airportElevationFeet: number;
+  verticalScale: number;
 }
 
 interface LatLonPoint {
@@ -148,10 +151,15 @@ function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number)
   return { x, z };
 }
 
+function altToY(altFeet: number, verticalScale: number): number {
+  return altFeet * ALTITUDE_SCALE * verticalScale;
+}
+
 function buildPlateGeometry(
   corners: [LatLonPoint, LatLonPoint, LatLonPoint, LatLonPoint],
   refLat: number,
-  refLon: number
+  refLon: number,
+  surfaceY: number
 ): THREE.BufferGeometry {
   const sw = latLonToLocal(corners[0].lat, corners[0].lon, refLat, refLon);
   const se = latLonToLocal(corners[1].lat, corners[1].lon, refLat, refLon);
@@ -159,10 +167,10 @@ function buildPlateGeometry(
   const nw = latLonToLocal(corners[3].lat, corners[3].lon, refLat, refLon);
 
   const positions = new Float32Array([
-    sw.x, SURFACE_OFFSET_NM, sw.z,
-    se.x, SURFACE_OFFSET_NM, se.z,
-    ne.x, SURFACE_OFFSET_NM, ne.z,
-    nw.x, SURFACE_OFFSET_NM, nw.z
+    sw.x, surfaceY, sw.z,
+    se.x, surfaceY, se.z,
+    ne.x, surfaceY, ne.z,
+    nw.x, surfaceY, nw.z
   ]);
 
   const uvs = new Float32Array([
@@ -248,7 +256,13 @@ async function renderPlateCanvas(
   }
 }
 
-export function ApproachPlateSurface({ plate, refLat, refLon }: ApproachPlateSurfaceProps) {
+export function ApproachPlateSurface({
+  plate,
+  refLat,
+  refLon,
+  airportElevationFeet,
+  verticalScale
+}: ApproachPlateSurfaceProps) {
   const [plateTexture, setPlateTexture] = useState<THREE.CanvasTexture | null>(null);
   const [plateGeometry, setPlateGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [loading, setLoading] = useState(false);
@@ -301,7 +315,8 @@ export function ApproachPlateSurface({ plate, refLat, refLon }: ApproachPlateSur
         const texture = new THREE.CanvasTexture(renderedCanvas);
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.needsUpdate = true;
-        const geometry = buildPlateGeometry(corners, refLat, refLon);
+        const surfaceY = altToY(airportElevationFeet, verticalScale) + SURFACE_OFFSET_NM;
+        const geometry = buildPlateGeometry(corners, refLat, refLon, surfaceY);
 
         if (cancelled) {
           texture.dispose();
@@ -324,7 +339,7 @@ export function ApproachPlateSurface({ plate, refLat, refLon }: ApproachPlateSur
     return () => {
       cancelled = true;
     };
-  }, [plate.cycle, plate.plateFile, refLat, refLon]);
+  }, [plate.cycle, plate.plateFile, refLat, refLon, airportElevationFeet, verticalScale]);
 
   useEffect(() => (
     () => {

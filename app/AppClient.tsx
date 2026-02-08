@@ -8,6 +8,7 @@ import type { Approach, Waypoint } from '@/src/cifp/parser';
 import { AirspaceVolumes } from '@/src/components/AirspaceVolumes';
 import { ApproachPath } from '@/src/components/ApproachPath';
 import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
+import { SatelliteSurface } from '@/src/components/SatelliteSurface';
 import { TerrainWireframe } from '@/src/components/TerrainWireframe';
 import type { AirportOption, SceneData } from '@/lib/types';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
@@ -50,10 +51,10 @@ function isMobileViewport(): boolean {
   return typeof window !== 'undefined' && window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
 }
 
-function readSurfaceModeFromSearch(search: string): 'terrain' | 'plate' | null {
+function readSurfaceModeFromSearch(search: string): 'terrain' | 'plate' | 'satellite' | null {
   const params = new URLSearchParams(search);
   const value = params.get('surface');
-  if (value === 'terrain' || value === 'plate') return value;
+  if (value === 'terrain' || value === 'plate' || value === 'satellite') return value;
   return null;
 }
 
@@ -197,7 +198,7 @@ export function AppClient({
   const [sceneData, setSceneData] = useState<SceneData>(initialSceneData);
   const [selectedAirport, setSelectedAirport] = useState<string>(initialSceneData.airport?.id ?? initialAirportId);
   const [selectedApproach, setSelectedApproach] = useState<string>(initialSceneData.selectedApproachId || initialApproachId);
-  const [surfaceMode, setSurfaceMode] = useState<'terrain' | 'plate'>('terrain');
+  const [surfaceMode, setSurfaceMode] = useState<'terrain' | 'plate' | 'satellite'>('terrain');
   const [didInitFromLocation, setDidInitFromLocation] = useState(false);
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [loading, setLoading] = useState(false);
@@ -337,7 +338,18 @@ export function AppClient({
   );
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const showApproachPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
-  const showTerrainSurface = !showApproachPlateSurface;
+  const showSatelliteSurface = surfaceMode === 'satellite';
+  const showTerrainSurface = surfaceMode === 'terrain' || (surfaceMode === 'plate' && !hasApproachPlate);
+  const surfaceLegendClass = showApproachPlateSurface
+    ? 'plate'
+    : showSatelliteSurface
+      ? 'satellite'
+      : 'terrain';
+  const surfaceLegendLabel = showApproachPlateSurface
+    ? 'FAA Plate Surface'
+    : showSatelliteSurface
+      ? 'Satellite Surface'
+      : 'Terrain Wireframe';
 
   return (
     <div className="app">
@@ -459,6 +471,13 @@ export function AppClient({
                 >
                   FAA Plate
                 </button>
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${surfaceMode === 'satellite' ? 'active' : ''}`}
+                  onClick={() => setSurfaceMode('satellite')}
+                >
+                  Satellite
+                </button>
               </div>
             </div>
           </div>
@@ -498,6 +517,18 @@ export function AppClient({
                   plate={sceneData.approachPlate}
                   refLat={airport.lat}
                   refLon={airport.lon}
+                  airportElevationFeet={airport.elevation}
+                  verticalScale={verticalScale}
+                />
+              )}
+
+              {showSatelliteSurface && (
+                <SatelliteSurface
+                  refLat={airport.lat}
+                  refLon={airport.lon}
+                  airportElevationFeet={airport.elevation}
+                  geoidSeparationFeet={sceneData.geoidSeparationFeet}
+                  verticalScale={verticalScale}
                 />
               )}
 
@@ -561,8 +592,8 @@ export function AppClient({
                 <span>Hold</span>
               </div>
               <div className="legend-item">
-                <div className={`legend-color ${showApproachPlateSurface ? 'plate' : 'terrain'}`} />
-                <span>{showApproachPlateSurface ? 'FAA Plate Surface' : 'Terrain Wireframe'}</span>
+                <div className={`legend-color ${surfaceLegendClass}`} />
+                <span>{surfaceLegendLabel}</span>
               </div>
               <div className="legend-item">
                 <div className="legend-color airspace-b" />
