@@ -10,6 +10,7 @@ import type { Approach, Waypoint, Airport, ApproachLeg, RunwayThreshold } from '
 
 // Scale factors
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
+const MISSED_DEFAULT_CLIMB_FT_PER_NM = 200;
 
 // Colors
 const COLORS = {
@@ -29,6 +30,7 @@ interface ApproachPathProps {
   airport: Airport;
   runways: RunwayThreshold[];
   verticalScale: number;
+  missedApproachStartAltitudeFeet?: number;
   nearbyAirports: Array<{
     airport: Airport;
     runways: RunwayThreshold[];
@@ -186,6 +188,36 @@ function buildRfArcPoints(
   }
 
   return points;
+}
+
+function buildCourseToFixTurnPoints(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  startHeadingDeg: number
+): THREE.Vector3[] {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const horizontalDistance = Math.hypot(dx, dz);
+  if (horizontalDistance < 1e-4) {
+    return [end];
+  }
+
+  const startHeadingRad = (startHeadingDeg * Math.PI) / 180;
+  const startTangent = new THREE.Vector3(Math.sin(startHeadingRad), 0, -Math.cos(startHeadingRad)).normalize();
+  const endTangent = new THREE.Vector3(dx, 0, dz).normalize();
+  const handleLength = Math.min(horizontalDistance * 0.45, 1.5);
+  const yDelta = end.y - start.y;
+
+  const p0 = start.clone();
+  const p1 = start.clone().addScaledVector(startTangent, handleLength);
+  p1.y = start.y + yDelta / 3;
+  const p2 = end.clone().addScaledVector(endTangent, -handleLength);
+  p2.y = start.y + (2 * yDelta) / 3;
+  const p3 = end.clone();
+
+  const curve = new THREE.CubicBezierCurve3(p0, p1, p2, p3);
+  const steps = Math.max(8, Math.min(20, Math.ceil(horizontalDistance * 4)));
+  return curve.getPoints(steps).slice(1);
 }
 
 function getHorizontalDistanceNm(
@@ -384,6 +416,114 @@ function applyGlidepathInsideFaf(
   return adjusted;
 }
 
+function resolveMissedApproachAltitudes(
+  missedLegs: ApproachLeg[],
+  baseAltitudes: Map<ApproachLeg, number>,
+  waypoints: Map<string, Waypoint>,
+  refLat: number,
+  refLon: number,
+  startAltitudeFeet?: number
+): Map<ApproachLeg, number> {
+  const adjusted = new Map(baseAltitudes);
+  if (missedLegs.length === 0) {
+    return adjusted;
+  }
+
+  const firstLeg = missedLegs[0];
+  const fallbackStartAltitude = adjusted.get(firstLeg) ?? firstLeg.altitude;
+  const computedStartAltitude = (
+    typeof startAltitudeFeet === 'number' &&
+    Number.isFinite(startAltitudeFeet) &&
+    startAltitudeFeet > 0
+  )
+    ? startAltitudeFeet
+    : fallbackStartAltitude;
+
+  if (
+    typeof computedStartAltitude !== 'number' ||
+    !Number.isFinite(computedStartAltitude) ||
+    computedStartAltitude <= 0
+  ) {
+    return adjusted;
+  }
+
+  const cumulativeDistanceNm = new Array<number>(missedLegs.length).fill(0);
+  let cumulative = 0;
+  for (let index = 1; index < missedLegs.length; index += 1) {
+    cumulative += getHorizontalDistanceNm(
+      missedLegs[index - 1],
+      missedLegs[index],
+      waypoints,
+      refLat,
+      refLon,
+      index - 2 >= 0 ? missedLegs[index - 2] : undefined,
+      index + 1 < missedLegs.length ? missedLegs[index + 1] : undefined
+    );
+    cumulativeDistanceNm[index] = cumulative;
+  }
+
+  const anchors: Array<{ index: number; altitude: number }> = [{ index: 0, altitude: computedStartAltitude }];
+  for (let index = 1; index < missedLegs.length; index += 1) {
+    const publishedAltitude = missedLegs[index].altitude;
+    if (
+      typeof publishedAltitude !== 'number' ||
+      !Number.isFinite(publishedAltitude) ||
+      publishedAltitude <= 0
+    ) {
+      continue;
+    }
+    const currentAnchorAltitude = anchors[anchors.length - 1].altitude;
+    if (publishedAltitude > currentAnchorAltitude) {
+      anchors.push({ index, altitude: publishedAltitude });
+    }
+  }
+
+  const profile = new Array<number>(missedLegs.length).fill(computedStartAltitude);
+
+  if (anchors.length === 1) {
+    for (let index = 1; index < missedLegs.length; index += 1) {
+      profile[index] = computedStartAltitude + cumulativeDistanceNm[index] * MISSED_DEFAULT_CLIMB_FT_PER_NM;
+    }
+  } else {
+    for (let anchorIndex = 0; anchorIndex < anchors.length - 1; anchorIndex += 1) {
+      const from = anchors[anchorIndex];
+      const to = anchors[anchorIndex + 1];
+      const fromDist = cumulativeDistanceNm[from.index];
+      const toDist = cumulativeDistanceNm[to.index];
+      const spanDist = Math.max(1e-4, toDist - fromDist);
+      for (let index = from.index; index <= to.index; index += 1) {
+        const fraction = (cumulativeDistanceNm[index] - fromDist) / spanDist;
+        const clampedFraction = Math.max(0, Math.min(1, fraction));
+        profile[index] = from.altitude + (to.altitude - from.altitude) * clampedFraction;
+      }
+    }
+    const lastAnchor = anchors[anchors.length - 1];
+    for (let index = lastAnchor.index + 1; index < missedLegs.length; index += 1) {
+      profile[index] = profile[index - 1];
+    }
+  }
+
+  for (let index = 0; index < missedLegs.length; index += 1) {
+    const leg = missedLegs[index];
+    let renderedAltitude = profile[index];
+    if (index > 0) {
+      renderedAltitude = Math.max(renderedAltitude, profile[index - 1]);
+    }
+    const publishedAltitude = leg.altitude;
+    if (
+      typeof publishedAltitude === 'number' &&
+      Number.isFinite(publishedAltitude) &&
+      publishedAltitude > renderedAltitude
+    ) {
+      renderedAltitude = publishedAltitude;
+    }
+    profile[index] = renderedAltitude;
+    adjusted.set(leg, renderedAltitude);
+  }
+
+  return adjusted;
+}
+
 // Waypoint marker component
 function WaypointMarker({ 
   position, 
@@ -430,6 +570,11 @@ interface VerticalLineData {
   x: number;
   y: number;
   z: number;
+}
+
+interface TurnConstraintLabel {
+  position: [number, number, number];
+  text: string;
 }
 
 function VerticalLines({
@@ -569,7 +714,8 @@ function PathTube({
   refLat,
   refLon,
   magVar,
-  color
+  color,
+  showTurnConstraintLabels = false
 }: {
   legs: ApproachLeg[];
   waypoints: Map<string, Waypoint>;
@@ -580,12 +726,15 @@ function PathTube({
   refLon: number;
   magVar: number;
   color: string;
+  showTurnConstraintLabels?: boolean;
 }) {
-  const { points, verticalLines } = useMemo(() => {
+  const { points, verticalLines, turnConstraintLabels } = useMemo(() => {
     const pts: THREE.Vector3[] = [];
     const vLines: VerticalLineData[] = [];
+    const turnLabels: TurnConstraintLabel[] = [];
     let lastPlottedPoint: THREE.Vector3 | null = null;
     let lastPlottedAltitudeFeet = initialAltitudeFeet;
+    let pendingCourseToFixTurnHeading: number | null = null;
 
     const pushPoint = (point: THREE.Vector3) => {
       const prev = pts[pts.length - 1];
@@ -620,17 +769,40 @@ function PathTube({
         // point along the published course so missed approach geometry is visible.
         const headingTrue = magneticToTrueHeading(leg.course, magVar);
         const headingRad = (headingTrue * Math.PI) / 180;
-        const climbDeltaFeet = Math.max(0, resolvedAltitude - lastPlottedAltitudeFeet);
-        const distanceFromClimbNm = climbDeltaFeet > 0 ? climbDeltaFeet / 200 : 0;
+        const climbDeltaFeet = resolvedAltitude - lastPlottedAltitudeFeet;
+        const climbDistanceNm = climbDeltaFeet > 0 ? climbDeltaFeet / 200 : 0;
         const nextLeg = legIndex + 1 < legs.length ? legs[legIndex + 1] : undefined;
         const nextWp = nextLeg ? resolveWaypoint(waypoints, nextLeg.waypointId) : undefined;
-        let distanceNm = Math.max(1.2, Math.min(8, distanceFromClimbNm || 2));
+        if (nextLeg?.pathTerminator === 'DF' && nextWp && climbDeltaFeet <= 50) {
+          if (showTurnConstraintLabels) {
+            turnLabels.push({
+              position: [lastPlottedPoint.x, y + 0.45, lastPlottedPoint.z],
+              text: `${Math.round(resolvedAltitude)}'`
+            });
+          }
+          // CA followed by DF is effectively a turn-to-fix transition. Avoid a
+          // synthetic outbound CA stub so the missed approach can start turning
+          // immediately from MAP while preserving downstream fix geometry.
+          pendingCourseToFixTurnHeading = headingTrue;
+          lastPlottedAltitudeFeet = resolvedAltitude;
+          continue;
+        }
+
+        // If this CA does not represent additional climb (or appears lower due
+        // to source data), depict only a very short initial segment so the
+        // missed approach can begin turning immediately.
+        let distanceNm = climbDeltaFeet > 0
+          ? Math.max(0.3, Math.min(8, climbDistanceNm))
+          : 0.2;
+
         if (nextWp) {
           const nextPos = latLonToLocal(nextWp.lat, nextWp.lon, refLat, refLon);
           const distanceToNextFix = Math.hypot(nextPos.x - lastPlottedPoint.x, nextPos.z - lastPlottedPoint.z);
           if (distanceToNextFix > 1e-4) {
             // Keep CA stubs from extending far past the upcoming turn-to-fix leg.
-            const nextFixCapNm = Math.max(1.2, distanceToNextFix * 0.6);
+            const nextFixCapNm = climbDeltaFeet > 0
+              ? Math.max(0.5, distanceToNextFix * 0.8)
+              : Math.max(0.1, distanceToNextFix * 0.05);
             distanceNm = Math.min(distanceNm, nextFixCapNm);
           }
         }
@@ -639,12 +811,23 @@ function PathTube({
           y,
           lastPlottedPoint.z - Math.cos(headingRad) * distanceNm
         );
+        if (nextLeg?.pathTerminator === 'DF' && showTurnConstraintLabels) {
+          turnLabels.push({
+            position: [currentPoint.x, currentPoint.y + 0.45, currentPoint.z],
+            text: `${Math.round(resolvedAltitude)}'`
+          });
+        }
       }
 
       if (!currentPoint) continue;
       const previousPoint = pts[pts.length - 1];
 
-      if (previousPoint && (leg.pathTerminator === 'RF' || leg.pathTerminator === 'AF') && leg.rfCenterWaypointId) {
+      if (previousPoint && pendingCourseToFixTurnHeading !== null && leg.pathTerminator === 'DF') {
+        for (const turnPoint of buildCourseToFixTurnPoints(previousPoint, currentPoint, pendingCourseToFixTurnHeading)) {
+          pushPoint(turnPoint);
+        }
+        pendingCourseToFixTurnHeading = null;
+      } else if (previousPoint && (leg.pathTerminator === 'RF' || leg.pathTerminator === 'AF') && leg.rfCenterWaypointId) {
         const centerWp = resolveWaypoint(waypoints, leg.rfCenterWaypointId);
         if (centerWp) {
           const center = latLonToLocal(centerWp.lat, centerWp.lon, refLat, refLon);
@@ -664,8 +847,8 @@ function PathTube({
       lastPlottedAltitudeFeet = resolvedAltitude;
     }
 
-    return { points: pts, verticalLines: vLines };
-  }, [legs, waypoints, resolvedAltitudes, initialAltitudeFeet, verticalScale, refLat, refLon, magVar]);
+    return { points: pts, verticalLines: vLines, turnConstraintLabels: turnLabels };
+  }, [legs, waypoints, resolvedAltitudes, initialAltitudeFeet, verticalScale, refLat, refLon, magVar, showTurnConstraintLabels]);
 
   const tubeGeometry = useMemo(() => {
     if (points.length < 2) return null;
@@ -673,7 +856,7 @@ function PathTube({
     for (let i = 0; i < points.length - 1; i += 1) {
       polyline.add(new THREE.LineCurve3(points[i], points[i + 1]));
     }
-    return new THREE.TubeGeometry(polyline, Math.max(points.length * 4, 24), 0.08, 8, false);
+    return new THREE.TubeGeometry(polyline, Math.max(points.length * 8, 48), 0.08, 8, false);
   }, [points]);
 
   if (!tubeGeometry) return null;
@@ -692,6 +875,26 @@ function PathTube({
       </mesh>
 
       <VerticalLines lines={verticalLines} color={color} />
+
+      {turnConstraintLabels.map((label, index) => (
+        <Html
+          // Position labels at turn initiation points for CA->DF restrictions.
+          key={`turn-alt-${index}-${label.text}`}
+          position={label.position}
+          center
+          style={{
+            color,
+            fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+            fontSize: '10px',
+            fontWeight: 600,
+            textShadow: '0 0 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7)',
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none'
+          }}
+        >
+          {label.text}
+        </Html>
+      ))}
     </group>
   );
 }
@@ -905,6 +1108,7 @@ export const ApproachPath = memo(function ApproachPath({
   airport,
   runways,
   verticalScale,
+  missedApproachStartAltitudeFeet,
   nearbyAirports
 }: ApproachPathProps) {
   const refLat = airport.lat;
@@ -986,6 +1190,18 @@ export const ApproachPath = memo(function ApproachPath({
     return altitudes;
   }, [holdLegs, resolvedAltitudes, airport.elevation]);
 
+  const missedPathAltitudes = useMemo(
+    () => resolveMissedApproachAltitudes(
+      approach.missedLegs,
+      resolvedAltitudes,
+      waypoints,
+      refLat,
+      refLon,
+      missedApproachStartAltitudeFeet
+    ),
+    [approach.missedLegs, missedApproachStartAltitudeFeet, resolvedAltitudes, waypoints, refLat, refLon]
+  );
+
   return (
     <group>
       {/* Airport marker */}
@@ -1061,13 +1277,14 @@ export const ApproachPath = memo(function ApproachPath({
         <PathTube
           legs={approach.missedLegs}
           waypoints={waypoints}
-          resolvedAltitudes={resolvedAltitudes}
+          resolvedAltitudes={missedPathAltitudes}
           initialAltitudeFeet={airport.elevation}
           verticalScale={verticalScale}
           refLat={refLat}
           refLon={refLon}
           magVar={airport.magVar}
           color={COLORS.missed}
+          showTurnConstraintLabels
         />
       )}
 

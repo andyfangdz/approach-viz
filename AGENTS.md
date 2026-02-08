@@ -52,8 +52,14 @@
 - Satellite mode uses a tighter tile error target (`~12`) to keep nearby airport surfaces readable.
 - FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
+- Missed-approach path rendering starts at the MAP using selected minimums DA (or MDA fallback), and the missed profile climbs immediately from MAP by interpolating toward the next higher published missed-leg altitude targets (non-descending); this does not change final-approach glidepath-to-runway depiction.
+- For missed segments with `CA` followed by `DF`, geometry is conditional:
+- non-climbing (or near-level) `CA` uses a local course-to-fix turn join from MAP for immediate turn behavior;
+- climbing `CA` renders a straight climb-out segment first, then turns toward the `DF` fix.
+- Missed `CA->DF` turn initiation points display altitude callouts (using resolved CA altitude) so turn altitude restrictions are visible in-scene.
+- Minimums selection prefers Cat A values when available; if Cat A is unavailable for a minima line, the app falls back to the lowest available category (B/C/D), displays that category in the minimums panel, and uses it for missed-approach start altitude.
 - RF and AF (DME arc) legs are rendered as arcs using published center fixes and turn direction.
-- CA legs without fix geometry are synthesized along published course, with length constrained by climb and capped relative to the next known-fix leg to avoid exaggerated runway-heading extensions before turns.
+- CA legs without fix geometry are synthesized along published course, with length constrained by climb and capped relative to the next known-fix leg to avoid exaggerated runway-heading extensions before turns; non-climbing (or lower-altitude) CA legs use a very short stub so missed approaches can turn immediately.
 - Missed-approach interpolation handles legs without direct fix geometry using neighbor-leg distance fallback.
 - Airport/runway context markers (selected airport + nearby airports/runways) should render even when the selected procedure has no CIFP geometry.
 - Vertical reference lines for path points are batched into a single `lineSegments` geometry per path segment (final/transition/missed) to reduce draw-call count.

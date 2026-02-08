@@ -11,7 +11,7 @@ import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
 import { SatelliteSurface } from '@/src/components/SatelliteSurface';
 import { SceneErrorBoundary } from '@/src/components/SceneErrorBoundary';
 import { TerrainWireframe } from '@/src/components/TerrainWireframe';
-import type { AirportOption, SceneData } from '@/lib/types';
+import type { AirportOption, MinimumsValueSummary, SceneData } from '@/lib/types';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
 
 const DEFAULT_VERTICAL_SCALE = 3;
@@ -81,6 +81,12 @@ function formatApproachLabel(approach: SceneData['approaches'][number]): string 
     return `${type} ${runway} (${procedureId})`;
   }
   return `${type} (${procedureId})`;
+}
+
+function formatMinimumValue(minimum: MinimumsValueSummary | undefined): string {
+  if (!minimum) return 'n/a';
+  const categorySuffix = minimum.category === 'A' ? '' : `, Cat ${minimum.category}`;
+  return `${minimum.altitude}' (${minimum.type}${categorySuffix})`;
 }
 
 const selectStyles: StylesConfig<SelectOption, false> = {
@@ -353,6 +359,9 @@ export function AppClient({
   const showSatelliteSurface = surfaceMode === 'satellite';
   const showTerrainSurface = surfaceMode === 'terrain' || (surfaceMode === 'plate' && !hasApproachPlate);
   const activeErrorMessage = errorMessage || surfaceErrorMessage;
+  const missedApproachStartAltitudeFeet = sceneData.minimumsSummary?.da?.altitude
+    ?? sceneData.minimumsSummary?.mda?.altitude
+    ?? undefined;
   const surfaceLegendClass = showApproachPlateSurface
     ? 'plate'
     : showSatelliteSurface
@@ -598,6 +607,7 @@ export function AppClient({
                   airport={airport}
                   runways={sceneData.runways}
                   verticalScale={verticalScale}
+                  missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
                   nearbyAirports={sceneData.nearbyAirports}
                 />
               )}
@@ -672,7 +682,7 @@ export function AppClient({
           )}
 
           <div className="minimums-section">
-            <h3>Minimums (Cat A)</h3>
+            <h3>Minimums</h3>
             {sceneData.requestedProcedureNotInCifp && (
               <div className="minimums-empty">
                 Requested <strong>{sceneData.requestedProcedureNotInCifp}</strong> not found; showing <strong>{sceneData.selectedApproachId || 'none'}</strong>.
@@ -690,17 +700,13 @@ export function AppClient({
                 <div className="minimums-row">
                   <span>DA</span>
                   <span className="minimums-value">
-                    {sceneData.minimumsSummary.daCatA
-                      ? `${sceneData.minimumsSummary.daCatA.altitude}' (${sceneData.minimumsSummary.daCatA.type})`
-                      : 'n/a'}
+                    {formatMinimumValue(sceneData.minimumsSummary.da)}
                   </span>
                 </div>
                 <div className="minimums-row">
                   <span>MDA</span>
                   <span className="minimums-value">
-                    {sceneData.minimumsSummary.mdaCatA
-                      ? `${sceneData.minimumsSummary.mdaCatA.altitude}' (${sceneData.minimumsSummary.mdaCatA.type})`
-                      : 'n/a'}
+                    {formatMinimumValue(sceneData.minimumsSummary.mda)}
                   </span>
                 </div>
                 <div className="minimums-cycle">DTPP cycle {sceneData.minimumsSummary.cycle}</div>

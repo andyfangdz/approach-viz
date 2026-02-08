@@ -8,6 +8,7 @@ import { getDb } from '@/lib/db';
 import type {
   AirspaceFeature,
   AirportOption,
+  MinimumsCategory,
   ApproachOption,
   MinimumsSummary,
   SceneData,
@@ -323,8 +324,30 @@ function parseMinimumAltitude(value: MinimumsValue | 'NA' | null): number | null
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function getCategoryAAltitude(minimums: ApproachMinimums): number | null {
-  return parseMinimumAltitude(minimums.cat_a);
+function getPreferredCategoryMinimum(minimums: ApproachMinimums): { altitude: number; category: MinimumsCategory } | null {
+  const inOrder: Array<[MinimumsCategory, MinimumsValue | 'NA' | null]> = [
+    ['A', minimums.cat_a],
+    ['B', minimums.cat_b],
+    ['C', minimums.cat_c],
+    ['D', minimums.cat_d]
+  ];
+
+  for (const [category, rawValue] of inOrder) {
+    const altitude = parseMinimumAltitude(rawValue);
+    if (altitude !== null) {
+      return { altitude, category };
+    }
+  }
+
+  return null;
+}
+
+function selectLowerMinimum(
+  current: MinimumsSummary['da'] | MinimumsSummary['mda'],
+  candidate: NonNullable<MinimumsSummary['da']>
+): NonNullable<MinimumsSummary['da']> {
+  if (!current) return candidate;
+  return candidate.altitude < current.altitude ? candidate : current;
 }
 
 function isDecisionAltitudeType(minimumsType: string): boolean {
@@ -436,27 +459,46 @@ function deriveMinimumsSummary(
   const externalApproach = findSelectedExternalApproach(airportApproaches, selectedApproachOption, currentApproach);
   if (!externalApproach) return null;
 
-  let bestDa: { altitude: number; type: string } | undefined;
-  let bestMda: { altitude: number; type: string } | undefined;
+  let bestDaCatA: MinimumsSummary['da'];
+  let bestMdaCatA: MinimumsSummary['mda'];
+  let bestDaFallback: MinimumsSummary['da'];
+  let bestMdaFallback: MinimumsSummary['mda'];
 
   for (const minima of externalApproach.minimums || []) {
-    const altitude = getCategoryAAltitude(minima);
-    if (altitude === null) continue;
+    const catAAltitude = parseMinimumAltitude(minima.cat_a);
+    const catACandidate = catAAltitude === null ? null : {
+      altitude: catAAltitude,
+      type: minima.minimums_type,
+      category: 'A' as const
+    };
+    const fallback = catAAltitude === null ? getPreferredCategoryMinimum(minima) : null;
+    const fallbackCandidate = fallback ? {
+      altitude: fallback.altitude,
+      type: minima.minimums_type,
+      category: fallback.category
+    } : null;
 
     if (isDecisionAltitudeType(minima.minimums_type)) {
-      if (!bestDa || altitude < bestDa.altitude) {
-        bestDa = { altitude, type: minima.minimums_type };
+      if (catACandidate) {
+        bestDaCatA = selectLowerMinimum(bestDaCatA, catACandidate);
+      } else if (fallbackCandidate) {
+        bestDaFallback = selectLowerMinimum(bestDaFallback, fallbackCandidate);
       }
-    } else if (!bestMda || altitude < bestMda.altitude) {
-      bestMda = { altitude, type: minima.minimums_type };
+    } else if (catACandidate) {
+      bestMdaCatA = selectLowerMinimum(bestMdaCatA, catACandidate);
+    } else if (fallbackCandidate) {
+      bestMdaFallback = selectLowerMinimum(bestMdaFallback, fallbackCandidate);
     }
   }
+
+  const bestDa = bestDaCatA ?? bestDaFallback;
+  const bestMda = bestMdaCatA ?? bestMdaFallback;
 
   return {
     sourceApproachName: externalApproach.name,
     cycle: minimaRows[0]?.cycle || '',
-    daCatA: bestDa,
-    mdaCatA: bestMda
+    da: bestDa,
+    mda: bestMda
   };
 }
 

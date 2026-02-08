@@ -32,11 +32,19 @@ export interface AirportOption {
   label: string;
 }
 
+export type MinimumsCategory = 'A' | 'B' | 'C' | 'D';
+
+export interface MinimumsValueSummary {
+  altitude: number;
+  type: string;
+  category: MinimumsCategory;
+}
+
 export interface MinimumsSummary {
   sourceApproachName: string;
   cycle: string;
-  daCatA?: { altitude: number; type: string };
-  mdaCatA?: { altitude: number; type: string };
+  da?: MinimumsValueSummary;
+  mda?: MinimumsValueSummary;
 }
 
 export interface ApproachPlate {
