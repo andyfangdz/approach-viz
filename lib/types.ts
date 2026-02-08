@@ -37,6 +37,11 @@ export interface MinimumsSummary {
   mdaCatA?: { altitude: number; type: string };
 }
 
+export interface ApproachPlate {
+  cycle: string;
+  plateFile: string;
+}
+
 export interface NearbyAirport {
   airport: Airport;
   runways: RunwayThreshold[];
@@ -53,4 +58,5 @@ export interface SceneData {
   nearbyAirports: NearbyAirport[];
   airspace: AirspaceFeature[];
   minimumsSummary: MinimumsSummary | null;
+  approachPlate: ApproachPlate | null;
 }

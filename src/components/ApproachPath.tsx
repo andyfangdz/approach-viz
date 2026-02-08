@@ -50,6 +50,16 @@ function altToY(altFeet: number, verticalScale: number): number {
   return altFeet * ALTITUDE_SCALE * verticalScale;
 }
 
+function normalizeHeading(degrees: number): number {
+  const wrapped = degrees % 360;
+  return wrapped < 0 ? wrapped + 360 : wrapped;
+}
+
+function magneticToTrueHeading(magneticCourse: number, magneticVariation: number): number {
+  const magVar = Number.isFinite(magneticVariation) ? magneticVariation : 0;
+  return normalizeHeading(magneticCourse + magVar);
+}
+
 function resolveWaypoint(waypoints: Map<string, Waypoint>, waypointId: string): Waypoint | undefined {
   if (waypoints.has(waypointId)) {
     return waypoints.get(waypointId);
@@ -122,6 +132,11 @@ function buildHoldPoints(
   pushStraight(-straightLength, 0, 0, false);
 
   return points;
+}
+
+function formatHoldDistance(distanceNm: number): string {
+  const rounded = Math.round(distanceNm * 10) / 10;
+  return Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1);
 }
 
 function buildRfArcPoints(
@@ -439,6 +454,7 @@ function HoldPattern({
   waypoints,
   refLat,
   refLon,
+  magVar,
   color,
   verticalScale
 }: {
@@ -447,6 +463,7 @@ function HoldPattern({
   waypoints: Map<string, Waypoint>;
   refLat: number;
   refLon: number;
+  magVar: number;
   color: string;
   verticalScale: number;
 }) {
@@ -454,31 +471,69 @@ function HoldPattern({
   const altitude = altitudeOverride;
   const headingCandidate = leg.holdCourse ?? leg.course;
   const heading = typeof headingCandidate === 'number' && Number.isFinite(headingCandidate)
-    ? headingCandidate
+    ? magneticToTrueHeading(headingCandidate, magVar)
     : 0;
   const holdDistanceCandidate = leg.holdDistance ?? leg.distance;
   const holdDistance = typeof holdDistanceCandidate === 'number' && Number.isFinite(holdDistanceCandidate)
     ? holdDistanceCandidate
     : 4;
   const turnDirection = leg.holdTurnDirection ?? 'R';
+  const magneticHeading = normalizeHeading(leg.holdCourse ?? leg.course ?? heading);
+  const trueHeading = normalizeHeading(heading);
+  const holdLabel = `HOLD ${Math.round(magneticHeading)}°M/${Math.round(trueHeading)}°T ${formatHoldDistance(holdDistance)}NM ${turnDirection === 'R' ? 'RIGHT' : 'LEFT'} TURNS`;
+  const center = useMemo(() => {
+    if (!wp) return null;
+    return latLonToLocal(wp.lat, wp.lon, refLat, refLon);
+  }, [wp, refLat, refLon]);
 
   const points = useMemo(() => {
-    if (!wp || altitude <= 0) return [];
-    const center = latLonToLocal(wp.lat, wp.lon, refLat, refLon);
+    if (!center || altitude <= 0) return [];
     return buildHoldPoints(center, heading, holdDistance, altitude, turnDirection, verticalScale);
-  }, [wp, altitude, heading, holdDistance, turnDirection, verticalScale, refLat, refLon]);
+  }, [center, altitude, heading, holdDistance, turnDirection, verticalScale]);
+  const labelPosition = useMemo<[number, number, number]>(() => {
+    if (!center) return [0, 0, 0];
+    const headingRad = (heading * Math.PI) / 180;
+    const forward = { x: Math.sin(headingRad), z: -Math.cos(headingRad) };
+    const right = { x: Math.cos(headingRad), z: Math.sin(headingRad) };
+    const turnSign = turnDirection === 'R' ? 1 : -1;
+    const lateralOffset = Math.max(1.4, holdDistance * 0.45);
+    const longitudinalOffset = Math.max(0.8, holdDistance * 0.2);
+    return [
+      center.x + right.x * lateralOffset * turnSign - forward.x * longitudinalOffset,
+      altToY(altitude, verticalScale) + 0.9,
+      center.z + right.z * lateralOffset * turnSign - forward.z * longitudinalOffset
+    ];
+  }, [center, heading, holdDistance, turnDirection, altitude, verticalScale]);
 
-  if (!wp || points.length === 0) return null;
+  if (!center || points.length === 0) return null;
 
   return (
-    <Line
-      points={points}
-      color={color}
-      lineWidth={2}
-      dashed
-      dashSize={0.4}
-      gapSize={0.2}
-    />
+    <group>
+      <Line
+        points={points}
+        color={color}
+        lineWidth={2}
+        dashed
+        dashSize={0.4}
+        gapSize={0.2}
+      />
+      <Html
+        position={labelPosition}
+        center
+        style={{
+          color,
+          fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+          fontSize: '10px',
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+          textShadow: '0 0 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7)',
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none'
+        }}
+      >
+        {holdLabel}
+      </Html>
+    </group>
   );
 }
 
@@ -491,6 +546,7 @@ function PathTube({
   verticalScale,
   refLat,
   refLon,
+  magVar,
   color
 }: {
   legs: ApproachLeg[];
@@ -500,6 +556,7 @@ function PathTube({
   verticalScale: number;
   refLat: number;
   refLon: number;
+  magVar: number;
   color: string;
 }) {
   const { points, verticalLines } = useMemo(() => {
@@ -538,7 +595,8 @@ function PathTube({
       ) {
         // CA = course to altitude. When there is no fix, synthesize a short
         // point along the published course so missed approach geometry is visible.
-        const headingRad = (leg.course * Math.PI) / 180;
+        const headingTrue = magneticToTrueHeading(leg.course, magVar);
+        const headingRad = (headingTrue * Math.PI) / 180;
         const climbDeltaFeet = Math.max(0, resolvedAltitude - lastPlottedAltitudeFeet);
         const distanceFromClimbNm = climbDeltaFeet > 0 ? climbDeltaFeet / 200 : 0;
         const distanceNm = Math.max(1.2, Math.min(8, distanceFromClimbNm || 2));
@@ -552,7 +610,7 @@ function PathTube({
       if (!currentPoint) continue;
       const previousPoint = pts[pts.length - 1];
 
-      if (previousPoint && leg.pathTerminator === 'RF' && leg.rfCenterWaypointId) {
+      if (previousPoint && (leg.pathTerminator === 'RF' || leg.pathTerminator === 'AF') && leg.rfCenterWaypointId) {
         const centerWp = resolveWaypoint(waypoints, leg.rfCenterWaypointId);
         if (centerWp) {
           const center = latLonToLocal(centerWp.lat, centerWp.lon, refLat, refLon);
@@ -573,7 +631,7 @@ function PathTube({
     }
 
     return { points: pts, verticalLines: vLines };
-  }, [legs, waypoints, resolvedAltitudes, initialAltitudeFeet, verticalScale, refLat, refLon]);
+  }, [legs, waypoints, resolvedAltitudes, initialAltitudeFeet, verticalScale, refLat, refLon, magVar]);
 
   const tubeGeometry = useMemo(() => {
     if (points.length < 2) return null;
@@ -945,6 +1003,7 @@ export function ApproachPath({ approach, waypoints, airport, runways, verticalSc
           verticalScale={verticalScale}
           refLat={refLat}
           refLon={refLon}
+          magVar={airport.magVar}
           color={COLORS.approach}
         />
       )}
@@ -960,6 +1019,7 @@ export function ApproachPath({ approach, waypoints, airport, runways, verticalSc
           verticalScale={verticalScale}
           refLat={refLat}
           refLon={refLon}
+          magVar={airport.magVar}
           color={COLORS.transition}
         />
       ))}
@@ -974,6 +1034,7 @@ export function ApproachPath({ approach, waypoints, airport, runways, verticalSc
           verticalScale={verticalScale}
           refLat={refLat}
           refLon={refLon}
+          magVar={airport.magVar}
           color={COLORS.missed}
         />
       )}
@@ -987,6 +1048,7 @@ export function ApproachPath({ approach, waypoints, airport, runways, verticalSc
           waypoints={waypoints}
           refLat={refLat}
           refLon={refLon}
+          magVar={airport.magVar}
           color={COLORS.hold}
           verticalScale={verticalScale}
         />

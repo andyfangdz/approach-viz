@@ -1,5 +1,7 @@
 'use server';
 
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Airport, Approach } from '@/src/cifp/parser';
 import { getDb } from '@/lib/db';
 import type {
@@ -14,6 +16,7 @@ import type {
 const DEFAULT_AIRPORT_ID = 'KCDW';
 const NEARBY_AIRPORT_RADIUS_NM = 20;
 const AIRSPACE_RADIUS_NM = 30;
+const APPROACH_DB_PATH = path.join(process.cwd(), 'public', 'data', 'approach-db', 'approaches.json');
 
 interface AirportRow {
   id: string;
@@ -80,9 +83,31 @@ interface ApproachMinimums {
 
 interface ExternalApproach {
   name: string;
+  plate_file?: string;
   types: string[];
   runway: string | null;
   minimums: ApproachMinimums[];
+}
+
+interface ApproachMinimumsDb {
+  dtpp_cycle_number: string;
+  airports: Record<string, { approaches: ExternalApproach[] }>;
+}
+
+let approachDbCache: ApproachMinimumsDb | null = null;
+
+function loadApproachDb(): ApproachMinimumsDb | null {
+  if (approachDbCache) {
+    return approachDbCache;
+  }
+
+  try {
+    const raw = fs.readFileSync(APPROACH_DB_PATH, 'utf8');
+    approachDbCache = JSON.parse(raw) as ApproachMinimumsDb;
+    return approachDbCache;
+  } catch {
+    return null;
+  }
 }
 
 function latLonDistanceNm(fromLat: number, fromLon: number, toLat: number, toLon: number): number {
@@ -198,6 +223,39 @@ function resolveExternalApproach(airportApproaches: ExternalApproach[], approach
   return scored[0]?.candidate ?? null;
 }
 
+function serializedApproachToRuntime(approach: SerializedApproach): Approach {
+  return {
+    airportId: approach.airportId,
+    procedureId: approach.procedureId,
+    type: approach.type,
+    runway: approach.runway,
+    transitions: new Map(approach.transitions),
+    finalLegs: approach.finalLegs,
+    missedLegs: approach.missedLegs
+  };
+}
+
+function deriveApproachPlate(airportId: string, approach: SerializedApproach | null): SceneData['approachPlate'] {
+  if (!approach) return null;
+
+  const approachDb = loadApproachDb();
+  const airportApproaches = approachDb?.airports?.[airportId]?.approaches;
+  if (!approachDb || !airportApproaches || airportApproaches.length === 0) {
+    return null;
+  }
+
+  const externalApproach = resolveExternalApproach(airportApproaches, serializedApproachToRuntime(approach));
+  const plateFile = (externalApproach?.plate_file || '').trim().toUpperCase();
+  if (!plateFile) {
+    return null;
+  }
+
+  return {
+    cycle: approachDb.dtpp_cycle_number || '',
+    plateFile
+  };
+}
+
 function deriveMinimumsSummary(minimaRows: MinimaRow[], approach: SerializedApproach | null): MinimumsSummary | null {
   if (!approach || minimaRows.length === 0) return null;
 
@@ -208,17 +266,7 @@ function deriveMinimumsSummary(minimaRows: MinimaRow[], approach: SerializedAppr
     minimums: JSON.parse(row.minimums_json || '[]') as ApproachMinimums[]
   }));
 
-  const pseudoApproach: Approach = {
-    airportId: approach.airportId,
-    procedureId: approach.procedureId,
-    type: approach.type,
-    runway: approach.runway,
-    transitions: new Map(approach.transitions),
-    finalLegs: approach.finalLegs,
-    missedLegs: approach.missedLegs
-  };
-
-  const externalApproach = resolveExternalApproach(airportApproaches, pseudoApproach);
+  const externalApproach = resolveExternalApproach(airportApproaches, serializedApproachToRuntime(approach));
   if (!externalApproach) return null;
 
   let bestDa: { altitude: number; type: string } | undefined;
@@ -377,7 +425,8 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
       runways: [],
       nearbyAirports: [],
       airspace: [],
-      minimumsSummary: null
+      minimumsSummary: null,
+      approachPlate: null
     };
   }
 
@@ -471,6 +520,7 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
     runways: runwayMap.get(airport.id) || runways,
     nearbyAirports,
     airspace: loadAirspaceForAirport(db, airport),
-    minimumsSummary: deriveMinimumsSummary(minimaRows, currentApproach)
+    minimumsSummary: deriveMinimumsSummary(minimaRows, currentApproach),
+    approachPlate: deriveApproachPlate(airport.id, currentApproach)
   };
 }

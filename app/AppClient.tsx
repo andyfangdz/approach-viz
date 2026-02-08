@@ -7,6 +7,7 @@ import Select, { type StylesConfig } from 'react-select';
 import type { Approach, Waypoint } from '@/src/cifp/parser';
 import { AirspaceVolumes } from '@/src/components/AirspaceVolumes';
 import { ApproachPath } from '@/src/components/ApproachPath';
+import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
 import { TerrainWireframe } from '@/src/components/TerrainWireframe';
 import type { AirportOption, SceneData } from '@/lib/types';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
@@ -163,6 +164,7 @@ export function AppClient({
   const [sceneData, setSceneData] = useState<SceneData>(initialSceneData);
   const [selectedAirport, setSelectedAirport] = useState<string>(initialSceneData.airport?.id ?? initialAirportId);
   const [selectedApproach, setSelectedApproach] = useState<string>(initialSceneData.selectedApproachId || initialApproachId);
+  const [surfaceMode, setSurfaceMode] = useState<'terrain' | 'plate'>('terrain');
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -266,6 +268,9 @@ export function AppClient({
     () => filterOptions(approachOptions, approachQuery),
     [approachOptions, approachQuery]
   );
+  const hasApproachPlate = Boolean(sceneData.approachPlate);
+  const showApproachPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
+  const showTerrainSurface = !showApproachPlateSurface;
 
   return (
     <div className="app">
@@ -369,6 +374,26 @@ export function AppClient({
               </div>
               <span className="control-value">{verticalScale.toFixed(1)}x</span>
             </div>
+
+            <div className="control-group">
+              <label>Surface</label>
+              <div className="surface-toggle" role="group" aria-label="Surface mode">
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${surfaceMode === 'terrain' ? 'active' : ''}`}
+                  onClick={() => setSurfaceMode('terrain')}
+                >
+                  Terrain
+                </button>
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${surfaceMode === 'plate' ? 'active' : ''}`}
+                  onClick={() => setSurfaceMode('plate')}
+                >
+                  FAA Plate
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </header>
@@ -393,11 +418,21 @@ export function AppClient({
               <directionalLight position={[10, 20, 10]} intensity={0.8} />
               <Environment preset="night" />
 
-              <TerrainWireframe
-                refLat={airport.lat}
-                refLon={airport.lon}
-                verticalScale={verticalScale}
-              />
+              {showTerrainSurface && (
+                <TerrainWireframe
+                  refLat={airport.lat}
+                  refLon={airport.lon}
+                  verticalScale={verticalScale}
+                />
+              )}
+
+              {showApproachPlateSurface && sceneData.approachPlate && (
+                <ApproachPlateSurface
+                  plate={sceneData.approachPlate}
+                  refLat={airport.lat}
+                  refLon={airport.lon}
+                />
+              )}
 
               {currentApproach && (
                 <ApproachPath
@@ -459,8 +494,8 @@ export function AppClient({
                 <span>Hold</span>
               </div>
               <div className="legend-item">
-                <div className="legend-color terrain" />
-                <span>Terrain Wireframe</span>
+                <div className={`legend-color ${showApproachPlateSurface ? 'plate' : 'terrain'}`} />
+                <span>{showApproachPlateSurface ? 'FAA Plate Surface' : 'Terrain Wireframe'}</span>
               </div>
               <div className="legend-item">
                 <div className="legend-color airspace-b" />
@@ -474,6 +509,9 @@ export function AppClient({
                 <div className="legend-color airspace-d" />
                 <span>Class D</span>
               </div>
+              {surfaceMode === 'plate' && !hasApproachPlate && (
+                <div className="legend-note">No FAA plate matched this approach; showing terrain.</div>
+              )}
             </div>
           )}
 

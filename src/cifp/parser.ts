@@ -131,6 +131,30 @@ function parseTenthsValue(raw: string): number | undefined {
   return parsed / 10;
 }
 
+function parseMagneticVariation(raw: string): number {
+  const trimmed = raw.trim().toUpperCase();
+  if (!trimmed) {
+    return 0;
+  }
+
+  const directionalMatch = trimmed.match(/^([EW])(\d{3,4})$/);
+  if (directionalMatch) {
+    const [, direction, digits] = directionalMatch;
+    const magnitude = parseInt(digits, 10) / 10;
+    if (Number.isFinite(magnitude)) {
+      return direction === 'W' ? -magnitude : magnitude;
+    }
+  }
+
+  const signedMatch = trimmed.match(/^([+-]?\d{3,4})$/);
+  if (signedMatch) {
+    const parsed = parseInt(signedMatch[1], 10) / 10;
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+}
+
 // Parse a single CIFP line
 function parseLine(line: string): {
   recordType: string;
@@ -217,7 +241,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const latStr = rest.slice(32, 41);
       const lonStr = rest.slice(41, 51);
       const elevation = parseInt(rest.slice(56, 61).trim()) || 0;
-      const magVar = parseInt(rest.slice(51, 56).trim()) || 0;
+      const magVar = parseMagneticVariation(rest.slice(51, 56));
       const name = rest.slice(93, 123).trim();
       
       if (latStr && lonStr) {
@@ -227,7 +251,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
           lat: parseDMS(latStr),
           lon: parseDMS(lonStr),
           elevation,
-          magVar: magVar / 10
+          magVar
         });
       }
     }
@@ -369,19 +393,25 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const distanceRaw = rest.slice(74, 78);
       const course = parseTenthsValue(courseRaw);
       const distance = parseTenthsValue(distanceRaw);
-      const isRfLeg = pathTerminator === 'RF';
+      const isArcLeg = pathTerminator === 'RF' || pathTerminator === 'AF';
       const holdCourse = isHold ? course : undefined;
       const holdDistance = isHold ? distance : undefined;
       const holdTurnDirectionRaw = isHold ? rest.slice(43, 44).trim() : '';
       const holdTurnDirection = holdTurnDirectionRaw === 'L' || holdTurnDirectionRaw === 'R'
         ? holdTurnDirectionRaw
         : undefined;
-      const rfTurnDirectionRaw = isRfLeg ? rest.slice(43, 44).trim() : '';
+      const rfTurnDirectionRaw = isArcLeg ? rest.slice(43, 44).trim() : '';
       const rfTurnDirection = rfTurnDirectionRaw === 'L' || rfTurnDirectionRaw === 'R'
         ? rfTurnDirectionRaw
         : undefined;
-      const rfCenterFix = isRfLeg ? rest.slice(106, 111).trim() : '';
-      const rfCenterWaypointId = rfCenterFix ? `${airportId}_${rfCenterFix}` : undefined;
+      const rfCenterFix = pathTerminator === 'RF'
+        ? rest.slice(106, 111).trim()
+        : pathTerminator === 'AF'
+          ? rest.slice(50, 54).trim()
+          : '';
+      const rfCenterWaypointId = rfCenterFix
+        ? (data.waypoints.has(`${airportId}_${rfCenterFix}`) ? `${airportId}_${rfCenterFix}` : rfCenterFix)
+        : undefined;
 
       const leg: ApproachLeg = {
         sequence: seqNum,

@@ -120,6 +120,33 @@ header {
   color: var(--text-primary);
 }
 
+.surface-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.surface-toggle-button {
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 7px 10px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.surface-toggle-button + .surface-toggle-button {
+  border-left: 1px solid var(--border);
+}
+
+.surface-toggle-button.active {
+  background: rgba(0, 255, 204, 0.18);
+  color: var(--text-primary);
+}
+
 .library-select {
   width: 100%;
   min-width: 220px;
@@ -267,6 +294,11 @@ header {
   box-shadow: 0 0 8px rgba(45, 140, 255, 0.5);
 }
 
+.legend-color.plate {
+  background: #f4d35e;
+  box-shadow: 0 0 8px rgba(244, 211, 94, 0.5);
+}
+
 .legend-color.airspace-b {
   background: rgba(0, 102, 255, 0.6);
 }
@@ -277,6 +309,12 @@ header {
 
 .legend-color.airspace-d {
   background: rgba(0, 153, 255, 0.6);
+}
+
+.legend-note {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .minimums-section {
