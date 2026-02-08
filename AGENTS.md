@@ -86,6 +86,7 @@
 
 ## Architecture Notes
 - Server-side data is backed by `data/approach-viz.sqlite`.
+- CI runs GitHub Actions workflow `.github/workflows/parser-tests.yml` on push/PR and executes `npm run test:parser`.
 - Server interactions are implemented as Next.js server actions (`app/actions.ts`).
 - Scene payloads are loaded server-side by route (`app/[[...slug]]/page.tsx`) and refreshed client-side via actions (`app/AppClient.tsx`).
 - FAA plate PDF fetching is done through same-origin proxy route `app/api/faa-plate/route.ts` (avoids browser CORS issues).
@@ -109,6 +110,7 @@ When changing parser/render/data logic, run:
 - Verify legend remains concise for minima/plate-only procedures (geometry-unavailable status shown in minimums section, not as long legend copy).
 
 ## Files Frequently Touched
+- `.github/workflows/parser-tests.yml`
 - `src/cifp/parser.ts`
 - `src/cifp/parser.test.ts`
 - `src/cifp/__fixtures__/real-cifp-procedures.txt`
