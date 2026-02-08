@@ -177,6 +177,7 @@ export function AppClient({
   const [selectedAirport, setSelectedAirport] = useState<string>(initialSceneData.airport?.id ?? initialAirportId);
   const [selectedApproach, setSelectedApproach] = useState<string>(initialSceneData.selectedApproachId || initialApproachId);
   const [surfaceMode, setSurfaceMode] = useState<'terrain' | 'plate'>('terrain');
+  const [didInitFromLocation, setDidInitFromLocation] = useState(false);
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -193,6 +194,7 @@ export function AppClient({
     if (modeFromQuery) {
       setSurfaceMode(modeFromQuery);
     }
+    setDidInitFromLocation(true);
   }, []);
 
   useEffect(() => {
@@ -217,7 +219,7 @@ export function AppClient({
   }, [airportOptions.length, startTransition]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !selectedAirport) return;
+    if (typeof window === 'undefined' || !selectedAirport || !didInitFromLocation) return;
     const encodedApproach = selectedApproach ? `/${encodeURIComponent(selectedApproach)}` : '';
     const nextPath = `/${selectedAirport}${encodedApproach}`;
     const params = new URLSearchParams(window.location.search);
@@ -227,7 +229,7 @@ export function AppClient({
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
       window.history.replaceState(null, '', nextUrl);
     }
-  }, [selectedAirport, selectedApproach, surfaceMode]);
+  }, [selectedAirport, selectedApproach, surfaceMode, didInitFromLocation]);
 
   const requestSceneData = (airportId: string, procedureId: string) => {
     const nextRequestId = requestCounter.current + 1;
