@@ -53,6 +53,9 @@
 - Satellite mode uses a tighter tile error target (`~12`) to keep nearby airport surfaces readable.
 - FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
+- CIFP approach continuation records (`F` subsection continuation `2` / application type `W`) are parsed as level-of-service/RNP values and are not treated as VDA.
+- FAF vertical angle for glidepath rendering is sourced from matched approach metadata (`approaches.json` `vertical_profile.vda`) when available, preventing CIFP level-of-service codes (for example `A152`) from being misread as descent angle.
+- If runway-anchored glidepath math would cause an immediate climb after FAF (for example steep VDA with FAF at/above constraints), final-path altitude falls back to smooth FAF-to-MAP interpolation to prevent abrupt altitude spikes.
 - Missed-approach path rendering starts at the MAP using selected minimums DA (or MDA fallback), and the missed profile climbs immediately from MAP by interpolating toward the next higher published missed-leg altitude targets (non-descending); this does not change final-approach glidepath-to-runway depiction.
 - Missed-profile distance interpolation treats no-fix `CA` legs as short climb segments (distance estimated from climb requirement), preventing exaggerated straight-out segments before turns when a CA leg precedes turn-to-fix legs.
 - For missed segments with `CA` followed by `DF`, geometry is conditional:
@@ -63,6 +66,7 @@
 - `CA->DF` turn direction is chosen from heading-to-fix bearing delta (preferred side), with opposite-side fallback only when the preferred geometry is infeasible.
 - When available, explicit turn direction published on the procedure leg descriptor (`L`/`R`, e.g. on `DF` legs) overrides geometric inference for `CA->DF` turn joins.
 - Curved `CA->DF` turn joins are applied only when `DF` leg turn direction is explicitly published; otherwise missed geometry remains straight/linear to avoid synthetic loops.
+- Missed `VI` (heading-to-intercept) legs without a fix are rendered as short heading stubs and carry explicit turn direction into the next fix leg join, preventing `CA->VI->CF/TF` snap-back turns.
 - Missed `CA->DF` turn initiation points display altitude callouts (using resolved CA altitude) so turn altitude restrictions are visible in-scene.
 - Missed `CA->DF` turn initiation points display altitude callouts only for meaningful published CA climb constraints (not derived/interpolated profile altitudes).
 - Minimums selection prefers Cat A values when available; if Cat A is unavailable for a minima line, the app falls back to the lowest available category (B/C/D), displays that category in the minimums panel, and uses it for missed-approach start altitude.

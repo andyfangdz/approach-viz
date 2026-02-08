@@ -113,3 +113,5 @@ SUSAP KTEBK6FR06-Y R      040         0  M     CA                     0601      
 SUSAP KTEBK6FR06-Y R      050TEBLEK6PC0E   L010DF                                 - 02000          200              A-JS   298362601
 SUSAP KTEBK6FR06-Y R      060UBUCKK6PC0EY   010TF                                 + 03000                           A JS   298372308
 SUSAP KTEBK6FR06-Y R      070UBUCKK6PC0EE  R   HM                     27180040    + 03000                           A JS   298382308
+SPACP PHNLPHFH26L  H      020KUHIOPHEA1E  F 010TF                                 + 02000                 RW26L PHPGA FS   230912405
+SPACP PHNLPHFH26L  H      020KUHIOPHEA2W                                                A152                          FS   230922405

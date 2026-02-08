@@ -84,12 +84,18 @@ interface ApproachMinimums {
   cat_d: MinimumsValue | 'NA' | null;
 }
 
+interface ExternalVerticalProfile {
+  vda?: string | null;
+  tch?: string | null;
+}
+
 interface ExternalApproach {
   name: string;
   plate_file?: string;
   types: string[];
   runway: string | null;
   minimums: ApproachMinimums[];
+  vertical_profile?: ExternalVerticalProfile | null;
 }
 
 interface ApproachMinimumsDb {
@@ -447,6 +453,48 @@ function findSelectedExternalApproach(
   return resolveExternalApproach(airportApproaches, serializedApproachToRuntime(currentApproach));
 }
 
+function parseExternalVerticalAngleDeg(externalApproach: ExternalApproach | null): number | undefined {
+  const raw = externalApproach?.vertical_profile?.vda;
+  if (raw === null || raw === undefined) return undefined;
+  const parsed = parseFloat(String(raw).trim());
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 9) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function applyExternalVerticalAngleToApproach(
+  currentApproach: SerializedApproach | null,
+  externalApproach: ExternalApproach | null
+): SerializedApproach | null {
+  if (!currentApproach) return null;
+
+  const verticalAngleDeg = parseExternalVerticalAngleDeg(externalApproach);
+  if (typeof verticalAngleDeg !== 'number') {
+    return currentApproach;
+  }
+
+  const fafIndex = currentApproach.finalLegs.findIndex((leg) => leg.isFinalApproachFix);
+  if (fafIndex < 0) {
+    return currentApproach;
+  }
+
+  const fafLeg = currentApproach.finalLegs[fafIndex];
+  if (typeof fafLeg.verticalAngleDeg === 'number' && Math.abs(fafLeg.verticalAngleDeg - verticalAngleDeg) < 1e-6) {
+    return currentApproach;
+  }
+
+  const finalLegs = [...currentApproach.finalLegs];
+  finalLegs[fafIndex] = {
+    ...fafLeg,
+    verticalAngleDeg
+  };
+  return {
+    ...currentApproach,
+    finalLegs
+  };
+}
+
 function deriveApproachPlate(
   airportId: string,
   selectedApproachOption: ApproachOption | null,
@@ -704,14 +752,24 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
     ? (approachRowByProcedureId.get(selectedApproachId) || null)
     : null;
   const currentApproach = selectedApproachRow ? deserializeApproach(selectedApproachRow) : null;
+  const airportExternalApproaches = loadApproachDb()?.airports?.[airport.id]?.approaches || [];
+  const selectedExternalApproach = findSelectedExternalApproach(
+    airportExternalApproaches,
+    selectedApproachOption,
+    currentApproach
+  );
+  const currentApproachWithVerticalProfile = applyExternalVerticalAngleToApproach(
+    currentApproach,
+    selectedExternalApproach
+  );
 
   const runways = (db
     .prepare('SELECT id, lat, lon FROM runways WHERE airport_id = ? ORDER BY id')
     .all(airport.id) as Array<{ id: string; lat: number; lon: number }>);
 
   let waypoints: WaypointRow[] = [];
-  if (currentApproach) {
-    const waypointIds = collectWaypointIds(currentApproach);
+  if (currentApproachWithVerticalProfile) {
+    const waypointIds = collectWaypointIds(currentApproachWithVerticalProfile);
     if (waypointIds.length > 0) {
       const placeholders = waypointIds.map(() => '?').join(',');
       waypoints = db
@@ -765,12 +823,12 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
     approaches,
     selectedApproachId,
     requestedProcedureNotInCifp,
-    currentApproach,
+    currentApproach: currentApproachWithVerticalProfile,
     waypoints,
     runways: runwayMap.get(airport.id) || runways,
     nearbyAirports,
     airspace: loadAirspaceForAirport(db, airport),
-    minimumsSummary: deriveMinimumsSummary(minimaRows, selectedApproachOption, currentApproach),
-    approachPlate: deriveApproachPlate(airport.id, selectedApproachOption, currentApproach)
+    minimumsSummary: deriveMinimumsSummary(minimaRows, selectedApproachOption, currentApproachWithVerticalProfile),
+    approachPlate: deriveApproachPlate(airport.id, selectedApproachOption, currentApproachWithVerticalProfile)
   };
 }

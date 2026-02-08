@@ -79,12 +79,24 @@ test('parses RF/AF arc metadata and turn directions from real procedures', () =>
   assert.equal(padqAf.rfCenterWaypointId, 'ODK');
 });
 
-test('parses vertical angle from continuation records on final approach legs', () => {
+test('parses procedure-data continuation RNP levels without misclassifying them as VDA', () => {
   const kabq = getApproach('KABQ', 'H21-Y');
   const faf = findLeg(kabq, 20);
 
   assert.equal(faf.pathTerminator, 'IF');
   assert.equal(faf.waypointId, 'KABQ_KAGNE');
   assert.equal(faf.isFinalApproachFix, true);
-  assert.equal(faf.verticalAngleDeg, 3.1);
+  assert.deepEqual(faf.rnpServiceLevels, [0.31]);
+  assert.equal(faf.verticalAngleDeg, undefined);
+});
+
+test('parses single-slot RNP continuation values for PHNL H26L FAF without bogus glide angle', () => {
+  const phnl = getApproach('PHNL', 'H26L');
+  const faf = findLeg(phnl, 20);
+
+  assert.equal(faf.pathTerminator, 'TF');
+  assert.equal(faf.waypointId, 'PHNL_KUHIO');
+  assert.equal(faf.isFinalApproachFix, true);
+  assert.deepEqual(faf.rnpServiceLevels, [1.52]);
+  assert.equal(faf.verticalAngleDeg, undefined);
 });

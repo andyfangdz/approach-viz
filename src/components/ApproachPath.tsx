@@ -12,6 +12,12 @@ import type { Approach, Waypoint, Airport, ApproachLeg, RunwayThreshold } from '
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 const MISSED_DEFAULT_CLIMB_FT_PER_NM = 200;
 const MIN_TURN_RADIUS_NM = 0.45;
+const MAX_COURSE_TO_FIX_TURN_ARC_RAD = (225 * Math.PI) / 180;
+const EXPLICIT_TURN_DIRECTION_SCORE_BIAS = 0.35;
+const INFERRED_TURN_DIRECTION_SCORE_BIAS = 0.1;
+const MIN_HEADING_TRANSITION_DELTA_DEG = 6;
+const MAX_HEADING_TRANSITION_DELTA_DEG = 210;
+const MIN_VI_TURN_RADIUS_NM = 0.35;
 
 // Colors
 const COLORS = {
@@ -197,6 +203,13 @@ function buildCourseToFixTurnPoints(
   startHeadingDeg: number,
   explicitTurnDirection?: 'L' | 'R'
 ): THREE.Vector3[] {
+  type TurnJoinCandidate = {
+    points: THREE.Vector3[];
+    score: number;
+    arcDelta: number;
+    turn: 'L' | 'R';
+  };
+
   const dx = end.x - start.x;
   const dz = end.z - start.z;
   const horizontalDistance = Math.hypot(dx, dz);
@@ -210,7 +223,7 @@ function buildCourseToFixTurnPoints(
   const end2 = new THREE.Vector2(end.x, end.z);
   const yDelta = end.y - start.y;
 
-  const buildCandidate = (turn: 'L' | 'R', radiusNm: number): { points: THREE.Vector3[]; score: number } | null => {
+  const buildCandidate = (turn: 'L' | 'R', radiusNm: number): TurnJoinCandidate | null => {
     const normal = turn === 'R' ? rightNormal : leftNormal;
     const center2 = new THREE.Vector2(start.x, start.z).addScaledVector(normal, radiusNm);
     const centerToEnd = end2.clone().sub(center2);
@@ -229,7 +242,7 @@ function buildCourseToFixTurnPoints(
       return wrapped;
     };
 
-    let best: { points: THREE.Vector3[]; score: number } | null = null;
+    let best: TurnJoinCandidate | null = null;
 
     for (const tangentAngle of candidateAngles) {
       const tangent2 = new THREE.Vector2(
@@ -284,7 +297,7 @@ function buildCourseToFixTurnPoints(
 
       const score = arcDelta + lineDistance / Math.max(0.01, horizontalDistance);
       if (!best || score < best.score) {
-        best = { points, score };
+        best = { points, score, arcDelta, turn };
       }
     }
 
@@ -301,26 +314,110 @@ function buildCourseToFixTurnPoints(
   };
   const bearingToFixDeg = (Math.atan2(dx, -dz) * 180) / Math.PI;
   const headingDelta = normalizeSignedDeltaDeg(bearingToFixDeg - startHeadingDeg);
-  const preferredTurn = explicitTurnDirection ?? (headingDelta >= 0 ? 'R' : 'L');
-
-  const tryTurns = (turn: 'L' | 'R') => [
-    buildCandidate(turn, desiredRadius),
-    buildCandidate(turn, reducedRadius)
-  ].filter((candidate): candidate is { points: THREE.Vector3[]; score: number } => Boolean(candidate));
-
-  const preferredCandidates = tryTurns(preferredTurn);
-  if (preferredCandidates.length > 0) {
-    preferredCandidates.sort((a, b) => a.score - b.score);
-    return preferredCandidates[0].points;
+  const inferredTurnDirection = Math.abs(headingDelta) >= 2 ? (headingDelta >= 0 ? 'R' : 'L') : undefined;
+  const preferredTurnDirection = explicitTurnDirection ?? inferredTurnDirection;
+  const directionBias = explicitTurnDirection
+    ? EXPLICIT_TURN_DIRECTION_SCORE_BIAS
+    : INFERRED_TURN_DIRECTION_SCORE_BIAS;
+  const radiiToTry = Math.abs(desiredRadius - reducedRadius) < 1e-4
+    ? [desiredRadius]
+    : [desiredRadius, reducedRadius];
+  const allCandidates: TurnJoinCandidate[] = [];
+  for (const turn of ['L', 'R'] as const) {
+    for (const radiusNm of radiiToTry) {
+      const candidate = buildCandidate(turn, radiusNm);
+      if (candidate) {
+        allCandidates.push(candidate);
+      }
+    }
   }
 
-  const fallbackCandidates = tryTurns(preferredTurn === 'L' ? 'R' : 'L');
-  if (fallbackCandidates.length > 0) {
-    fallbackCandidates.sort((a, b) => a.score - b.score);
-    return fallbackCandidates[0].points;
+  const feasibleCandidates = allCandidates.filter(
+    (candidate) => candidate.arcDelta <= MAX_COURSE_TO_FIX_TURN_ARC_RAD
+  );
+  if (feasibleCandidates.length > 0) {
+    const scoredCandidates = feasibleCandidates.map((candidate) => ({
+      candidate,
+      weightedScore: candidate.score + (
+        preferredTurnDirection && candidate.turn !== preferredTurnDirection
+          ? directionBias
+          : 0
+      )
+    }));
+    scoredCandidates.sort((a, b) => a.weightedScore - b.weightedScore);
+    return scoredCandidates[0].candidate.points;
   }
 
   return [end];
+}
+
+function buildHeadingTransitionArcPoints(
+  start: THREE.Vector3,
+  startHeadingDeg: number,
+  endHeadingDeg: number,
+  endY: number,
+  turnDirection?: 'L' | 'R',
+  radiusNm = MIN_TURN_RADIUS_NM
+): THREE.Vector3[] {
+  const normalizePositiveDeg = (value: number) => {
+    const wrapped = value % 360;
+    return wrapped < 0 ? wrapped + 360 : wrapped;
+  };
+  const normalizeSignedDeltaDeg = (delta: number) => {
+    let normalized = ((delta + 180) % 360 + 360) % 360 - 180;
+    if (normalized <= -180) normalized += 360;
+    return normalized;
+  };
+
+  const startHeading = normalizeHeading(startHeadingDeg);
+  const targetHeading = normalizeHeading(endHeadingDeg);
+  const rightDelta = normalizePositiveDeg(targetHeading - startHeading);
+  const leftDelta = normalizePositiveDeg(startHeading - targetHeading);
+
+  let resolvedTurn: 'L' | 'R';
+  let deltaDeg: number;
+  if (turnDirection) {
+    resolvedTurn = turnDirection;
+    deltaDeg = turnDirection === 'R' ? rightDelta : leftDelta;
+  } else {
+    const signedDelta = normalizeSignedDeltaDeg(targetHeading - startHeading);
+    resolvedTurn = signedDelta >= 0 ? 'R' : 'L';
+    deltaDeg = Math.abs(signedDelta);
+  }
+
+  if (
+    !Number.isFinite(deltaDeg) ||
+    deltaDeg < MIN_HEADING_TRANSITION_DELTA_DEG ||
+    deltaDeg > MAX_HEADING_TRANSITION_DELTA_DEG
+  ) {
+    return [];
+  }
+
+  const startHeadingRad = (startHeading * Math.PI) / 180;
+  const headingDir = new THREE.Vector2(Math.sin(startHeadingRad), -Math.cos(startHeadingRad)).normalize();
+  const rightNormal = new THREE.Vector2(-headingDir.y, headingDir.x);
+  const center2 = new THREE.Vector2(start.x, start.z).addScaledVector(
+    resolvedTurn === 'R' ? rightNormal : rightNormal.clone().multiplyScalar(-1),
+    radiusNm
+  );
+  const startAngle = Math.atan2(start.z - center2.y, start.x - center2.x);
+  const arcDelta = (deltaDeg * Math.PI) / 180;
+  const steps = Math.max(8, Math.ceil(arcDelta / (Math.PI / 48))); // ~3.75deg
+  const points: THREE.Vector3[] = [];
+
+  for (let step = 1; step <= steps; step += 1) {
+    const t = step / steps;
+    const angle = resolvedTurn === 'R'
+      ? startAngle + arcDelta * t
+      : startAngle - arcDelta * t;
+    points.push(new THREE.Vector3(
+      center2.x + Math.cos(angle) * radiusNm,
+      start.y + (endY - start.y) * t,
+      center2.y + Math.sin(angle) * radiusNm
+    ));
+  }
+
+  return points;
 }
 
 function getHorizontalDistanceNm(
@@ -494,7 +591,14 @@ function applyGlidepathInsideFaf(
   }
 
   const gradientFeetPerNm = Math.tan((verticalAngleDeg * Math.PI) / 180) * 6076.12;
-  let thresholdCrossingAltitude = mapLeg.altitude;
+  const mapAltitude = (
+    typeof mapLeg.altitude === 'number' &&
+    Number.isFinite(mapLeg.altitude) &&
+    mapLeg.altitude > 0
+  )
+    ? mapLeg.altitude
+    : undefined;
+  let thresholdCrossingAltitude = mapAltitude;
   if (!thresholdCrossingAltitude || thresholdCrossingAltitude <= 0) {
     const fafDistanceToThreshold = distanceToThreshold.get(fafLeg) ?? 0;
     thresholdCrossingAltitude = fafAltitude - gradientFeetPerNm * fafDistanceToThreshold;
@@ -505,13 +609,48 @@ function applyGlidepathInsideFaf(
 
   const tchFeet = Math.max(0, thresholdCrossingAltitude - tdzeFeet);
   const referenceThresholdAltitude = tdzeFeet + tchFeet;
-
+  const candidateGlidepathAltitudes = new Map<ApproachLeg, number>();
   for (const leg of glideLegs) {
-    if (leg === fafLeg) continue;
     const legDistanceToThreshold = distanceToThreshold.get(leg);
     if (typeof legDistanceToThreshold !== 'number') continue;
     const resolvedAltitude = referenceThresholdAltitude + gradientFeetPerNm * legDistanceToThreshold;
     if (Number.isFinite(resolvedAltitude) && resolvedAltitude > 0) {
+      candidateGlidepathAltitudes.set(leg, resolvedAltitude);
+    }
+  }
+
+  // If runway-anchored glidepath would rise immediately after FAF (for example
+  // steep VDA with FAF "at/above" constraint), fall back to a smooth FAF->MAP
+  // interpolation to avoid visual altitude spikes.
+  const nextLegAfterFaf = glideLegs[1];
+  const nextLegCandidateAltitude = nextLegAfterFaf ? candidateGlidepathAltitudes.get(nextLegAfterFaf) : undefined;
+  const glidepathClimbsAfterFaf = (
+    typeof nextLegCandidateAltitude === 'number' &&
+    nextLegCandidateAltitude > fafAltitude + 50
+  );
+
+  if (glidepathClimbsAfterFaf && typeof mapAltitude === 'number') {
+    const fafDistanceToThreshold = distanceToThreshold.get(fafLeg) ?? 0;
+    if (fafDistanceToThreshold > 1e-4) {
+      for (let i = 1; i < glideLegs.length; i += 1) {
+        const leg = glideLegs[i];
+        const legDistanceToThreshold = distanceToThreshold.get(leg);
+        if (typeof legDistanceToThreshold !== 'number') continue;
+        const fraction = (fafDistanceToThreshold - legDistanceToThreshold) / fafDistanceToThreshold;
+        const clampedFraction = Math.max(0, Math.min(1, fraction));
+        const resolvedAltitude = fafAltitude + (mapAltitude - fafAltitude) * clampedFraction;
+        if (Number.isFinite(resolvedAltitude) && resolvedAltitude > 0) {
+          adjusted.set(leg, resolvedAltitude);
+        }
+      }
+    }
+    return adjusted;
+  }
+
+  for (const leg of glideLegs) {
+    if (leg === fafLeg) continue;
+    const resolvedAltitude = candidateGlidepathAltitudes.get(leg);
+    if (typeof resolvedAltitude === 'number') {
       adjusted.set(leg, resolvedAltitude);
     }
   }
@@ -864,6 +1003,8 @@ function PathTube({
     let lastPlottedPoint: THREE.Vector3 | null = null;
     let lastPlottedAltitudeFeet = initialAltitudeFeet;
     let pendingCourseToFixTurnHeading: number | null = null;
+    let pendingCourseToFixTurnDirection: 'L' | 'R' | undefined;
+    let lastLegCourseHeadingTrue: number | null = null;
 
     const pushPoint = (point: THREE.Vector3) => {
       const prev = pts[pts.length - 1];
@@ -884,10 +1025,16 @@ function PathTube({
       const y = altToY(resolvedAltitude, verticalScale);
       const wp = resolveWaypoint(waypoints, leg.waypointId);
       let currentPoint: THREE.Vector3 | null = null;
+      let headingTransitionPoints: THREE.Vector3[] | null = null;
 
       if (wp) {
         const pos = latLonToLocal(wp.lat, wp.lon, refLat, refLon);
         currentPoint = new THREE.Vector3(pos.x, y, pos.z);
+        if (typeof leg.course === 'number' && Number.isFinite(leg.course)) {
+          lastLegCourseHeadingTrue = magneticToTrueHeading(leg.course, magVar);
+        } else {
+          lastLegCourseHeadingTrue = null;
+        }
       } else if (
         leg.pathTerminator === 'CA' &&
         lastPlottedPoint &&
@@ -921,6 +1068,8 @@ function PathTube({
           // synthetic outbound CA stub so the missed approach can start turning
           // immediately from MAP while preserving downstream fix geometry.
           pendingCourseToFixTurnHeading = headingTrue;
+          pendingCourseToFixTurnDirection = nextLeg.turnDirection;
+          lastLegCourseHeadingTrue = headingTrue;
           lastPlottedAltitudeFeet = resolvedAltitude;
           continue;
         }
@@ -950,6 +1099,7 @@ function PathTube({
         );
         if (nextLeg?.pathTerminator === 'DF' && nextWp && nextLeg.turnDirection) {
           pendingCourseToFixTurnHeading = headingTrue;
+          pendingCourseToFixTurnDirection = nextLeg.turnDirection;
           if (showTurnConstraintLabels && effectiveTurnConstraintAltitude !== null) {
             turnLabels.push({
               position: [currentPoint.x, currentPoint.y + 0.45, currentPoint.z],
@@ -957,22 +1107,88 @@ function PathTube({
             });
           }
         }
+        lastLegCourseHeadingTrue = headingTrue;
+      } else if (
+        leg.pathTerminator === 'VI' &&
+        lastPlottedPoint &&
+        typeof leg.course === 'number' &&
+        Number.isFinite(leg.course)
+      ) {
+        // VI = heading to an intercept. Depict a short heading segment so the
+        // missed path turns immediately before joining the next fix leg.
+        const headingTrue = magneticToTrueHeading(leg.course, magVar);
+        const headingRad = (headingTrue * Math.PI) / 180;
+        const nextLeg = legIndex + 1 < legs.length ? legs[legIndex + 1] : undefined;
+        const nextWp = nextLeg ? resolveWaypoint(waypoints, nextLeg.waypointId) : undefined;
+        let distanceNm = 0.35;
+        if (nextWp) {
+          const nextPos = latLonToLocal(nextWp.lat, nextWp.lon, refLat, refLon);
+          const distanceToNextFix = Math.hypot(nextPos.x - lastPlottedPoint.x, nextPos.z - lastPlottedPoint.z);
+          if (distanceToNextFix > 1e-4) {
+            distanceNm = Math.max(0.15, Math.min(0.8, distanceToNextFix * 0.12));
+          }
+        }
+
+        if (lastLegCourseHeadingTrue !== null) {
+          const viTurnRadius = Math.max(
+            MIN_VI_TURN_RADIUS_NM,
+            Math.min(MIN_TURN_RADIUS_NM, distanceNm * 0.8)
+          );
+          const arcPoints = buildHeadingTransitionArcPoints(
+            lastPlottedPoint,
+            lastLegCourseHeadingTrue,
+            headingTrue,
+            y,
+            leg.turnDirection,
+            viTurnRadius
+          );
+          if (arcPoints.length > 0) {
+            headingTransitionPoints = arcPoints;
+            currentPoint = arcPoints[arcPoints.length - 1];
+          }
+        }
+        if (!currentPoint) {
+          currentPoint = new THREE.Vector3(
+            lastPlottedPoint.x + Math.sin(headingRad) * distanceNm,
+            y,
+            lastPlottedPoint.z - Math.cos(headingRad) * distanceNm
+          );
+        }
+        pendingCourseToFixTurnHeading = headingTrue;
+        // VI is heading-to-intercept; favor geometric turn-side resolution for
+        // the downstream fix join so we don't force oversized loops.
+        pendingCourseToFixTurnDirection = undefined;
+        lastLegCourseHeadingTrue = headingTrue;
+      } else {
+        lastLegCourseHeadingTrue = null;
       }
 
       if (!currentPoint) continue;
       const previousPoint = pts[pts.length - 1];
 
-      if (previousPoint && pendingCourseToFixTurnHeading !== null && leg.pathTerminator === 'DF') {
+      const shouldApplyPendingFixJoinTurn = (
+        previousPoint &&
+        pendingCourseToFixTurnHeading !== null &&
+        wp &&
+        (leg.pathTerminator === 'DF' || leg.pathTerminator === 'CF' || leg.pathTerminator === 'TF')
+      );
+
+      if (shouldApplyPendingFixJoinTurn) {
+        const turnHeading = pendingCourseToFixTurnHeading;
+        if (turnHeading === null) continue;
         for (const turnPoint of buildCourseToFixTurnPoints(
           previousPoint,
           currentPoint,
-          pendingCourseToFixTurnHeading,
-          leg.turnDirection
+          turnHeading,
+          pendingCourseToFixTurnDirection
         )) {
           pushPoint(turnPoint);
         }
         pendingCourseToFixTurnHeading = null;
+        pendingCourseToFixTurnDirection = undefined;
       } else if (previousPoint && (leg.pathTerminator === 'RF' || leg.pathTerminator === 'AF') && leg.rfCenterWaypointId) {
+        pendingCourseToFixTurnHeading = null;
+        pendingCourseToFixTurnDirection = undefined;
         const centerWp = resolveWaypoint(waypoints, leg.rfCenterWaypointId);
         if (centerWp) {
           const center = latLonToLocal(centerWp.lat, centerWp.lon, refLat, refLon);
@@ -982,6 +1198,10 @@ function PathTube({
           }
         } else {
           pushPoint(currentPoint);
+        }
+      } else if (headingTransitionPoints && headingTransitionPoints.length > 0) {
+        for (const transitionPoint of headingTransitionPoints) {
+          pushPoint(transitionPoint);
         }
       } else {
         pushPoint(currentPoint);
