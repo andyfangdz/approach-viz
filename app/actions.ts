@@ -345,7 +345,16 @@ function loadAirspaceForAirport(db: ReturnType<typeof getDb>, airport: Airport):
 export async function listAirportsAction(): Promise<AirportOption[]> {
   const db = getDb();
   const rows = db
-    .prepare('SELECT id, name FROM airports ORDER BY id')
+    .prepare(`
+      SELECT a.id, a.name
+      FROM airports a
+      WHERE EXISTS (
+        SELECT 1
+        FROM approaches ap
+        WHERE ap.airport_id = a.id
+      )
+      ORDER BY a.id
+    `)
     .all() as Array<{ id: string; name: string }>;
 
   return rows.map((row) => ({
