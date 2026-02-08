@@ -131,7 +131,8 @@ function rowToApproachOption(row: ApproachRow): ApproachOption {
   return {
     procedureId: row.procedure_id,
     type: row.type,
-    runway: row.runway
+    runway: row.runway,
+    source: 'cifp'
   };
 }
 
@@ -165,6 +166,127 @@ function parseProcedureRunway(runway: string): { runwayKey: string | null; varia
 function parseApproachNameVariant(name: string): string {
   const match = name.toUpperCase().match(/\b([XYZ])\s+RWY\b/);
   return match ? match[1] : '';
+}
+
+function parseApproachCirclingSuffix(raw: string): string {
+  const upper = raw.toUpperCase().trim();
+  const dashed = upper.match(/-([A-Z])\s*$/);
+  if (dashed) return dashed[1];
+  if (!/\d/.test(upper)) {
+    const standalone = upper.match(/\b([A-Z])\s*$/);
+    if (standalone) return standalone[1];
+  }
+  return '';
+}
+
+function inferExternalApproachType(externalApproach: ExternalApproach): string {
+  const text = `${externalApproach.name} ${(externalApproach.types || []).join(' ')}`.toUpperCase();
+  if (text.includes('RNAV/RNP') || text.includes('RNP')) return 'RNAV/RNP';
+  if (text.includes('RNAV') || text.includes('GPS')) return 'RNAV';
+  if (text.includes('ILS')) return 'ILS';
+  if (text.includes('LOC/BC') || text.includes('LOCALIZER BACK COURSE')) return 'LOC/BC';
+  if (text.includes('LOC')) return 'LOC';
+  if (text.includes('LDA')) return 'LDA';
+  if (text.includes('VOR')) return 'VOR';
+  if (text.includes('NDB')) return 'NDB';
+  if (text.includes('SDF')) return 'SDF';
+  return (externalApproach.types[0] || 'OTHER').toUpperCase();
+}
+
+function approachTypeToProcedurePrefix(type: string): string {
+  const upper = type.toUpperCase();
+  const map: Record<string, string> = {
+    ILS: 'I',
+    LOC: 'L',
+    RNAV: 'R',
+    VOR: 'V',
+    NDB: 'N',
+    GPS: 'G',
+    SDF: 'S',
+    'VOR/DME': 'D',
+    LDA: 'P',
+    'LOC/BC': 'B',
+    'NDB/DME': 'Q',
+    'RNAV/RNP': 'H',
+    'LDA/DME': 'X'
+  };
+  return map[upper] || upper[0] || 'U';
+}
+
+function normalizeExternalRunway(externalApproach: ExternalApproach): string {
+  const circlingSuffix = parseApproachCirclingSuffix(externalApproach.name);
+  if (circlingSuffix) return circlingSuffix;
+  const runwayKey = normalizeRunwayKey(externalApproach.runway ?? externalApproach.name);
+  return runwayKey || '';
+}
+
+function buildExternalProcedureId(externalApproach: ExternalApproach, usedProcedureIds: Set<string>): string {
+  const inferredType = inferExternalApproachType(externalApproach);
+  const prefix = approachTypeToProcedurePrefix(inferredType);
+  const circlingSuffix = parseApproachCirclingSuffix(externalApproach.name);
+  const runwayKey = normalizeRunwayKey(externalApproach.runway ?? externalApproach.name);
+  const variant = parseApproachNameVariant(externalApproach.name);
+
+  let candidate = '';
+  if (circlingSuffix) {
+    candidate = `${prefix}-${circlingSuffix}`;
+  } else if (runwayKey) {
+    candidate = `${prefix}${variant}${runwayKey}`;
+  }
+
+  if (!candidate) {
+    const slug = externalApproach.name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    candidate = slug ? `EXT-${slug}` : 'EXT-APPROACH';
+  }
+
+  let resolved = candidate;
+  let collisionIndex = 2;
+  while (usedProcedureIds.has(resolved)) {
+    resolved = `${candidate}-${collisionIndex}`;
+    collisionIndex += 1;
+  }
+  usedProcedureIds.add(resolved);
+  return resolved;
+}
+
+function parseMinimaRows(rows: MinimaRow[]): ExternalApproach[] {
+  return rows.map((row) => ({
+    name: row.approach_name,
+    runway: row.runway,
+    types: JSON.parse(row.types_json || '[]') as string[],
+    minimums: JSON.parse(row.minimums_json || '[]') as ApproachMinimums[]
+  }));
+}
+
+function buildApproachOptions(approachRows: ApproachRow[], minimaRows: MinimaRow[]): ApproachOption[] {
+  const cifpOptions = approachRows.map(rowToApproachOption);
+  if (minimaRows.length === 0) return cifpOptions;
+
+  const minimaApproaches = parseMinimaRows(minimaRows);
+  if (minimaApproaches.length === 0) return cifpOptions;
+
+  const matchedMinimaNames = new Set<string>();
+  for (const row of approachRows) {
+    const approach = deserializeApproach(row);
+    const matched = resolveExternalApproach(minimaApproaches, serializedApproachToRuntime(approach));
+    if (matched) {
+      matchedMinimaNames.add(matched.name);
+    }
+  }
+
+  const usedProcedureIds = new Set(cifpOptions.map((option) => option.procedureId));
+  const externalOnlyOptions = minimaApproaches
+    .filter((approach) => !matchedMinimaNames.has(approach.name))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((approach) => ({
+      procedureId: buildExternalProcedureId(approach, usedProcedureIds),
+      type: inferExternalApproachType(approach),
+      runway: normalizeExternalRunway(approach),
+      source: 'external' as const,
+      externalApproachName: approach.name
+    }));
+
+  return [...cifpOptions, ...externalOnlyOptions];
 }
 
 function getTypeMatchScore(currentApproachType: string, externalApproach: ExternalApproach): number {
@@ -201,7 +323,26 @@ function isDecisionAltitudeType(minimumsType: string): boolean {
 
 function resolveExternalApproach(airportApproaches: ExternalApproach[], approach: Approach): ExternalApproach | null {
   const { runwayKey, variant } = parseProcedureRunway(approach.runway);
-  if (!runwayKey) return null;
+  if (!runwayKey) {
+    const circlingSuffix = parseApproachCirclingSuffix(`${approach.procedureId} ${approach.runway}`);
+    const circlingCandidates = airportApproaches.filter((candidate) => (
+      normalizeRunwayKey(candidate.runway ?? candidate.name) === null
+    ));
+    if (circlingCandidates.length === 0) return null;
+
+    const scored = circlingCandidates
+      .map((candidate) => {
+        const candidateSuffix = parseApproachCirclingSuffix(candidate.name);
+        const suffixScore = circlingSuffix
+          ? (candidateSuffix === circlingSuffix ? 5 : 0)
+          : (candidateSuffix ? 0 : 1);
+        const typeScore = getTypeMatchScore(approach.type, candidate);
+        return { candidate, score: suffixScore + typeScore };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return scored[0]?.score ? scored[0].candidate : null;
+  }
 
   const runwayCandidates = airportApproaches.filter((candidate) => (
     normalizeRunwayKey(candidate.runway ?? candidate.name) === runwayKey
@@ -235,8 +376,26 @@ function serializedApproachToRuntime(approach: SerializedApproach): Approach {
   };
 }
 
-function deriveApproachPlate(airportId: string, approach: SerializedApproach | null): SceneData['approachPlate'] {
-  if (!approach) return null;
+function findSelectedExternalApproach(
+  airportApproaches: ExternalApproach[],
+  selectedApproachOption: ApproachOption | null,
+  currentApproach: SerializedApproach | null
+): ExternalApproach | null {
+  if (!selectedApproachOption || airportApproaches.length === 0) return null;
+  if (selectedApproachOption.source === 'external') {
+    if (!selectedApproachOption.externalApproachName) return null;
+    return airportApproaches.find((approach) => approach.name === selectedApproachOption.externalApproachName) || null;
+  }
+  if (!currentApproach) return null;
+  return resolveExternalApproach(airportApproaches, serializedApproachToRuntime(currentApproach));
+}
+
+function deriveApproachPlate(
+  airportId: string,
+  selectedApproachOption: ApproachOption | null,
+  currentApproach: SerializedApproach | null
+): SceneData['approachPlate'] {
+  if (!selectedApproachOption) return null;
 
   const approachDb = loadApproachDb();
   const airportApproaches = approachDb?.airports?.[airportId]?.approaches;
@@ -244,7 +403,7 @@ function deriveApproachPlate(airportId: string, approach: SerializedApproach | n
     return null;
   }
 
-  const externalApproach = resolveExternalApproach(airportApproaches, serializedApproachToRuntime(approach));
+  const externalApproach = findSelectedExternalApproach(airportApproaches, selectedApproachOption, currentApproach);
   const plateFile = (externalApproach?.plate_file || '').trim().toUpperCase();
   if (!plateFile) {
     return null;
@@ -256,17 +415,15 @@ function deriveApproachPlate(airportId: string, approach: SerializedApproach | n
   };
 }
 
-function deriveMinimumsSummary(minimaRows: MinimaRow[], approach: SerializedApproach | null): MinimumsSummary | null {
-  if (!approach || minimaRows.length === 0) return null;
+function deriveMinimumsSummary(
+  minimaRows: MinimaRow[],
+  selectedApproachOption: ApproachOption | null,
+  currentApproach: SerializedApproach | null
+): MinimumsSummary | null {
+  if (!selectedApproachOption || minimaRows.length === 0) return null;
 
-  const airportApproaches: ExternalApproach[] = minimaRows.map((row) => ({
-    name: row.approach_name,
-    runway: row.runway,
-    types: JSON.parse(row.types_json || '[]') as string[],
-    minimums: JSON.parse(row.minimums_json || '[]') as ApproachMinimums[]
-  }));
-
-  const externalApproach = resolveExternalApproach(airportApproaches, serializedApproachToRuntime(approach));
+  const airportApproaches = parseMinimaRows(minimaRows);
+  const externalApproach = findSelectedExternalApproach(airportApproaches, selectedApproachOption, currentApproach);
   if (!externalApproach) return null;
 
   let bestDa: { altitude: number; type: string } | undefined;
@@ -420,6 +577,7 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
       airport: null,
       approaches: [],
       selectedApproachId: '',
+      requestedProcedureNotInCifp: null,
       currentApproach: null,
       waypoints: [],
       runways: [],
@@ -441,12 +599,32 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
     `)
     .all(airport.id) as ApproachRow[];
 
-  const approaches = approachRows.map(rowToApproachOption);
-  const selectedApproachId = approachRows.some((row) => row.procedure_id === requestedProcedureId)
-    ? requestedProcedureId
-    : (approachRows[0]?.procedure_id || '');
+  const minimaRows = db
+    .prepare(`
+      SELECT airport_id, approach_name, runway, types_json, minimums_json, cycle
+      FROM minima
+      WHERE airport_id = ?
+    `)
+    .all(airport.id) as MinimaRow[];
 
-  const selectedApproachRow = approachRows.find((row) => row.procedure_id === selectedApproachId) || null;
+  const approaches = buildApproachOptions(approachRows, minimaRows);
+  const approachRowByProcedureId = new Map(approachRows.map((row) => [row.procedure_id, row]));
+  const approachOptionByProcedureId = new Map(approaches.map((option) => [option.procedureId, option]));
+  const normalizedRequestedProcedureId = requestedProcedureId.trim();
+  const requestedProcedureExists = normalizedRequestedProcedureId
+    ? approachOptionByProcedureId.has(normalizedRequestedProcedureId)
+    : false;
+  const selectedApproachId = requestedProcedureExists
+    ? normalizedRequestedProcedureId
+    : (approaches[0]?.procedureId || '');
+  const requestedProcedureNotInCifp = normalizedRequestedProcedureId && !requestedProcedureExists
+    ? normalizedRequestedProcedureId
+    : null;
+
+  const selectedApproachOption = approachOptionByProcedureId.get(selectedApproachId) || null;
+  const selectedApproachRow = selectedApproachOption?.source === 'cifp'
+    ? (approachRowByProcedureId.get(selectedApproachId) || null)
+    : null;
   const currentApproach = selectedApproachRow ? deserializeApproach(selectedApproachRow) : null;
 
   const runways = (db
@@ -503,24 +681,17 @@ export async function loadSceneDataAction(requestedAirportId: string, requestedP
     .filter((item) => item.runways.length > 0)
     .slice(0, 8);
 
-  const minimaRows = db
-    .prepare(`
-      SELECT airport_id, approach_name, runway, types_json, minimums_json, cycle
-      FROM minima
-      WHERE airport_id = ?
-    `)
-    .all(airport.id) as MinimaRow[];
-
   return {
     airport,
     approaches,
     selectedApproachId,
+    requestedProcedureNotInCifp,
     currentApproach,
     waypoints,
     runways: runwayMap.get(airport.id) || runways,
     nearbyAirports,
     airspace: loadAirspaceForAirport(db, airport),
-    minimumsSummary: deriveMinimumsSummary(minimaRows, currentApproach),
-    approachPlate: deriveApproachPlate(airport.id, currentApproach)
+    minimumsSummary: deriveMinimumsSummary(minimaRows, selectedApproachOption, currentApproach),
+    approachPlate: deriveApproachPlate(airport.id, selectedApproachOption, currentApproach)
   };
 }

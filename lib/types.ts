@@ -23,6 +23,8 @@ export interface ApproachOption {
   procedureId: string;
   type: string;
   runway: string;
+  source: 'cifp' | 'external';
+  externalApproachName?: string;
 }
 
 export interface AirportOption {
@@ -52,6 +54,7 @@ export interface SceneData {
   airport: Airport | null;
   approaches: ApproachOption[];
   selectedApproachId: string;
+  requestedProcedureNotInCifp: string | null;
   currentApproach: SerializedApproach | null;
   waypoints: Waypoint[];
   runways: RunwayThreshold[];

@@ -20,6 +20,8 @@ interface SelectOption {
   value: string;
   label: string;
   searchText: string;
+  source: 'cifp' | 'external';
+  externalApproachName?: string;
 }
 
 function LoadingFallback() {
@@ -53,6 +55,25 @@ function readSurfaceModeFromSearch(search: string): 'terrain' | 'plate' | null {
   const value = params.get('surface');
   if (value === 'terrain' || value === 'plate') return value;
   return null;
+}
+
+function formatApproachLabel(approach: SceneData['approaches'][number]): string {
+  if (approach.source === 'external' && approach.externalApproachName) {
+    return `${approach.externalApproachName} (no CIFP geometry)`;
+  }
+  const { type, runway, procedureId } = approach;
+  const cleanedRunway = (runway || '').toUpperCase().replace(/\s+/g, '');
+  if (/\d/.test(cleanedRunway)) {
+    return `${type} RWY ${runway} (${procedureId})`;
+  }
+  const circlingMatch = cleanedRunway.match(/-?([A-Z])$/);
+  if (circlingMatch) {
+    return `${type}-${circlingMatch[1]} (${procedureId})`;
+  }
+  if (runway) {
+    return `${type} ${runway} (${procedureId})`;
+  }
+  return `${type} (${procedureId})`;
 }
 
 const selectStyles: StylesConfig<SelectOption, false> = {
@@ -257,27 +278,44 @@ export function AppClient({
   const airport = sceneData.airport;
   const menuPortalTarget = typeof document === 'undefined' ? undefined : document.body;
   const currentApproach = useMemo(() => sceneApproachToRuntimeApproach(sceneData), [sceneData]);
+  const contextApproach = useMemo<Approach | null>(() => {
+    if (currentApproach) return currentApproach;
+    if (!airport) return null;
+    return {
+      airportId: airport.id,
+      procedureId: selectedApproach || 'EXTERNAL',
+      type: 'EXTERNAL',
+      runway: '',
+      transitions: new Map(),
+      finalLegs: [],
+      missedLegs: []
+    };
+  }, [currentApproach, airport, selectedApproach]);
   const waypoints = useMemo(() => sceneWaypointsToMap(sceneData), [sceneData]);
   const effectiveAirportOptions: SelectOption[] = useMemo(() => {
     if (airportOptions.length > 0) {
       return airportOptions.map((option) => ({
         value: option.id,
         label: option.label,
-        searchText: `${option.id} ${option.label}`.toLowerCase()
+        searchText: `${option.id} ${option.label}`.toLowerCase(),
+        source: 'cifp' as const
       }));
     }
     if (!airport) return [];
     return [{
       value: airport.id,
       label: `${airport.id} - ${airport.name}`,
-      searchText: `${airport.id} ${airport.name}`.toLowerCase()
+      searchText: `${airport.id} ${airport.name}`.toLowerCase(),
+      source: 'cifp' as const
     }];
   }, [airportOptions, airport]);
   const approachOptions: SelectOption[] = useMemo(
     () => sceneData.approaches.map((approach) => ({
       value: approach.procedureId,
-      label: `${approach.type} RWY ${approach.runway} (${approach.procedureId})`,
-      searchText: `${approach.procedureId} ${approach.type} ${approach.runway}`.toLowerCase()
+      label: formatApproachLabel(approach),
+      searchText: `${approach.procedureId} ${approach.type} ${approach.runway} ${approach.externalApproachName || ''}`.toLowerCase(),
+      source: approach.source,
+      externalApproachName: approach.externalApproachName
     })),
     [sceneData.approaches]
   );
@@ -463,9 +501,9 @@ export function AppClient({
                 />
               )}
 
-              {currentApproach && (
+              {contextApproach && (
                 <ApproachPath
-                  approach={currentApproach}
+                  approach={contextApproach}
                   waypoints={waypoints}
                   airport={airport}
                   runways={sceneData.runways}
@@ -546,6 +584,17 @@ export function AppClient({
 
           <div className="minimums-section">
             <h3>Minimums (Cat A)</h3>
+            {sceneData.requestedProcedureNotInCifp && (
+              <div className="minimums-empty">
+                Requested <strong>{sceneData.requestedProcedureNotInCifp}</strong> not found; showing <strong>{sceneData.selectedApproachId || 'none'}</strong>.
+              </div>
+            )}
+            {selectedApproachOption?.source === 'external' && (
+              <div className="minimums-row">
+                <span>Geometry</span>
+                <span className="minimums-value">Unavailable (CIFP)</span>
+              </div>
+            )}
             {sceneData.minimumsSummary ? (
               <>
                 <div className="minimums-source">{sceneData.minimumsSummary.sourceApproachName}</div>

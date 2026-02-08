@@ -44,6 +44,7 @@
 - RF and AF (DME arc) legs are rendered as arcs using published center fixes and turn direction.
 - CA legs without fix geometry are synthesized along published course, with length constrained by climb and capped relative to the next known-fix leg to avoid exaggerated runway-heading extensions before turns.
 - Missed-approach interpolation handles legs without direct fix geometry using neighbor-leg distance fallback.
+- Airport/runway context markers (selected airport + nearby airports/runways) should render even when the selected procedure has no CIFP geometry.
 
 ## URL State
 - Selection is encoded in path format:
@@ -63,6 +64,8 @@
 - FAA plate PDF fetching is done through same-origin proxy route `app/api/faa-plate/route.ts` (avoids browser CORS issues).
 - Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions.ts` and included in scene payload for client rendering.
 - Vercel Analytics is enabled globally from `app/layout.tsx` via `@vercel/analytics/next`.
+- Build step keeps approach geometry CIFP-only.
+- Approach selector merges CIFP procedures with minima/plate-only procedures that are missing CIFP geometry; selecting minima/plate-only procedures should still show plate + minimums and an explicit "geometry unavailable from CIFP" indication.
 
 ## Validation Expectations
 When changing parser/render/data logic, run:
@@ -74,6 +77,8 @@ When changing parser/render/data logic, run:
 - hold leg(s)
 - missed approach with CA/DF/HM
 - glidepath inside FAF
+- Verify at least one minima/plate-only procedure (for example `KPOU VOR-A`) appears in selector list, shows minimums + plate, and indicates geometry is unavailable from CIFP.
+- Verify legend remains concise for minima/plate-only procedures (geometry-unavailable status shown in minimums section, not as long legend copy).
 
 ## Files Frequently Touched
 - `src/cifp/parser.ts`

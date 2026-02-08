@@ -1052,9 +1052,9 @@ export function ApproachPath({ approach, waypoints, airport, runways, verticalSc
       )}
 
       {/* Hold patterns */}
-      {holdLegs.map((leg) => (
+      {holdLegs.map((leg, index) => (
         <HoldPattern
-          key={`hold-${leg.sequence}-${leg.waypointId}`}
+          key={`hold-${index}-${leg.sequence}-${leg.waypointId}-${leg.pathTerminator}-${leg.isMissedApproach ? 'm' : 'f'}`}
           leg={leg}
           altitudeOverride={holdAltitudes.get(leg) ?? leg.altitude ?? airport.elevation}
           waypoints={waypoints}

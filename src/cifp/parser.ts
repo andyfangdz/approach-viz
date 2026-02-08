@@ -195,7 +195,9 @@ function getProcedureType(procId: string): { type: string; runway: string } {
     'V': 'VOR',
     'N': 'NDB',
     'G': 'GPS',
-    'S': 'SDF',
+    // FAA CIFP "Sxx" procedure identifiers commonly represent conventional
+    // non-precision runway approaches (typically VOR-based), not SDF.
+    'S': 'VOR',
     'D': 'VOR/DME',
     'P': 'LDA',
     'B': 'LOC/BC',
