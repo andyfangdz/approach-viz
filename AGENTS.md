@@ -79,6 +79,7 @@
 
 ## URL State
 - Selection is encoded in path format:
+  - `/<AIRPORT>`
   - `/<AIRPORT>/<PROCEDURE_ID>`
 - Surface mode is encoded in query params:
   - `?surface=terrain`, `?surface=plate`, or `?surface=satellite`
@@ -92,7 +93,7 @@
 - Server-side data is backed by `data/approach-viz.sqlite`.
 - CI runs GitHub Actions workflow `.github/workflows/parser-tests.yml` on push/PR and executes `npm run test:parser`.
 - Server interactions are implemented as Next.js server actions (`app/actions.ts`).
-- Scene payloads are loaded server-side by route (`app/[[...slug]]/page.tsx`) and refreshed client-side via actions (`app/AppClient.tsx`).
+- Scene payloads are loaded server-side by explicit App Router pages (`app/page.tsx`, `app/[airportId]/page.tsx`, `app/[airportId]/[procedureId]/page.tsx`) via shared loader `app/route-page.tsx`, and refreshed client-side via actions (`app/AppClient.tsx`).
 - FAA plate PDF fetching is done through same-origin proxy route `app/api/faa-plate/route.ts` (avoids browser CORS issues).
 - Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions.ts` and included in scene payload for client rendering.
 - CIFP-to-minima/plate matching uses runway + type-family scoring; `VOR/DME` procedures now explicitly prefer `VOR/DME`/`TACAN` external approaches over same-runway RNAV rows.
@@ -128,7 +129,10 @@ When changing parser/render/data logic, run:
 - `app/actions.ts`
 - `app/layout.tsx`
 - `app/api/faa-plate/route.ts`
-- `app/[[...slug]]/page.tsx`
+- `app/page.tsx`
+- `app/[airportId]/page.tsx`
+- `app/[airportId]/[procedureId]/page.tsx`
+- `app/route-page.tsx`
 - `lib/db.ts`
 - `lib/types.ts`
 - `scripts/build-db.ts`
