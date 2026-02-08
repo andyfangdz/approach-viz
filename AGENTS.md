@@ -61,6 +61,7 @@
 - Scene payloads are loaded server-side by route (`app/[[...slug]]/page.tsx`) and refreshed client-side via actions (`app/AppClient.tsx`).
 - FAA plate PDF fetching is done through same-origin proxy route `app/api/faa-plate/route.ts` (avoids browser CORS issues).
 - Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions.ts` and included in scene payload for client rendering.
+- Vercel Analytics is enabled globally from `app/layout.tsx` via `@vercel/analytics/next`.
 
 ## Validation Expectations
 When changing parser/render/data logic, run:
@@ -81,6 +82,7 @@ When changing parser/render/data logic, run:
 - `src/components/ApproachPlateSurface.tsx`
 - `app/AppClient.tsx`
 - `app/actions.ts`
+- `app/layout.tsx`
 - `app/api/faa-plate/route.ts`
 - `app/[[...slug]]/page.tsx`
 - `lib/db.ts`
