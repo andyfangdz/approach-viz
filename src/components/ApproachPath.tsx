@@ -576,7 +576,8 @@ function PathTube({
       }
     };
 
-    for (const leg of legs) {
+    for (let legIndex = 0; legIndex < legs.length; legIndex += 1) {
+      const leg = legs[legIndex];
       const resolvedAltitude = resolvedAltitudes.get(leg) ?? leg.altitude;
       if (!resolvedAltitude || resolvedAltitude <= 0) continue;
 
@@ -599,7 +600,18 @@ function PathTube({
         const headingRad = (headingTrue * Math.PI) / 180;
         const climbDeltaFeet = Math.max(0, resolvedAltitude - lastPlottedAltitudeFeet);
         const distanceFromClimbNm = climbDeltaFeet > 0 ? climbDeltaFeet / 200 : 0;
-        const distanceNm = Math.max(1.2, Math.min(8, distanceFromClimbNm || 2));
+        const nextLeg = legIndex + 1 < legs.length ? legs[legIndex + 1] : undefined;
+        const nextWp = nextLeg ? resolveWaypoint(waypoints, nextLeg.waypointId) : undefined;
+        let distanceNm = Math.max(1.2, Math.min(8, distanceFromClimbNm || 2));
+        if (nextWp) {
+          const nextPos = latLonToLocal(nextWp.lat, nextWp.lon, refLat, refLon);
+          const distanceToNextFix = Math.hypot(nextPos.x - lastPlottedPoint.x, nextPos.z - lastPlottedPoint.z);
+          if (distanceToNextFix > 1e-4) {
+            // Keep CA stubs from extending far past the upcoming turn-to-fix leg.
+            const nextFixCapNm = Math.max(1.2, distanceToNextFix * 0.6);
+            distanceNm = Math.min(distanceNm, nextFixCapNm);
+          }
+        }
         currentPoint = new THREE.Vector3(
           lastPlottedPoint.x + Math.sin(headingRad) * distanceNm,
           y,

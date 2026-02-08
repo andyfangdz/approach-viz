@@ -42,6 +42,7 @@
 - FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
 - RF and AF (DME arc) legs are rendered as arcs using published center fixes and turn direction.
+- CA legs without fix geometry are synthesized along published course, with length constrained by climb and capped relative to the next known-fix leg to avoid exaggerated runway-heading extensions before turns.
 - Missed-approach interpolation handles legs without direct fix geometry using neighbor-leg distance fallback.
 
 ## URL State
