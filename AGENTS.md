@@ -47,6 +47,12 @@
 ## URL State
 - Selection is encoded in path format:
   - `/<AIRPORT>/<PROCEDURE_ID>`
+- Surface mode is encoded in query params:
+  - `?surface=terrain` or `?surface=plate`
+
+## Mobile UI Defaults
+- On small screens (`<=900px`), selectors are collapsed by default.
+- On small screens (`<=900px`), legend content is collapsed by default.
 
 ## Architecture Notes
 - Server-side data is backed by `data/approach-viz.sqlite`.

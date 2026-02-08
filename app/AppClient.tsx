@@ -14,6 +14,7 @@ import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
 
 const DEFAULT_VERTICAL_SCALE = 3;
 const MAX_PICKER_RESULTS = 80;
+const MOBILE_BREAKPOINT_PX = 900;
 
 interface SelectOption {
   value: string;
@@ -41,6 +42,17 @@ function filterOptions(options: SelectOption[], query: string): SelectOption[] {
   return options
     .filter((option) => option.searchText.includes(normalized))
     .slice(0, MAX_PICKER_RESULTS);
+}
+
+function isMobileViewport(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
+}
+
+function readSurfaceModeFromSearch(search: string): 'terrain' | 'plate' | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('surface');
+  if (value === 'terrain' || value === 'plate') return value;
+  return null;
 }
 
 const selectStyles: StylesConfig<SelectOption, false> = {
@@ -172,6 +184,18 @@ export function AppClient({
   const requestCounter = useRef(0);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (isMobileViewport()) {
+      setSelectorsCollapsed(true);
+      setLegendCollapsed(true);
+    }
+    const modeFromQuery = readSurfaceModeFromSearch(window.location.search);
+    if (modeFromQuery) {
+      setSurfaceMode(modeFromQuery);
+    }
+  }, []);
+
+  useEffect(() => {
     setSceneData(initialSceneData);
     setSelectedAirport(initialSceneData.airport?.id ?? initialAirportId);
     setSelectedApproach(initialSceneData.selectedApproachId || initialApproachId);
@@ -196,11 +220,14 @@ export function AppClient({
     if (typeof window === 'undefined' || !selectedAirport) return;
     const encodedApproach = selectedApproach ? `/${encodeURIComponent(selectedApproach)}` : '';
     const nextPath = `/${selectedAirport}${encodedApproach}`;
-    const nextUrl = `${nextPath}${window.location.hash}`;
-    if (`${window.location.pathname}${window.location.hash}` !== nextUrl) {
+    const params = new URLSearchParams(window.location.search);
+    params.set('surface', surfaceMode);
+    const nextSearch = params.toString();
+    const nextUrl = `${nextPath}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
       window.history.replaceState(null, '', nextUrl);
     }
-  }, [selectedAirport, selectedApproach]);
+  }, [selectedAirport, selectedApproach, surfaceMode]);
 
   const requestSceneData = (airportId: string, procedureId: string) => {
     const nextRequestId = requestCounter.current + 1;
