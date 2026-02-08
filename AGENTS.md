@@ -66,7 +66,7 @@
 - `CA->DF` turn direction is chosen from heading-to-fix bearing delta (preferred side), with opposite-side fallback only when the preferred geometry is infeasible.
 - When available, explicit turn direction published on the procedure leg descriptor (`L`/`R`, e.g. on `DF` legs) overrides geometric inference for `CA->DF` turn joins.
 - Curved `CA->DF` turn joins are applied only when `DF` leg turn direction is explicitly published; otherwise missed geometry remains straight/linear to avoid synthetic loops.
-- Missed `VI` (heading-to-intercept) legs without a fix are rendered as short heading stubs and carry explicit turn direction into the next fix leg join, preventing `CA->VI->CF/TF` snap-back turns.
+- Missed `VI` (heading-to-intercept) legs without a fix are rendered as short heading stubs with radius-constrained heading-transition arcs (about `0.55..0.9 NM` turn radius) before joining downstream fix legs; downstream fix joins use geometric turn-side resolution to avoid forced loops.
 - Missed `CA->DF` turn initiation points display altitude callouts (using resolved CA altitude) so turn altitude restrictions are visible in-scene.
 - Missed `CA->DF` turn initiation points display altitude callouts only for meaningful published CA climb constraints (not derived/interpolated profile altitudes).
 - Minimums selection prefers Cat A values when available; if Cat A is unavailable for a minima line, the app falls back to the lowest available category (B/C/D), displays that category in the minimums panel, and uses it for missed-approach start altitude.

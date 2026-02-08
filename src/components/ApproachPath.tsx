@@ -17,7 +17,8 @@ const EXPLICIT_TURN_DIRECTION_SCORE_BIAS = 0.35;
 const INFERRED_TURN_DIRECTION_SCORE_BIAS = 0.1;
 const MIN_HEADING_TRANSITION_DELTA_DEG = 6;
 const MAX_HEADING_TRANSITION_DELTA_DEG = 210;
-const MIN_VI_TURN_RADIUS_NM = 0.35;
+const MIN_VI_TURN_RADIUS_NM = 0.55;
+const MAX_VI_TURN_RADIUS_NM = 0.9;
 
 // Colors
 const COLORS = {
@@ -1120,20 +1121,17 @@ function PathTube({
         const headingRad = (headingTrue * Math.PI) / 180;
         const nextLeg = legIndex + 1 < legs.length ? legs[legIndex + 1] : undefined;
         const nextWp = nextLeg ? resolveWaypoint(waypoints, nextLeg.waypointId) : undefined;
-        let distanceNm = 0.35;
+        let distanceNm = 0.45;
         if (nextWp) {
           const nextPos = latLonToLocal(nextWp.lat, nextWp.lon, refLat, refLon);
           const distanceToNextFix = Math.hypot(nextPos.x - lastPlottedPoint.x, nextPos.z - lastPlottedPoint.z);
           if (distanceToNextFix > 1e-4) {
-            distanceNm = Math.max(0.15, Math.min(0.8, distanceToNextFix * 0.12));
+            distanceNm = Math.max(0.25, Math.min(1.2, distanceToNextFix * 0.18));
           }
         }
 
         if (lastLegCourseHeadingTrue !== null) {
-          const viTurnRadius = Math.max(
-            MIN_VI_TURN_RADIUS_NM,
-            Math.min(MIN_TURN_RADIUS_NM, distanceNm * 0.8)
-          );
+          const viTurnRadius = Math.max(MIN_VI_TURN_RADIUS_NM, Math.min(MAX_VI_TURN_RADIUS_NM, distanceNm * 0.9));
           const arcPoints = buildHeadingTransitionArcPoints(
             lastPlottedPoint,
             lastLegCourseHeadingTrue,
