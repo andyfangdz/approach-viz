@@ -303,17 +303,41 @@ function buildApproachOptions(approachRows: ApproachRow[], minimaRows: MinimaRow
 function getTypeMatchScore(currentApproachType: string, externalApproach: ExternalApproach): number {
   const current = currentApproachType.toUpperCase();
   const external = `${externalApproach.name} ${(externalApproach.types || []).join(' ')}`.toUpperCase();
+  const hasExternalToken = (...tokens: string[]) => tokens.some((token) => external.includes(token));
 
   if (current.includes('RNAV/RNP') || current.includes('RNP')) {
-    if (external.includes('RNP')) return 4;
-    if (external.includes('RNAV')) return 2;
+    if (hasExternalToken('RNAV/RNP', 'RNP')) return 5;
+    if (hasExternalToken('RNAV', 'GPS')) return 3;
     return 0;
   }
-  if (current === 'RNAV') return external.includes('RNAV') ? 3 : 0;
-  if (current === 'ILS') return external.includes('ILS') ? 3 : 0;
-  if (current === 'LOC') return external.includes('LOC') ? 3 : 0;
-  if (current === 'VOR') return external.includes('VOR') ? 3 : 0;
-  return 1;
+  if (current === 'RNAV' || current === 'GPS') return hasExternalToken('RNAV', 'GPS') ? 4 : 0;
+  if (current === 'ILS') return hasExternalToken('ILS') ? 4 : 0;
+  if (current === 'LOC/BC') {
+    if (hasExternalToken('LOC/BC', 'LOCALIZER BACK COURSE', 'BACK COURSE')) return 5;
+    if (hasExternalToken('LOC', 'LOCALIZER')) return 2;
+    return 0;
+  }
+  if (current === 'LOC') return hasExternalToken('LOC', 'LOCALIZER') ? 4 : 0;
+  if (current === 'LDA/DME') {
+    if (hasExternalToken('LDA') && hasExternalToken('DME')) return 5;
+    if (hasExternalToken('LDA')) return 4;
+    return 0;
+  }
+  if (current === 'LDA') return hasExternalToken('LDA') ? 4 : 0;
+  if (current === 'VOR/DME') {
+    if (hasExternalToken('VOR/DME', 'VORDME', 'TACAN')) return 5;
+    if (hasExternalToken('VOR')) return 3;
+    return 0;
+  }
+  if (current === 'VOR') return hasExternalToken('VOR') ? 4 : 0;
+  if (current === 'NDB/DME') {
+    if (hasExternalToken('NDB') && hasExternalToken('DME')) return 5;
+    if (hasExternalToken('NDB')) return 3;
+    return 0;
+  }
+  if (current === 'NDB') return hasExternalToken('NDB') ? 4 : 0;
+  if (current === 'SDF') return hasExternalToken('SDF') ? 4 : 0;
+  return hasExternalToken(current) ? 2 : 0;
 }
 
 function parseMinimumAltitude(value: MinimumsValue | 'NA' | null): number | null {

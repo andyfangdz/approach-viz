@@ -91,6 +91,7 @@
 - Scene payloads are loaded server-side by route (`app/[[...slug]]/page.tsx`) and refreshed client-side via actions (`app/AppClient.tsx`).
 - FAA plate PDF fetching is done through same-origin proxy route `app/api/faa-plate/route.ts` (avoids browser CORS issues).
 - Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions.ts` and included in scene payload for client rendering.
+- CIFP-to-minima/plate matching uses runway + type-family scoring; `VOR/DME` procedures now explicitly prefer `VOR/DME`/`TACAN` external approaches over same-runway RNAV rows.
 - Vercel Analytics is enabled globally from `app/layout.tsx` via `@vercel/analytics/next`.
 - Build step keeps approach geometry CIFP-only.
 - Approach selector merges CIFP procedures with minima/plate-only procedures that are missing CIFP geometry; selecting minima/plate-only procedures should still show plate + minimums and an explicit "geometry unavailable from CIFP" indication.
