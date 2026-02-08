@@ -3,7 +3,7 @@
  * Renders waypoints, approach segments, and vertical reference lines
  */
 
-import { useMemo } from 'react';
+import { memo, useEffect, useMemo } from 'react';
 import { Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Approach, Waypoint, Airport, ApproachLeg, RunwayThreshold } from '../cifp/parser';
@@ -426,25 +426,47 @@ function WaypointMarker({
   );
 }
 
-// Vertical reference line from point to ground
-function VerticalLine({ 
-  x, y, z, color 
-}: { 
-  x: number; y: number; z: number; color: string;
-}) {
-  const points = useMemo<[number, number, number][]>(() => [
-    [x, 0, z],
-    [x, y, z]
-  ], [x, y, z]);
+interface VerticalLineData {
+  x: number;
+  y: number;
+  z: number;
+}
 
+function VerticalLines({
+  lines,
+  color
+}: {
+  lines: VerticalLineData[];
+  color: string;
+}) {
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(lines.length * 2 * 3);
+    for (let i = 0; i < lines.length; i += 1) {
+      const base = i * 6;
+      const { x, y, z } = lines[i];
+      positions[base] = x;
+      positions[base + 1] = 0;
+      positions[base + 2] = z;
+      positions[base + 3] = x;
+      positions[base + 4] = y;
+      positions[base + 5] = z;
+    }
+    const nextGeometry = new THREE.BufferGeometry();
+    nextGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return nextGeometry;
+  }, [lines]);
+
+  useEffect(() => (
+    () => {
+      geometry.dispose();
+    }
+  ), [geometry]);
+
+  if (lines.length === 0) return null;
   return (
-    <Line
-      points={points}
-      color={color}
-      transparent
-      opacity={0.2}
-      lineWidth={1}
-    />
+    <lineSegments geometry={geometry}>
+      <lineBasicMaterial color={color} transparent opacity={0.2} />
+    </lineSegments>
   );
 }
 
@@ -561,7 +583,7 @@ function PathTube({
 }) {
   const { points, verticalLines } = useMemo(() => {
     const pts: THREE.Vector3[] = [];
-    const vLines: { x: number; y: number; z: number }[] = [];
+    const vLines: VerticalLineData[] = [];
     let lastPlottedPoint: THREE.Vector3 | null = null;
     let lastPlottedAltitudeFeet = initialAltitudeFeet;
 
@@ -669,16 +691,7 @@ function PathTube({
         />
       </mesh>
 
-      {/* Vertical lines */}
-      {verticalLines.map((line, i) => (
-        <VerticalLine
-          key={`vline-${i}`}
-          x={line.x}
-          y={line.y}
-          z={line.z}
-          color={color}
-        />
-      ))}
+      <VerticalLines lines={verticalLines} color={color} />
     </group>
   );
 }
@@ -886,7 +899,14 @@ function collectUniqueWaypoints(
   return Array.from(seen.values());
 }
 
-export function ApproachPath({ approach, waypoints, airport, runways, verticalScale, nearbyAirports }: ApproachPathProps) {
+export const ApproachPath = memo(function ApproachPath({
+  approach,
+  waypoints,
+  airport,
+  runways,
+  verticalScale,
+  nearbyAirports
+}: ApproachPathProps) {
   const refLat = airport.lat;
   const refLon = airport.lon;
 
@@ -1067,4 +1087,4 @@ export function ApproachPath({ approach, waypoints, airport, runways, verticalSc
       ))}
     </group>
   );
-}
+});

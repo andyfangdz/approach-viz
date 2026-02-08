@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import * as THREE from 'three';
 
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
@@ -44,8 +44,8 @@ function latToTileYFloat(lat: number, zoom: number): number {
   return (1 - mercator / Math.PI) * 0.5 * n;
 }
 
-function altitudeFeetToY(altFeet: number, verticalScale: number): number {
-  return altFeet * ALTITUDE_SCALE * verticalScale;
+function altitudeFeetToBaseY(altFeet: number): number {
+  return altFeet * ALTITUDE_SCALE;
 }
 
 function decodeTerrariumElevationMeters(r: number, g: number, b: number): number {
@@ -73,8 +73,7 @@ function buildTerrainGeometry(
   minLon: number,
   maxLon: number,
   minTileX: number,
-  minTileY: number,
-  verticalScale: number
+  minTileY: number
 ): THREE.BufferGeometry {
   const pointsPerAxis = GRID_SEGMENTS + 1;
   const vertexCount = pointsPerAxis * pointsPerAxis;
@@ -106,7 +105,7 @@ function buildTerrainGeometry(
 
       const x = (lon - refLon) * 60 * cosRef;
       const z = -(lat - refLat) * 60;
-      const y = altitudeFeetToY(elevationFeet, verticalScale);
+      const y = altitudeFeetToBaseY(elevationFeet);
 
       const vertexIndex = row * pointsPerAxis + col;
       positions[vertexIndex * 3] = x;
@@ -134,7 +133,12 @@ function buildTerrainGeometry(
   return geometry;
 }
 
-export function TerrainWireframe({ refLat, refLon, radiusNm = TERRAIN_RADIUS_NM, verticalScale }: TerrainWireframeProps) {
+export const TerrainWireframe = memo(function TerrainWireframe({
+  refLat,
+  refLon,
+  radiusNm = TERRAIN_RADIUS_NM,
+  verticalScale
+}: TerrainWireframeProps) {
   const [terrainGeometry, setTerrainGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [wireGeometry, setWireGeometry] = useState<THREE.WireframeGeometry | null>(null);
 
@@ -211,8 +215,7 @@ export function TerrainWireframe({ refLat, refLon, radiusNm = TERRAIN_RADIUS_NM,
         minLon,
         maxLon,
         minTileX,
-        minTileY,
-        verticalScale
+        minTileY
       );
       const wire = new THREE.WireframeGeometry(geometry);
 
@@ -237,7 +240,7 @@ export function TerrainWireframe({ refLat, refLon, radiusNm = TERRAIN_RADIUS_NM,
     return () => {
       cancelled = true;
     };
-  }, [refLat, refLon, radiusNm, verticalScale]);
+  }, [refLat, refLon, radiusNm]);
 
   useEffect(() => (
     () => {
@@ -257,7 +260,7 @@ export function TerrainWireframe({ refLat, refLon, radiusNm = TERRAIN_RADIUS_NM,
 
   return (
     <group>
-      <mesh geometry={terrainGeometry} position={[0, -0.02, 0]}>
+      <mesh geometry={terrainGeometry} position={[0, -0.02, 0]} scale={[1, verticalScale, 1]}>
         <meshStandardMaterial
           color="#0c1a2f"
           transparent
@@ -271,9 +274,9 @@ export function TerrainWireframe({ refLat, refLon, radiusNm = TERRAIN_RADIUS_NM,
           polygonOffsetUnits={1}
         />
       </mesh>
-      <lineSegments geometry={wireGeometry} position={[0, -0.005, 0]}>
+      <lineSegments geometry={wireGeometry} position={[0, -0.005, 0]} scale={[1, verticalScale, 1]}>
         <lineBasicMaterial color="#4ea0db" transparent opacity={0.58} />
       </lineSegments>
     </group>
   );
-}
+});

@@ -1,5 +1,5 @@
 import { Html } from '@react-three/drei';
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import type { ApproachPlate } from '@/lib/types';
 
@@ -151,8 +151,8 @@ function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number)
   return { x, z };
 }
 
-function altToY(altFeet: number, verticalScale: number): number {
-  return altFeet * ALTITUDE_SCALE * verticalScale;
+function altToBaseY(altFeet: number): number {
+  return altFeet * ALTITUDE_SCALE;
 }
 
 function buildPlateGeometry(
@@ -256,7 +256,7 @@ async function renderPlateCanvas(
   }
 }
 
-export function ApproachPlateSurface({
+export const ApproachPlateSurface = memo(function ApproachPlateSurface({
   plate,
   refLat,
   refLon,
@@ -315,7 +315,7 @@ export function ApproachPlateSurface({
         const texture = new THREE.CanvasTexture(renderedCanvas);
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.needsUpdate = true;
-        const surfaceY = altToY(airportElevationFeet, verticalScale) + SURFACE_OFFSET_NM;
+        const surfaceY = altToBaseY(airportElevationFeet) + SURFACE_OFFSET_NM;
         const geometry = buildPlateGeometry(corners, refLat, refLon, surfaceY);
 
         if (cancelled) {
@@ -339,7 +339,7 @@ export function ApproachPlateSurface({
     return () => {
       cancelled = true;
     };
-  }, [plate.cycle, plate.plateFile, refLat, refLon, airportElevationFeet, verticalScale]);
+  }, [plate.cycle, plate.plateFile, refLat, refLon, airportElevationFeet]);
 
   useEffect(() => (
     () => {
@@ -374,7 +374,7 @@ export function ApproachPlateSurface({
   }
 
   return (
-    <mesh geometry={plateGeometry}>
+    <mesh geometry={plateGeometry} scale={[1, verticalScale, 1]}>
       <meshBasicMaterial
         map={plateTexture}
         transparent
@@ -385,4 +385,4 @@ export function ApproachPlateSurface({
       />
     </mesh>
   );
-}
+});

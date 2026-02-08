@@ -37,6 +37,8 @@
   - approach paths/waypoints/holds
   - terrain wireframe
   - Class B/C/D airspace volumes
+- Terrain wireframe elevation samples are fetched/decoded per-airport reference and reused across vertical-scale changes; vertical exaggeration updates are applied via Y-scale transform (no tile refetch/rebuild on slider changes).
+- FAA plate surface texture/geometry is fetched and rasterized per selected plate/airport reference; vertical-scale changes apply via mesh Y-scale transform (no plate re-fetch/re-render on slider changes).
 - Surface mode supports:
   - `Terrain` (existing Terrarium-based wireframe terrain grid)
   - `FAA Plate` (geo-located FAA approach plate mesh replacing terrain at selected approach)
@@ -54,6 +56,8 @@
 - CA legs without fix geometry are synthesized along published course, with length constrained by climb and capped relative to the next known-fix leg to avoid exaggerated runway-heading extensions before turns.
 - Missed-approach interpolation handles legs without direct fix geometry using neighbor-leg distance fallback.
 - Airport/runway context markers (selected airport + nearby airports/runways) should render even when the selected procedure has no CIFP geometry.
+- Vertical reference lines for path points are batched into a single `lineSegments` geometry per path segment (final/transition/missed) to reduce draw-call count.
+- Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized; the canvas uses capped DPR (`1..1.5`) and high-performance WebGL context hints.
 
 ## URL State
 - Selection is encoded in path format:

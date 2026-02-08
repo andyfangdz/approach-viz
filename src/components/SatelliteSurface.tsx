@@ -1,5 +1,5 @@
 import { Html } from '@react-three/drei';
-import { useCallback, useMemo, useRef } from 'react';
+import { memo, useCallback, useMemo, useRef } from 'react';
 import {
   GLTFExtensionsPlugin,
   GoogleCloudAuthPlugin,
@@ -70,7 +70,7 @@ function computeEcefToLocalNmFrame(
   return enuToLocal.multiply(ecefToEnu);
 }
 
-export function SatelliteSurface({
+export const SatelliteSurface = memo(function SatelliteSurface({
   refLat,
   refLon,
   airportElevationFeet,
@@ -154,4 +154,4 @@ export function SatelliteSurface({
       </group>
     </group>
   );
-}
+});

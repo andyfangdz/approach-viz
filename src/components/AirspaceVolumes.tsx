@@ -3,7 +3,7 @@
  * Renders translucent Class B/C/D airspace boundaries
  */
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import * as THREE from 'three';
 
 const ALTITUDE_SCALE = 1 / 6076.12;
@@ -140,7 +140,12 @@ function AirspaceVolume({
   );
 }
 
-export function AirspaceVolumes({ features, refLat, refLon, verticalScale }: AirspaceVolumesProps) {
+export const AirspaceVolumes = memo(function AirspaceVolumes({
+  features,
+  refLat,
+  refLon,
+  verticalScale
+}: AirspaceVolumesProps) {
   return (
     <group>
       {features.map((feature, i) => (
@@ -154,4 +159,4 @@ export function AirspaceVolumes({ features, refLat, refLon, verticalScale }: Air
       ))}
     </group>
   );
-}
+});

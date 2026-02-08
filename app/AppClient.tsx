@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Environment, Html, OrbitControls } from '@react-three/drei';
 import Select, { type StylesConfig } from 'react-select';
@@ -18,6 +18,10 @@ const DEFAULT_VERTICAL_SCALE = 3;
 const MAX_PICKER_RESULTS = 80;
 const MOBILE_BREAKPOINT_PX = 900;
 const SATELLITE_MAX_RETRIES = 3;
+const CAMERA_POSITION: [number, number, number] = [15, 8, 15];
+const FOG_ARGS: [string, number, number] = ['#0a0a14', 50, 200];
+const DIRECTIONAL_LIGHT_POSITION: [number, number, number] = [10, 20, 10];
+const ORBIT_TARGET: [number, number, number] = [0, 2, 0];
 
 interface SelectOption {
   value: string;
@@ -366,7 +370,7 @@ export function AppClient({
     setSatelliteRetryNonce(0);
     setSurfaceMode(mode);
   };
-  const handleSatelliteRuntimeError = (message: string, error?: Error) => {
+  const handleSatelliteRuntimeError = useCallback((message: string, error?: Error) => {
     console.error('Satellite surface rendering failed', error);
     setSatelliteRetryCount((previousCount) => {
       if (previousCount >= SATELLITE_MAX_RETRIES) {
@@ -382,7 +386,7 @@ export function AppClient({
       }
       return nextCount;
     });
-  };
+  }, []);
 
   return (
     <div className="app">
@@ -526,15 +530,21 @@ export function AppClient({
           <div className="loading">No airport data available</div>
         ) : (
           <Canvas
-            camera={{ position: [15, 8, 15], fov: 60, near: 0.1, far: 500 }}
-            gl={{ antialias: true }}
+            camera={{ position: CAMERA_POSITION, fov: 60, near: 0.1, far: 500 }}
+            dpr={[1, 1.5]}
+            gl={{
+              antialias: true,
+              alpha: false,
+              stencil: false,
+              powerPreference: 'high-performance'
+            }}
           >
             <color attach="background" args={['#0a0a14']} />
-            <fog attach="fog" args={['#0a0a14', 50, 200]} />
+            <fog attach="fog" args={FOG_ARGS} />
 
             <Suspense fallback={<LoadingFallback />}>
               <ambientLight intensity={0.4} />
-              <directionalLight position={[10, 20, 10]} intensity={0.8} />
+              <directionalLight position={DIRECTIONAL_LIGHT_POSITION} intensity={0.8} />
               <Environment preset="night" />
 
               {showTerrainSurface && (
@@ -594,7 +604,6 @@ export function AppClient({
 
               {sceneData.airspace.length > 0 && (
                 <AirspaceVolumes
-                  key={`airspace-${sceneData.airspace.length}-${sceneData.airspace.map((item) => item.name).join(',')}`}
                   features={sceneData.airspace}
                   refLat={airport.lat}
                   refLon={airport.lon}
@@ -605,7 +614,7 @@ export function AppClient({
               <OrbitControls
                 enableDamping
                 dampingFactor={0.05}
-                target={[0, 2, 0]}
+                target={ORBIT_TARGET}
               />
             </Suspense>
           </Canvas>
