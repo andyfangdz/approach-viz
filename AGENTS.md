@@ -53,6 +53,7 @@
 ## Mobile UI Defaults
 - On small screens (`<=900px`), selectors are collapsed by default.
 - On small screens (`<=900px`), legend content is collapsed by default.
+- Touch/drag interactions in the 3D scene should suppress iOS text selection/callout overlays (`user-select: none`, `touch-action: none` on scene surface), while selector text inputs remain editable.
 
 ## Architecture Notes
 - Server-side data is backed by `data/approach-viz.sqlite`.

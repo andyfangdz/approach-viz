@@ -22,6 +22,9 @@ body {
   color: var(--text-primary);
   min-height: 100vh;
   overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .app {
@@ -178,6 +181,31 @@ header {
 .main-content {
   position: relative;
   overflow: hidden;
+}
+
+header,
+.main-content,
+.info-panel,
+.help-panel {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.main-content canvas {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
+input,
+textarea,
+.library-select input {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .loading {
