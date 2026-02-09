@@ -110,7 +110,7 @@ export function SceneCanvas({
 
         {showTiledSurface && (
           <SceneErrorBoundary
-            resetKey={`${airport.id}:${selectedApproach}:${surfaceMode}:${satelliteRetryNonce}`}
+            resetKey={`${airport.id}:${satelliteRetryNonce}`}
             onError={(error) => onSatelliteRuntimeError('3D tiles renderer crashed.', error)}
             fallback={
               <Html center>
@@ -123,7 +123,7 @@ export function SceneCanvas({
           >
             {!surfaceErrorMessage && (
               <SatelliteSurface
-                key={`${airport.id}:${selectedApproach}:${satelliteRetryNonce}`}
+                key={`${airport.id}:${satelliteRetryNonce}`}
                 refLat={airport.lat}
                 refLon={airport.lon}
                 airportElevationFeet={airport.elevation}

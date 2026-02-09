@@ -65,6 +65,7 @@
 - Satellite mode applies EGM96 geoid separation per airport when converting MSL airport elevation to WGS84 ellipsoid height for the tile anchor transform.
 - In satellite mode, airport/runway context markers apply WGS84 curvature-drop compensation from the selected-airport tangent origin so nearby runways stay grounded.
 - Satellite mode uses a tighter tile error target (`~12`) to keep nearby airport surfaces readable.
+- Satellite/3D plate tile renderers are keyed by airport (not selected approach) so switching procedures does not remount the tileset or churn tile sessions.
 - FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
 - 3D plate mode does not fall back to Terrarium wireframe terrain; it keeps the Google 3D Tiles surface active and omits only the plate texture overlay when no plate metadata is available.
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
