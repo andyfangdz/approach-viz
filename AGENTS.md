@@ -65,6 +65,13 @@ Rendering guidance is split into topic docs under `docs/`:
 - On small screens (`<=900px`), legend content is collapsed by default.
 - Touch/drag interactions in the 3D scene should suppress iOS text selection/callout overlays (`user-select: none`, `touch-action: none` on scene surface), while selector text inputs remain editable.
 
+## App Icons And PWA
+
+- Browser/app metadata includes a web manifest at `/manifest.webmanifest` via `app/manifest.ts`.
+- App icon assets live at `app/favicon.ico`, `app/icon.png`, and `app/apple-icon.png` (Next.js metadata file conventions).
+- PWA install thumbnails are served from `public/icon-192.png` and `public/icon-512.png`.
+- Theme color for browser chrome/PWA install surfaces is configured in `app/layout.tsx` viewport metadata.
+
 ## Architecture Notes
 
 - Server-side data is backed by `data/approach-viz.sqlite`, with scene payloads assembled through Next.js server actions.

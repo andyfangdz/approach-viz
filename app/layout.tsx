@@ -4,14 +4,16 @@ import '@/src/App.css';
 
 export const metadata: Metadata = {
   title: 'ApproachViz',
-  description: '3D visualization for instrument approach procedures'
+  description: '3D visualization for instrument approach procedures',
+  manifest: '/manifest.webmanifest'
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
-  userScalable: false
+  userScalable: false,
+  themeColor: '#14305a'
 };
 
 export default function RootLayout({
