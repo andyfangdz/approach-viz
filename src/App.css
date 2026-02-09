@@ -50,6 +50,12 @@ header {
   gap: 12px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .logo {
   display: flex;
   align-items: center;

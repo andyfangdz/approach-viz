@@ -22,6 +22,7 @@ export function HeaderControls({
   onVerticalScaleChange,
   surfaceMode,
   onSurfaceModeSelected,
+  onRecenterScene,
   menuPortalTarget
 }: HeaderControlsProps) {
   return (
@@ -33,9 +34,14 @@ export function HeaderControls({
             Approach<span>Viz</span>
           </div>
         </div>
-        <button type="button" className="panel-toggle" onClick={onToggleSelectors}>
-          {selectorsCollapsed ? 'Show Selectors' : 'Hide Selectors'}
-        </button>
+        <div className="header-actions">
+          <button type="button" className="panel-toggle" onClick={onRecenterScene}>
+            Recenter View
+          </button>
+          <button type="button" className="panel-toggle" onClick={onToggleSelectors}>
+            {selectorsCollapsed ? 'Show Selectors' : 'Hide Selectors'}
+          </button>
+        </div>
       </div>
 
       {!selectorsCollapsed && (

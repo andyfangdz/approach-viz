@@ -56,6 +56,7 @@ export function AppClient({
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
   const [satelliteRetryCount, setSatelliteRetryCount] = useState(0);
   const [satelliteRetryNonce, setSatelliteRetryNonce] = useState(0);
+  const [recenterNonce, setRecenterNonce] = useState(0);
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
@@ -281,6 +282,7 @@ export function AppClient({
         onVerticalScaleChange={setVerticalScale}
         surfaceMode={surfaceMode}
         onSurfaceModeSelected={handleSurfaceModeSelected}
+        onRecenterScene={() => setRecenterNonce((current) => current + 1)}
         menuPortalTarget={menuPortalTarget}
       />
 
@@ -301,6 +303,7 @@ export function AppClient({
             satelliteRetryNonce={satelliteRetryNonce}
             satelliteRetryCount={satelliteRetryCount}
             surfaceErrorMessage={surfaceErrorMessage}
+            recenterNonce={recenterNonce}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             onSatelliteRuntimeError={handleSatelliteRuntimeError}
           />

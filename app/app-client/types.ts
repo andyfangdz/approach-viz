@@ -25,6 +25,7 @@ export interface HeaderControlsProps {
   onVerticalScaleChange: (verticalScale: number) => void;
   surfaceMode: SurfaceMode;
   onSurfaceModeSelected: (mode: SurfaceMode) => void;
+  onRecenterScene: () => void;
   menuPortalTarget?: HTMLElement;
 }
 
@@ -39,6 +40,7 @@ export interface SceneCanvasProps {
   satelliteRetryNonce: number;
   satelliteRetryCount: number;
   surfaceErrorMessage: string;
+  recenterNonce: number;
   missedApproachStartAltitudeFeet?: number;
   onSatelliteRuntimeError: (message: string, error?: Error) => void;
 }

@@ -53,6 +53,7 @@
   - `Terrain` (existing Terrarium-based wireframe terrain grid)
   - `FAA Plate` (geo-located FAA approach plate mesh replacing terrain at selected approach)
   - `Satellite` (Google Earth Photorealistic 3D Tiles rendered via `3d-tiles-renderer`, transformed into the app's local frame using `@takram/three-geospatial`)
+- Header includes a `Recenter View` control that resets camera position and orbit target to airport-centered defaults.
 - FAA plate mesh is rendered at the selected airport elevation (scaled by vertical scale), not fixed at sea-level.
 - Satellite mode loads Google tiles directly on the client (no server-side imagery proxy).
 - Satellite mode requires `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and does not provide a runtime key-entry fallback UI.

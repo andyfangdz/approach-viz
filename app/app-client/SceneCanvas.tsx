@@ -1,6 +1,7 @@
-import { Suspense } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Suspense, useEffect, useRef, type RefObject } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { Environment, Html, OrbitControls } from '@react-three/drei';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { AirspaceVolumes } from '@/src/components/AirspaceVolumes';
 import { ApproachPath } from '@/src/components/ApproachPath';
 import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
@@ -24,6 +25,29 @@ function LoadingFallback() {
   );
 }
 
+function RecenterCamera({
+  recenterNonce,
+  controlsRef
+}: {
+  recenterNonce: number;
+  controlsRef: RefObject<OrbitControlsImpl | null>;
+}) {
+  const { camera } = useThree();
+
+  useEffect(() => {
+    if (recenterNonce <= 0) return;
+    camera.position.set(...CAMERA_POSITION);
+    camera.lookAt(...ORBIT_TARGET);
+    const controls = controlsRef.current;
+    if (controls) {
+      controls.target.set(...ORBIT_TARGET);
+      controls.update();
+    }
+  }, [camera, controlsRef, recenterNonce]);
+
+  return null;
+}
+
 export function SceneCanvas({
   airport,
   sceneData,
@@ -35,9 +59,11 @@ export function SceneCanvas({
   satelliteRetryNonce,
   satelliteRetryCount,
   surfaceErrorMessage,
+  recenterNonce,
   missedApproachStartAltitudeFeet,
   onSatelliteRuntimeError
 }: SceneCanvasProps) {
+  const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const showApproachPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
   const showSatelliteSurface = surfaceMode === 'satellite';
@@ -59,6 +85,7 @@ export function SceneCanvas({
       <fog attach="fog" args={FOG_ARGS} />
 
       <Suspense fallback={<LoadingFallback />}>
+        <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />
         <ambientLight intensity={0.4} />
         <directionalLight position={DIRECTIONAL_LIGHT_POSITION} intensity={0.8} />
         <Environment preset="night" />
@@ -130,7 +157,7 @@ export function SceneCanvas({
           />
         )}
 
-        <OrbitControls enableDamping dampingFactor={0.05} target={ORBIT_TARGET} />
+        <OrbitControls ref={controlsRef} enableDamping dampingFactor={0.05} target={ORBIT_TARGET} />
       </Suspense>
     </Canvas>
   );
