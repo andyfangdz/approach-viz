@@ -52,6 +52,7 @@
 - Terrain wireframe elevation samples are fetched/decoded per-airport reference and reused across vertical-scale changes; vertical exaggeration updates are applied via Y-scale transform (no tile refetch/rebuild on slider changes).
 - FAA plate surface texture/geometry is fetched and rasterized per selected plate/airport reference; vertical-scale changes apply via mesh Y-scale transform (no plate re-fetch/re-render on slider changes).
 - 3D plate texture projection data is fetched/rasterized per selected plate/airport reference; vertical-scale changes reuse the shared 3D-tile transform (no plate re-fetch/re-render on slider changes).
+- FAA plate PDF rasterization uses 4x render scale (retina-quality) for both flat FAA Plate surface rendering and 3D Plate texture projection.
 - Surface mode supports:
   - `Terrain` (existing Terrarium-based wireframe terrain grid)
   - `FAA Plate` (geo-located FAA approach plate mesh replacing terrain at selected approach)

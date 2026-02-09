@@ -3,7 +3,7 @@ import { memo, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import type { ApproachPlate } from '@/lib/types';
 
-const PLATE_RENDER_SCALE = 2;
+const PLATE_RENDER_SCALE = 4;
 const SURFACE_OFFSET_NM = -0.002;
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 const DEG_TO_RAD = Math.PI / 180;
