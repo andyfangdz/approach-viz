@@ -53,8 +53,8 @@ export function InfoPanel({
             <div className="legend-color airspace-d" />
             <span>Class D</span>
           </div>
-          {surfaceMode === 'plate' && !hasApproachPlate && (
-            <div className="legend-note">No FAA plate matched this approach; showing terrain.</div>
+          {(surfaceMode === 'plate' || surfaceMode === '3dplate') && !hasApproachPlate && (
+            <div className="legend-note">No FAA plate matched this approach.</div>
           )}
         </div>
       )}

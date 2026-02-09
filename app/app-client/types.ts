@@ -3,7 +3,7 @@ import type { Waypoint } from '@/src/cifp/parser';
 import type { SelectOption } from '@/app/app-client-utils';
 import type { SceneData } from '@/lib/types';
 
-export type SurfaceMode = 'terrain' | 'plate' | 'satellite';
+export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
 
 export interface HeaderControlsProps {
   selectorsCollapsed: boolean;

@@ -49,20 +49,24 @@
   - Class B/C/D airspace volumes
 - Terrain wireframe elevation samples are fetched/decoded per-airport reference and reused across vertical-scale changes; vertical exaggeration updates are applied via Y-scale transform (no tile refetch/rebuild on slider changes).
 - FAA plate surface texture/geometry is fetched and rasterized per selected plate/airport reference; vertical-scale changes apply via mesh Y-scale transform (no plate re-fetch/re-render on slider changes).
+- 3D plate texture projection data is fetched/rasterized per selected plate/airport reference; vertical-scale changes reuse the shared 3D-tile transform (no plate re-fetch/re-render on slider changes).
 - Surface mode supports:
   - `Terrain` (existing Terrarium-based wireframe terrain grid)
   - `FAA Plate` (geo-located FAA approach plate mesh replacing terrain at selected approach)
+  - `3D Plate` (FAA plate texture projected onto Google Photorealistic 3D Tiles terrain using the same `3d-tiles-renderer` pipeline as Satellite mode)
   - `Satellite` (Google Earth Photorealistic 3D Tiles rendered via `3d-tiles-renderer`, transformed into the app's local frame using `@takram/three-geospatial`)
 - Header includes a `Recenter View` control that resets camera position and orbit target to airport-centered defaults.
 - FAA plate mesh is rendered at the selected airport elevation (scaled by vertical scale), not fixed at sea-level.
+- 3D plate mode applies georeferenced plate texturing directly to Google 3D Tiles terrain materials (shader projection in local scene coordinates).
 - Satellite mode loads Google tiles directly on the client (no server-side imagery proxy).
-- Satellite mode requires `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and does not provide a runtime key-entry fallback UI.
+- Satellite and 3D plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and do not provide a runtime key-entry fallback UI.
 - Satellite mode should retry renderer initialization up to 3 times on runtime failures; after retries are exhausted, show an in-app error message and keep current surface mode (no automatic terrain fallback).
 - Satellite mode terrain is vertically aligned to the app's MSL altitude frame by offsetting tiles to the selected airport elevation.
 - Satellite mode applies EGM96 geoid separation per airport when converting MSL airport elevation to WGS84 ellipsoid height for the tile anchor transform.
 - In satellite mode, airport/runway context markers apply WGS84 curvature-drop compensation from the selected-airport tangent origin so nearby runways stay grounded.
 - Satellite mode uses a tighter tile error target (`~12`) to keep nearby airport surfaces readable.
 - FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
+- 3D plate mode does not fall back to Terrarium wireframe terrain; it keeps the Google 3D Tiles surface active and omits only the plate texture overlay when no plate metadata is available.
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
 - CIFP approach continuation records (`F` subsection continuation `2` / application type `W`) are parsed as level-of-service/RNP values and are not treated as VDA.
 - FAF vertical angle for glidepath rendering is sourced from matched approach metadata (`approaches.json` `vertical_profile.vda`) when available, preventing CIFP level-of-service codes (for example `A152`) from being misread as descent angle.
@@ -94,7 +98,7 @@
   - `/<AIRPORT>`
   - `/<AIRPORT>/<PROCEDURE_ID>`
 - Surface mode is encoded in query params:
-  - `?surface=terrain`, `?surface=plate`, or `?surface=satellite`
+  - `?surface=terrain`, `?surface=plate`, `?surface=3dplate`, or `?surface=satellite`
 
 ## Mobile UI Defaults
 

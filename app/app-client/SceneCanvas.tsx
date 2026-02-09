@@ -65,10 +65,10 @@ export function SceneCanvas({
 }: SceneCanvasProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const hasApproachPlate = Boolean(sceneData.approachPlate);
-  const showApproachPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
-  const showSatelliteSurface = surfaceMode === 'satellite';
+  const showFlatPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
   const showTerrainSurface =
     surfaceMode === 'terrain' || (surfaceMode === 'plate' && !hasApproachPlate);
+  const showTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dplate';
 
   return (
     <Canvas
@@ -98,7 +98,7 @@ export function SceneCanvas({
           />
         )}
 
-        {showApproachPlateSurface && sceneData.approachPlate && (
+        {showFlatPlateSurface && sceneData.approachPlate && (
           <ApproachPlateSurface
             plate={sceneData.approachPlate}
             refLat={airport.lat}
@@ -108,15 +108,15 @@ export function SceneCanvas({
           />
         )}
 
-        {showSatelliteSurface && (
+        {showTiledSurface && (
           <SceneErrorBoundary
             resetKey={`${airport.id}:${selectedApproach}:${surfaceMode}:${satelliteRetryNonce}`}
-            onError={(error) => onSatelliteRuntimeError('Satellite renderer crashed.', error)}
+            onError={(error) => onSatelliteRuntimeError('3D tiles renderer crashed.', error)}
             fallback={
               <Html center>
                 <div className="loading-3d">
                   {surfaceErrorMessage ||
-                    `Retrying satellite (${satelliteRetryCount + 1}/${SATELLITE_MAX_RETRIES})...`}
+                    `Retrying 3D tiles (${satelliteRetryCount + 1}/${SATELLITE_MAX_RETRIES})...`}
                 </div>
               </Html>
             }
@@ -129,6 +129,7 @@ export function SceneCanvas({
                 airportElevationFeet={airport.elevation}
                 geoidSeparationFeet={sceneData.geoidSeparationFeet}
                 verticalScale={verticalScale}
+                plateOverlay={surfaceMode === '3dplate' ? sceneData.approachPlate : null}
                 onRuntimeError={onSatelliteRuntimeError}
               />
             )}
@@ -143,7 +144,9 @@ export function SceneCanvas({
             runways={sceneData.runways}
             verticalScale={verticalScale}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
-            applyEarthCurvatureCompensation={surfaceMode === 'satellite'}
+            applyEarthCurvatureCompensation={
+              surfaceMode === 'satellite' || surfaceMode === '3dplate'
+            }
             nearbyAirports={sceneData.nearbyAirports}
           />
         )}

@@ -218,15 +218,25 @@ export function AppClient({
       ? hasApproachPlate
         ? 'plate'
         : 'terrain'
-      : surfaceMode === 'satellite'
-        ? 'satellite'
-        : 'terrain';
+      : surfaceMode === '3dplate'
+        ? hasApproachPlate
+          ? 'plate'
+          : 'satellite'
+        : surfaceMode === 'satellite'
+          ? 'satellite'
+          : 'terrain';
   const surfaceLegendLabel =
-    surfaceLegendClass === 'plate'
-      ? 'FAA Plate Surface'
-      : surfaceLegendClass === 'satellite'
-        ? 'Satellite Surface'
-        : 'Terrain Wireframe';
+    surfaceMode === 'plate'
+      ? hasApproachPlate
+        ? 'FAA Plate Surface'
+        : 'Terrain Wireframe'
+      : surfaceMode === '3dplate'
+        ? hasApproachPlate
+          ? '3D Plate Surface'
+          : 'Satellite Surface'
+        : surfaceLegendClass === 'satellite'
+          ? 'Satellite Surface'
+          : 'Terrain Wireframe';
 
   const handleSurfaceModeSelected = (mode: SurfaceMode) => {
     setSurfaceErrorMessage('');
@@ -236,7 +246,7 @@ export function AppClient({
   };
 
   const handleSatelliteRuntimeError = useCallback((message: string, error?: Error) => {
-    console.error('Satellite surface rendering failed', error);
+    console.error('3D tiles surface rendering failed', error);
     setSatelliteRetryCount((previousCount) => {
       if (previousCount >= SATELLITE_MAX_RETRIES) {
         return previousCount;
@@ -244,7 +254,7 @@ export function AppClient({
       const nextCount = previousCount + 1;
       if (nextCount >= SATELLITE_MAX_RETRIES) {
         setSurfaceErrorMessage(
-          `Satellite surface failed after ${SATELLITE_MAX_RETRIES} attempts. ${message}`
+          `3D tiles surface failed after ${SATELLITE_MAX_RETRIES} attempts. ${message}`
         );
       } else {
         setSatelliteRetryNonce((nonce) => nonce + 1);

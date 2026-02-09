@@ -36,10 +36,12 @@ export function isMobileViewport(): boolean {
 
 export function readSurfaceModeFromSearch(
   search: string
-): 'terrain' | 'plate' | 'satellite' | null {
+): 'terrain' | 'plate' | '3dplate' | 'satellite' | null {
   const params = new URLSearchParams(search);
   const value = params.get('surface');
-  if (value === 'terrain' || value === 'plate' || value === 'satellite') return value;
+  if (value === 'terrain' || value === 'plate' || value === '3dplate' || value === 'satellite') {
+    return value;
+  }
   return null;
 }
 

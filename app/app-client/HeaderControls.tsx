@@ -148,6 +148,13 @@ export function HeaderControls({
               </button>
               <button
                 type="button"
+                className={`surface-toggle-button ${surfaceMode === '3dplate' ? 'active' : ''}`}
+                onClick={() => onSurfaceModeSelected('3dplate')}
+              >
+                3D Plate
+              </button>
+              <button
+                type="button"
                 className={`surface-toggle-button ${surfaceMode === 'satellite' ? 'active' : ''}`}
                 onClick={() => onSurfaceModeSelected('satellite')}
               >
