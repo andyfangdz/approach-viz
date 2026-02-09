@@ -116,6 +116,7 @@ export function SceneCanvas({
             runways={sceneData.runways}
             verticalScale={verticalScale}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
+            applyEarthCurvatureCompensation={surfaceMode === 'satellite'}
             nearbyAirports={sceneData.nearbyAirports}
           />
         )}

@@ -25,6 +25,7 @@ interface ApproachPathProps {
   runways: RunwayThreshold[];
   verticalScale: number;
   missedApproachStartAltitudeFeet?: number;
+  applyEarthCurvatureCompensation?: boolean;
   nearbyAirports: Array<{
     airport: Airport;
     runways: RunwayThreshold[];
@@ -39,6 +40,7 @@ export const ApproachPath = memo(function ApproachPath({
   runways,
   verticalScale,
   missedApproachStartAltitudeFeet,
+  applyEarthCurvatureCompensation = false,
   nearbyAirports
 }: ApproachPathProps) {
   const refLat = airport.lat;
@@ -147,6 +149,7 @@ export const ApproachPath = memo(function ApproachPath({
         runwayColor={COLORS.runway}
         airportLabelColor={COLORS.runway}
         showRunwayLabels
+        applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
       />
 
       {nearbyAirports.map(({ airport: nearbyAirport, runways: nearbyRunways }) => (
@@ -160,6 +163,7 @@ export const ApproachPath = memo(function ApproachPath({
           runwayColor={COLORS.nearbyRunway}
           airportLabelColor={COLORS.nearbyAirport}
           showRunwayLabels={false}
+          applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
         />
       ))}
 

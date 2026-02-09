@@ -41,6 +41,7 @@
 ## Rendering Notes
 
 - Coordinates are local NM relative to selected airport reference point.
+- Local lat/lon to scene-coordinate conversion uses WGS84 radii-of-curvature at the selected-airport latitude (east/north tangent-plane approximation).
 - Published CIFP leg/hold courses are magnetic; when synthesizing geometry from course values (for example holds or `CA` legs), convert to true heading using airport magnetic variation.
 - Vertical scale is user-adjustable from the header slider and is applied consistently to:
   - approach paths/waypoints/holds
@@ -58,6 +59,7 @@
 - Satellite mode should retry renderer initialization up to 3 times on runtime failures; after retries are exhausted, show an in-app error message and keep current surface mode (no automatic terrain fallback).
 - Satellite mode terrain is vertically aligned to the app's MSL altitude frame by offsetting tiles to the selected airport elevation.
 - Satellite mode applies EGM96 geoid separation per airport when converting MSL airport elevation to WGS84 ellipsoid height for the tile anchor transform.
+- In satellite mode, airport/runway context markers apply WGS84 curvature-drop compensation from the selected-airport tangent origin so nearby runways stay grounded.
 - Satellite mode uses a tighter tile error target (`~12`) to keep nearby airport surfaces readable.
 - FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.

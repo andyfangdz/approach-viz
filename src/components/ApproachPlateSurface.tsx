@@ -6,6 +6,11 @@ import type { ApproachPlate } from '@/lib/types';
 const PLATE_RENDER_SCALE = 2;
 const SURFACE_OFFSET_NM = -0.002;
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
+const DEG_TO_RAD = Math.PI / 180;
+const METERS_TO_NM = 1 / 1852;
+const WGS84_SEMI_MAJOR_METERS = 6378137;
+const WGS84_FLATTENING = 1 / 298.257223563;
+const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 const PDF_WORKER_SRC = new URL(
   'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
   import.meta.url
@@ -140,8 +145,17 @@ function latLonToLocal(
   refLat: number,
   refLon: number
 ): { x: number; z: number } {
-  const x = (lon - refLon) * 60 * Math.cos((refLat * Math.PI) / 180);
-  const z = -(lat - refLat) * 60;
+  const phi = refLat * DEG_TO_RAD;
+  const sinPhi = Math.sin(phi);
+  const cosPhi = Math.cos(phi);
+  const denom = Math.sqrt(1 - WGS84_E2 * sinPhi * sinPhi);
+  const primeVerticalMeters = WGS84_SEMI_MAJOR_METERS / denom;
+  const meridionalMeters = (WGS84_SEMI_MAJOR_METERS * (1 - WGS84_E2)) / (denom * denom * denom);
+
+  const dLatRad = (lat - refLat) * DEG_TO_RAD;
+  const dLonRad = (lon - refLon) * DEG_TO_RAD;
+  const x = dLonRad * primeVerticalMeters * cosPhi * METERS_TO_NM;
+  const z = -(dLatRad * meridionalMeters * METERS_TO_NM);
   return { x, z };
 }
 
