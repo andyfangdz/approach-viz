@@ -86,6 +86,8 @@
 - When available, explicit turn direction published on the downstream fix leg descriptor (`L`/`R`) overrides geometric inference for `CA->(DF/CF/TF)` turn joins.
 - Curved `CA->(DF/CF/TF)` turn joins are applied only when the downstream fix leg turn direction is explicitly published; otherwise missed geometry remains straight/linear to avoid synthetic loops.
 - Missed `VI` (heading-to-intercept) legs without a fix are rendered as short heading stubs with radius-constrained heading-transition arcs (about `0.55..0.9 NM` turn radius) before joining downstream fix legs; downstream fix joins use published turn direction when available, otherwise geometric turn-side resolution.
+- Missed no-fix heading legs (`VI`, `VA`, `VR`, `VD`, `VM`, `CI`, `CD`) are synthesized as short heading stubs so radial/intercept-style legs are visible even when CIFP omits waypoint geometry.
+- When those no-fix heading legs feed a downstream `CF` leg with a published course, the join intercepts the published inbound course before the fix (instead of turning directly to the fix), improving radial-intercept depiction (for example `KSAV I10` missed).
 - Missed `CA->(DF/CF/TF)` turn initiation points display altitude callouts (using resolved CA altitude) so turn altitude restrictions are visible in-scene.
 - Missed `CA->(DF/CF/TF)` turn initiation points display altitude callouts only for meaningful published CA climb constraints (not derived/interpolated profile altitudes).
 - Minimums selection prefers Cat A values when available; if Cat A is unavailable for a minima line, the app falls back to the lowest available category (B/C/D), displays that category in the minimums panel, and uses it for missed-approach start altitude.

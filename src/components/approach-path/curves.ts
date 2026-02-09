@@ -277,6 +277,67 @@ export function buildCourseToFixTurnPoints(
   return [end];
 }
 
+export function buildHeadingToCourseInterceptPoints(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  startHeadingDeg: number,
+  inboundCourseDeg: number,
+  explicitTurnDirection?: 'L' | 'R'
+): THREE.Vector3[] {
+  const horizontalDistance = Math.hypot(end.x - start.x, end.z - start.z);
+  if (horizontalDistance < 1e-4) {
+    return [end];
+  }
+
+  const startHeadingRad = (startHeadingDeg * Math.PI) / 180;
+  const inboundCourseRad = (inboundCourseDeg * Math.PI) / 180;
+  const headingDir = new THREE.Vector2(Math.sin(startHeadingRad), -Math.cos(startHeadingRad));
+  const inboundDir = new THREE.Vector2(Math.sin(inboundCourseRad), -Math.cos(inboundCourseRad));
+  const start2 = new THREE.Vector2(start.x, start.z);
+  const end2 = new THREE.Vector2(end.x, end.z);
+
+  let intercept2: THREE.Vector2 | null = null;
+
+  const denominator = headingDir.x * inboundDir.y - headingDir.y * inboundDir.x;
+  if (Math.abs(denominator) > 1e-6) {
+    const delta = end2.clone().sub(start2);
+    const t = (delta.x * inboundDir.y - delta.y * inboundDir.x) / denominator;
+    const u = (delta.x * headingDir.y - delta.y * headingDir.x) / denominator;
+    // Intersect the forward heading ray with the inbound course line upstream of fix.
+    if (t > 0.1 && u <= -0.05) {
+      intercept2 = start2.clone().addScaledVector(headingDir, t);
+    }
+  }
+
+  if (!intercept2) {
+    // Fall back to joining a short distance upstream of the fix on the published course.
+    const upstreamOffsetNm = Math.max(0.8, Math.min(5.5, horizontalDistance * 0.45));
+    intercept2 = end2.clone().addScaledVector(inboundDir, -upstreamOffsetNm);
+  }
+
+  const toInterceptDistance = Math.hypot(intercept2.x - start.x, intercept2.y - start.z);
+  const interceptFraction = Math.max(
+    0.05,
+    Math.min(0.95, toInterceptDistance / horizontalDistance)
+  );
+  const interceptY = start.y + (end.y - start.y) * interceptFraction;
+  const intercept3 = new THREE.Vector3(intercept2.x, interceptY, intercept2.y);
+
+  const joinPoints = buildCourseToFixTurnPoints(
+    start,
+    intercept3,
+    startHeadingDeg,
+    explicitTurnDirection
+  );
+
+  const lastJoinPoint = joinPoints[joinPoints.length - 1];
+  if (!lastJoinPoint || lastJoinPoint.distanceToSquared(end) > 1e-8) {
+    joinPoints.push(end);
+  }
+
+  return joinPoints;
+}
+
 export function buildHeadingTransitionArcPoints(
   start: THREE.Vector3,
   startHeadingDeg: number,

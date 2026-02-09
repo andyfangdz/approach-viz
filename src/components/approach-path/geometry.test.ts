@@ -84,6 +84,10 @@ function buildResolvedAltitudes(legs: ApproachLeg[]): Map<ApproachLeg, number> {
   );
 }
 
+function segmentHeadingDegrees(from: THREE.Vector3, to: THREE.Vector3): number {
+  return ((((Math.atan2(to.x - from.x, -(to.z - from.z)) * 180) / Math.PI) % 360) + 360) % 360;
+}
+
 test('coordinate geometry converts to local NM with expected axis directions', () => {
   const refLat = 40;
   const refLon = -100;
@@ -398,6 +402,107 @@ test('VI leg carries downstream explicit turn direction into fix join', () => {
   assert.ok(rightResult.points.length > 25);
   assert.ok(leftResult.points[2].z < 0);
   assert.ok(rightResult.points[2].z > 0);
+});
+
+test('VI-to-CF missed join aligns to published CF course near fix', () => {
+  const refLat = 40;
+  const refLon = -100;
+  const legs = [
+    makeLeg({
+      sequence: 10,
+      waypointId: 'APT_MAP',
+      pathTerminator: 'CF',
+      course: 90,
+      altitude: 1000,
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 20,
+      waypointId: 'APT_',
+      pathTerminator: 'VI',
+      course: 330,
+      altitude: 1300,
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 30,
+      waypointId: 'APT_FIX',
+      pathTerminator: 'CF',
+      course: 0,
+      altitude: 2000,
+      isMissedApproach: true
+    })
+  ];
+  const waypoints = new Map<string, Waypoint>([
+    ['APT_MAP', localWaypoint('APT_MAP', 0, 0, refLat, refLon)],
+    ['APT_FIX', localWaypoint('APT_FIX', 4, 6, refLat, refLon)]
+  ]);
+
+  const result = buildPathGeometry({
+    legs,
+    waypoints,
+    resolvedAltitudes: buildResolvedAltitudes(legs),
+    initialAltitudeFeet: 900,
+    verticalScale: 1,
+    refLat,
+    refLon,
+    magVar: 0
+  });
+
+  assert.ok(result.points.length > 10);
+  const secondLast = result.points[result.points.length - 2];
+  const last = result.points[result.points.length - 1];
+  const finalSegmentHeading = segmentHeadingDegrees(secondLast, last);
+  assert.ok(finalSegmentHeading < 10 || finalSegmentHeading > 350);
+});
+
+test('VR no-fix missed leg is synthesized as heading geometry before fix join', () => {
+  const refLat = 40;
+  const refLon = -100;
+  const legs = [
+    makeLeg({
+      sequence: 10,
+      waypointId: 'APT_MAP',
+      pathTerminator: 'CF',
+      course: 250,
+      altitude: 1200,
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 20,
+      waypointId: 'APT_',
+      pathTerminator: 'VR',
+      course: 250,
+      altitude: 1300,
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 30,
+      waypointId: 'APT_FIX',
+      pathTerminator: 'CF',
+      course: 200,
+      altitude: 2000,
+      isMissedApproach: true
+    })
+  ];
+  const waypoints = new Map<string, Waypoint>([
+    ['APT_MAP', localWaypoint('APT_MAP', 0, 0, refLat, refLon)],
+    ['APT_FIX', localWaypoint('APT_FIX', -4, -5, refLat, refLon)]
+  ]);
+
+  const result = buildPathGeometry({
+    legs,
+    waypoints,
+    resolvedAltitudes: buildResolvedAltitudes(legs),
+    initialAltitudeFeet: 1000,
+    verticalScale: 1,
+    refLat,
+    refLon,
+    magVar: 0
+  });
+
+  assert.ok(result.points.length > 3);
+  assert.ok(result.verticalLines.length >= 3);
 });
 
 test('RF/AF path segments are rendered as arcs in path geometry', () => {

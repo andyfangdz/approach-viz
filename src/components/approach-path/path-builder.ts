@@ -3,6 +3,7 @@ import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
 import { MAX_VI_TURN_RADIUS_NM, MIN_VI_TURN_RADIUS_NM } from './constants';
 import { altToY, latLonToLocal, magneticToTrueHeading, resolveWaypoint } from './coordinates';
 import {
+  buildHeadingToCourseInterceptPoints,
   buildCourseToFixTurnPoints,
   buildHeadingTransitionArcPoints,
   buildRfArcPoints
@@ -11,6 +12,18 @@ import type { TurnConstraintLabel, VerticalLineData } from './types';
 
 export function isFixJoinTerminator(pathTerminator?: string): boolean {
   return pathTerminator === 'DF' || pathTerminator === 'CF' || pathTerminator === 'TF';
+}
+
+function isNoFixHeadingLeg(pathTerminator?: string): boolean {
+  return (
+    pathTerminator === 'VI' ||
+    pathTerminator === 'VA' ||
+    pathTerminator === 'VR' ||
+    pathTerminator === 'VD' ||
+    pathTerminator === 'VM' ||
+    pathTerminator === 'CI' ||
+    pathTerminator === 'CD'
+  );
 }
 
 export function buildPathGeometry({
@@ -45,6 +58,7 @@ export function buildPathGeometry({
   let lastPlottedAltitudeFeet = initialAltitudeFeet;
   let pendingCourseToFixTurnHeading: number | null = null;
   let pendingCourseToFixTurnDirection: 'L' | 'R' | undefined;
+  let pendingCourseToFixPrefersCourseIntercept = false;
   let lastLegCourseHeadingTrue: number | null = null;
 
   const pushPoint = (point: THREE.Vector3) => {
@@ -111,6 +125,7 @@ export function buildPathGeometry({
         }
         pendingCourseToFixTurnHeading = headingTrue;
         pendingCourseToFixTurnDirection = nextLeg?.turnDirection;
+        pendingCourseToFixPrefersCourseIntercept = false;
         lastLegCourseHeadingTrue = headingTrue;
         lastPlottedAltitudeFeet = resolvedAltitude;
         continue;
@@ -140,6 +155,7 @@ export function buildPathGeometry({
       if (isFixJoinTerminator(nextLeg?.pathTerminator) && nextWp && nextLeg?.turnDirection) {
         pendingCourseToFixTurnHeading = headingTrue;
         pendingCourseToFixTurnDirection = nextLeg?.turnDirection;
+        pendingCourseToFixPrefersCourseIntercept = false;
         if (showTurnConstraintLabels && effectiveTurnConstraintAltitude !== null) {
           turnConstraintLabels.push({
             position: [currentPoint.x, currentPoint.y + 0.45, currentPoint.z],
@@ -149,7 +165,7 @@ export function buildPathGeometry({
       }
       lastLegCourseHeadingTrue = headingTrue;
     } else if (
-      leg.pathTerminator === 'VI' &&
+      isNoFixHeadingLeg(leg.pathTerminator) &&
       lastPlottedPoint &&
       typeof leg.course === 'number' &&
       Number.isFinite(leg.course)
@@ -159,6 +175,14 @@ export function buildPathGeometry({
       const nextLeg = legIndex + 1 < legs.length ? legs[legIndex + 1] : undefined;
       const nextWp = nextLeg ? resolveWaypoint(waypoints, nextLeg.waypointId) : undefined;
       let distanceNm = 0.45;
+      if (
+        (leg.pathTerminator === 'CD' || leg.pathTerminator === 'VD') &&
+        typeof leg.distance === 'number' &&
+        Number.isFinite(leg.distance) &&
+        leg.distance > 0
+      ) {
+        distanceNm = Math.max(distanceNm, Math.min(2.5, Math.max(0.35, leg.distance * 0.1)));
+      }
       if (nextWp) {
         const nextPos = latLonToLocal(nextWp.lat, nextWp.lon, refLat, refLon);
         const distanceToNextFix = Math.hypot(
@@ -199,6 +223,7 @@ export function buildPathGeometry({
       pendingCourseToFixTurnDirection = isFixJoinTerminator(nextLeg?.pathTerminator)
         ? nextLeg?.turnDirection
         : undefined;
+      pendingCourseToFixPrefersCourseIntercept = true;
       lastLegCourseHeadingTrue = headingTrue;
     } else {
       lastLegCourseHeadingTrue = null;
@@ -213,7 +238,32 @@ export function buildPathGeometry({
       wp &&
       isFixJoinTerminator(leg.pathTerminator);
 
-    if (shouldApplyPendingFixJoinTurn) {
+    const shouldApplyPendingCourseIntercept =
+      shouldApplyPendingFixJoinTurn &&
+      pendingCourseToFixPrefersCourseIntercept &&
+      leg.pathTerminator === 'CF' &&
+      typeof leg.course === 'number' &&
+      Number.isFinite(leg.course);
+
+    if (shouldApplyPendingCourseIntercept) {
+      const turnHeading = pendingCourseToFixTurnHeading;
+      if (turnHeading === null) continue;
+      const courseHeading = leg.course;
+      if (typeof courseHeading !== 'number') continue;
+      const courseHeadingTrue = magneticToTrueHeading(courseHeading, magVar);
+      for (const turnPoint of buildHeadingToCourseInterceptPoints(
+        previousPoint,
+        currentPoint,
+        turnHeading,
+        courseHeadingTrue,
+        pendingCourseToFixTurnDirection
+      )) {
+        pushPoint(turnPoint);
+      }
+      pendingCourseToFixTurnHeading = null;
+      pendingCourseToFixTurnDirection = undefined;
+      pendingCourseToFixPrefersCourseIntercept = false;
+    } else if (shouldApplyPendingFixJoinTurn) {
       const turnHeading = pendingCourseToFixTurnHeading;
       if (turnHeading === null) continue;
       for (const turnPoint of buildCourseToFixTurnPoints(
@@ -226,6 +276,7 @@ export function buildPathGeometry({
       }
       pendingCourseToFixTurnHeading = null;
       pendingCourseToFixTurnDirection = undefined;
+      pendingCourseToFixPrefersCourseIntercept = false;
     } else if (
       previousPoint &&
       (leg.pathTerminator === 'RF' || leg.pathTerminator === 'AF') &&
@@ -233,6 +284,7 @@ export function buildPathGeometry({
     ) {
       pendingCourseToFixTurnHeading = null;
       pendingCourseToFixTurnDirection = undefined;
+      pendingCourseToFixPrefersCourseIntercept = false;
       const centerWp = resolveWaypoint(waypoints, leg.rfCenterWaypointId);
       if (centerWp) {
         const center = latLonToLocal(centerWp.lat, centerWp.lon, refLat, refLon);
