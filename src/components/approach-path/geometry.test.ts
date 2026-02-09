@@ -329,6 +329,98 @@ test('missed CA-to-CF without explicit turn direction remains linear (no synthet
   assert.ok(maxTurnDegrees(result.points) > 150);
 });
 
+test('missed CF-to-CF with explicit turn direction renders smooth climbing turn join', () => {
+  const refLat = 40;
+  const refLon = -100;
+  const legs = [
+    makeLeg({
+      sequence: 10,
+      waypointId: 'APT_MAP',
+      pathTerminator: 'CF',
+      course: 305,
+      altitude: 1000,
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 20,
+      waypointId: 'APT_FIX',
+      pathTerminator: 'CF',
+      course: 171,
+      turnDirection: 'L',
+      altitude: 3000,
+      isMissedApproach: true
+    })
+  ];
+  const waypoints = new Map<string, Waypoint>([
+    ['APT_MAP', localWaypoint('APT_MAP', 0, 0, refLat, refLon)],
+    ['APT_FIX', localWaypoint('APT_FIX', -1, -12, refLat, refLon)]
+  ]);
+
+  const result = buildPathGeometry({
+    legs,
+    waypoints,
+    resolvedAltitudes: buildResolvedAltitudes(legs),
+    initialAltitudeFeet: 900,
+    verticalScale: 1,
+    refLat,
+    refLon,
+    magVar: 0
+  });
+
+  assert.ok(result.points.length > 15);
+  assert.ok(maxTurnDegrees(result.points) < 30);
+  assert.equal(result.verticalLines.length, 2);
+  const secondLast = result.points[result.points.length - 2];
+  const last = result.points[result.points.length - 1];
+  const finalHeading = segmentHeadingDegrees(secondLast, last);
+  assert.ok(Math.abs(finalHeading - 171) < 8);
+});
+
+test('missed CF-to-CF right-turn join intercepts published course before fix', () => {
+  const refLat = 40;
+  const refLon = -100;
+  const legs = [
+    makeLeg({
+      sequence: 10,
+      waypointId: 'APT_MAP',
+      pathTerminator: 'CF',
+      course: 37,
+      altitude: 1000,
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 20,
+      waypointId: 'APT_FIX',
+      pathTerminator: 'CF',
+      course: 171,
+      turnDirection: 'R',
+      altitude: 3000,
+      isMissedApproach: true
+    })
+  ];
+  const waypoints = new Map<string, Waypoint>([
+    ['APT_MAP', localWaypoint('APT_MAP', 0, 0, refLat, refLon)],
+    ['APT_FIX', localWaypoint('APT_FIX', -6, 5, refLat, refLon)]
+  ]);
+
+  const result = buildPathGeometry({
+    legs,
+    waypoints,
+    resolvedAltitudes: buildResolvedAltitudes(legs),
+    initialAltitudeFeet: 900,
+    verticalScale: 1,
+    refLat,
+    refLon,
+    magVar: 0
+  });
+
+  assert.ok(result.points.length > 15);
+  const secondLast = result.points[result.points.length - 2];
+  const last = result.points[result.points.length - 1];
+  const finalHeading = segmentHeadingDegrees(secondLast, last);
+  assert.ok(Math.abs(finalHeading - 171) < 8);
+});
+
 test('VI leg carries downstream explicit turn direction into fix join', () => {
   const refLat = 40;
   const refLon = -100;

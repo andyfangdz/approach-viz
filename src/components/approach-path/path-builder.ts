@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
 import { MAX_VI_TURN_RADIUS_NM, MIN_VI_TURN_RADIUS_NM } from './constants';
-import { altToY, latLonToLocal, magneticToTrueHeading, resolveWaypoint } from './coordinates';
+import {
+  altToY,
+  latLonToLocal,
+  magneticToTrueHeading,
+  normalizeHeading,
+  resolveWaypoint
+} from './coordinates';
 import {
   buildHeadingToCourseInterceptPoints,
   buildCourseToFixTurnPoints,
@@ -71,6 +77,9 @@ export function buildPathGeometry({
       points.push(point);
     }
   };
+
+  const segmentHeadingTrue = (from: THREE.Vector3, to: THREE.Vector3): number =>
+    normalizeHeading((Math.atan2(to.x - from.x, -(to.z - from.z)) * 180) / Math.PI);
 
   for (let legIndex = 0; legIndex < legs.length; legIndex += 1) {
     const leg = legs[legIndex];
@@ -245,6 +254,17 @@ export function buildPathGeometry({
       typeof leg.course === 'number' &&
       Number.isFinite(leg.course);
 
+    const previousLeg = legIndex - 1 >= 0 ? legs[legIndex - 1] : undefined;
+    const shouldApplyDirectMissedFixJoinTurn =
+      !shouldApplyPendingFixJoinTurn &&
+      previousPoint &&
+      wp &&
+      leg.isMissedApproach &&
+      isFixJoinTerminator(leg.pathTerminator) &&
+      leg.turnDirection &&
+      previousLeg?.isMissedApproach &&
+      isFixJoinTerminator(previousLeg.pathTerminator);
+
     if (shouldApplyPendingCourseIntercept) {
       const turnHeading = pendingCourseToFixTurnHeading;
       if (turnHeading === null) continue;
@@ -273,6 +293,43 @@ export function buildPathGeometry({
         pendingCourseToFixTurnDirection
       )) {
         pushPoint(turnPoint);
+      }
+      pendingCourseToFixTurnHeading = null;
+      pendingCourseToFixTurnDirection = undefined;
+      pendingCourseToFixPrefersCourseIntercept = false;
+    } else if (shouldApplyDirectMissedFixJoinTurn) {
+      const entryHeadingTrue =
+        points.length >= 2
+          ? segmentHeadingTrue(points[points.length - 2], previousPoint)
+          : typeof previousLeg?.course === 'number' && Number.isFinite(previousLeg.course)
+            ? magneticToTrueHeading(previousLeg.course, magVar)
+            : null;
+      if (entryHeadingTrue === null) {
+        pushPoint(currentPoint);
+      } else if (
+        leg.pathTerminator === 'CF' &&
+        typeof leg.course === 'number' &&
+        Number.isFinite(leg.course)
+      ) {
+        const courseHeadingTrue = magneticToTrueHeading(leg.course, magVar);
+        for (const turnPoint of buildHeadingToCourseInterceptPoints(
+          previousPoint,
+          currentPoint,
+          entryHeadingTrue,
+          courseHeadingTrue,
+          leg.turnDirection
+        )) {
+          pushPoint(turnPoint);
+        }
+      } else {
+        for (const turnPoint of buildCourseToFixTurnPoints(
+          previousPoint,
+          currentPoint,
+          entryHeadingTrue,
+          leg.turnDirection
+        )) {
+          pushPoint(turnPoint);
+        }
       }
       pendingCourseToFixTurnHeading = null;
       pendingCourseToFixTurnDirection = undefined;

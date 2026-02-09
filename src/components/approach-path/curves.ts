@@ -296,7 +296,13 @@ export function buildHeadingToCourseInterceptPoints(
   const start2 = new THREE.Vector2(start.x, start.z);
   const end2 = new THREE.Vector2(end.x, end.z);
 
-  let intercept2: THREE.Vector2 | null = null;
+  const interceptCandidates2: THREE.Vector2[] = [];
+  const pushInterceptCandidate = (candidate: THREE.Vector2) => {
+    if (interceptCandidates2.some((existing) => existing.distanceToSquared(candidate) <= 1e-6)) {
+      return;
+    }
+    interceptCandidates2.push(candidate);
+  };
 
   const denominator = headingDir.x * inboundDir.y - headingDir.y * inboundDir.x;
   if (Math.abs(denominator) > 1e-6) {
@@ -305,36 +311,49 @@ export function buildHeadingToCourseInterceptPoints(
     const u = (delta.x * headingDir.y - delta.y * headingDir.x) / denominator;
     // Intersect the forward heading ray with the inbound course line upstream of fix.
     if (t > 0.1 && u <= -0.05) {
-      intercept2 = start2.clone().addScaledVector(headingDir, t);
+      pushInterceptCandidate(start2.clone().addScaledVector(headingDir, t));
     }
   }
 
-  if (!intercept2) {
-    // Fall back to joining a short distance upstream of the fix on the published course.
-    const upstreamOffsetNm = Math.max(0.8, Math.min(5.5, horizontalDistance * 0.45));
-    intercept2 = end2.clone().addScaledVector(inboundDir, -upstreamOffsetNm);
+  // Always include fixed upstream-course intercept candidates as robust fallbacks.
+  for (const distanceScale of [0.35, 0.45, 0.6, 0.8, 1.0]) {
+    const upstreamOffsetNm = Math.max(0.8, Math.min(8, horizontalDistance * distanceScale));
+    pushInterceptCandidate(end2.clone().addScaledVector(inboundDir, -upstreamOffsetNm));
   }
 
-  const toInterceptDistance = Math.hypot(intercept2.x - start.x, intercept2.y - start.z);
-  const interceptFraction = Math.max(
-    0.05,
-    Math.min(0.95, toInterceptDistance / horizontalDistance)
-  );
-  const interceptY = start.y + (end.y - start.y) * interceptFraction;
-  const intercept3 = new THREE.Vector3(intercept2.x, interceptY, intercept2.y);
+  let bestCurvedJoinPoints: THREE.Vector3[] | null = null;
+  let bestCurvedDistanceNm = Number.POSITIVE_INFINITY;
+  let bestFallbackJoinPoints: THREE.Vector3[] | null = null;
+  let bestFallbackDistanceNm = Number.POSITIVE_INFINITY;
 
-  const joinPoints = buildCourseToFixTurnPoints(
-    start,
-    intercept3,
-    startHeadingDeg,
-    explicitTurnDirection
-  );
+  for (const intercept2 of interceptCandidates2) {
+    const toInterceptDistance = Math.hypot(intercept2.x - start.x, intercept2.y - start.z);
+    const interceptFraction = Math.max(
+      0.05,
+      Math.min(0.95, toInterceptDistance / horizontalDistance)
+    );
+    const interceptY = start.y + (end.y - start.y) * interceptFraction;
+    const intercept3 = new THREE.Vector3(intercept2.x, interceptY, intercept2.y);
+    const joinPoints = buildCourseToFixTurnPoints(
+      start,
+      intercept3,
+      startHeadingDeg,
+      explicitTurnDirection
+    );
+    if (joinPoints.length > 2 && toInterceptDistance < bestCurvedDistanceNm) {
+      bestCurvedJoinPoints = joinPoints;
+      bestCurvedDistanceNm = toInterceptDistance;
+    } else if (joinPoints.length > 1 && toInterceptDistance < bestFallbackDistanceNm) {
+      bestFallbackJoinPoints = joinPoints;
+      bestFallbackDistanceNm = toInterceptDistance;
+    }
+  }
 
+  const joinPoints = bestCurvedJoinPoints ?? bestFallbackJoinPoints ?? [end];
   const lastJoinPoint = joinPoints[joinPoints.length - 1];
   if (!lastJoinPoint || lastJoinPoint.distanceToSquared(end) > 1e-8) {
     joinPoints.push(end);
   }
-
   return joinPoints;
 }
 

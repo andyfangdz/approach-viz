@@ -25,6 +25,8 @@
 - When available, explicit turn direction published on the downstream fix leg descriptor (`L`/`R`) overrides geometric inference for `CA->(DF/CF/TF)` turn joins.
 - Curved `CA->(DF/CF/TF)` turn joins are applied only when the downstream fix leg turn direction is explicitly published; otherwise missed geometry remains straight/linear to avoid synthetic loops.
 - Missed `CA->(DF/CF/TF)` turn initiation points display altitude callouts only for meaningful published `CA` climb constraints (not derived/interpolated profile altitudes).
+- Missed direct fix-join legs (`CF`/`DF`/`TF` to `CF`/`DF`/`TF`) also render as curved climbing turns when the downstream leg publishes explicit turn direction (`L`/`R`), using the inbound heading from the previous segment instead of hard-cornering at the first fix.
+- When that downstream missed leg is `CF` with a published course/radial, the join turns to intercept the published course before the fix (rather than turning directly to the fix).
 
 ## No-Fix Heading Legs and Arc Legs
 

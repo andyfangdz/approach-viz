@@ -49,6 +49,7 @@ Rendering guidance is split into topic docs under `docs/`:
 - `docs/rendering-surface-modes.md`
 - `docs/rendering-approach-geometry.md`
 - `docs/rendering-performance.md`
+- Missed direct fix-join legs (`CF`/`DF`/`TF`) with explicit downstream turn direction (`L`/`R`) render curved climbing-turn joins (not hard corners), and downstream `CF` legs with published course/radial intercept that course before the fix.
 
 ## URL State
 
