@@ -11,10 +11,9 @@ let resolvedDbPath: string | null = null;
 function resolveDbPath(): string {
   if (resolvedDbPath) return resolvedDbPath;
 
-  const candidates = [
-    process.env.APPROACH_VIZ_DB_PATH,
-    DEFAULT_DB_PATH
-  ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+  const candidates = [process.env.APPROACH_VIZ_DB_PATH, DEFAULT_DB_PATH].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0
+  );
 
   const existing = candidates.find((candidate) => fs.existsSync(candidate));
   if (existing) {

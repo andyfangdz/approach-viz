@@ -6,7 +6,10 @@ import type { ApproachPlate } from '@/lib/types';
 const PLATE_RENDER_SCALE = 2;
 const SURFACE_OFFSET_NM = -0.002;
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
-const PDF_WORKER_SRC = new URL('pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url).toString();
+const PDF_WORKER_SRC = new URL(
+  'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
 
 interface GeoControlPoint {
   u: number;
@@ -79,18 +82,8 @@ function extractGeoReferenceMetadata(bytes: Uint8Array): GeoReferenceMetadata | 
   if (controlPoints.length < 4) return null;
 
   return {
-    mediaBox: [
-      mediaBoxValues[0],
-      mediaBoxValues[1],
-      mediaBoxValues[2],
-      mediaBoxValues[3]
-    ],
-    bbox: [
-      bboxValues[0],
-      bboxValues[1],
-      bboxValues[2],
-      bboxValues[3]
-    ],
+    mediaBox: [mediaBoxValues[0], mediaBoxValues[1], mediaBoxValues[2], mediaBoxValues[3]],
+    bbox: [bboxValues[0], bboxValues[1], bboxValues[2], bboxValues[3]],
     controlPoints: controlPoints.slice(0, 4)
   };
 }
@@ -131,13 +124,9 @@ function fitBilinearModel(
   points: GeoControlPoint[],
   valueSelector: (point: GeoControlPoint) => number
 ): [number, number, number, number] | null {
-  const equations = points.slice(0, 4).map((point) => [
-    1,
-    point.u,
-    point.v,
-    point.u * point.v,
-    valueSelector(point)
-  ]);
+  const equations = points
+    .slice(0, 4)
+    .map((point) => [1, point.u, point.v, point.u * point.v, valueSelector(point)]);
   return solveLinearSystem4(equations);
 }
 
@@ -145,7 +134,12 @@ function evaluateBilinear(coeff: [number, number, number, number], u: number, v:
   return coeff[0] + coeff[1] * u + coeff[2] * v + coeff[3] * u * v;
 }
 
-function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number): { x: number; z: number } {
+function latLonToLocal(
+  lat: number,
+  lon: number,
+  refLat: number,
+  refLon: number
+): { x: number; z: number } {
   const x = (lon - refLon) * 60 * Math.cos((refLat * Math.PI) / 180);
   const z = -(lat - refLat) * 60;
   return { x, z };
@@ -167,18 +161,21 @@ function buildPlateGeometry(
   const nw = latLonToLocal(corners[3].lat, corners[3].lon, refLat, refLon);
 
   const positions = new Float32Array([
-    sw.x, surfaceY, sw.z,
-    se.x, surfaceY, se.z,
-    ne.x, surfaceY, ne.z,
-    nw.x, surfaceY, nw.z
+    sw.x,
+    surfaceY,
+    sw.z,
+    se.x,
+    surfaceY,
+    se.z,
+    ne.x,
+    surfaceY,
+    ne.z,
+    nw.x,
+    surfaceY,
+    nw.z
   ]);
 
-  const uvs = new Float32Array([
-    0, 0,
-    1, 0,
-    1, 1,
-    0, 1
-  ]);
+  const uvs = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -341,17 +338,19 @@ export const ApproachPlateSurface = memo(function ApproachPlateSurface({
     };
   }, [plate.cycle, plate.plateFile, refLat, refLon, airportElevationFeet]);
 
-  useEffect(() => (
-    () => {
+  useEffect(
+    () => () => {
       plateTexture?.dispose();
-    }
-  ), [plateTexture]);
+    },
+    [plateTexture]
+  );
 
-  useEffect(() => (
-    () => {
+  useEffect(
+    () => () => {
       plateGeometry?.dispose();
-    }
-  ), [plateGeometry]);
+    },
+    [plateGeometry]
+  );
 
   if (loading) {
     return (

@@ -1,0 +1,7 @@
+.next
+dist
+node_modules
+data
+public/data
+*.sqlite
+*.png

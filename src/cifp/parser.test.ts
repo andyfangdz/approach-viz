@@ -15,8 +15,13 @@ function getApproach(airportId: string, procedureId: string): Approach {
 }
 
 function findLeg(approach: Approach, sequence: number) {
-  const leg = [...approach.finalLegs, ...approach.missedLegs].find((candidate) => candidate.sequence === sequence);
-  assert.ok(leg, `Expected leg sequence ${sequence} in ${approach.airportId} ${approach.procedureId}`);
+  const leg = [...approach.finalLegs, ...approach.missedLegs].find(
+    (candidate) => candidate.sequence === sequence
+  );
+  assert.ok(
+    leg,
+    `Expected leg sequence ${sequence} in ${approach.airportId} ${approach.procedureId}`
+  );
   return leg;
 }
 

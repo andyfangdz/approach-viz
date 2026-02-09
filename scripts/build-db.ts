@@ -250,13 +250,7 @@ function main() {
           ...approach,
           transitions: Array.from(approach.transitions.entries())
         };
-        insertApproach.run(
-          airportId,
-          procedureId,
-          type,
-          runway,
-          JSON.stringify(serializable)
-        );
+        insertApproach.run(airportId, procedureId, type, runway, JSON.stringify(serializable));
       }
     }
   });
@@ -271,11 +265,14 @@ function main() {
       for (const approach of approaches) {
         const name = String(approach.name || '').trim();
         if (!name) continue;
-        const runway = approach.runway === null || approach.runway === undefined
-          ? null
-          : String(approach.runway);
+        const runway =
+          approach.runway === null || approach.runway === undefined
+            ? null
+            : String(approach.runway);
         const typesJson = JSON.stringify(Array.isArray(approach.types) ? approach.types : []);
-        const minimumsJson = JSON.stringify(Array.isArray(approach.minimums) ? approach.minimums : []);
+        const minimumsJson = JSON.stringify(
+          Array.isArray(approach.minimums) ? approach.minimums : []
+        );
         insertMinima.run(
           airportId,
           name,
@@ -298,7 +295,9 @@ function main() {
     ];
 
     for (const { file, classCode } of classes) {
-      const geo = JSON.parse(fs.readFileSync(path.join(AIRSPACE_DIR, file), 'utf8')) as AirspaceGeoJson;
+      const geo = JSON.parse(
+        fs.readFileSync(path.join(AIRSPACE_DIR, file), 'utf8')
+      ) as AirspaceGeoJson;
       for (const feature of geo.features) {
         const rings = extractRings(feature);
         if (!rings.length) continue;
@@ -323,7 +322,10 @@ function main() {
   insertMetadata.run('dtpp_cycle_number', minimumsDb.dtpp_cycle_number || '');
   insertMetadata.run('generated_at', new Date().toISOString());
   insertMetadata.run('airport_count', String(parsed.airports.size));
-  insertMetadata.run('approach_count', String(Array.from(parsed.approaches.values()).reduce((sum, rows) => sum + rows.length, 0)));
+  insertMetadata.run(
+    'approach_count',
+    String(Array.from(parsed.approaches.values()).reduce((sum, rows) => sum + rows.length, 0))
+  );
 
   db.close();
   console.log(`✅ SQLite DB built at ${DB_PATH}`);

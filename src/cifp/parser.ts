@@ -189,11 +189,8 @@ function parseAltitude(alt: string): { value: number; constraint?: '+' | '-' | '
 
   const trimmed = alt.trim();
   const explicitConstraint = trimmed[0];
-  const constraint: '+' | '-' | 'at' = explicitConstraint === '+'
-    ? '+'
-    : explicitConstraint === '-'
-      ? '-'
-      : 'at';
+  const constraint: '+' | '-' | 'at' =
+    explicitConstraint === '+' ? '+' : explicitConstraint === '-' ? '-' : 'at';
 
   // Altitude fields can be either plain 5-digit values (e.g. 10000) or
   // signed values with spacing (e.g. "+ 8500"). Parse the numeric portion
@@ -292,17 +289,17 @@ function parseApproachRecord(line: string, airportId: string): ParsedApproachRec
   const descriptor2 = trimmedField(line, FIELD.approachDescriptor2);
   const descriptor3 = trimmedField(line, FIELD.approachDescriptor3);
   const turnDirectionRaw = descriptor3;
-  const turnDirection = turnDirectionRaw === 'L' || turnDirectionRaw === 'R'
-    ? turnDirectionRaw
-    : undefined;
+  const turnDirection =
+    turnDirectionRaw === 'L' || turnDirectionRaw === 'R' ? turnDirectionRaw : undefined;
   const course = parseDecimalTenthsField(line, FIELD.approachCourse);
   const distance = parseDecimalTenthsField(line, FIELD.approachDistance);
   const isArcLeg = pathTerminator === 'RF' || pathTerminator === 'AF';
-  const rfCenterFix = pathTerminator === 'RF'
-    ? trimmedField(line, FIELD.approachRfCenterFixRf)
-    : pathTerminator === 'AF'
-      ? trimmedField(line, FIELD.approachRfCenterFixAf)
-      : '';
+  const rfCenterFix =
+    pathTerminator === 'RF'
+      ? trimmedField(line, FIELD.approachRfCenterFixRf)
+      : pathTerminator === 'AF'
+        ? trimmedField(line, FIELD.approachRfCenterFixAf)
+        : '';
 
   return {
     airportId,
@@ -593,7 +590,9 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
     const holdTurnDirection = isHold ? turnDirection : undefined;
     const rfTurnDirection = isArcLeg ? turnDirection : undefined;
     const rfCenterWaypointId = rfCenterFix
-      ? (data.waypoints.has(`${airportId}_${rfCenterFix}`) ? `${airportId}_${rfCenterFix}` : rfCenterFix)
+      ? data.waypoints.has(`${airportId}_${rfCenterFix}`)
+        ? `${airportId}_${rfCenterFix}`
+        : rfCenterFix
       : undefined;
 
     const leg: ApproachLeg = {

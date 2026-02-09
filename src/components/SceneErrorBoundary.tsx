@@ -13,7 +13,10 @@ interface SceneErrorBoundaryState {
   hasError: boolean;
 }
 
-export class SceneErrorBoundary extends Component<SceneErrorBoundaryProps, SceneErrorBoundaryState> {
+export class SceneErrorBoundary extends Component<
+  SceneErrorBoundaryProps,
+  SceneErrorBoundaryState
+> {
   state: SceneErrorBoundaryState = { hasError: false };
 
   static getDerivedStateFromError(): SceneErrorBoundaryState {

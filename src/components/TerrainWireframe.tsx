@@ -98,9 +98,8 @@ function buildTerrainGeometry(
       const sampleY = Math.floor(py);
       const idx = (sampleY * width + sampleX) * 4;
       const alpha = data[idx + 3];
-      const elevationMeters = alpha === 0
-        ? 0
-        : decodeTerrariumElevationMeters(data[idx], data[idx + 1], data[idx + 2]);
+      const elevationMeters =
+        alpha === 0 ? 0 : decodeTerrariumElevationMeters(data[idx], data[idx + 1], data[idx + 2]);
       const elevationFeet = elevationMeters * 3.28084;
 
       const x = (lon - refLon) * 60 * cosRef;
@@ -182,7 +181,7 @@ export const TerrainWireframe = memo(function TerrainWireframe({
         return;
       }
 
-      if (tiles.every(tile => !tile)) {
+      if (tiles.every((tile) => !tile)) {
         return;
       }
 
@@ -242,17 +241,19 @@ export const TerrainWireframe = memo(function TerrainWireframe({
     };
   }, [refLat, refLon, radiusNm]);
 
-  useEffect(() => (
-    () => {
+  useEffect(
+    () => () => {
       terrainGeometry?.dispose();
-    }
-  ), [terrainGeometry]);
+    },
+    [terrainGeometry]
+  );
 
-  useEffect(() => (
-    () => {
+  useEffect(
+    () => () => {
       wireGeometry?.dispose();
-    }
-  ), [wireGeometry]);
+    },
+    [wireGeometry]
+  );
 
   if (!terrainGeometry || !wireGeometry) {
     return null;

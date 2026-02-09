@@ -110,7 +110,7 @@ header {
   width: 100%;
 }
 
-.control-group.vertical-scale input[type="range"] {
+.control-group.vertical-scale input[type='range'] {
   width: 160px;
   accent-color: var(--accent-cyan);
 }
@@ -138,7 +138,9 @@ header {
   font-size: 12px;
   padding: 7px 10px;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 
 .surface-toggle-button + .surface-toggle-button {
@@ -165,7 +167,9 @@ header {
   font-size: 12px;
   padding: 7px 10px;
   cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
 }
 
 .panel-toggle:hover {
@@ -242,7 +246,9 @@ textarea,
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .info-panel {
@@ -449,7 +455,7 @@ textarea,
     min-width: 0;
   }
 
-  .control-group.vertical-scale input[type="range"] {
+  .control-group.vertical-scale input[type='range'] {
     width: 100%;
   }
 

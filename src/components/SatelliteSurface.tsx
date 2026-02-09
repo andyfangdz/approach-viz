@@ -5,13 +5,9 @@ import {
   GoogleCloudAuthPlugin,
   TileCompressionPlugin,
   TilesFadePlugin,
-  UpdateOnChangePlugin,
+  UpdateOnChangePlugin
 } from '3d-tiles-renderer/plugins';
-import {
-  TilesAttributionOverlay,
-  TilesPlugin,
-  TilesRenderer,
-} from '3d-tiles-renderer/r3f';
+import { TilesAttributionOverlay, TilesPlugin, TilesRenderer } from '3d-tiles-renderer/r3f';
 import { Ellipsoid, Geodetic, radians } from '@takram/three-geospatial';
 import { Matrix4, Vector3 } from 'three';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
@@ -36,37 +32,15 @@ interface SatelliteSurfaceProps {
 function computeEcefToLocalNmFrame(
   latitudeDeg: number,
   longitudeDeg: number,
-  heightMeters: number,
+  heightMeters: number
 ): Matrix4 {
-  const ecefOrigin = new Geodetic(
-    radians(longitudeDeg),
-    radians(latitudeDeg),
-    heightMeters,
-  ).toECEF(new Vector3());
-  const enuFrame = Ellipsoid.WGS84.getEastNorthUpFrame(
-    ecefOrigin,
-    new Matrix4(),
+  const ecefOrigin = new Geodetic(radians(longitudeDeg), radians(latitudeDeg), heightMeters).toECEF(
+    new Vector3()
   );
+  const enuFrame = Ellipsoid.WGS84.getEastNorthUpFrame(ecefOrigin, new Matrix4());
   const ecefToEnu = enuFrame.clone().invert();
   // ENU (x=east,y=north,z=up) -> local scene (x=east,y=up,z=south)
-  const enuToLocal = new Matrix4().set(
-    1,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-    0,
-    0,
-    -1,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-  );
+  const enuToLocal = new Matrix4().set(1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1);
   return enuToLocal.multiply(ecefToEnu);
 }
 
@@ -76,7 +50,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   airportElevationFeet,
   geoidSeparationFeet,
   verticalScale,
-  onRuntimeError,
+  onRuntimeError
 }: SatelliteSurfaceProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
   const loadErrorCountRef = useRef(0);
@@ -91,25 +65,28 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       computeEcefToLocalNmFrame(
         safeLat,
         safeLon,
-        (safeAirportElevationFeet + safeGeoidSeparationFeet) * FEET_TO_METERS,
+        (safeAirportElevationFeet + safeGeoidSeparationFeet) * FEET_TO_METERS
       ),
-    [safeLat, safeLon, safeAirportElevationFeet, safeGeoidSeparationFeet],
+    [safeLat, safeLon, safeAirportElevationFeet, safeGeoidSeparationFeet]
   );
   const airportElevationY = useMemo(
     () => safeAirportElevationFeet * FEET_TO_NM * verticalScale,
-    [safeAirportElevationFeet, verticalScale],
+    [safeAirportElevationFeet, verticalScale]
   );
   const rendererKey = useMemo(
     () => `${apiKey}:${safeLat.toFixed(5)}:${safeLon.toFixed(5)}`,
-    [apiKey, safeLat, safeLon],
+    [apiKey, safeLat, safeLon]
   );
-  const handleLoadError = useCallback((event: { error: Error }) => {
-    loadErrorCountRef.current += 1;
-    // Ignore sporadic network/tile misses; fail over only when repeated quickly.
-    if (loadErrorCountRef.current < 16 || fatalErrorReportedRef.current) return;
-    fatalErrorReportedRef.current = true;
-    onRuntimeError?.('Satellite tiles failed repeatedly.', event.error);
-  }, [onRuntimeError]);
+  const handleLoadError = useCallback(
+    (event: { error: Error }) => {
+      loadErrorCountRef.current += 1;
+      // Ignore sporadic network/tile misses; fail over only when repeated quickly.
+      if (loadErrorCountRef.current < 16 || fatalErrorReportedRef.current) return;
+      fatalErrorReportedRef.current = true;
+      onRuntimeError?.('Satellite tiles failed repeatedly.', event.error);
+    },
+    [onRuntimeError]
+  );
   const handleTilesLoadEnd = useCallback(() => {
     loadErrorCountRef.current = 0;
   }, []);
@@ -137,15 +114,14 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         >
           <TilesPlugin
             plugin={GoogleCloudAuthPlugin}
-            args={[{
-              apiToken: apiKey,
-              autoRefreshToken: true,
-            }]}
+            args={[
+              {
+                apiToken: apiKey,
+                autoRefreshToken: true
+              }
+            ]}
           />
-          <TilesPlugin
-            plugin={GLTFExtensionsPlugin}
-            dracoLoader={dracoLoader}
-          />
+          <TilesPlugin plugin={GLTFExtensionsPlugin} dracoLoader={dracoLoader} />
           <TilesPlugin plugin={TileCompressionPlugin} />
           <TilesPlugin plugin={UpdateOnChangePlugin} />
           <TilesPlugin plugin={TilesFadePlugin} />

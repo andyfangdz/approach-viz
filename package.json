@@ -8,6 +8,8 @@
     "build-db": "tsx scripts/build-db.ts",
     "prepare-data": "npm run download-data && npm run build-db",
     "test:parser": "node --import tsx --test src/cifp/parser.test.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "dev": "npm run prepare-data && next dev",
     "build": "npm run prepare-data && next build",
     "start": "next start"
@@ -41,6 +43,7 @@
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.182.0",
+    "prettier": "^3.8.1",
     "tsx": "^4.20.0",
     "typescript": "^5.9.3"
   }

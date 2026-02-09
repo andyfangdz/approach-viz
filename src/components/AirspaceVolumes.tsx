@@ -33,7 +33,7 @@ interface AirspaceVolumesProps {
 function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number) {
   const dLat = lat - refLat;
   const dLon = lon - refLon;
-  const x = dLon * 60 * Math.cos(refLat * Math.PI / 180);
+  const x = dLon * 60 * Math.cos((refLat * Math.PI) / 180);
   const z = -dLat * 60;
   return { x, z };
 }
@@ -100,13 +100,14 @@ function AirspaceVolume({
     if (meshes.length === 0) return { geometry: null, edgesGeometry: null };
 
     // Merge all geometries
-    const mergedGeo = meshes.length === 1 
-      ? meshes[0] 
-      : meshes.reduce((acc, geo) => {
-          // For simplicity, just use the first one
-          // In production, use BufferGeometryUtils.mergeGeometries
-          return acc;
-        }, meshes[0]);
+    const mergedGeo =
+      meshes.length === 1
+        ? meshes[0]
+        : meshes.reduce((acc, geo) => {
+            // For simplicity, just use the first one
+            // In production, use BufferGeometryUtils.mergeGeometries
+            return acc;
+          }, meshes[0]);
 
     return {
       geometry: mergedGeo,

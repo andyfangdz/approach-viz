@@ -1,26 +1,32 @@
 # AGENTS.md
 
 ## Project
+
 - Name: `approach-viz`
 - Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
+
 - Keep this file up to date at all times.
 - Any change to behavior, architecture, rendering, data sources, commands, validation, dependencies, or frequently touched files must include the corresponding `AGENTS.md` update in the same work item/PR.
 - Before finishing, agents should quickly verify this file still matches the current codebase and workflows.
 
 ## Core Commands
+
 - Install deps: `npm install`
 - Download FAA/CIFP + airspace + approach minimums data: `npm run download-data`
 - Build local SQLite DB from downloaded sources: `npm run build-db`
 - Full data refresh (download + SQLite rebuild): `npm run prepare-data`
 - Run CIFP parser fixture tests: `npm run test:parser`
+- Format codebase with Prettier: `npm run format`
+- Verify Prettier formatting: `npm run format:check`
 - Dev server: `npm run dev`
 - Production build (also refreshes data): `npm run build`
 - Run production server: `npm run start`
 
 ## Data Sources
+
 - CIFP: FAA digital products download page (scraped latest archive URL)
 - Airspace overlays: `drnic/faa-airspace-data` (`class_b`, `class_c`, `class_d`)
 - Approach minimums (MDA/DA): `ammaraskar/faa-instrument-approach-db` release asset `approaches.json`
@@ -28,10 +34,12 @@
 - Terrain wireframe: Terrarium elevation tiles from `https://elevation-tiles-prod.s3.amazonaws.com/terrarium`
 
 ## Airport Coverage
+
 - Selector supports all airports present in parsed FAA CIFP data (not a fixed curated list).
 - Airport/approach selectors use `react-select` searchable comboboxes.
 
 ## Rendering Notes
+
 - Coordinates are local NM relative to selected airport reference point.
 - Published CIFP leg/hold courses are magnetic; when synthesizing geometry from course values (for example holds or `CA` legs), convert to true heading using airport magnetic variation.
 - Vertical scale is user-adjustable from the header slider and is applied consistently to:
@@ -78,6 +86,7 @@
 - Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized; the canvas uses capped DPR (`1..1.5`) and high-performance WebGL context hints.
 
 ## URL State
+
 - Selection is encoded in path format:
   - `/<AIRPORT>`
   - `/<AIRPORT>/<PROCEDURE_ID>`
@@ -85,28 +94,37 @@
   - `?surface=terrain`, `?surface=plate`, or `?surface=satellite`
 
 ## Mobile UI Defaults
+
 - On small screens (`<=900px`), selectors are collapsed by default.
 - On small screens (`<=900px`), legend content is collapsed by default.
 - Touch/drag interactions in the 3D scene should suppress iOS text selection/callout overlays (`user-select: none`, `touch-action: none` on scene surface), while selector text inputs remain editable.
 
 ## Architecture Notes
+
 - Server-side data is backed by `data/approach-viz.sqlite`.
 - CI runs GitHub Actions workflow `.github/workflows/parser-tests.yml` on push/PR and executes `npm run test:parser`.
 - Server interactions are implemented as Next.js server actions (`app/actions.ts`).
+- Server action internals are split into `app/actions-lib/*` modules (airport queries, external/minimums matching, vertical-profile enrichment, scene-data assembly) while `app/actions.ts` remains a thin action wrapper.
 - Scene payloads are loaded server-side by explicit App Router pages (`app/page.tsx`, `app/[airportId]/page.tsx`, `app/[airportId]/[procedureId]/page.tsx`) via shared loader `app/route-page.tsx`, and refreshed client-side via actions (`app/AppClient.tsx`).
+- `src/components/ApproachPath.tsx` is an orchestration layer; geometry/altitude/math/marker primitives live in `src/components/approach-path/*` for smaller, focused modules.
+- `app/AppClient.tsx` delegates picker formatting/filtering/runtime conversion helpers to `app/app-client-utils.ts`.
+- `app/AppClient.tsx` coordinates state/effects and delegates major UI sections to `app/app-client/*` (`HeaderControls`, `SceneCanvas`, `InfoPanel`, `HelpPanel`) plus shared constants/types.
 - FAA plate PDF fetching is done through same-origin proxy route `app/api/faa-plate/route.ts` (avoids browser CORS issues).
-- Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions.ts` and included in scene payload for client rendering.
+- Plate metadata (`cycle`, `plateFile`) is resolved in the server action layer (`app/actions-lib/approaches.ts`) and included in scene payload for client rendering.
 - CIFP-to-minima/plate matching uses runway + type-family scoring; `VOR/DME` procedures now explicitly prefer `VOR/DME`/`TACAN` external approaches over same-runway RNAV rows.
 - Vercel Analytics is enabled globally from `app/layout.tsx` via `@vercel/analytics/next`.
 - Build step keeps approach geometry CIFP-only.
 - Approach selector merges CIFP procedures with minima/plate-only procedures that are missing CIFP geometry; selecting minima/plate-only procedures should still show plate + minimums and an explicit "geometry unavailable from CIFP" indication.
 
 ## Validation Expectations
+
 When changing parser/render/data logic, run:
+
 1. `npm run prepare-data`
 2. `npm run test:parser` (especially for `src/cifp/parser.ts` changes)
 3. `npm run build`
 4. Spot-check at least one procedure with:
+
 - RF leg(s)
 - AF/DME arc leg(s)
 - hold leg(s)
@@ -116,18 +134,47 @@ When changing parser/render/data logic, run:
 - Verify legend remains concise for minima/plate-only procedures (geometry-unavailable status shown in minimums section, not as long legend copy).
 
 ## Files Frequently Touched
+
 - `README.md`
 - `.github/workflows/parser-tests.yml`
 - `src/cifp/parser.ts`
 - `src/cifp/parser.test.ts`
 - `src/cifp/__fixtures__/real-cifp-procedures.txt`
 - `src/components/ApproachPath.tsx`
+- `src/components/approach-path/constants.ts`
+- `src/components/approach-path/coordinates.ts`
+- `src/components/approach-path/curves.ts`
+- `src/components/approach-path/altitudes.ts`
+- `src/components/approach-path/PathTube.tsx`
+- `src/components/approach-path/HoldPattern.tsx`
+- `src/components/approach-path/AirportMarker.tsx`
+- `src/components/approach-path/WaypointMarker.tsx`
+- `src/components/approach-path/VerticalLines.tsx`
+- `src/components/approach-path/waypointCollection.ts`
 - `src/components/AirspaceVolumes.tsx`
 - `src/components/TerrainWireframe.tsx`
 - `src/components/ApproachPlateSurface.tsx`
 - `src/components/SatelliteSurface.tsx`
 - `app/AppClient.tsx`
+- `app/app-client-utils.ts`
+- `app/app-client/constants.ts`
+- `app/app-client/types.ts`
+- `app/app-client/HeaderControls.tsx`
+- `app/app-client/SceneCanvas.tsx`
+- `app/app-client/InfoPanel.tsx`
+- `app/app-client/HelpPanel.tsx`
 - `app/actions.ts`
+- `app/actions-lib/constants.ts`
+- `app/actions-lib/types.ts`
+- `app/actions-lib/geo.ts`
+- `app/actions-lib/airports.ts`
+- `app/actions-lib/approach-db.ts`
+- `app/actions-lib/approach-matching.ts`
+- `app/actions-lib/approach-minimums.ts`
+- `app/actions-lib/approach-serialization.ts`
+- `app/actions-lib/approach-vertical-profile.ts`
+- `app/actions-lib/approaches.ts`
+- `app/actions-lib/scene-data.ts`
 - `app/layout.tsx`
 - `app/api/faa-plate/route.ts`
 - `app/page.tsx`
@@ -138,3 +185,5 @@ When changing parser/render/data logic, run:
 - `lib/types.ts`
 - `scripts/build-db.ts`
 - `scripts/download-data.sh`
+- `.prettierrc.json`
+- `.prettierignore`

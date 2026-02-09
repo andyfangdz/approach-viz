@@ -1,192 +1,24 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { Canvas } from '@react-three/fiber';
-import { Environment, Html, OrbitControls } from '@react-three/drei';
-import Select, { type StylesConfig } from 'react-select';
-import type { Approach, Waypoint } from '@/src/cifp/parser';
-import { AirspaceVolumes } from '@/src/components/AirspaceVolumes';
-import { ApproachPath } from '@/src/components/ApproachPath';
-import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
-import { SatelliteSurface } from '@/src/components/SatelliteSurface';
-import { SceneErrorBoundary } from '@/src/components/SceneErrorBoundary';
-import { TerrainWireframe } from '@/src/components/TerrainWireframe';
-import type { AirportOption, MinimumsValueSummary, SceneData } from '@/lib/types';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import type { Approach } from '@/src/cifp/parser';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
-
-const DEFAULT_VERTICAL_SCALE = 3;
-const MAX_PICKER_RESULTS = 80;
-const MOBILE_BREAKPOINT_PX = 900;
-const SATELLITE_MAX_RETRIES = 3;
-const CAMERA_POSITION: [number, number, number] = [15, 8, 15];
-const FOG_ARGS: [string, number, number] = ['#0a0a14', 50, 200];
-const DIRECTIONAL_LIGHT_POSITION: [number, number, number] = [10, 20, 10];
-const ORBIT_TARGET: [number, number, number] = [0, 2, 0];
-
-interface SelectOption {
-  value: string;
-  label: string;
-  searchText: string;
-  source: 'cifp' | 'external';
-  externalApproachName?: string;
-}
-
-function LoadingFallback() {
-  return (
-    <Html center>
-      <div className="loading-3d">Loading 3D scene...</div>
-    </Html>
-  );
-}
-
-function normalizeQuery(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function filterOptions(options: SelectOption[], query: string): SelectOption[] {
-  const normalized = normalizeQuery(query);
-  if (!normalized) {
-    return options.slice(0, MAX_PICKER_RESULTS);
-  }
-  return options
-    .filter((option) => option.searchText.includes(normalized))
-    .slice(0, MAX_PICKER_RESULTS);
-}
-
-function isMobileViewport(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
-}
-
-function readSurfaceModeFromSearch(search: string): 'terrain' | 'plate' | 'satellite' | null {
-  const params = new URLSearchParams(search);
-  const value = params.get('surface');
-  if (value === 'terrain' || value === 'plate' || value === 'satellite') return value;
-  return null;
-}
-
-function formatApproachLabel(approach: SceneData['approaches'][number]): string {
-  if (approach.source === 'external' && approach.externalApproachName) {
-    return `${approach.externalApproachName} (no CIFP geometry)`;
-  }
-  const { type, runway, procedureId } = approach;
-  const cleanedRunway = (runway || '').toUpperCase().replace(/\s+/g, '');
-  if (/\d/.test(cleanedRunway)) {
-    return `${type} RWY ${runway} (${procedureId})`;
-  }
-  const circlingMatch = cleanedRunway.match(/-?([A-Z])$/);
-  if (circlingMatch) {
-    return `${type}-${circlingMatch[1]} (${procedureId})`;
-  }
-  if (runway) {
-    return `${type} ${runway} (${procedureId})`;
-  }
-  return `${type} (${procedureId})`;
-}
-
-function formatMinimumValue(minimum: MinimumsValueSummary | undefined): string {
-  if (!minimum) return 'n/a';
-  const categorySuffix = minimum.category === 'A' ? '' : `, Cat ${minimum.category}`;
-  return `${minimum.altitude}' (${minimum.type}${categorySuffix})`;
-}
-
-const selectStyles: StylesConfig<SelectOption, false> = {
-  control: (base, state) => ({
-    ...base,
-    backgroundColor: '#1a1a2e',
-    borderColor: state.isFocused ? '#00ffcc' : '#2a2a44',
-    minHeight: 36,
-    boxShadow: state.isFocused ? '0 0 0 3px rgba(0, 255, 204, 0.15)' : 'none',
-    ':hover': {
-      borderColor: '#00ffcc'
-    }
-  }),
-  valueContainer: (base) => ({
-    ...base,
-    padding: '2px 10px'
-  }),
-  singleValue: (base) => ({
-    ...base,
-    color: '#e8e8f0',
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12
-  }),
-  placeholder: (base) => ({
-    ...base,
-    color: '#8888aa',
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12
-  }),
-  input: (base) => ({
-    ...base,
-    color: '#e8e8f0',
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12
-  }),
-  menu: (base) => ({
-    ...base,
-    backgroundColor: 'rgba(18, 18, 31, 0.98)',
-    border: '1px solid #2a2a44',
-    borderRadius: 8,
-    overflow: 'hidden'
-  }),
-  menuList: (base) => ({
-    ...base,
-    maxHeight: 260
-  }),
-  option: (base, state) => ({
-    ...base,
-    backgroundColor: state.isSelected
-      ? 'rgba(0, 255, 204, 0.24)'
-      : state.isFocused
-        ? 'rgba(0, 255, 204, 0.16)'
-        : 'transparent',
-    color: '#e8e8f0',
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12,
-    cursor: 'pointer'
-  }),
-  indicatorSeparator: (base) => ({
-    ...base,
-    backgroundColor: '#2a2a44'
-  }),
-  dropdownIndicator: (base) => ({
-    ...base,
-    color: '#8888aa',
-    ':hover': {
-      color: '#00ffcc'
-    }
-  }),
-  clearIndicator: (base) => ({
-    ...base,
-    color: '#8888aa',
-    ':hover': {
-      color: '#ff7777'
-    }
-  }),
-  menuPortal: (base) => ({
-    ...base,
-    zIndex: 280
-  })
-};
-
-function sceneApproachToRuntimeApproach(scene: SceneData): Approach | null {
-  const source = scene.currentApproach;
-  if (!source) return null;
-
-  return {
-    airportId: source.airportId,
-    procedureId: source.procedureId,
-    type: source.type,
-    runway: source.runway,
-    transitions: new Map(source.transitions),
-    finalLegs: source.finalLegs,
-    missedLegs: source.missedLegs
-  };
-}
-
-function sceneWaypointsToMap(scene: SceneData): Map<string, Waypoint> {
-  return new Map(scene.waypoints.map((waypoint) => [waypoint.id, waypoint as Waypoint]));
-}
+import {
+  filterOptions,
+  formatApproachLabel,
+  isMobileViewport,
+  readSurfaceModeFromSearch,
+  sceneApproachToRuntimeApproach,
+  sceneWaypointsToMap,
+  type SelectOption
+} from '@/app/app-client-utils';
+import { HeaderControls } from '@/app/app-client/HeaderControls';
+import { HelpPanel } from '@/app/app-client/HelpPanel';
+import { InfoPanel } from '@/app/app-client/InfoPanel';
+import { SATELLITE_MAX_RETRIES, DEFAULT_VERTICAL_SCALE } from '@/app/app-client/constants';
+import { SceneCanvas } from '@/app/app-client/SceneCanvas';
+import type { SurfaceMode } from '@/app/app-client/types';
+import type { AirportOption, SceneData } from '@/lib/types';
 
 interface AppClientProps {
   initialAirportOptions: AirportOption[];
@@ -204,13 +36,19 @@ export function AppClient({
   const [selectorsCollapsed, setSelectorsCollapsed] = useState(false);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [airportOptions, setAirportOptions] = useState<AirportOption[]>(initialAirportOptions);
-  const [airportOptionsLoading, setAirportOptionsLoading] = useState(initialAirportOptions.length === 0);
+  const [airportOptionsLoading, setAirportOptionsLoading] = useState(
+    initialAirportOptions.length === 0
+  );
   const [airportQuery, setAirportQuery] = useState('');
   const [approachQuery, setApproachQuery] = useState('');
   const [sceneData, setSceneData] = useState<SceneData>(initialSceneData);
-  const [selectedAirport, setSelectedAirport] = useState<string>(initialSceneData.airport?.id ?? initialAirportId);
-  const [selectedApproach, setSelectedApproach] = useState<string>(initialSceneData.selectedApproachId || initialApproachId);
-  const [surfaceMode, setSurfaceMode] = useState<'terrain' | 'plate' | 'satellite'>('terrain');
+  const [selectedAirport, setSelectedAirport] = useState<string>(
+    initialSceneData.airport?.id ?? initialAirportId
+  );
+  const [selectedApproach, setSelectedApproach] = useState<string>(
+    initialSceneData.selectedApproachId || initialApproachId
+  );
+  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>('terrain');
   const [didInitFromLocation, setDidInitFromLocation] = useState(false);
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [loading, setLoading] = useState(false);
@@ -268,31 +106,34 @@ export function AppClient({
     }
   }, [selectedAirport, selectedApproach, surfaceMode, didInitFromLocation]);
 
-  const requestSceneData = (airportId: string, procedureId: string) => {
-    const nextRequestId = requestCounter.current + 1;
-    requestCounter.current = nextRequestId;
-    setLoading(true);
-    setErrorMessage('');
-    setSurfaceErrorMessage('');
-    setSatelliteRetryCount(0);
-    setSatelliteRetryNonce(0);
+  const requestSceneData = useCallback(
+    (airportId: string, procedureId: string) => {
+      const nextRequestId = requestCounter.current + 1;
+      requestCounter.current = nextRequestId;
+      setLoading(true);
+      setErrorMessage('');
+      setSurfaceErrorMessage('');
+      setSatelliteRetryCount(0);
+      setSatelliteRetryNonce(0);
 
-    startTransition(() => {
-      loadSceneDataAction(airportId, procedureId)
-        .then((nextSceneData) => {
-          if (requestCounter.current !== nextRequestId) return;
-          setSceneData(nextSceneData);
-          setSelectedAirport(nextSceneData.airport?.id ?? airportId);
-          setSelectedApproach(nextSceneData.selectedApproachId || '');
-          setLoading(false);
-        })
-        .catch(() => {
-          if (requestCounter.current !== nextRequestId) return;
-          setLoading(false);
-          setErrorMessage('Unable to load airport data.');
-        });
-    });
-  };
+      startTransition(() => {
+        loadSceneDataAction(airportId, procedureId)
+          .then((nextSceneData) => {
+            if (requestCounter.current !== nextRequestId) return;
+            setSceneData(nextSceneData);
+            setSelectedAirport(nextSceneData.airport?.id ?? airportId);
+            setSelectedApproach(nextSceneData.selectedApproachId || '');
+            setLoading(false);
+          })
+          .catch(() => {
+            if (requestCounter.current !== nextRequestId) return;
+            setLoading(false);
+            setErrorMessage('Unable to load airport data.');
+          });
+      });
+    },
+    [startTransition]
+  );
 
   const airport = sceneData.airport;
   const menuPortalTarget = typeof document === 'undefined' ? undefined : document.body;
@@ -311,6 +152,7 @@ export function AppClient({
     };
   }, [currentApproach, airport, selectedApproach]);
   const waypoints = useMemo(() => sceneWaypointsToMap(sceneData), [sceneData]);
+
   const effectiveAirportOptions: SelectOption[] = useMemo(() => {
     if (airportOptions.length > 0) {
       return airportOptions.map((option) => ({
@@ -321,64 +163,77 @@ export function AppClient({
       }));
     }
     if (!airport) return [];
-    return [{
-      value: airport.id,
-      label: `${airport.id} - ${airport.name}`,
-      searchText: `${airport.id} ${airport.name}`.toLowerCase(),
-      source: 'cifp' as const
-    }];
+    return [
+      {
+        value: airport.id,
+        label: `${airport.id} - ${airport.name}`,
+        searchText: `${airport.id} ${airport.name}`.toLowerCase(),
+        source: 'cifp' as const
+      }
+    ];
   }, [airportOptions, airport]);
+
   const approachOptions: SelectOption[] = useMemo(
-    () => sceneData.approaches.map((approach) => ({
-      value: approach.procedureId,
-      label: formatApproachLabel(approach),
-      searchText: `${approach.procedureId} ${approach.type} ${approach.runway} ${approach.externalApproachName || ''}`.toLowerCase(),
-      source: approach.source,
-      externalApproachName: approach.externalApproachName
-    })),
+    () =>
+      sceneData.approaches.map((approach) => ({
+        value: approach.procedureId,
+        label: formatApproachLabel(approach),
+        searchText:
+          `${approach.procedureId} ${approach.type} ${approach.runway} ${approach.externalApproachName || ''}`.toLowerCase(),
+        source: approach.source,
+        externalApproachName: approach.externalApproachName
+      })),
     [sceneData.approaches]
   );
+
   const selectedAirportOption = useMemo(
     () => effectiveAirportOptions.find((option) => option.value === selectedAirport) ?? null,
     [effectiveAirportOptions, selectedAirport]
   );
+
   const selectedApproachOption = useMemo(
     () => approachOptions.find((option) => option.value === selectedApproach) ?? null,
     [approachOptions, selectedApproach]
   );
+
   const filteredAirportOptions = useMemo(
     () => filterOptions(effectiveAirportOptions, airportQuery),
     [effectiveAirportOptions, airportQuery]
   );
+
   const filteredApproachOptions = useMemo(
     () => filterOptions(approachOptions, approachQuery),
     [approachOptions, approachQuery]
   );
-  const hasApproachPlate = Boolean(sceneData.approachPlate);
-  const showApproachPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
-  const showSatelliteSurface = surfaceMode === 'satellite';
-  const showTerrainSurface = surfaceMode === 'terrain' || (surfaceMode === 'plate' && !hasApproachPlate);
-  const activeErrorMessage = errorMessage || surfaceErrorMessage;
-  const missedApproachStartAltitudeFeet = sceneData.minimumsSummary?.da?.altitude
-    ?? sceneData.minimumsSummary?.mda?.altitude
-    ?? undefined;
-  const surfaceLegendClass = showApproachPlateSurface
-    ? 'plate'
-    : showSatelliteSurface
-      ? 'satellite'
-      : 'terrain';
-  const surfaceLegendLabel = showApproachPlateSurface
-    ? 'FAA Plate Surface'
-    : showSatelliteSurface
-      ? 'Satellite Surface'
-      : 'Terrain Wireframe';
 
-  const handleSurfaceButtonClick = (mode: 'terrain' | 'plate' | 'satellite') => {
+  const hasApproachPlate = Boolean(sceneData.approachPlate);
+  const activeErrorMessage = errorMessage || surfaceErrorMessage;
+  const missedApproachStartAltitudeFeet =
+    sceneData.minimumsSummary?.da?.altitude ??
+    sceneData.minimumsSummary?.mda?.altitude ??
+    undefined;
+  const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' =
+    surfaceMode === 'plate'
+      ? hasApproachPlate
+        ? 'plate'
+        : 'terrain'
+      : surfaceMode === 'satellite'
+        ? 'satellite'
+        : 'terrain';
+  const surfaceLegendLabel =
+    surfaceLegendClass === 'plate'
+      ? 'FAA Plate Surface'
+      : surfaceLegendClass === 'satellite'
+        ? 'Satellite Surface'
+        : 'Terrain Wireframe';
+
+  const handleSurfaceModeSelected = (mode: SurfaceMode) => {
     setSurfaceErrorMessage('');
     setSatelliteRetryCount(0);
     setSatelliteRetryNonce(0);
     setSurfaceMode(mode);
   };
+
   const handleSatelliteRuntimeError = useCallback((message: string, error?: Error) => {
     console.error('Satellite surface rendering failed', error);
     setSatelliteRetryCount((previousCount) => {
@@ -388,7 +243,7 @@ export function AppClient({
       const nextCount = previousCount + 1;
       if (nextCount >= SATELLITE_MAX_RETRIES) {
         setSurfaceErrorMessage(
-          `Satellite surface failed after ${SATELLITE_MAX_RETRIES} attempts. ${message}`,
+          `Satellite surface failed after ${SATELLITE_MAX_RETRIES} attempts. ${message}`
         );
       } else {
         setSatelliteRetryNonce((nonce) => nonce + 1);
@@ -399,337 +254,70 @@ export function AppClient({
 
   return (
     <div className="app">
-      <header>
-        <div className="header-row">
-          <div className="logo">
-            <div className="logo-icon">A</div>
-            <div className="logo-text">Approach<span>Viz</span></div>
-          </div>
-          <button
-            type="button"
-            className="panel-toggle"
-            onClick={() => setSelectorsCollapsed((current) => !current)}
-          >
-            {selectorsCollapsed ? 'Show Selectors' : 'Hide Selectors'}
-          </button>
-        </div>
-
-        {!selectorsCollapsed && (
-          <div className="controls">
-            <div className="control-group">
-              <label>Airport</label>
-              <div className="library-select">
-                <Select<SelectOption, false>
-                  instanceId="airport-select"
-                  inputId="airport-select-input"
-                  isClearable={false}
-                  isSearchable
-                  options={filteredAirportOptions}
-                  value={selectedAirportOption}
-                  styles={selectStyles}
-                  filterOption={null}
-                  placeholder={airportOptionsLoading ? 'Loading airports...' : 'Search airport...'}
-                  noOptionsMessage={() => 'No airports found'}
-                  isDisabled={airportOptionsLoading || effectiveAirportOptions.length === 0}
-                  maxMenuHeight={260}
-                  menuPortalTarget={menuPortalTarget}
-                  menuPosition="fixed"
-                  inputValue={airportQuery}
-                  onInputChange={(value, meta) => {
-                    if (meta.action === 'input-change') setAirportQuery(value);
-                    if (meta.action === 'menu-close') setAirportQuery('');
-                  }}
-                  onChange={(nextOption) => {
-                    const nextAirportId = nextOption?.value;
-                    if (!nextAirportId || nextAirportId === selectedAirport) return;
-                    setAirportQuery('');
-                    setSelectedAirport(nextAirportId);
-                    setSelectedApproach('');
-                    requestSceneData(nextAirportId, '');
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="control-group">
-              <label>Approach</label>
-              <div className="library-select">
-                <Select<SelectOption, false>
-                  instanceId="approach-select"
-                  inputId="approach-select-input"
-                  isClearable={false}
-                  isSearchable
-                  options={filteredApproachOptions}
-                  value={selectedApproachOption}
-                  styles={selectStyles}
-                  filterOption={null}
-                  placeholder={approachOptions.length > 0 ? 'Search approach...' : 'No approaches available'}
-                  noOptionsMessage={() => 'No approaches found'}
-                  isDisabled={approachOptions.length === 0}
-                  maxMenuHeight={260}
-                  menuPortalTarget={menuPortalTarget}
-                  menuPosition="fixed"
-                  inputValue={approachQuery}
-                  onInputChange={(value, meta) => {
-                    if (meta.action === 'input-change') setApproachQuery(value);
-                    if (meta.action === 'menu-close') setApproachQuery('');
-                  }}
-                  onChange={(nextOption) => {
-                    const nextApproachId = nextOption?.value;
-                    if (!nextApproachId || nextApproachId === selectedApproach) return;
-                    setApproachQuery('');
-                    setSelectedApproach(nextApproachId);
-                    requestSceneData(selectedAirport, nextApproachId);
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="control-group vertical-scale">
-              <label>Vertical</label>
-              <div className="vertical-scale-row">
-                <input
-                  type="range"
-                  min={1}
-                  max={15}
-                  step={0.5}
-                  value={verticalScale}
-                  onChange={(event) => setVerticalScale(parseFloat(event.target.value))}
-                />
-              </div>
-              <span className="control-value">{verticalScale.toFixed(1)}x</span>
-            </div>
-
-            <div className="control-group">
-              <label>Surface</label>
-              <div className="surface-toggle" role="group" aria-label="Surface mode">
-                <button
-                  type="button"
-                  className={`surface-toggle-button ${surfaceMode === 'terrain' ? 'active' : ''}`}
-                  onClick={() => handleSurfaceButtonClick('terrain')}
-                >
-                  Terrain
-                </button>
-                <button
-                  type="button"
-                  className={`surface-toggle-button ${surfaceMode === 'plate' ? 'active' : ''}`}
-                  onClick={() => handleSurfaceButtonClick('plate')}
-                >
-                  FAA Plate
-                </button>
-                <button
-                  type="button"
-                  className={`surface-toggle-button ${surfaceMode === 'satellite' ? 'active' : ''}`}
-                  onClick={() => handleSurfaceButtonClick('satellite')}
-                >
-                  Satellite
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </header>
+      <HeaderControls
+        selectorsCollapsed={selectorsCollapsed}
+        onToggleSelectors={() => setSelectorsCollapsed((current) => !current)}
+        filteredAirportOptions={filteredAirportOptions}
+        selectedAirportOption={selectedAirportOption}
+        airportOptionsLoading={airportOptionsLoading}
+        effectiveAirportOptionsLength={effectiveAirportOptions.length}
+        airportQuery={airportQuery}
+        onAirportQueryChange={setAirportQuery}
+        onAirportSelected={(airportId) => {
+          setSelectedAirport(airportId);
+          setSelectedApproach('');
+          requestSceneData(airportId, '');
+        }}
+        filteredApproachOptions={filteredApproachOptions}
+        selectedApproachOption={selectedApproachOption}
+        approachOptionsLength={approachOptions.length}
+        approachQuery={approachQuery}
+        onApproachQueryChange={setApproachQuery}
+        onApproachSelected={(approachId) => {
+          setSelectedApproach(approachId);
+          requestSceneData(selectedAirport, approachId);
+        }}
+        verticalScale={verticalScale}
+        onVerticalScaleChange={setVerticalScale}
+        surfaceMode={surfaceMode}
+        onSurfaceModeSelected={handleSurfaceModeSelected}
+        menuPortalTarget={menuPortalTarget}
+      />
 
       <main className="main-content">
-        {(loading || isPending) && (
-          <div className="loading">Loading approach data...</div>
-        )}
+        {(loading || isPending) && <div className="loading">Loading approach data...</div>}
 
         {!airport ? (
           <div className="loading">No airport data available</div>
         ) : (
-          <Canvas
-            camera={{ position: CAMERA_POSITION, fov: 60, near: 0.1, far: 500 }}
-            dpr={[1, 1.5]}
-            gl={{
-              antialias: true,
-              alpha: false,
-              stencil: false,
-              powerPreference: 'high-performance'
-            }}
-          >
-            <color attach="background" args={['#0a0a14']} />
-            <fog attach="fog" args={FOG_ARGS} />
-
-            <Suspense fallback={<LoadingFallback />}>
-              <ambientLight intensity={0.4} />
-              <directionalLight position={DIRECTIONAL_LIGHT_POSITION} intensity={0.8} />
-              <Environment preset="night" />
-
-              {showTerrainSurface && (
-                <TerrainWireframe
-                  refLat={airport.lat}
-                  refLon={airport.lon}
-                  verticalScale={verticalScale}
-                />
-              )}
-
-              {showApproachPlateSurface && sceneData.approachPlate && (
-                <ApproachPlateSurface
-                  plate={sceneData.approachPlate}
-                  refLat={airport.lat}
-                  refLon={airport.lon}
-                  airportElevationFeet={airport.elevation}
-                  verticalScale={verticalScale}
-                />
-              )}
-
-              {showSatelliteSurface && (
-                <SceneErrorBoundary
-                  resetKey={`${airport.id}:${selectedApproach}:${surfaceMode}:${satelliteRetryNonce}`}
-                  onError={(error) => handleSatelliteRuntimeError('Satellite renderer crashed.', error)}
-                  fallback={(
-                    <Html center>
-                      <div className="loading-3d">
-                        {surfaceErrorMessage || `Retrying satellite (${satelliteRetryCount + 1}/${SATELLITE_MAX_RETRIES})...`}
-                      </div>
-                    </Html>
-                  )}
-                >
-                  {!surfaceErrorMessage && (
-                    <SatelliteSurface
-                      key={`${airport.id}:${selectedApproach}:${satelliteRetryNonce}`}
-                      refLat={airport.lat}
-                      refLon={airport.lon}
-                      airportElevationFeet={airport.elevation}
-                      geoidSeparationFeet={sceneData.geoidSeparationFeet}
-                      verticalScale={verticalScale}
-                      onRuntimeError={handleSatelliteRuntimeError}
-                    />
-                  )}
-                </SceneErrorBoundary>
-              )}
-
-              {contextApproach && (
-                <ApproachPath
-                  approach={contextApproach}
-                  waypoints={waypoints}
-                  airport={airport}
-                  runways={sceneData.runways}
-                  verticalScale={verticalScale}
-                  missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
-                  nearbyAirports={sceneData.nearbyAirports}
-                />
-              )}
-
-              {sceneData.airspace.length > 0 && (
-                <AirspaceVolumes
-                  features={sceneData.airspace}
-                  refLat={airport.lat}
-                  refLon={airport.lon}
-                  verticalScale={verticalScale}
-                />
-              )}
-
-              <OrbitControls
-                enableDamping
-                dampingFactor={0.05}
-                target={ORBIT_TARGET}
-              />
-            </Suspense>
-          </Canvas>
+          <SceneCanvas
+            airport={airport}
+            sceneData={sceneData}
+            contextApproach={contextApproach}
+            waypoints={waypoints}
+            verticalScale={verticalScale}
+            selectedApproach={selectedApproach}
+            surfaceMode={surfaceMode}
+            satelliteRetryNonce={satelliteRetryNonce}
+            satelliteRetryCount={satelliteRetryCount}
+            surfaceErrorMessage={surfaceErrorMessage}
+            missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
+            onSatelliteRuntimeError={handleSatelliteRuntimeError}
+          />
         )}
 
-        <div className="info-panel">
-          <div className="section-header">
-            <h3>Legend</h3>
-            <button
-              type="button"
-              className="panel-toggle small"
-              onClick={() => setLegendCollapsed((current) => !current)}
-            >
-              {legendCollapsed ? 'Show' : 'Hide'}
-            </button>
-          </div>
-          {!legendCollapsed && (
-            <div className="legend">
-              <div className="legend-item">
-                <div className="legend-color final" />
-                <span>Final Approach</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color transition" />
-                <span>Transitions</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color missed" />
-                <span>Missed Approach</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color hold" />
-                <span>Hold</span>
-              </div>
-              <div className="legend-item">
-                <div className={`legend-color ${surfaceLegendClass}`} />
-                <span>{surfaceLegendLabel}</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color airspace-b" />
-                <span>Class B</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color airspace-c" />
-                <span>Class C</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color airspace-d" />
-                <span>Class D</span>
-              </div>
-              {surfaceMode === 'plate' && !hasApproachPlate && (
-                <div className="legend-note">No FAA plate matched this approach; showing terrain.</div>
-              )}
-            </div>
-          )}
+        <InfoPanel
+          legendCollapsed={legendCollapsed}
+          onToggleLegend={() => setLegendCollapsed((current) => !current)}
+          surfaceLegendClass={surfaceLegendClass}
+          surfaceLegendLabel={surfaceLegendLabel}
+          surfaceMode={surfaceMode}
+          hasApproachPlate={hasApproachPlate}
+          sceneData={sceneData}
+          selectedApproachSource={selectedApproachOption?.source}
+        />
 
-          <div className="minimums-section">
-            <h3>Minimums</h3>
-            {sceneData.requestedProcedureNotInCifp && (
-              <div className="minimums-empty">
-                Requested <strong>{sceneData.requestedProcedureNotInCifp}</strong> not found; showing <strong>{sceneData.selectedApproachId || 'none'}</strong>.
-              </div>
-            )}
-            {selectedApproachOption?.source === 'external' && (
-              <div className="minimums-row">
-                <span>Geometry</span>
-                <span className="minimums-value">Unavailable (CIFP)</span>
-              </div>
-            )}
-            {sceneData.minimumsSummary ? (
-              <>
-                <div className="minimums-source">{sceneData.minimumsSummary.sourceApproachName}</div>
-                <div className="minimums-row">
-                  <span>DA</span>
-                  <span className="minimums-value">
-                    {formatMinimumValue(sceneData.minimumsSummary.da)}
-                  </span>
-                </div>
-                <div className="minimums-row">
-                  <span>MDA</span>
-                  <span className="minimums-value">
-                    {formatMinimumValue(sceneData.minimumsSummary.mda)}
-                  </span>
-                </div>
-                <div className="minimums-cycle">DTPP cycle {sceneData.minimumsSummary.cycle}</div>
-              </>
-            ) : (
-              <div className="minimums-empty">No matching minimums found</div>
-            )}
-          </div>
-        </div>
-
-        {activeErrorMessage && (
-          <div className="help-panel">
-            <p>{activeErrorMessage}</p>
-          </div>
-        )}
-
-        {!activeErrorMessage && (
-          <div className="help-panel">
-            <p><kbd>Drag</kbd> Rotate view</p>
-            <p><kbd>Scroll</kbd> Zoom in/out</p>
-            <p><kbd>Right-drag</kbd> Pan</p>
-          </div>
-        )}
+        <HelpPanel errorMessage={activeErrorMessage} />
       </main>
     </div>
   );
