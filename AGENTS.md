@@ -9,7 +9,8 @@
 ## Agent Maintenance Rule
 
 - Keep this file up to date at all times.
-- Any change to behavior, architecture, rendering, data sources, commands, validation, dependencies, or frequently touched files must include the corresponding `AGENTS.md` update in the same work item/PR.
+- Any change to behavior, architecture, rendering, data sources, commands, validation, or dependencies must include the corresponding `AGENTS.md` update in the same work item/PR.
+- Rendering changes must also update the relevant `docs/rendering-*.md` topic file(s).
 - Before finishing, agents should quickly verify this file still matches the current codebase and workflows.
 
 ## Core Commands
@@ -42,61 +43,12 @@
 
 ## Rendering Notes
 
-- Coordinates are local NM relative to selected airport reference point.
-- Local lat/lon to scene-coordinate conversion uses WGS84 radii-of-curvature at the selected-airport latitude (east/north tangent-plane approximation).
-- Published CIFP leg/hold courses are magnetic; when synthesizing geometry from course values (for example holds or `CA` legs), convert to true heading using airport magnetic variation.
-- Vertical scale is user-adjustable from the header slider and is applied consistently to:
-  - approach paths/waypoints/holds
-  - terrain wireframe
-  - Class B/C/D airspace volumes
-- Terrain wireframe elevation samples are fetched/decoded per-airport reference and reused across vertical-scale changes; vertical exaggeration updates are applied via Y-scale transform (no tile refetch/rebuild on slider changes).
-- FAA plate surface texture/geometry is fetched and rasterized per selected plate/airport reference; vertical-scale changes apply via mesh Y-scale transform (no plate re-fetch/re-render on slider changes).
-- 3D plate texture projection data is fetched/rasterized per selected plate/airport reference; vertical-scale changes reuse the shared 3D-tile transform (no plate re-fetch/re-render on slider changes).
-- FAA plate PDF rasterization uses 4x render scale (retina-quality) for both flat FAA Plate surface rendering and 3D Plate texture projection.
-- Surface mode supports:
-  - `Terrain` (existing Terrarium-based wireframe terrain grid)
-  - `FAA Plate` (geo-located FAA approach plate mesh replacing terrain at selected approach)
-  - `3D Plate` (FAA plate texture projected onto Google Photorealistic 3D Tiles terrain using the same `3d-tiles-renderer` pipeline as Satellite mode)
-  - `Satellite` (Google Earth Photorealistic 3D Tiles rendered via `3d-tiles-renderer`, transformed into the app's local frame using `@takram/three-geospatial`)
-- Header includes a `Recenter View` control that resets camera position and orbit target to airport-centered defaults.
-- FAA plate mesh is rendered at the selected airport elevation (scaled by vertical scale), not fixed at sea-level.
-- 3D plate mode applies georeferenced plate texturing directly to Google 3D Tiles terrain materials (shader projection in local scene coordinates).
-- Satellite mode loads Google tiles directly on the client (no server-side imagery proxy).
-- Satellite and 3D plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and do not provide a runtime key-entry fallback UI.
-- Satellite mode should retry renderer initialization up to 3 times on runtime failures; after retries are exhausted, show an in-app error message and keep current surface mode (no automatic terrain fallback).
-- Satellite mode terrain is vertically aligned to the app's MSL altitude frame by offsetting tiles to the selected airport elevation.
-- Satellite mode applies EGM96 geoid separation per airport when converting MSL airport elevation to WGS84 ellipsoid height for the tile anchor transform.
-- In satellite mode, airport/runway context markers apply WGS84 curvature-drop compensation from the selected-airport tangent origin so nearby runways stay grounded.
-- Satellite mode uses a tighter tile error target (`~12`) to keep nearby airport surfaces readable.
-- Satellite/3D plate tile renderers are keyed by airport (not selected approach) so switching procedures does not remount the tileset or churn tile sessions.
-- FAA plate mode falls back to terrain when no matching plate metadata is found for the selected approach.
-- 3D plate mode does not fall back to Terrarium wireframe terrain; it keeps the Google 3D Tiles surface active and omits only the plate texture overlay when no plate metadata is available.
-- Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
-- CIFP approach continuation records (`F` subsection continuation `2` / application type `W`) are parsed as level-of-service/RNP values and are not treated as VDA.
-- FAF vertical angle for glidepath rendering is sourced from matched approach metadata (`approaches.json` `vertical_profile.vda`) when available, preventing CIFP level-of-service codes (for example `A152`) from being misread as descent angle.
-- If runway-anchored glidepath math would cause an immediate climb after FAF (for example steep VDA with FAF at/above constraints), final-path altitude falls back to smooth FAF-to-MAP interpolation to prevent abrupt altitude spikes.
-- Missed-approach path rendering starts at the MAP using selected minimums DA (or MDA fallback), and the missed profile climbs immediately from MAP by interpolating toward the next higher published missed-leg altitude targets (non-descending); this does not change final-approach glidepath-to-runway depiction.
-- Missed-profile distance interpolation treats no-fix `CA` legs as short climb segments (distance estimated from climb requirement), preventing exaggerated straight-out segments before turns when a CA leg precedes turn-to-fix legs.
-- For missed segments with `CA` followed by fix-join legs (`DF`/`CF`/`TF`), geometry is conditional:
-- non-climbing (or near-level) `CA` uses a local course-to-fix turn join from MAP for immediate turn behavior;
-- climbing `CA` renders a straight climb-out segment first, then turns toward the downstream fix leg.
-- The missed `CA->(DF/CF/TF)` change of course is rendered with a curved course-to-fix join (not a hard corner), including cases with large heading reversal after climb-out.
-- `CA->(DF/CF/TF)` turn joins use a radius-constrained arc+tangent model with a minimum turn radius to avoid snap/instant-reversal geometry.
-- `CA->(DF/CF/TF)` turn direction is chosen from heading-to-fix bearing delta (preferred side), with opposite-side fallback only when the preferred geometry is infeasible.
-- When available, explicit turn direction published on the downstream fix leg descriptor (`L`/`R`) overrides geometric inference for `CA->(DF/CF/TF)` turn joins.
-- Curved `CA->(DF/CF/TF)` turn joins are applied only when the downstream fix leg turn direction is explicitly published; otherwise missed geometry remains straight/linear to avoid synthetic loops.
-- Missed `VI` (heading-to-intercept) legs without a fix are rendered as short heading stubs with radius-constrained heading-transition arcs (about `0.55..0.9 NM` turn radius) before joining downstream fix legs; downstream fix joins use published turn direction when available, otherwise geometric turn-side resolution.
-- Missed no-fix heading legs (`VI`, `VA`, `VR`, `VD`, `VM`, `CI`, `CD`) are synthesized as short heading stubs so radial/intercept-style legs are visible even when CIFP omits waypoint geometry.
-- When those no-fix heading legs feed a downstream `CF` leg with a published course, the join intercepts the published inbound course before the fix (instead of turning directly to the fix), improving radial-intercept depiction (for example `KSAV I10` missed).
-- Missed `CA->(DF/CF/TF)` turn initiation points display altitude callouts (using resolved CA altitude) so turn altitude restrictions are visible in-scene.
-- Missed `CA->(DF/CF/TF)` turn initiation points display altitude callouts only for meaningful published CA climb constraints (not derived/interpolated profile altitudes).
-- Minimums selection prefers Cat A values when available; if Cat A is unavailable for a minima line, the app falls back to the lowest available category (B/C/D), displays that category in the minimums panel, and uses it for missed-approach start altitude.
-- RF and AF (DME arc) legs are rendered as arcs using published center fixes and turn direction.
-- CA legs without fix geometry are synthesized along published course, with length constrained by climb and capped relative to the next known-fix leg to avoid exaggerated runway-heading extensions before turns; non-climbing (or lower-altitude) CA legs use a very short stub so missed approaches can turn immediately.
-- Missed-approach interpolation handles legs without direct fix geometry using neighbor-leg distance fallback.
-- Airport/runway context markers (selected airport + nearby airports/runways) should render even when the selected procedure has no CIFP geometry.
-- Vertical reference lines for path points are batched into a single `lineSegments` geometry per path segment (final/transition/missed) to reduce draw-call count.
-- Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized; the canvas uses capped DPR (`1..1.5`) and high-performance WebGL context hints.
+Rendering guidance is split into topic docs under `docs/`:
+
+- `docs/rendering-coordinate-system.md`
+- `docs/rendering-surface-modes.md`
+- `docs/rendering-approach-geometry.md`
+- `docs/rendering-performance.md`
 
 ## URL State
 
@@ -114,22 +66,46 @@
 
 ## Architecture Notes
 
-- Server-side data is backed by `data/approach-viz.sqlite`.
-- CI runs GitHub Actions workflow `.github/workflows/parser-tests.yml` on push/PR and executes `npm run test:parser`.
-- Server interactions are implemented as Next.js server actions (`app/actions.ts`).
-- Server action internals are split into `app/actions-lib/*` modules (airport queries, external/minimums matching, vertical-profile enrichment, scene-data assembly) while `app/actions.ts` remains a thin action wrapper.
-- Scene payloads are loaded server-side by explicit App Router pages (`app/page.tsx`, `app/[airportId]/page.tsx`, `app/[airportId]/[procedureId]/page.tsx`) via shared loader `app/route-page.tsx`, and refreshed client-side via actions (`app/AppClient.tsx`).
-- `src/components/ApproachPath.tsx` is an orchestration layer; geometry/altitude/math/marker primitives live in `src/components/approach-path/*` for smaller, focused modules.
-- `src/components/approach-path/path-builder.ts` contains the pure path-geometry assembly logic used by `PathTube`, enabling deterministic unit tests for final/transition/missed segment rendering behavior.
-- `src/components/approach-path/runway-geometry.ts` contains pure runway pairing/reciprocal-stub geometry logic used by `AirportMarker`.
-- `app/AppClient.tsx` delegates picker formatting/filtering/runtime conversion helpers to `app/app-client-utils.ts`.
-- `app/AppClient.tsx` coordinates state/effects and delegates major UI sections to `app/app-client/*` (`HeaderControls`, `SceneCanvas`, `InfoPanel`, `HelpPanel`) plus shared constants/types.
-- FAA plate PDF fetching is done through same-origin proxy route `app/api/faa-plate/route.ts` (avoids browser CORS issues).
-- Plate metadata (`cycle`, `plateFile`) is resolved in the server action layer (`app/actions-lib/approaches.ts`) and included in scene payload for client rendering.
-- CIFP-to-minima/plate matching uses runway + type-family scoring; `VOR/DME` procedures now explicitly prefer `VOR/DME`/`TACAN` external approaches over same-runway RNAV rows.
-- Vercel Analytics is enabled globally from `app/layout.tsx` via `@vercel/analytics/next`.
-- Build step keeps approach geometry CIFP-only.
-- Approach selector merges CIFP procedures with minima/plate-only procedures that are missing CIFP geometry; selecting minima/plate-only procedures should still show plate + minimums and an explicit "geometry unavailable from CIFP" indication.
+- Server-side data is backed by `data/approach-viz.sqlite`, with scene payloads assembled through Next.js server actions.
+- `app/actions.ts` is a thin wrapper; server logic lives in `app/actions-lib/*` and feeds App Router page loaders plus client refresh actions.
+- The client runtime is coordinated in `app/AppClient.tsx`, with UI sections in `app/app-client/*` and scene/math primitives in `src/components/*` and `src/components/approach-path/*`.
+- FAA plate PDFs are fetched through `app/api/faa-plate/route.ts`; plate metadata and minima matching are resolved server-side before payload delivery.
+- Build-time geometry remains CIFP-only; selector data may include minima/plate-only procedures with explicit geometry-unavailable status.
+- CI parser coverage runs in `.github/workflows/parser-tests.yml`; Vercel Analytics is enabled in `app/layout.tsx`.
+
+ASCII data flow:
+
+```text
+Browser
+  |
+  v
+App Router pages (app/page.tsx, app/[airportId]/*)
+  |
+  v
+Route loader (app/route-page.tsx)
+  |
+  v
+Server actions (app/actions.ts)
+  |
+  v
+Actions lib (app/actions-lib/*) ---> SQLite (data/approach-viz.sqlite)
+  |                                  External metadata (CIFP/minima/plates)
+  v
+Scene payload
+  |
+  v
+AppClient (app/AppClient.tsx)
+  |
+  +--> UI sections (app/app-client/*)
+  +--> Scene components (src/components/*, src/components/approach-path/*)
+  +--> FAA plate proxy (app/api/faa-plate/route.ts)
+```
+
+Architecture details are split into topic docs under `docs/`:
+
+- `docs/architecture-overview.md` (includes Mermaid system diagram)
+- `docs/architecture-data-and-actions.md`
+- `docs/architecture-client-and-scene.md`
 
 ## Validation Expectations
 
@@ -149,61 +125,3 @@ When changing parser/render/data logic, run:
 - glidepath inside FAF
 - Verify at least one minima/plate-only procedure (for example `KPOU VOR-A`) appears in selector list, shows minimums + plate, and indicates geometry is unavailable from CIFP.
 - Verify legend remains concise for minima/plate-only procedures (geometry-unavailable status shown in minimums section, not as long legend copy).
-
-## Files Frequently Touched
-
-- `README.md`
-- `.github/workflows/parser-tests.yml`
-- `src/cifp/parser.ts`
-- `src/cifp/parser.test.ts`
-- `src/cifp/__fixtures__/real-cifp-procedures.txt`
-- `src/components/ApproachPath.tsx`
-- `src/components/approach-path/constants.ts`
-- `src/components/approach-path/coordinates.ts`
-- `src/components/approach-path/curves.ts`
-- `src/components/approach-path/path-builder.ts`
-- `src/components/approach-path/runway-geometry.ts`
-- `src/components/approach-path/geometry.test.ts`
-- `src/components/approach-path/altitudes.ts`
-- `src/components/approach-path/PathTube.tsx`
-- `src/components/approach-path/HoldPattern.tsx`
-- `src/components/approach-path/AirportMarker.tsx`
-- `src/components/approach-path/WaypointMarker.tsx`
-- `src/components/approach-path/VerticalLines.tsx`
-- `src/components/approach-path/waypointCollection.ts`
-- `src/components/AirspaceVolumes.tsx`
-- `src/components/TerrainWireframe.tsx`
-- `src/components/ApproachPlateSurface.tsx`
-- `src/components/SatelliteSurface.tsx`
-- `app/AppClient.tsx`
-- `app/app-client-utils.ts`
-- `app/app-client/constants.ts`
-- `app/app-client/types.ts`
-- `app/app-client/HeaderControls.tsx`
-- `app/app-client/SceneCanvas.tsx`
-- `app/app-client/InfoPanel.tsx`
-- `app/app-client/HelpPanel.tsx`
-- `app/actions.ts`
-- `app/actions-lib/constants.ts`
-- `app/actions-lib/types.ts`
-- `app/actions-lib/geo.ts`
-- `app/actions-lib/airports.ts`
-- `app/actions-lib/approach-db.ts`
-- `app/actions-lib/approach-matching.ts`
-- `app/actions-lib/approach-minimums.ts`
-- `app/actions-lib/approach-serialization.ts`
-- `app/actions-lib/approach-vertical-profile.ts`
-- `app/actions-lib/approaches.ts`
-- `app/actions-lib/scene-data.ts`
-- `app/layout.tsx`
-- `app/api/faa-plate/route.ts`
-- `app/page.tsx`
-- `app/[airportId]/page.tsx`
-- `app/[airportId]/[procedureId]/page.tsx`
-- `app/route-page.tsx`
-- `lib/db.ts`
-- `lib/types.ts`
-- `scripts/build-db.ts`
-- `scripts/download-data.sh`
-- `.prettierrc.json`
-- `.prettierignore`
