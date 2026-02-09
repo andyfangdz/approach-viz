@@ -18,7 +18,9 @@
 - Download FAA/CIFP + airspace + approach minimums data: `npm run download-data`
 - Build local SQLite DB from downloaded sources: `npm run build-db`
 - Full data refresh (download + SQLite rebuild): `npm run prepare-data`
+- Run full automated tests (parser + geometry): `npm run test`
 - Run CIFP parser fixture tests: `npm run test:parser`
+- Run geometry unit tests (path/curve/runway math): `npm run test:geometry`
 - Format codebase with Prettier: `npm run format`
 - Verify Prettier formatting: `npm run format:check`
 - Dev server: `npm run dev`
@@ -74,17 +76,17 @@
 - If runway-anchored glidepath math would cause an immediate climb after FAF (for example steep VDA with FAF at/above constraints), final-path altitude falls back to smooth FAF-to-MAP interpolation to prevent abrupt altitude spikes.
 - Missed-approach path rendering starts at the MAP using selected minimums DA (or MDA fallback), and the missed profile climbs immediately from MAP by interpolating toward the next higher published missed-leg altitude targets (non-descending); this does not change final-approach glidepath-to-runway depiction.
 - Missed-profile distance interpolation treats no-fix `CA` legs as short climb segments (distance estimated from climb requirement), preventing exaggerated straight-out segments before turns when a CA leg precedes turn-to-fix legs.
-- For missed segments with `CA` followed by `DF`, geometry is conditional:
+- For missed segments with `CA` followed by fix-join legs (`DF`/`CF`/`TF`), geometry is conditional:
 - non-climbing (or near-level) `CA` uses a local course-to-fix turn join from MAP for immediate turn behavior;
-- climbing `CA` renders a straight climb-out segment first, then turns toward the `DF` fix.
-- The `CA->DF` change of course is rendered with a curved course-to-fix join (not a hard corner), including cases with large heading reversal after climb-out.
-- `CA->DF` turn joins use a radius-constrained arc+tangent model with a minimum turn radius to avoid snap/instant-reversal geometry.
-- `CA->DF` turn direction is chosen from heading-to-fix bearing delta (preferred side), with opposite-side fallback only when the preferred geometry is infeasible.
-- When available, explicit turn direction published on the procedure leg descriptor (`L`/`R`, e.g. on `DF` legs) overrides geometric inference for `CA->DF` turn joins.
-- Curved `CA->DF` turn joins are applied only when `DF` leg turn direction is explicitly published; otherwise missed geometry remains straight/linear to avoid synthetic loops.
-- Missed `VI` (heading-to-intercept) legs without a fix are rendered as short heading stubs with radius-constrained heading-transition arcs (about `0.55..0.9 NM` turn radius) before joining downstream fix legs; downstream fix joins use geometric turn-side resolution to avoid forced loops.
-- Missed `CA->DF` turn initiation points display altitude callouts (using resolved CA altitude) so turn altitude restrictions are visible in-scene.
-- Missed `CA->DF` turn initiation points display altitude callouts only for meaningful published CA climb constraints (not derived/interpolated profile altitudes).
+- climbing `CA` renders a straight climb-out segment first, then turns toward the downstream fix leg.
+- The missed `CA->(DF/CF/TF)` change of course is rendered with a curved course-to-fix join (not a hard corner), including cases with large heading reversal after climb-out.
+- `CA->(DF/CF/TF)` turn joins use a radius-constrained arc+tangent model with a minimum turn radius to avoid snap/instant-reversal geometry.
+- `CA->(DF/CF/TF)` turn direction is chosen from heading-to-fix bearing delta (preferred side), with opposite-side fallback only when the preferred geometry is infeasible.
+- When available, explicit turn direction published on the downstream fix leg descriptor (`L`/`R`) overrides geometric inference for `CA->(DF/CF/TF)` turn joins.
+- Curved `CA->(DF/CF/TF)` turn joins are applied only when the downstream fix leg turn direction is explicitly published; otherwise missed geometry remains straight/linear to avoid synthetic loops.
+- Missed `VI` (heading-to-intercept) legs without a fix are rendered as short heading stubs with radius-constrained heading-transition arcs (about `0.55..0.9 NM` turn radius) before joining downstream fix legs; downstream fix joins use published turn direction when available, otherwise geometric turn-side resolution.
+- Missed `CA->(DF/CF/TF)` turn initiation points display altitude callouts (using resolved CA altitude) so turn altitude restrictions are visible in-scene.
+- Missed `CA->(DF/CF/TF)` turn initiation points display altitude callouts only for meaningful published CA climb constraints (not derived/interpolated profile altitudes).
 - Minimums selection prefers Cat A values when available; if Cat A is unavailable for a minima line, the app falls back to the lowest available category (B/C/D), displays that category in the minimums panel, and uses it for missed-approach start altitude.
 - RF and AF (DME arc) legs are rendered as arcs using published center fixes and turn direction.
 - CA legs without fix geometry are synthesized along published course, with length constrained by climb and capped relative to the next known-fix leg to avoid exaggerated runway-heading extensions before turns; non-climbing (or lower-altitude) CA legs use a very short stub so missed approaches can turn immediately.
@@ -115,6 +117,8 @@
 - Server action internals are split into `app/actions-lib/*` modules (airport queries, external/minimums matching, vertical-profile enrichment, scene-data assembly) while `app/actions.ts` remains a thin action wrapper.
 - Scene payloads are loaded server-side by explicit App Router pages (`app/page.tsx`, `app/[airportId]/page.tsx`, `app/[airportId]/[procedureId]/page.tsx`) via shared loader `app/route-page.tsx`, and refreshed client-side via actions (`app/AppClient.tsx`).
 - `src/components/ApproachPath.tsx` is an orchestration layer; geometry/altitude/math/marker primitives live in `src/components/approach-path/*` for smaller, focused modules.
+- `src/components/approach-path/path-builder.ts` contains the pure path-geometry assembly logic used by `PathTube`, enabling deterministic unit tests for final/transition/missed segment rendering behavior.
+- `src/components/approach-path/runway-geometry.ts` contains pure runway pairing/reciprocal-stub geometry logic used by `AirportMarker`.
 - `app/AppClient.tsx` delegates picker formatting/filtering/runtime conversion helpers to `app/app-client-utils.ts`.
 - `app/AppClient.tsx` coordinates state/effects and delegates major UI sections to `app/app-client/*` (`HeaderControls`, `SceneCanvas`, `InfoPanel`, `HelpPanel`) plus shared constants/types.
 - FAA plate PDF fetching is done through same-origin proxy route `app/api/faa-plate/route.ts` (avoids browser CORS issues).
@@ -129,9 +133,11 @@
 When changing parser/render/data logic, run:
 
 1. `npm run prepare-data`
-2. `npm run test:parser` (especially for `src/cifp/parser.ts` changes)
-3. `npm run build`
-4. Spot-check at least one procedure with:
+2. `npm run test`
+3. `npm run test:parser` (especially for `src/cifp/parser.ts` changes)
+4. `npm run test:geometry` (for path/curve/runway/coordinate geometry changes)
+5. `npm run build`
+6. Spot-check at least one procedure with:
 
 - RF leg(s)
 - AF/DME arc leg(s)
@@ -152,6 +158,9 @@ When changing parser/render/data logic, run:
 - `src/components/approach-path/constants.ts`
 - `src/components/approach-path/coordinates.ts`
 - `src/components/approach-path/curves.ts`
+- `src/components/approach-path/path-builder.ts`
+- `src/components/approach-path/runway-geometry.ts`
+- `src/components/approach-path/geometry.test.ts`
 - `src/components/approach-path/altitudes.ts`
 - `src/components/approach-path/PathTube.tsx`
 - `src/components/approach-path/HoldPattern.tsx`

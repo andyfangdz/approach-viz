@@ -1,0 +1,265 @@
+import * as THREE from 'three';
+import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
+import { MAX_VI_TURN_RADIUS_NM, MIN_VI_TURN_RADIUS_NM } from './constants';
+import { altToY, latLonToLocal, magneticToTrueHeading, resolveWaypoint } from './coordinates';
+import {
+  buildCourseToFixTurnPoints,
+  buildHeadingTransitionArcPoints,
+  buildRfArcPoints
+} from './curves';
+import type { TurnConstraintLabel, VerticalLineData } from './types';
+
+export function isFixJoinTerminator(pathTerminator?: string): boolean {
+  return pathTerminator === 'DF' || pathTerminator === 'CF' || pathTerminator === 'TF';
+}
+
+export function buildPathGeometry({
+  legs,
+  waypoints,
+  resolvedAltitudes,
+  initialAltitudeFeet,
+  verticalScale,
+  refLat,
+  refLon,
+  magVar,
+  showTurnConstraintLabels = false
+}: {
+  legs: ApproachLeg[];
+  waypoints: Map<string, Waypoint>;
+  resolvedAltitudes: Map<ApproachLeg, number>;
+  initialAltitudeFeet: number;
+  verticalScale: number;
+  refLat: number;
+  refLon: number;
+  magVar: number;
+  showTurnConstraintLabels?: boolean;
+}): {
+  points: THREE.Vector3[];
+  verticalLines: VerticalLineData[];
+  turnConstraintLabels: TurnConstraintLabel[];
+} {
+  const points: THREE.Vector3[] = [];
+  const verticalLines: VerticalLineData[] = [];
+  const turnConstraintLabels: TurnConstraintLabel[] = [];
+  let lastPlottedPoint: THREE.Vector3 | null = null;
+  let lastPlottedAltitudeFeet = initialAltitudeFeet;
+  let pendingCourseToFixTurnHeading: number | null = null;
+  let pendingCourseToFixTurnDirection: 'L' | 'R' | undefined;
+  let lastLegCourseHeadingTrue: number | null = null;
+
+  const pushPoint = (point: THREE.Vector3) => {
+    const previous = points[points.length - 1];
+    if (!previous) {
+      points.push(point);
+      return;
+    }
+    if (previous.distanceToSquared(point) > 1e-8) {
+      points.push(point);
+    }
+  };
+
+  for (let legIndex = 0; legIndex < legs.length; legIndex += 1) {
+    const leg = legs[legIndex];
+    const resolvedAltitude = resolvedAltitudes.get(leg) ?? leg.altitude;
+    if (!resolvedAltitude || resolvedAltitude <= 0) continue;
+
+    const y = altToY(resolvedAltitude, verticalScale);
+    const wp = resolveWaypoint(waypoints, leg.waypointId);
+    let currentPoint: THREE.Vector3 | null = null;
+    let headingTransitionPoints: THREE.Vector3[] | null = null;
+
+    if (wp) {
+      const pos = latLonToLocal(wp.lat, wp.lon, refLat, refLon);
+      currentPoint = new THREE.Vector3(pos.x, y, pos.z);
+      if (typeof leg.course === 'number' && Number.isFinite(leg.course)) {
+        lastLegCourseHeadingTrue = magneticToTrueHeading(leg.course, magVar);
+      } else {
+        lastLegCourseHeadingTrue = null;
+      }
+    } else if (
+      leg.pathTerminator === 'CA' &&
+      lastPlottedPoint &&
+      typeof leg.course === 'number' &&
+      Number.isFinite(leg.course)
+    ) {
+      const headingTrue = magneticToTrueHeading(leg.course, magVar);
+      const headingRad = (headingTrue * Math.PI) / 180;
+      const climbDeltaFeet = resolvedAltitude - lastPlottedAltitudeFeet;
+      const climbDistanceNm = climbDeltaFeet > 0 ? climbDeltaFeet / 200 : 0;
+      const nextLeg = legIndex + 1 < legs.length ? legs[legIndex + 1] : undefined;
+      const nextWp = nextLeg ? resolveWaypoint(waypoints, nextLeg.waypointId) : undefined;
+      const publishedTurnAltitude =
+        typeof leg.altitude === 'number' && Number.isFinite(leg.altitude) && leg.altitude > 0
+          ? leg.altitude
+          : null;
+      const effectiveTurnConstraintAltitude =
+        publishedTurnAltitude !== null && publishedTurnAltitude > lastPlottedAltitudeFeet + 25
+          ? publishedTurnAltitude
+          : null;
+
+      if (
+        isFixJoinTerminator(nextLeg?.pathTerminator) &&
+        nextWp &&
+        nextLeg?.turnDirection &&
+        climbDeltaFeet <= 50
+      ) {
+        if (showTurnConstraintLabels && effectiveTurnConstraintAltitude !== null) {
+          turnConstraintLabels.push({
+            position: [lastPlottedPoint.x, y + 0.45, lastPlottedPoint.z],
+            text: `${Math.round(effectiveTurnConstraintAltitude)}'`
+          });
+        }
+        pendingCourseToFixTurnHeading = headingTrue;
+        pendingCourseToFixTurnDirection = nextLeg?.turnDirection;
+        lastLegCourseHeadingTrue = headingTrue;
+        lastPlottedAltitudeFeet = resolvedAltitude;
+        continue;
+      }
+
+      let distanceNm = climbDeltaFeet > 0 ? Math.max(0.3, Math.min(8, climbDistanceNm)) : 0.2;
+      if (nextWp) {
+        const nextPos = latLonToLocal(nextWp.lat, nextWp.lon, refLat, refLon);
+        const distanceToNextFix = Math.hypot(
+          nextPos.x - lastPlottedPoint.x,
+          nextPos.z - lastPlottedPoint.z
+        );
+        if (distanceToNextFix > 1e-4) {
+          const nextFixCapNm =
+            climbDeltaFeet > 0
+              ? Math.max(0.5, distanceToNextFix * 0.8)
+              : Math.max(0.1, distanceToNextFix * 0.05);
+          distanceNm = Math.min(distanceNm, nextFixCapNm);
+        }
+      }
+
+      currentPoint = new THREE.Vector3(
+        lastPlottedPoint.x + Math.sin(headingRad) * distanceNm,
+        y,
+        lastPlottedPoint.z - Math.cos(headingRad) * distanceNm
+      );
+      if (isFixJoinTerminator(nextLeg?.pathTerminator) && nextWp && nextLeg?.turnDirection) {
+        pendingCourseToFixTurnHeading = headingTrue;
+        pendingCourseToFixTurnDirection = nextLeg?.turnDirection;
+        if (showTurnConstraintLabels && effectiveTurnConstraintAltitude !== null) {
+          turnConstraintLabels.push({
+            position: [currentPoint.x, currentPoint.y + 0.45, currentPoint.z],
+            text: `${Math.round(effectiveTurnConstraintAltitude)}'`
+          });
+        }
+      }
+      lastLegCourseHeadingTrue = headingTrue;
+    } else if (
+      leg.pathTerminator === 'VI' &&
+      lastPlottedPoint &&
+      typeof leg.course === 'number' &&
+      Number.isFinite(leg.course)
+    ) {
+      const headingTrue = magneticToTrueHeading(leg.course, magVar);
+      const headingRad = (headingTrue * Math.PI) / 180;
+      const nextLeg = legIndex + 1 < legs.length ? legs[legIndex + 1] : undefined;
+      const nextWp = nextLeg ? resolveWaypoint(waypoints, nextLeg.waypointId) : undefined;
+      let distanceNm = 0.45;
+      if (nextWp) {
+        const nextPos = latLonToLocal(nextWp.lat, nextWp.lon, refLat, refLon);
+        const distanceToNextFix = Math.hypot(
+          nextPos.x - lastPlottedPoint.x,
+          nextPos.z - lastPlottedPoint.z
+        );
+        if (distanceToNextFix > 1e-4) {
+          distanceNm = Math.max(0.25, Math.min(1.2, distanceToNextFix * 0.18));
+        }
+      }
+
+      if (lastLegCourseHeadingTrue !== null) {
+        const viTurnRadius = Math.max(
+          MIN_VI_TURN_RADIUS_NM,
+          Math.min(MAX_VI_TURN_RADIUS_NM, distanceNm * 0.9)
+        );
+        const arcPoints = buildHeadingTransitionArcPoints(
+          lastPlottedPoint,
+          lastLegCourseHeadingTrue,
+          headingTrue,
+          y,
+          leg.turnDirection,
+          viTurnRadius
+        );
+        if (arcPoints.length > 0) {
+          headingTransitionPoints = arcPoints;
+          currentPoint = arcPoints[arcPoints.length - 1];
+        }
+      }
+      if (!currentPoint) {
+        currentPoint = new THREE.Vector3(
+          lastPlottedPoint.x + Math.sin(headingRad) * distanceNm,
+          y,
+          lastPlottedPoint.z - Math.cos(headingRad) * distanceNm
+        );
+      }
+      pendingCourseToFixTurnHeading = headingTrue;
+      pendingCourseToFixTurnDirection = isFixJoinTerminator(nextLeg?.pathTerminator)
+        ? nextLeg?.turnDirection
+        : undefined;
+      lastLegCourseHeadingTrue = headingTrue;
+    } else {
+      lastLegCourseHeadingTrue = null;
+    }
+
+    if (!currentPoint) continue;
+    const previousPoint = points[points.length - 1];
+
+    const shouldApplyPendingFixJoinTurn =
+      previousPoint &&
+      pendingCourseToFixTurnHeading !== null &&
+      wp &&
+      isFixJoinTerminator(leg.pathTerminator);
+
+    if (shouldApplyPendingFixJoinTurn) {
+      const turnHeading = pendingCourseToFixTurnHeading;
+      if (turnHeading === null) continue;
+      for (const turnPoint of buildCourseToFixTurnPoints(
+        previousPoint,
+        currentPoint,
+        turnHeading,
+        pendingCourseToFixTurnDirection
+      )) {
+        pushPoint(turnPoint);
+      }
+      pendingCourseToFixTurnHeading = null;
+      pendingCourseToFixTurnDirection = undefined;
+    } else if (
+      previousPoint &&
+      (leg.pathTerminator === 'RF' || leg.pathTerminator === 'AF') &&
+      leg.rfCenterWaypointId
+    ) {
+      pendingCourseToFixTurnHeading = null;
+      pendingCourseToFixTurnDirection = undefined;
+      const centerWp = resolveWaypoint(waypoints, leg.rfCenterWaypointId);
+      if (centerWp) {
+        const center = latLonToLocal(centerWp.lat, centerWp.lon, refLat, refLon);
+        const turnDirection = leg.rfTurnDirection ?? 'R';
+        for (const arcPoint of buildRfArcPoints(
+          previousPoint,
+          currentPoint,
+          center,
+          turnDirection
+        )) {
+          pushPoint(arcPoint);
+        }
+      } else {
+        pushPoint(currentPoint);
+      }
+    } else if (headingTransitionPoints && headingTransitionPoints.length > 0) {
+      for (const transitionPoint of headingTransitionPoints) {
+        pushPoint(transitionPoint);
+      }
+    } else {
+      pushPoint(currentPoint);
+    }
+
+    verticalLines.push({ x: currentPoint.x, y: currentPoint.y, z: currentPoint.z });
+    lastPlottedPoint = currentPoint;
+    lastPlottedAltitudeFeet = resolvedAltitude;
+  }
+
+  return { points, verticalLines, turnConstraintLabels };
+}
