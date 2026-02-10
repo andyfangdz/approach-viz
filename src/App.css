@@ -289,7 +289,7 @@ textarea,
 
 .options-panel-fab {
   position: absolute;
-  bottom: 76px;
+  bottom: 24px;
   right: 24px;
   width: 40px;
   height: 40px;
@@ -337,7 +337,7 @@ textarea,
 .options-panel {
   position: absolute;
   right: 24px;
-  bottom: 76px;
+  bottom: 24px;
   background: rgba(18, 18, 31, 0.9);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
