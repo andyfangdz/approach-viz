@@ -65,6 +65,7 @@ Rendering guidance is split into topic docs under `docs/`:
 
 - On small screens (`<=900px`), selectors are collapsed by default.
 - On small screens (`<=900px`), legend content is collapsed by default.
+- Bottom-right help panel is error-only; static drag/scroll interaction hints are not shown.
 - Touch/drag interactions in the 3D scene should suppress iOS text selection/callout overlays (`user-select: none`, `touch-action: none` on scene surface), while selector text inputs remain editable.
 
 ## App Icons And PWA
