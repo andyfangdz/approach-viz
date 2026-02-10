@@ -329,6 +329,20 @@ function main() {
 
   db.close();
   console.log(`✅ SQLite DB built at ${DB_PATH}`);
+
+  const airportElevations: [number, number, number][] = [];
+  for (const airport of parsed.airports.values()) {
+    if (!Number.isFinite(airport.lat) || !Number.isFinite(airport.lon)) continue;
+    const elevation = Number.isFinite(airport.elevation) ? airport.elevation : 0;
+    airportElevations.push([
+      Math.round(airport.lat * 1e4) / 1e4,
+      Math.round(airport.lon * 1e4) / 1e4,
+      Math.round(elevation)
+    ]);
+  }
+  const elevationsPath = path.join(DATA_DIR, 'airport-elevations.json');
+  fs.writeFileSync(elevationsPath, JSON.stringify(airportElevations));
+  console.log(`✅ Airport elevations index written (${airportElevations.length} airports)`);
 }
 
 main();

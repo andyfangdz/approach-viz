@@ -7,9 +7,9 @@ import {
   latLonToLocal
 } from '@/src/components/approach-path/coordinates';
 import {
-  buildElevationGrid,
-  sampleElevation,
-  type ElevationGrid
+  loadAirportElevationIndex,
+  nearestAirportElevation,
+  type AirportElevationIndex
 } from '@/src/components/terrain-elevation';
 
 const DEFAULT_RADIUS_NM = 80;
@@ -59,7 +59,7 @@ interface LiveTrafficFeed {
 interface TrafficHistoryPoint {
   lat: number;
   lon: number;
-  altitudeFeet: number;
+  altitudeFeet: number | null;
   timestampMs: number;
 }
 
@@ -86,11 +86,11 @@ function normalizeCallsignLabel(flight: string | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeAltitudeFeet(aircraft: LiveTrafficAircraft): number {
+function normalizeAltitudeFeet(aircraft: LiveTrafficAircraft): number | null {
   if (typeof aircraft.altitudeFeet === 'number' && Number.isFinite(aircraft.altitudeFeet)) {
     return aircraft.altitudeFeet;
   }
-  return 0;
+  return null;
 }
 
 function estimateDistanceNm(latA: number, lonA: number, latB: number, lonB: number): number {
@@ -169,16 +169,13 @@ function toScenePoint(
   refLat: number,
   refLon: number,
   verticalScale: number,
-  applyEarthCurvatureCompensation: boolean,
-  elevationGrid: ElevationGrid | null
+  applyEarthCurvatureCompensation: boolean
 ): [number, number, number] {
   const local = latLonToLocal(lat, lon, refLat, refLon);
   const curvatureDropFeet = applyEarthCurvatureCompensation
     ? earthCurvatureDropNm(local.x, local.z, refLat) * FEET_PER_NM
     : 0;
-  const terrainFloorFeet = elevationGrid ? sampleElevation(elevationGrid, lat, lon) : 0;
-  const clampedAltitudeFeet = Math.max(terrainFloorFeet, altitudeFeet);
-  const correctedAltitudeFeet = clampedAltitudeFeet - curvatureDropFeet;
+  const correctedAltitudeFeet = altitudeFeet - curvatureDropFeet;
   return [local.x, altToY(correctedAltitudeFeet, verticalScale), local.z];
 }
 
@@ -216,7 +213,10 @@ function mergeTracks(
         nextPoint.lat,
         nextPoint.lon
       );
-      const altitudeDelta = Math.abs(lastPoint.altitudeFeet - nextPoint.altitudeFeet);
+      const altitudeDelta =
+        lastPoint.altitudeFeet !== null && nextPoint.altitudeFeet !== null
+          ? Math.abs(lastPoint.altitudeFeet - nextPoint.altitudeFeet)
+          : 0;
       if (movedNm >= MIN_SAMPLE_DISTANCE_NM || altitudeDelta >= 100) {
         nextHistory.push(nextPoint);
       } else {
@@ -256,7 +256,7 @@ export function LiveTrafficOverlay({
   limit = DEFAULT_LIMIT
 }: LiveTrafficOverlayProps) {
   const [tracks, setTracks] = useState<Map<string, TrafficTrack>>(new Map());
-  const [elevationGrid, setElevationGrid] = useState<ElevationGrid | null>(null);
+  const [airportIndex, setAirportIndex] = useState<AirportElevationIndex | null>(null);
   const normalizedHistoryMinutes = normalizeHistoryMinutes(historyMinutes);
   const markerMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const markerDummy = useMemo(() => new THREE.Object3D(), []);
@@ -274,13 +274,13 @@ export function LiveTrafficOverlay({
 
   useEffect(() => {
     let cancelled = false;
-    buildElevationGrid(refLat, refLon, radiusNm).then((grid) => {
-      if (!cancelled) setElevationGrid(grid);
+    loadAirportElevationIndex().then((index) => {
+      if (!cancelled) setAirportIndex(index);
     });
     return () => {
       cancelled = true;
     };
-  }, [refLat, refLon, radiusNm]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -394,9 +394,18 @@ export function LiveTrafficOverlay({
   }, []);
 
   const renderTracks = useMemo(() => {
+    const resolveAltitude = (lat: number, lon: number, altFeet: number | null): number => {
+      if (altFeet !== null) return altFeet;
+      return airportIndex ? nearestAirportElevation(airportIndex, lat, lon) : 0;
+    };
+
     return Array.from(tracks.values())
       .map((track) => {
-        const markerAltitudeFeet = normalizeAltitudeFeet(track.aircraft);
+        const markerAltitudeFeet = resolveAltitude(
+          track.aircraft.lat,
+          track.aircraft.lon,
+          normalizeAltitudeFeet(track.aircraft)
+        );
         const markerPosition = toScenePoint(
           track.aircraft.lat,
           track.aircraft.lon,
@@ -404,19 +413,17 @@ export function LiveTrafficOverlay({
           refLat,
           refLon,
           verticalScale,
-          applyEarthCurvatureCompensation,
-          elevationGrid
+          applyEarthCurvatureCompensation
         );
         const trailPoints = track.history.map((point) =>
           toScenePoint(
             point.lat,
             point.lon,
-            point.altitudeFeet,
+            resolveAltitude(point.lat, point.lon, point.altitudeFeet),
             refLat,
             refLon,
             verticalScale,
-            applyEarthCurvatureCompensation,
-            elevationGrid
+            applyEarthCurvatureCompensation
           )
         );
         return {
@@ -431,7 +438,7 @@ export function LiveTrafficOverlay({
         (track) =>
           Number.isFinite(track.markerPosition[0]) && Number.isFinite(track.markerPosition[2])
       );
-  }, [tracks, refLat, refLon, elevationGrid, verticalScale, applyEarthCurvatureCompensation]);
+  }, [tracks, refLat, refLon, airportIndex, verticalScale, applyEarthCurvatureCompensation]);
 
   useEffect(() => {
     const markerMesh = markerMeshRef.current;
