@@ -20,11 +20,15 @@ import {
   DEFAULT_TERRAIN_RADIUS_NM,
   DEFAULT_VERTICAL_SCALE,
   DEFAULT_TRAFFIC_HISTORY_MINUTES,
+  DEFAULT_NEXRAD_VOLUME_ENABLED,
+  DEFAULT_NEXRAD_MIN_DBZ,
   MIN_TERRAIN_RADIUS_NM,
   MAX_TERRAIN_RADIUS_NM,
   TERRAIN_RADIUS_STEP_NM,
   MIN_TRAFFIC_HISTORY_MINUTES,
-  MAX_TRAFFIC_HISTORY_MINUTES
+  MAX_TRAFFIC_HISTORY_MINUTES,
+  MIN_NEXRAD_MIN_DBZ,
+  MAX_NEXRAD_MIN_DBZ
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import type { SurfaceMode } from '@/app/app-client/types';
@@ -45,6 +49,8 @@ interface PersistedOptionsState {
   hideGroundTraffic?: boolean;
   showTrafficCallsigns?: boolean;
   trafficHistoryMinutes?: number;
+  nexradVolumeEnabled?: boolean;
+  nexradMinDbz?: number;
 }
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
@@ -58,6 +64,13 @@ function normalizeTerrainRadiusNm(radiusNm: number): number {
   if (!Number.isFinite(radiusNm)) return DEFAULT_TERRAIN_RADIUS_NM;
   const snapped = Math.round(radiusNm / TERRAIN_RADIUS_STEP_NM) * TERRAIN_RADIUS_STEP_NM;
   return clampValue(snapped, MIN_TERRAIN_RADIUS_NM, MAX_TERRAIN_RADIUS_NM);
+}
+
+function normalizeNexradMinDbz(dbz: number): number {
+  if (!Number.isFinite(dbz)) return DEFAULT_NEXRAD_MIN_DBZ;
+  return Math.round(
+    clampValue(dbz, MIN_NEXRAD_MIN_DBZ, MAX_NEXRAD_MIN_DBZ, DEFAULT_NEXRAD_MIN_DBZ)
+  );
 }
 
 export function AppClient({
@@ -92,6 +105,8 @@ export function AppClient({
   const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
     DEFAULT_TRAFFIC_HISTORY_MINUTES
   );
+  const [nexradVolumeEnabled, setNexradVolumeEnabled] = useState(DEFAULT_NEXRAD_VOLUME_ENABLED);
+  const [nexradMinDbz, setNexradMinDbz] = useState(DEFAULT_NEXRAD_MIN_DBZ);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
@@ -143,6 +158,12 @@ export function AppClient({
             )
           );
         }
+        if (typeof persisted.nexradVolumeEnabled === 'boolean') {
+          setNexradVolumeEnabled(persisted.nexradVolumeEnabled);
+        }
+        if (typeof persisted.nexradMinDbz === 'number') {
+          setNexradMinDbz(normalizeNexradMinDbz(persisted.nexradMinDbz));
+        }
       }
     } catch (error) {
       console.warn('Unable to restore saved options', error);
@@ -161,7 +182,9 @@ export function AppClient({
       liveTrafficEnabled,
       hideGroundTraffic,
       showTrafficCallsigns,
-      trafficHistoryMinutes
+      trafficHistoryMinutes,
+      nexradVolumeEnabled,
+      nexradMinDbz
     };
     window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
   }, [
@@ -172,7 +195,9 @@ export function AppClient({
     liveTrafficEnabled,
     hideGroundTraffic,
     showTrafficCallsigns,
-    trafficHistoryMinutes
+    trafficHistoryMinutes,
+    nexradVolumeEnabled,
+    nexradMinDbz
   ]);
 
   useEffect(() => {
@@ -399,6 +424,8 @@ export function AppClient({
             hideGroundTraffic={hideGroundTraffic}
             showTrafficCallsigns={showTrafficCallsigns}
             trafficHistoryMinutes={trafficHistoryMinutes}
+            nexradVolumeEnabled={nexradVolumeEnabled}
+            nexradMinDbz={nexradMinDbz}
             surfaceMode={surfaceMode}
             satelliteRetryNonce={satelliteRetryNonce}
             satelliteRetryCount={satelliteRetryCount}
@@ -434,6 +461,7 @@ export function AppClient({
           surfaceLegendLabel={surfaceLegendLabel}
           surfaceMode={surfaceMode}
           liveTrafficEnabled={liveTrafficEnabled}
+          nexradVolumeEnabled={nexradVolumeEnabled}
           hasApproachPlate={hasApproachPlate}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
@@ -454,6 +482,10 @@ export function AppClient({
           onFlattenBathymetryChange={setFlattenBathymetry}
           liveTrafficEnabled={liveTrafficEnabled}
           onLiveTrafficEnabledChange={setLiveTrafficEnabled}
+          nexradVolumeEnabled={nexradVolumeEnabled}
+          onNexradVolumeEnabledChange={setNexradVolumeEnabled}
+          nexradMinDbz={nexradMinDbz}
+          onNexradMinDbzChange={(dbz) => setNexradMinDbz(normalizeNexradMinDbz(dbz))}
           hideGroundTraffic={hideGroundTraffic}
           onHideGroundTrafficChange={setHideGroundTraffic}
           showTrafficCallsigns={showTrafficCallsigns}

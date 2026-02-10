@@ -4,7 +4,9 @@ import {
   MIN_TRAFFIC_HISTORY_MINUTES,
   MAX_TERRAIN_RADIUS_NM,
   MIN_TERRAIN_RADIUS_NM,
-  TERRAIN_RADIUS_STEP_NM
+  TERRAIN_RADIUS_STEP_NM,
+  MIN_NEXRAD_MIN_DBZ,
+  MAX_NEXRAD_MIN_DBZ
 } from './constants';
 
 export function OptionsPanel({
@@ -18,6 +20,10 @@ export function OptionsPanel({
   onFlattenBathymetryChange,
   liveTrafficEnabled,
   onLiveTrafficEnabledChange,
+  nexradVolumeEnabled,
+  onNexradVolumeEnabledChange,
+  nexradMinDbz,
+  onNexradMinDbzChange,
   hideGroundTraffic,
   onHideGroundTrafficChange,
   showTrafficCallsigns,
@@ -123,6 +129,34 @@ export function OptionsPanel({
           checked={liveTrafficEnabled}
           onChange={(event) => onLiveTrafficEnabledChange(event.target.checked)}
           aria-label="Enable live ADS-B traffic"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">NEXRAD L3 Volume</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={nexradVolumeEnabled}
+          onChange={(event) => onNexradVolumeEnabledChange(event.target.checked)}
+          aria-label="Enable NEXRAD level 3 volumetric overlay"
+        />
+      </label>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">NEXRAD Threshold ({nexradMinDbz} dBZ)</span>
+        </span>
+        <input
+          type="range"
+          min={MIN_NEXRAD_MIN_DBZ}
+          max={MAX_NEXRAD_MIN_DBZ}
+          step={1}
+          value={nexradMinDbz}
+          disabled={!nexradVolumeEnabled}
+          onChange={(event) => onNexradMinDbzChange(Number(event.target.value))}
+          aria-label="NEXRAD reflectivity threshold dBZ"
         />
       </label>
 

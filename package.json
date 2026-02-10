@@ -33,6 +33,7 @@
     "better-sqlite3": "^11.8.1",
     "egm96-universal": "^1.1.1",
     "kdbush": "^4.0.2",
+    "nexrad-level-3-data": "^0.6.1",
     "next": "^16.1.6",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.2.4",

@@ -9,8 +9,8 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 ## Options Panel
 
-- Exposed controls: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle, `Live ADS-B Traffic`, `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (1–30 min).
-- Live traffic is enabled by default; `Hide Ground Traffic` is disabled by default; default history window is 3 min.
+- Exposed controls: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle, `Live ADS-B Traffic`, `NEXRAD L3 Volume`, `NEXRAD Threshold` (5–60 dBZ), `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (1–30 min).
+- Live traffic is enabled by default; NEXRAD volumetric overlay is disabled by default; `Hide Ground Traffic` is disabled by default; default traffic history window is 3 min.
 - All options-panel values are persisted to browser `localStorage` and restored on load.
 
 ## Header and Selector Layout

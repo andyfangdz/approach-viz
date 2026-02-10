@@ -8,6 +8,7 @@ export function InfoPanel({
   surfaceLegendLabel,
   surfaceMode,
   liveTrafficEnabled,
+  nexradVolumeEnabled,
   hasApproachPlate,
   sceneData,
   selectedApproachSource
@@ -72,6 +73,12 @@ export function InfoPanel({
           <div className="legend-item">
             <div className="legend-color traffic" />
             <span>Live Traffic</span>
+          </div>
+        )}
+        {nexradVolumeEnabled && (
+          <div className="legend-item">
+            <div className="legend-color nexrad" />
+            <span>NEXRAD Volume</span>
           </div>
         )}
         <div className="legend-item">

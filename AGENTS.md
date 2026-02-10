@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite
+- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + `nexrad-level-3-data`
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -42,7 +42,7 @@ Each area below has a one-sentence summary; full details live in the linked `doc
 
 ### Data Sources
 
-CIFP, airspace, minimums, plate PDFs, terrain tiles, and live ADS-B traffic are ingested from FAA and third-party feeds into SQLite at build time, with live data proxied at runtime. → [`docs/data-sources.md`](docs/data-sources.md)
+CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and runtime NEXRAD Level 3 weather are ingested/proxied from FAA and third-party feeds into SQLite (build-time) and same-origin API routes (runtime). → [`docs/data-sources.md`](docs/data-sources.md)
 
 ### Architecture
 
@@ -54,7 +54,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 
 ### Rendering
 
-3D approach paths, airspace volumes, terrain/satellite surfaces, and live traffic are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
+3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional NEXRAD volumetric weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes
@@ -63,7 +63,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 
 ### UI, URL State, and Mobile
 
-URL-path-encoded airport/procedure selection, options panel with localStorage persistence, overlay-style selectors, mobile-first collapsed defaults, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
+URL-path-encoded airport/procedure selection, options panel (including traffic/weather overlays) with localStorage persistence, overlay-style selectors, mobile-first collapsed defaults, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
 
 ### Validation
 

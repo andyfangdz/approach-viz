@@ -34,6 +34,8 @@ export interface SceneCanvasProps {
   hideGroundTraffic: boolean;
   showTrafficCallsigns: boolean;
   trafficHistoryMinutes: number;
+  nexradVolumeEnabled: boolean;
+  nexradMinDbz: number;
   surfaceMode: SurfaceMode;
   satelliteRetryNonce: number;
   satelliteRetryCount: number;
@@ -50,6 +52,7 @@ export interface InfoPanelProps {
   surfaceLegendLabel: string;
   surfaceMode: SurfaceMode;
   liveTrafficEnabled: boolean;
+  nexradVolumeEnabled: boolean;
   hasApproachPlate: boolean;
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
@@ -66,6 +69,10 @@ export interface OptionsPanelProps {
   onFlattenBathymetryChange: (enabled: boolean) => void;
   liveTrafficEnabled: boolean;
   onLiveTrafficEnabledChange: (enabled: boolean) => void;
+  nexradVolumeEnabled: boolean;
+  onNexradVolumeEnabledChange: (enabled: boolean) => void;
+  nexradMinDbz: number;
+  onNexradMinDbzChange: (dbz: number) => void;
   hideGroundTraffic: boolean;
   onHideGroundTrafficChange: (enabled: boolean) => void;
   showTrafficCallsigns: boolean;

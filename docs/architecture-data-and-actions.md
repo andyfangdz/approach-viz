@@ -43,6 +43,13 @@
 - On upstream fetch failures, the proxy returns an empty `aircraft` array with an `error` field (HTTP 200) so client polling remains non-fatal.
 - Client traffic rendering is optional and independent from SQLite/server-action scene payload assembly.
 
+## NEXRAD Weather Access
+
+- NEXRAD Level 3 volumetric weather is fetched through same-origin proxy `app/api/weather/nexrad/route.ts`.
+- The proxy resolves nearest radar metadata via Iowa State Mesonet, fetches latest super-resolution reflectivity scans (`N0B/N1B/N2B/N3B`) from `unidata-nexrad-level3`, and parses radial bins into capped voxel payloads.
+- Super-resolution product code `153` is enabled by extending the runtime parser product map (`nexrad-level-3-data`) with `N0B/N1B/N2B/N3B` abbreviations.
+- Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
+
 ## CI and Instrumentation
 
 - CI workflow `.github/workflows/parser-tests.yml` runs `npm run test:parser` on push/PR.

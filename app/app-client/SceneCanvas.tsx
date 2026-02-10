@@ -9,6 +9,7 @@ import { SatelliteSurface } from '@/app/scene/SatelliteSurface';
 import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
 import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
 import { LiveTrafficOverlay, type SceneAirport } from '@/app/scene/LiveTrafficOverlay';
+import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
 import {
   CAMERA_POSITION,
   DIRECTIONAL_LIGHT_POSITION,
@@ -61,6 +62,8 @@ export const SceneCanvas = memo(function SceneCanvas({
   hideGroundTraffic,
   showTrafficCallsigns,
   trafficHistoryMinutes,
+  nexradVolumeEnabled,
+  nexradMinDbz,
   surfaceMode,
   satelliteRetryNonce,
   satelliteRetryCount,
@@ -186,6 +189,19 @@ export const SceneCanvas = memo(function SceneCanvas({
             hideGroundTargets={hideGroundTraffic}
             showCallsignLabels={showTrafficCallsigns}
             historyMinutes={trafficHistoryMinutes}
+            applyEarthCurvatureCompensation={
+              surfaceMode === 'satellite' || surfaceMode === '3dplate'
+            }
+          />
+        )}
+
+        {nexradVolumeEnabled && (
+          <NexradVolumeOverlay
+            refLat={airport.lat}
+            refLon={airport.lon}
+            verticalScale={verticalScale}
+            minDbz={nexradMinDbz}
+            enabled={nexradVolumeEnabled}
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'
             }

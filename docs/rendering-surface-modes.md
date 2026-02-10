@@ -7,6 +7,11 @@
 - `3D Plate`: FAA plate texture projected onto Google Photorealistic 3D Tiles terrain using the same `3d-tiles-renderer` pipeline as Satellite mode.
 - `Satellite`: Google Earth Photorealistic 3D Tiles rendered via `3d-tiles-renderer`, transformed into the app's local frame using `@takram/three-geospatial`.
 
+## Surface-Independent Overlays
+
+- NEXRAD Level 3 volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
+- In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
+
 ## Shared Vertical-Scale Behavior
 
 - Terrain wireframe elevation samples are fetched/decoded per-airport reference and reused across vertical-scale changes; vertical exaggeration updates apply via Y-scale transform (no tile refetch/rebuild on slider changes).
