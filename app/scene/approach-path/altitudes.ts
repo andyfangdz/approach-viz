@@ -1,4 +1,4 @@
-import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
+import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { MISSED_DEFAULT_CLIMB_FT_PER_NM } from './constants';
 import { latLonToLocal, resolveWaypoint } from './coordinates';
 

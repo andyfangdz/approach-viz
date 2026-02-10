@@ -4,7 +4,7 @@
  */
 
 import { memo, useMemo } from 'react';
-import type { Approach, ApproachLeg, Airport, RunwayThreshold, Waypoint } from '../cifp/parser';
+import type { Approach, ApproachLeg, Airport, RunwayThreshold, Waypoint } from '@/lib/cifp/parser';
 import {
   applyGlidepathInsideFaf,
   resolveMissedApproachAltitudes,

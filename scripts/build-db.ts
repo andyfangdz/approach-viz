@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import KDBush from 'kdbush';
-import { parseCIFP } from '../src/cifp/parser';
+import { parseCIFP } from '../lib/cifp/parser';
 
 interface ApproachMinimumsDb {
   dtpp_cycle_number: string;

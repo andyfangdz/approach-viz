@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import type { Approach } from '@/src/cifp/parser';
+import type { Approach } from '@/lib/cifp/parser';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
 import {
   formatApproachLabel,

@@ -5,7 +5,7 @@ import {
   altToY,
   earthCurvatureDropNm,
   latLonToLocal
-} from '@/src/components/approach-path/coordinates';
+} from './approach-path/coordinates';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;

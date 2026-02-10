@@ -1,6 +1,6 @@
 import { getDb } from '@/lib/db';
 import type { AirspaceFeature, AirportOption } from '@/lib/types';
-import type { Airport } from '@/src/cifp/parser';
+import type { Airport } from '@/lib/cifp/parser';
 import { AIRSPACE_RADIUS_NM, DEFAULT_AIRPORT_ID } from './constants';
 import { latLonDistanceNm } from './geo';
 import type { AirportRow, AirspaceRow, RunwayRow } from './types';

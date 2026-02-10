@@ -13,9 +13,9 @@ flowchart TD
   AL --> DB["SQLite<br/>data/approach-viz.sqlite"]
   AL --> EXT["External Data<br/>CIFP + minima + plate metadata"]
   A --> C["Client Runtime<br/>app/AppClient.tsx"]
-  C --> S["Scene Components<br/>app/app-client/* + src/components/*"]
+  C --> S["Scene Components<br/>app/app-client/* + app/scene/*"]
   C --> P["FAA Plate Proxy<br/>app/api/faa-plate/route.ts"]
-  S --> G["Path Geometry Modules<br/>src/components/approach-path/*"]
+  S --> G["Path Geometry Modules<br/>app/scene/approach-path/*"]
 ```
 
 ## Architecture Docs

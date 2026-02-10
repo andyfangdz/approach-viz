@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import type { ApproachLeg, Waypoint } from '../../cifp/parser';
+import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { buildPathGeometry } from './path-builder';
 import { reciprocalRunwayId, buildRunwaySegments, parseRunwayId } from './runway-geometry';
 import {

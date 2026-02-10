@@ -1,4 +1,4 @@
-import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
+import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import type { UniqueWaypoint } from './types';
 import { latLonToLocal, resolveWaypoint } from './coordinates';
 

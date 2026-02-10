@@ -15,11 +15,11 @@
 
 ## Scene and Geometry Boundaries
 
-- `src/components/ApproachPath.tsx` is an orchestration layer.
-- Geometry/altitude/math/marker primitives are split into `src/components/approach-path/*`.
-- `src/components/LiveTrafficOverlay.tsx` handles ADS-B polling, initial history backfill requests (based on selected history window), retention-increase backfill merges for existing tracks, history pruning, and marker/trail rendering as an optional overlay group.
-- `src/components/approach-path/path-builder.ts` provides pure path-geometry assembly used by `PathTube`, supporting deterministic unit tests for final/transition/missed behavior.
-- `src/components/approach-path/runway-geometry.ts` provides pure runway pairing/reciprocal-stub geometry logic used by `AirportMarker`.
+- `app/scene/ApproachPath.tsx` is an orchestration layer.
+- Geometry/altitude/math/marker primitives are split into `app/scene/approach-path/*`.
+- `app/scene/LiveTrafficOverlay.tsx` handles ADS-B polling, initial history backfill requests (based on selected history window), retention-increase backfill merges for existing tracks, history pruning, and marker/trail rendering as an optional overlay group.
+- `app/scene/approach-path/path-builder.ts` provides pure path-geometry assembly used by `PathTube`, supporting deterministic unit tests for final/transition/missed behavior.
+- `app/scene/approach-path/runway-geometry.ts` provides pure runway pairing/reciprocal-stub geometry logic used by `AirportMarker`.
 
 ## Architectural Intent
 

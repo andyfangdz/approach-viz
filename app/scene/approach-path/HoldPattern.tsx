@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Html, Line } from '@react-three/drei';
-import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
+import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { buildHoldPoints, formatHoldDistance } from './curves';
 import {
   altToY,

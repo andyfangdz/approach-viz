@@ -2,13 +2,13 @@ import { Suspense, memo, useEffect, useMemo, useRef, type RefObject } from 'reac
 import { Canvas, useThree } from '@react-three/fiber';
 import { Environment, Html, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
-import { AirspaceVolumes } from '@/src/components/AirspaceVolumes';
-import { ApproachPath } from '@/src/components/ApproachPath';
-import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
-import { SatelliteSurface } from '@/src/components/SatelliteSurface';
-import { SceneErrorBoundary } from '@/src/components/SceneErrorBoundary';
-import { TerrainWireframe } from '@/src/components/TerrainWireframe';
-import { LiveTrafficOverlay, type SceneAirport } from '@/src/components/LiveTrafficOverlay';
+import { AirspaceVolumes } from '@/app/scene/AirspaceVolumes';
+import { ApproachPath } from '@/app/scene/ApproachPath';
+import { ApproachPlateSurface } from '@/app/scene/ApproachPlateSurface';
+import { SatelliteSurface } from '@/app/scene/SatelliteSurface';
+import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
+import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
+import { LiveTrafficOverlay, type SceneAirport } from '@/app/scene/LiveTrafficOverlay';
 import {
   CAMERA_POSITION,
   DIRECTIONAL_LIGHT_POSITION,

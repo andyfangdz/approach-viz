@@ -1,5 +1,5 @@
 import type { StylesConfig } from 'react-select';
-import type { Approach, Waypoint } from '@/src/cifp/parser';
+import type { Approach, Waypoint } from '@/lib/cifp/parser';
 import type { MinimumsValueSummary, SceneData } from '@/lib/types';
 
 const MAX_PICKER_RESULTS = 80;

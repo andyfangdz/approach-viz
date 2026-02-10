@@ -28,6 +28,14 @@
 - Production build (also refreshes data): `npm run build`
 - Run production server: `npm run start`
 
+## Directory Layout
+
+- `app/` — Next.js routes, server actions (`actions-lib/`), API proxies (`api/`), client UI (`app-client/`), and 3D scene components (`scene/`)
+- `lib/` — shared types, SQLite singleton, spatial index, and CIFP parser (`cifp/`)
+- `scripts/` — data download and database build scripts
+- `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
+- `data/` — build-time artifacts (SQLite DB, spatial index binaries)
+
 ## Documentation Index
 
 Each area below has a one-sentence summary; full details live in the linked `docs/` file.
