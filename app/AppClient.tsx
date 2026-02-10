@@ -87,7 +87,7 @@ export function AppClient({
   const [terrainRadiusNm, setTerrainRadiusNm] = useState<number>(DEFAULT_TERRAIN_RADIUS_NM);
   const [flattenBathymetry, setFlattenBathymetry] = useState(true);
   const [liveTrafficEnabled, setLiveTrafficEnabled] = useState(true);
-  const [hideGroundTraffic, setHideGroundTraffic] = useState(true);
+  const [hideGroundTraffic, setHideGroundTraffic] = useState(false);
   const [showTrafficCallsigns, setShowTrafficCallsigns] = useState(false);
   const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
     DEFAULT_TRAFFIC_HISTORY_MINUTES

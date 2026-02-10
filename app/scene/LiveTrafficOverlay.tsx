@@ -272,7 +272,7 @@ export function LiveTrafficOverlay({
   refLon,
   sceneAirports,
   verticalScale,
-  hideGroundTargets = true,
+  hideGroundTargets = false,
   showCallsignLabels = false,
   historyMinutes,
   applyEarthCurvatureCompensation = false,
