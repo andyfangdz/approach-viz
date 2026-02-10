@@ -20,7 +20,7 @@ const EFFECTIVE_EARTH_RADIUS_NM = 3440.065 * (4 / 3); // standard refraction mod
 
 const S3_BUCKET = 'unidata-nexrad-level2';
 const S3_REGION = 'us-east-1';
-const REQUEST_TIMEOUT_MS = 12_000;
+const REQUEST_TIMEOUT_MS = 20_000;
 const DBZ_MIN = -32;
 const DBZ_MAX = 94.5;
 const DBZ_RANGE = DBZ_MAX - DBZ_MIN;
@@ -93,7 +93,7 @@ async function listS3Keys(prefix: string, maxKeys = 20): Promise<string[]> {
 }
 
 async function fetchS3Object(key: string): Promise<Buffer> {
-  const url = `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${encodeURIComponent(key)}`;
+  const url = `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${key}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -152,6 +152,48 @@ function voxelizeRadar(
   const halfX = GRID_X / 2;
   const halfY = GRID_Y / 2;
 
+  // Build elevation angle lookup from VCP data or per-radial records
+  const elevAngleMap = new Map<number, number>();
+  try {
+    const vcpData = radar.vcp;
+    if (vcpData?.record?.elevations) {
+      const vcpElevs = vcpData.record.elevations;
+      // VCP elevations array is 1-indexed (index 0 is null)
+      // Multiple VCP entries may map to the same library elevation number
+      // because the library merges surveillance + Doppler cuts.
+      // Use the first VCP entry for each library elevation as a reasonable default.
+      const vcpAngles: number[] = [];
+      for (let i = 1; i < vcpElevs.length; i++) {
+        if (vcpElevs[i]?.elevation_angle !== undefined) {
+          vcpAngles.push(vcpElevs[i].elevation_angle);
+        }
+      }
+      // Deduplicate to unique ascending angles
+      const uniqueAngles = [...new Set(vcpAngles)].sort((a, b) => a - b);
+      for (let i = 0; i < uniqueAngles.length && i < elevations.length; i++) {
+        elevAngleMap.set(elevations[i], uniqueAngles[i]);
+      }
+    }
+  } catch {
+    // ignore - will fall through to per-radial or default
+  }
+
+  // If VCP didn't populate, try per-radial elevation_angle from the data structure
+  for (const elev of elevations) {
+    if (elevAngleMap.has(elev)) continue;
+    try {
+      const elevData = radar.data?.[String(elev)];
+      if (Array.isArray(elevData) && elevData.length > 0) {
+        const angle = elevData[0]?.record?.elevation_angle;
+        if (typeof angle === 'number' && Number.isFinite(angle)) {
+          elevAngleMap.set(elev, angle);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   for (const elev of elevations) {
     try {
       radar.setElevation(elev);
@@ -175,25 +217,11 @@ function voxelizeRadar(
 
     if (!reflectivity || !azimuths) continue;
 
-    // Get the elevation angle for this sweep (average of reported azimuths' elevation)
-    let elevAngleDeg: number;
-    try {
-      const elevData = radar.getElevation();
-      if (Array.isArray(elevData) && elevData.length > 0) {
-        elevAngleDeg = elevData.reduce((sum: number, e: number) => sum + e, 0) / elevData.length;
-      } else {
-        // Fallback: estimate from elevation index
-        const defaultAngles = [
-          0.5, 0.9, 1.3, 1.8, 2.4, 3.1, 4.0, 5.1, 6.4, 8.0, 10.0, 12.5, 15.6, 19.5
-        ];
-        elevAngleDeg = defaultAngles[elev - 1] ?? (elev - 1) * 1.5;
-      }
-    } catch {
-      const defaultAngles = [
-        0.5, 0.9, 1.3, 1.8, 2.4, 3.1, 4.0, 5.1, 6.4, 8.0, 10.0, 12.5, 15.6, 19.5
-      ];
-      elevAngleDeg = defaultAngles[elev - 1] ?? (elev - 1) * 1.5;
-    }
+    // Get elevation angle (from our lookup, or use fallback table)
+    const defaultAngles = [
+      0.5, 0.9, 1.3, 1.8, 2.4, 3.1, 4.0, 5.1, 6.4, 8.0, 10.0, 12.5, 15.6, 19.5
+    ];
+    const elevAngleDeg = elevAngleMap.get(elev) ?? defaultAngles[elev - 1] ?? (elev - 1) * 1.5;
 
     for (let scanIdx = 0; scanIdx < reflectivity.length; scanIdx++) {
       const scan = reflectivity[scanIdx];
@@ -203,6 +231,9 @@ function voxelizeRadar(
       if (azimuthDeg === undefined || !Number.isFinite(azimuthDeg)) continue;
 
       const { gate_count, first_gate, gate_size, moment_data } = scan;
+      // nexrad-level-2-data returns first_gate and gate_size in km
+      const firstGateMeters = first_gate * 1000;
+      const gateSizeMeters = gate_size * 1000;
       const maxRangeMeters = radiusNm * 1852;
 
       for (let gate = 0; gate < gate_count; gate++) {
@@ -210,7 +241,7 @@ function voxelizeRadar(
         if (dbz === undefined || dbz === null || !Number.isFinite(dbz)) continue;
         if (dbz < DBZ_THRESHOLD) continue;
 
-        const rangeMeters = first_gate + gate * gate_size;
+        const rangeMeters = firstGateMeters + gate * gateSizeMeters;
         if (rangeMeters > maxRangeMeters) break;
 
         const { eastNm, northNm, altFt } = polarToCartesian(azimuthDeg, elevAngleDeg, rangeMeters);
@@ -255,7 +286,7 @@ function voxelizeRadar(
   try {
     const vcpData = radar.vcp;
     if (typeof vcpData === 'number') vcp = vcpData;
-    else if (vcpData?.vcp) vcp = vcpData.vcp;
+    else if (vcpData?.record?.pattern_number) vcp = vcpData.record.pattern_number;
   } catch {
     // ignore
   }
@@ -270,11 +301,10 @@ function noStoreHeaders(): Headers {
 }
 
 function buildS3Prefix(stationId: string, now: Date): string {
-  const site = stationId.replace(/^K/, '');
   const year = now.getUTCFullYear();
   const month = String(now.getUTCMonth() + 1).padStart(2, '0');
   const day = String(now.getUTCDate()).padStart(2, '0');
-  return `${year}/${month}/${day}/${site}/`;
+  return `${year}/${month}/${day}/${stationId}/`;
 }
 
 export async function GET(request: NextRequest) {

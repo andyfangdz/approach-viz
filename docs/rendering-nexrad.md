@@ -42,17 +42,17 @@ The rendering uses a two-pass approach on a box geometry enclosing the radar vol
 
 The colormap (`app/scene/nexrad/colormap.ts`) follows the standard NWS reflectivity color scale:
 
-| dBZ Range | Color | Opacity |
-|-----------|-------|---------|
-| < 5 | Transparent | 0% |
-| 5-15 | Teal/gray | 15-25% |
-| 15-20 | Blue | 25% |
-| 20-30 | Green | 30-35% |
-| 30-40 | Yellow → Orange | 40-55% |
-| 40-50 | Orange → Red | 55-70% |
-| 50-60 | Red → Dark red | 70-80% |
-| 60-70 | Magenta | 80-90% |
-| 70+ | White/pink | 90-100% |
+| dBZ Range | Color           | Opacity |
+| --------- | --------------- | ------- |
+| < 5       | Transparent     | 0%      |
+| 5-15      | Teal/gray       | 15-25%  |
+| 15-20     | Blue            | 25%     |
+| 20-30     | Green           | 30-35%  |
+| 30-40     | Yellow → Orange | 40-55%  |
+| 40-50     | Orange → Red    | 55-70%  |
+| 50-60     | Red → Dark red  | 70-80%  |
+| 60-70     | Magenta         | 80-90%  |
+| 70+       | White/pink      | 90-100% |
 
 Colors are stored as a 256×1 RGBA `DataTexture` with linear filtering for smooth interpolation.
 
@@ -77,10 +77,10 @@ Colors are stored as a 256×1 RGBA `DataTexture` with linear filtering for smoot
 
 ## Files
 
-| File | Role |
-|------|------|
-| `app/api/nexrad/route.ts` | API proxy: S3 fetch, parse, voxelize |
-| `app/scene/NexradVolume.tsx` | R3F component: fetch, texture creation, mesh rendering |
-| `app/scene/nexrad/stations.ts` | WSR-88D station list + nearest-station lookup |
-| `app/scene/nexrad/shaders.ts` | GLSL vertex/fragment shaders for volumetric ray marching |
-| `app/scene/nexrad/colormap.ts` | NWS reflectivity colormap → DataTexture |
+| File                           | Role                                                     |
+| ------------------------------ | -------------------------------------------------------- |
+| `app/api/nexrad/route.ts`      | API proxy: S3 fetch, parse, voxelize                     |
+| `app/scene/NexradVolume.tsx`   | R3F component: fetch, texture creation, mesh rendering   |
+| `app/scene/nexrad/stations.ts` | WSR-88D station list + nearest-station lookup            |
+| `app/scene/nexrad/shaders.ts`  | GLSL vertex/fragment shaders for volumetric ray marching |
+| `app/scene/nexrad/colormap.ts` | NWS reflectivity colormap → DataTexture                  |

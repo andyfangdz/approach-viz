@@ -13,7 +13,7 @@ import {
   DoubleSide
 } from 'three';
 import { useFrame } from '@react-three/fiber';
-import { latLonToLocal, altToY } from '@/app/scene/approach-path/coordinates';
+import { latLonToLocal } from '@/app/scene/approach-path/coordinates';
 import { volumeVertexShader, volumeFragmentShader } from './nexrad/shaders';
 import { createColormapTexture } from './nexrad/colormap';
 
@@ -77,7 +77,9 @@ async function fetchNexradData(lat: number, lon: number): Promise<NexradData | n
 
     const metaJson = new TextDecoder().decode(bytes.slice(0, sepIndex));
     const meta: VoxelMeta = JSON.parse(metaJson);
-    const voxels = new Uint8Array(buffer, sepIndex + 1, meta.gridX * meta.gridY * meta.gridZ);
+    // Copy voxel data to a standalone buffer (views can cause issues with Data3DTexture)
+    const voxels = new Uint8Array(meta.gridX * meta.gridY * meta.gridZ);
+    voxels.set(new Uint8Array(buffer, sepIndex + 1, voxels.length));
 
     return { meta, voxels };
   } catch {

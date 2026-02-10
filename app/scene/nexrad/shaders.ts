@@ -12,10 +12,10 @@ export const volumeVertexShader = /* glsl */ `
   varying vec3 vDirection;
 
   void main() {
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
     vOrigin = cameraPosition;
-    vDirection = position - cameraPosition;
-    gl_Position = projectionMatrix * mvPosition;
+    vDirection = worldPos.xyz - cameraPosition;
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
 
@@ -66,9 +66,11 @@ export const volumeFragmentShader = /* glsl */ `
       // Convert world position to UV [0,1] within the box
       vec3 uv = (samplePos - uBoxMin) / boxSize;
 
-      // Sample volume - the 3D texture stores data with Z as the vertical axis
-      // but in our coordinate system Y is up, so we remap: tex(x) = uv.x, tex(y) = uv.z, tex(z) = uv.y
-      float intensity = texture(uVolume, vec3(uv.x, uv.z, uv.y)).r;
+      // Data3DTexture layout: width=gridX (east), height=gridY (north), depth=gridZ (alt)
+      // Scene axes: X=east, Y=up(alt), Z=-north
+      // So: tex.x = uv.x (east), tex.y = 1-uv.z (flip: scene Z is -north, voxel Y is +north),
+      //     tex.z = uv.y (altitude)
+      float intensity = texture(uVolume, vec3(uv.x, 1.0 - uv.z, uv.y)).r;
 
       if (intensity > 0.004) { // above ~1/255
         // Look up color from the 1D colormap
