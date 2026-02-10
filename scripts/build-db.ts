@@ -343,14 +343,8 @@ function main() {
   }
   index.finish();
 
-  fs.writeFileSync(
-    path.join(DB_DIR, 'airport-spatial.bin'),
-    Buffer.from(index.data)
-  );
-  fs.writeFileSync(
-    path.join(DB_DIR, 'airport-spatial-meta.json'),
-    JSON.stringify(meta)
-  );
+  fs.writeFileSync(path.join(DB_DIR, 'airport-spatial.bin'), Buffer.from(index.data));
+  fs.writeFileSync(path.join(DB_DIR, 'airport-spatial-meta.json'), JSON.stringify(meta));
   console.log(`✅ Airport spatial index built (${airports.length} airports)`);
 }
 
