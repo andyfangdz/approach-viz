@@ -6,11 +6,6 @@ import {
   earthCurvatureDropNm,
   latLonToLocal
 } from '@/src/components/approach-path/coordinates';
-import {
-  loadAirportElevationIndex,
-  nearestAirportElevation,
-  type AirportElevationIndex
-} from '@/src/components/terrain-elevation';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
@@ -20,9 +15,16 @@ const STALE_TRACK_GRACE_MS = 20000;
 const MIN_SAMPLE_DISTANCE_NM = 0.03;
 const FEET_PER_NM = 6076.12;
 
+export interface SceneAirport {
+  lat: number;
+  lon: number;
+  elevation: number;
+}
+
 interface LiveTrafficOverlayProps {
   refLat: number;
   refLon: number;
+  sceneAirports: SceneAirport[];
   verticalScale: number;
   hideGroundTargets?: boolean;
   showCallsignLabels?: boolean;
@@ -244,9 +246,31 @@ function mergeTracks(
   return nextTracks;
 }
 
+function nearestSceneAirportElevation(
+  airports: SceneAirport[],
+  lat: number,
+  lon: number
+): number {
+  if (airports.length === 0) return 0;
+  const cosLat = Math.cos(lat * (Math.PI / 180));
+  let bestDistSq = Number.POSITIVE_INFINITY;
+  let bestElevation = 0;
+  for (const ap of airports) {
+    const dLat = ap.lat - lat;
+    const dLon = (ap.lon - lon) * cosLat;
+    const distSq = dLat * dLat + dLon * dLon;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestElevation = ap.elevation;
+    }
+  }
+  return bestElevation;
+}
+
 export function LiveTrafficOverlay({
   refLat,
   refLon,
+  sceneAirports,
   verticalScale,
   hideGroundTargets = true,
   showCallsignLabels = false,
@@ -256,7 +280,6 @@ export function LiveTrafficOverlay({
   limit = DEFAULT_LIMIT
 }: LiveTrafficOverlayProps) {
   const [tracks, setTracks] = useState<Map<string, TrafficTrack>>(new Map());
-  const [airportIndex, setAirportIndex] = useState<AirportElevationIndex | null>(null);
   const normalizedHistoryMinutes = normalizeHistoryMinutes(historyMinutes);
   const markerMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const markerDummy = useMemo(() => new THREE.Object3D(), []);
@@ -271,16 +294,6 @@ export function LiveTrafficOverlay({
       }),
     []
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    loadAirportElevationIndex().then((index) => {
-      if (!cancelled) setAirportIndex(index);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -396,7 +409,7 @@ export function LiveTrafficOverlay({
   const renderTracks = useMemo(() => {
     const resolveAltitude = (lat: number, lon: number, altFeet: number | null): number => {
       if (altFeet !== null) return altFeet;
-      return airportIndex ? nearestAirportElevation(airportIndex, lat, lon) : 0;
+      return nearestSceneAirportElevation(sceneAirports, lat, lon);
     };
 
     return Array.from(tracks.values())
@@ -438,7 +451,7 @@ export function LiveTrafficOverlay({
         (track) =>
           Number.isFinite(track.markerPosition[0]) && Number.isFinite(track.markerPosition[2])
       );
-  }, [tracks, refLat, refLon, airportIndex, verticalScale, applyEarthCurvatureCompensation]);
+  }, [tracks, refLat, refLon, sceneAirports, verticalScale, applyEarthCurvatureCompensation]);
 
   useEffect(() => {
     const markerMesh = markerMeshRef.current;

@@ -1,4 +1,4 @@
-import { Suspense, memo, useEffect, useRef, type RefObject } from 'react';
+import { Suspense, memo, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Environment, Html, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
@@ -8,7 +8,7 @@ import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
 import { SatelliteSurface } from '@/src/components/SatelliteSurface';
 import { SceneErrorBoundary } from '@/src/components/SceneErrorBoundary';
 import { TerrainWireframe } from '@/src/components/TerrainWireframe';
-import { LiveTrafficOverlay } from '@/src/components/LiveTrafficOverlay';
+import { LiveTrafficOverlay, type SceneAirport } from '@/src/components/LiveTrafficOverlay';
 import {
   CAMERA_POSITION,
   DIRECTIONAL_LIGHT_POSITION,
@@ -70,6 +70,19 @@ export const SceneCanvas = memo(function SceneCanvas({
   onSatelliteRuntimeError
 }: SceneCanvasProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const sceneAirports = useMemo<SceneAirport[]>(() => {
+    const list: SceneAirport[] = [
+      { lat: airport.lat, lon: airport.lon, elevation: airport.elevation }
+    ];
+    for (const nearby of sceneData.nearbyAirports) {
+      list.push({
+        lat: nearby.airport.lat,
+        lon: nearby.airport.lon,
+        elevation: nearby.airport.elevation
+      });
+    }
+    return list;
+  }, [airport, sceneData.nearbyAirports]);
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const showFlatPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
   const showTerrainSurface =
@@ -172,6 +185,7 @@ export const SceneCanvas = memo(function SceneCanvas({
           <LiveTrafficOverlay
             refLat={airport.lat}
             refLon={airport.lon}
+            sceneAirports={sceneAirports}
             verticalScale={verticalScale}
             hideGroundTargets={hideGroundTraffic}
             showCallsignLabels={showTrafficCallsigns}

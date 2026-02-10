@@ -17,7 +17,7 @@
 
 - Install deps: `npm install`
 - Download FAA/CIFP + airspace + approach minimums data: `npm run download-data`
-- Build local SQLite DB + airport elevation index from downloaded sources: `npm run build-db`
+- Build local SQLite DB from downloaded sources: `npm run build-db`
 - Full data refresh (download + SQLite rebuild): `npm run prepare-data`
 - Run full automated tests (parser + geometry): `npm run test`
 - Run CIFP parser fixture tests: `npm run test:parser`
@@ -56,7 +56,7 @@ Rendering guidance is split into topic docs under `docs/`:
 - Options-panel values are persisted to browser `localStorage` and restored on load (vertical scale, terrain radius, bathymetry toggle, traffic toggles, traffic history).
 - `SceneCanvas` is memoized so non-scene UI state updates (for example selector search typing/collapse toggles) do not re-render the Three.js subtree.
 - Airport/approach combobox search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header UI.
-- Live ADS-B aircraft without a reported altitude are placed at the nearest airport's field elevation (looked up from a static `public/data/airport-elevations.json` index built during `npm run build-db`) so they render on the surface instead of underground. Aircraft with valid altitude reports are rendered at their reported altitude without clamping.
+- Live ADS-B aircraft without a reported altitude are placed at the nearest scene airport's field elevation (selected airport + nearby airports already in the scene payload) so they render on the surface instead of underground. Aircraft with valid altitude reports are rendered at their reported altitude without clamping.
 - Live ADS-B markers reuse shared Three.js sphere geometry/material instances across aircraft markers to reduce per-refresh GPU object churn.
 - Live ADS-B aircraft markers render through a single `InstancedMesh` (capacity bounded by traffic query `limit`) instead of one mesh per target.
 - Three.js objects allocated imperatively (for example path tube geometries, airspace extrusion/edge geometries, traffic marker buffers, plate textures) must be disposed in effect cleanups when replaced/unmounted.
