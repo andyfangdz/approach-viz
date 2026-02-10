@@ -15,9 +15,16 @@ const STALE_TRACK_GRACE_MS = 20000;
 const MIN_SAMPLE_DISTANCE_NM = 0.03;
 const FEET_PER_NM = 6076.12;
 
+export interface SceneAirport {
+  lat: number;
+  lon: number;
+  elevation: number;
+}
+
 interface LiveTrafficOverlayProps {
   refLat: number;
   refLon: number;
+  sceneAirports: SceneAirport[];
   verticalScale: number;
   hideGroundTargets?: boolean;
   showCallsignLabels?: boolean;
@@ -54,7 +61,7 @@ interface LiveTrafficFeed {
 interface TrafficHistoryPoint {
   lat: number;
   lon: number;
-  altitudeFeet: number;
+  altitudeFeet: number | null;
   timestampMs: number;
 }
 
@@ -81,11 +88,11 @@ function normalizeCallsignLabel(flight: string | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeAltitudeFeet(aircraft: LiveTrafficAircraft): number {
+function normalizeAltitudeFeet(aircraft: LiveTrafficAircraft): number | null {
   if (typeof aircraft.altitudeFeet === 'number' && Number.isFinite(aircraft.altitudeFeet)) {
     return aircraft.altitudeFeet;
   }
-  return 0;
+  return null;
 }
 
 function estimateDistanceNm(latA: number, lonA: number, latB: number, lonB: number): number {
@@ -208,7 +215,10 @@ function mergeTracks(
         nextPoint.lat,
         nextPoint.lon
       );
-      const altitudeDelta = Math.abs(lastPoint.altitudeFeet - nextPoint.altitudeFeet);
+      const altitudeDelta =
+        lastPoint.altitudeFeet !== null && nextPoint.altitudeFeet !== null
+          ? Math.abs(lastPoint.altitudeFeet - nextPoint.altitudeFeet)
+          : 0;
       if (movedNm >= MIN_SAMPLE_DISTANCE_NM || altitudeDelta >= 100) {
         nextHistory.push(nextPoint);
       } else {
@@ -236,9 +246,31 @@ function mergeTracks(
   return nextTracks;
 }
 
+function nearestSceneAirportElevation(
+  airports: SceneAirport[],
+  lat: number,
+  lon: number
+): number {
+  if (airports.length === 0) return 0;
+  const cosLat = Math.cos(lat * (Math.PI / 180));
+  let bestDistSq = Number.POSITIVE_INFINITY;
+  let bestElevation = 0;
+  for (const ap of airports) {
+    const dLat = ap.lat - lat;
+    const dLon = (ap.lon - lon) * cosLat;
+    const distSq = dLat * dLat + dLon * dLon;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestElevation = ap.elevation;
+    }
+  }
+  return bestElevation;
+}
+
 export function LiveTrafficOverlay({
   refLat,
   refLon,
+  sceneAirports,
   verticalScale,
   hideGroundTargets = true,
   showCallsignLabels = false,
@@ -375,9 +407,26 @@ export function LiveTrafficOverlay({
   }, []);
 
   const renderTracks = useMemo(() => {
+    const resolveAltitude = (
+      lat: number,
+      lon: number,
+      altFeet: number | null,
+      isOnGround?: boolean
+    ): number => {
+      if (isOnGround || altFeet === null) {
+        return nearestSceneAirportElevation(sceneAirports, lat, lon);
+      }
+      return altFeet;
+    };
+
     return Array.from(tracks.values())
       .map((track) => {
-        const markerAltitudeFeet = normalizeAltitudeFeet(track.aircraft);
+        const markerAltitudeFeet = resolveAltitude(
+          track.aircraft.lat,
+          track.aircraft.lon,
+          normalizeAltitudeFeet(track.aircraft),
+          track.aircraft.isOnGround
+        );
         const markerPosition = toScenePoint(
           track.aircraft.lat,
           track.aircraft.lon,
@@ -391,7 +440,7 @@ export function LiveTrafficOverlay({
           toScenePoint(
             point.lat,
             point.lon,
-            point.altitudeFeet,
+            resolveAltitude(point.lat, point.lon, point.altitudeFeet),
             refLat,
             refLon,
             verticalScale,
@@ -410,7 +459,7 @@ export function LiveTrafficOverlay({
         (track) =>
           Number.isFinite(track.markerPosition[0]) && Number.isFinite(track.markerPosition[2])
       );
-  }, [tracks, refLat, refLon, verticalScale, applyEarthCurvatureCompensation]);
+  }, [tracks, refLat, refLon, sceneAirports, verticalScale, applyEarthCurvatureCompensation]);
 
   useEffect(() => {
     const markerMesh = markerMeshRef.current;

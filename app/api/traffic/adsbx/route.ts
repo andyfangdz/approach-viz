@@ -113,7 +113,7 @@ function normalizeHeading(value: unknown): number | null {
 
 function normalizeAltitudeFeet(value: unknown): number | null {
   if (typeof value === 'string' && value.trim().toLowerCase() === 'ground') {
-    return 0;
+    return null;
   }
   const parsed = toFiniteNumber(value);
   if (parsed === null) return null;

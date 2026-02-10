@@ -1,7 +1,8 @@
 import { getDb } from '@/lib/db';
+import { airportsWithinNm } from '@/lib/airport-index';
 import type { SceneData } from '@/lib/types';
-import { NEARBY_AIRPORT_RADIUS_NM } from './constants';
-import { computeGeoidSeparationFeet, latLonDistanceNm } from './geo';
+import { NEARBY_AIRPORT_RADIUS_NM, ELEVATION_AIRPORT_RADIUS_NM } from './constants';
+import { computeGeoidSeparationFeet } from './geo';
 import {
   applyExternalVerticalAngleToApproach,
   buildApproachOptions,
@@ -26,6 +27,7 @@ function emptySceneData(): SceneData {
     waypoints: [],
     runways: [],
     nearbyAirports: [],
+    elevationAirports: [],
     airspace: [],
     minimumsSummary: null,
     approachPlate: null
@@ -113,47 +115,48 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     }
   }
 
-  const nearbyLatRadius = NEARBY_AIRPORT_RADIUS_NM / 60;
-  const nearbyLonRadius =
-    NEARBY_AIRPORT_RADIUS_NM / (60 * Math.max(0.2, Math.cos((airport.lat * Math.PI) / 180)));
-  const nearbyRows = db
-    .prepare(
-      `
-      SELECT id, name, lat, lon, elevation, mag_var
-      FROM airports
-      WHERE id <> ?
-        AND lat BETWEEN ? AND ?
-        AND lon BETWEEN ? AND ?
-    `
-    )
-    .all(
-      airport.id,
-      airport.lat - nearbyLatRadius,
-      airport.lat + nearbyLatRadius,
-      airport.lon - nearbyLonRadius,
-      airport.lon + nearbyLonRadius
-    ) as AirportRow[];
-
-  const nearbyWithDistance = nearbyRows
-    .map((row) => ({
-      row,
-      distanceNm: latLonDistanceNm(airport.lat, airport.lon, row.lat, row.lon)
-    }))
-    .filter((item) => item.distanceNm <= NEARBY_AIRPORT_RADIUS_NM)
-    .sort((a, b) => a.distanceNm - b.distanceNm)
-    .slice(0, 12);
-
-  const nearbyAirportIds = nearbyWithDistance.map((item) => item.row.id);
+  // Use kdbush spatial index for nearby airports (requires runways) and elevation airports
+  const nearbyCandidates = airportsWithinNm(
+    airport.lat,
+    airport.lon,
+    NEARBY_AIRPORT_RADIUS_NM,
+    airport.id
+  );
+  nearbyCandidates.sort((a, b) => a.distNm - b.distNm);
+  const nearbyTop = nearbyCandidates.slice(0, 12);
+  const nearbyAirportIds = nearbyTop.map((c) => c.id);
   const runwayMap = loadRunwayMap(db, [airport.id, ...nearbyAirportIds]);
 
-  const nearbyAirports = nearbyWithDistance
-    .map((item) => ({
-      airport: rowToAirport(item.row),
-      runways: runwayMap.get(item.row.id) || [],
-      distanceNm: item.distanceNm
-    }))
-    .filter((item) => item.runways.length > 0)
+  // Nearby airports with full details (for rendering runways etc.)
+  const nearbyAirports = nearbyTop
+    .map((c) => {
+      const row = db
+        .prepare('SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?')
+        .get(c.id) as AirportRow | undefined;
+      if (!row) return null;
+      return {
+        airport: rowToAirport(row),
+        runways: runwayMap.get(c.id) || [],
+        distanceNm: c.distNm
+      };
+    })
+    .filter(
+      (item): item is NonNullable<typeof item> => item !== null && item.runways.length > 0
+    )
     .slice(0, 8);
+
+  // Elevation-only airports covering the full traffic radius (80 NM)
+  const elevationCandidates = airportsWithinNm(
+    airport.lat,
+    airport.lon,
+    ELEVATION_AIRPORT_RADIUS_NM,
+    airport.id
+  );
+  const elevationAirports = elevationCandidates.map((c) => ({
+    lat: c.lat,
+    lon: c.lon,
+    elevation: c.elevation
+  }));
 
   return {
     airport,
@@ -165,6 +168,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     waypoints,
     runways: runwayMap.get(airport.id) || runways,
     nearbyAirports,
+    elevationAirports,
     airspace: loadAirspaceForAirport(db, airport),
     minimumsSummary: deriveMinimumsSummary(
       minimaRows,
