@@ -451,7 +451,9 @@ async function buildVolumeForStation(
 
       for (let gateIndex = 0; gateIndex < momentData.length; gateIndex += GATE_STRIDE) {
         const dbz = momentData[gateIndex];
-        if (!Number.isFinite(dbz) || dbz < MIN_DBZ || dbz > MAX_DBZ) continue;
+        if (typeof dbz !== 'number' || !Number.isFinite(dbz) || dbz < MIN_DBZ || dbz > MAX_DBZ) {
+          continue;
+        }
 
         const rangeNm = firstGateNm + gateIndex * gateSizeNm;
         if (rangeNm > SOURCE_MAX_RANGE_NM) break;
