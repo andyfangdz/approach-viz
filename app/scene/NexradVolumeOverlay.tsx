@@ -62,7 +62,6 @@ interface RenderVoxel {
   heightBase: number;
   footprintNm: number;
   dbz: number;
-  altitudeFeetAgl: number;
 }
 
 interface DbzColorBand {
@@ -70,12 +69,6 @@ interface DbzColorBand {
   hex: number;
 }
 
-type PrecipPhase = 'rain' | 'mixed' | 'snow';
-
-const RAIN_FADE_START_FEET_AGL = 5_000;
-const RAIN_FADE_END_FEET_AGL = 13_000;
-const SNOW_FADE_START_FEET_AGL = 10_000;
-const SNOW_FADE_END_FEET_AGL = 20_000;
 const NEXRAD_COLOR_GAIN = 1.28;
 const MIN_VISIBLE_LUMINANCE = 58;
 
@@ -102,44 +95,6 @@ const RAIN_DBZ_COLOR_BANDS: DbzColorBand[] = [
   { minDbz: 5, hex: 0x49ff64 }
 ];
 
-// Discrete reflectivity bands sampled from the provided legend's mixed bar.
-const MIXED_DBZ_COLOR_BANDS: DbzColorBand[] = [
-  { minDbz: 75, hex: 0x8f0b5f },
-  { minDbz: 70, hex: 0x9b0f67 },
-  { minDbz: 65, hex: 0xa71470 },
-  { minDbz: 60, hex: 0xb31979 },
-  { minDbz: 55, hex: 0xbf1f82 },
-  { minDbz: 50, hex: 0xc8288b },
-  { minDbz: 45, hex: 0xcf3895 },
-  { minDbz: 40, hex: 0xd54a9f },
-  { minDbz: 35, hex: 0xdb5ca9 },
-  { minDbz: 30, hex: 0xe16db2 },
-  { minDbz: 25, hex: 0xe67fbc },
-  { minDbz: 20, hex: 0xec94c7 },
-  { minDbz: 15, hex: 0xf2add2 },
-  { minDbz: 10, hex: 0xf7c3dd },
-  { minDbz: 5, hex: 0xfbd9e8 }
-];
-
-// Discrete reflectivity bands sampled from the provided legend's snow bar.
-const SNOW_DBZ_COLOR_BANDS: DbzColorBand[] = [
-  { minDbz: 75, hex: 0x001b4d },
-  { minDbz: 70, hex: 0x002568 },
-  { minDbz: 65, hex: 0x003185 },
-  { minDbz: 60, hex: 0x003ea3 },
-  { minDbz: 55, hex: 0x004bc1 },
-  { minDbz: 50, hex: 0x0058dc },
-  { minDbz: 45, hex: 0x0b6aef },
-  { minDbz: 40, hex: 0x1f7df9 },
-  { minDbz: 35, hex: 0x3791ff },
-  { minDbz: 30, hex: 0x52a5ff },
-  { minDbz: 25, hex: 0x6cb8ff },
-  { minDbz: 20, hex: 0x87cbff },
-  { minDbz: 15, hex: 0x9ad6ff },
-  { minDbz: 10, hex: 0xb0e2ff },
-  { minDbz: 5, hex: 0xc6ecff }
-];
-
 function dbzToBandHex(dbz: number, bands: DbzColorBand[]): number {
   if (!Number.isFinite(dbz)) return bands[bands.length - 1].hex;
   for (const band of bands) {
@@ -150,57 +105,14 @@ function dbzToBandHex(dbz: number, bands: DbzColorBand[]): number {
   return bands[bands.length - 1].hex;
 }
 
-function smoothStep(edge0: number, edge1: number, value: number): number {
-  if (edge1 <= edge0) return value >= edge1 ? 1 : 0;
-  const x = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
-  return x * x * (3 - 2 * x);
-}
-
-function inferPhaseWeightsFromAltitudeAgl(altitudeFeetAgl: number): Record<PrecipPhase, number> {
-  if (!Number.isFinite(altitudeFeetAgl)) {
-    return { rain: 1, mixed: 0, snow: 0 };
-  }
-
-  const snow = smoothStep(SNOW_FADE_START_FEET_AGL, SNOW_FADE_END_FEET_AGL, altitudeFeetAgl);
-  const rain = 1 - smoothStep(RAIN_FADE_START_FEET_AGL, RAIN_FADE_END_FEET_AGL, altitudeFeetAgl);
-  const mixed = Math.max(0, 1 - rain - snow);
-  const total = rain + mixed + snow;
-  if (total <= 0) {
-    return { rain: 1, mixed: 0, snow: 0 };
-  }
-  return {
-    rain: rain / total,
-    mixed: mixed / total,
-    snow: snow / total
-  };
-}
-
 function hexChannel(hex: number, shift: number): number {
   return (hex >> shift) & 0xff;
 }
 
-function blendHexByWeights(
-  rainHex: number,
-  mixedHex: number,
-  snowHex: number,
-  phaseWeights: Record<PrecipPhase, number>
-): number {
-  const rainWeight = phaseWeights.rain;
-  const mixedWeight = phaseWeights.mixed;
-  const snowWeight = phaseWeights.snow;
-
-  const red =
-    hexChannel(rainHex, 16) * rainWeight +
-    hexChannel(mixedHex, 16) * mixedWeight +
-    hexChannel(snowHex, 16) * snowWeight;
-  const green =
-    hexChannel(rainHex, 8) * rainWeight +
-    hexChannel(mixedHex, 8) * mixedWeight +
-    hexChannel(snowHex, 8) * snowWeight;
-  const blue =
-    hexChannel(rainHex, 0) * rainWeight +
-    hexChannel(mixedHex, 0) * mixedWeight +
-    hexChannel(snowHex, 0) * snowWeight;
+function applyVisibilityGain(hex: number): number {
+  const red = hexChannel(hex, 16);
+  const green = hexChannel(hex, 8);
+  const blue = hexChannel(hex, 0);
 
   // Preserve hue while preventing bright bins from clipping to white.
   const peakChannel = Math.max(red, green, blue, 1);
@@ -225,12 +137,9 @@ function blendHexByWeights(
   return (liftedRed << 16) | (liftedGreen << 8) | liftedBlue;
 }
 
-function dbzToHex(dbz: number, altitudeFeetAgl: number): number {
-  const phaseWeights = inferPhaseWeightsFromAltitudeAgl(altitudeFeetAgl);
+function dbzToHex(dbz: number): number {
   const rainHex = dbzToBandHex(dbz, RAIN_DBZ_COLOR_BANDS);
-  const mixedHex = dbzToBandHex(dbz, MIXED_DBZ_COLOR_BANDS);
-  const snowHex = dbzToBandHex(dbz, SNOW_DBZ_COLOR_BANDS);
-  return blendHexByWeights(rainHex, mixedHex, snowHex, phaseWeights);
+  return applyVisibilityGain(rainHex);
 }
 
 function applyVoxelInstances(
@@ -248,7 +157,7 @@ function applyVoxelInstances(
     meshDummy.updateMatrix();
     mesh.setMatrixAt(index, meshDummy.matrix);
 
-    colorScratch.setHex(dbzToHex(voxel.dbz, voxel.altitudeFeetAgl));
+    colorScratch.setHex(dbzToHex(voxel.dbz));
     mesh.setColorAt(index, colorScratch);
   }
 
@@ -405,11 +314,6 @@ export function NexradVolumeOverlay({
   }, [payload?.radar, refLat, refLon]);
 
   const renderVoxels = useMemo<RenderVoxel[]>(() => {
-    const radarElevationFeet = payload?.radar?.elevationFeet;
-    const normalizedRadarElevationFeet =
-      typeof radarElevationFeet === 'number' && Number.isFinite(radarElevationFeet)
-        ? radarElevationFeet
-        : 0;
     if (!enabled || !payload?.voxels || !radarOffset) return [];
 
     const next: RenderVoxel[] = [];
@@ -422,7 +326,6 @@ export function NexradVolumeOverlay({
         (applyEarthCurvatureCompensation ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM : 0);
       const yBase = correctedCenterFeet * ALTITUDE_SCALE;
       const heightBase = Math.max((topFeet - bottomFeet) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM);
-      const altitudeFeetAgl = correctedCenterFeet - normalizedRadarElevationFeet;
 
       if (!Number.isFinite(x) || !Number.isFinite(yBase) || !Number.isFinite(z)) continue;
 
@@ -432,8 +335,7 @@ export function NexradVolumeOverlay({
         z,
         heightBase,
         footprintNm,
-        dbz,
-        altitudeFeetAgl
+        dbz
       });
     }
 
