@@ -49,6 +49,7 @@
 - The proxy resolves nearest radar metadata via Iowa State Mesonet, fetches latest super-resolution reflectivity scans (`N0B/N1B/N2B/N3B`) from `unidata-nexrad-level3`, and parses radial bins into capped voxel payloads.
 - Super-resolution product code `153` is enabled by extending the runtime parser product map (`nexrad-level-3-data`) with `N0B/N1B/N2B/N3B` abbreviations.
 - Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
+- `next.config.ts` marks `nexrad-level-3-data` as a `serverExternalPackages` dependency so Turbopack does not attempt to statically bundle its dynamic `require()` loader logic.
 
 ## CI and Instrumentation
 
