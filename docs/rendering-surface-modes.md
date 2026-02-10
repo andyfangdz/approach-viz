@@ -11,11 +11,11 @@
 
 - NEXRAD Level 3 volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
 - In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
-- NEXRAD voxel coloring follows a traditional aviation reflectivity ramp (`green -> yellow -> orange -> red -> magenta`) by increasing dBZ intensity.
-- NEXRAD voxel material uses additive blending in a non-transparent render pass (`transparent=false`, `depthWrite=false`) so reflectivity colors stay vivid while avoiding camera-angle-dependent transparent-instance sorting artifacts.
+- NEXRAD voxel coloring follows discrete aviation legend ramps for rain, mixed, and snow; because Level 3 reflectivity does not carry hydrometeor phase, phase tinting uses altitude-weighted blending above radar (`rain fade 5,000-13,000 ft AGL`, `snow fade 10,000-20,000 ft AGL`, mixed in-between) to avoid abrupt color-band transitions.
+- NEXRAD voxels render in two passes: a primary alpha pass (`transparent=true`, `NormalBlending`, `FrontSide`, `depthWrite=true`) for stable density control plus a lighter additive glow pass (`AdditiveBlending`, `FrontSide`) for radar-style bloom.
 - NEXRAD voxels render without scene fog contribution so echoes keep their intended color/intensity.
 - NEXRAD overlay opacity is user-configurable in the options panel so voxel intensity can be tuned per-surface and time-of-day visibility needs.
-- NEXRAD opacity slider updates mutate overlay material opacity in place (no voxel remount/rebuild), so adjusting transparency does not drop the rendered volume.
+- NEXRAD opacity slider updates mutate both voxel-pass opacities in place (no voxel remount/rebuild), so adjusting transparency does not drop the rendered volume.
 
 ## Shared Vertical-Scale Behavior
 

@@ -5,6 +5,7 @@ import { earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates
 const FEET_PER_NM = 6076.12;
 const ALTITUDE_SCALE = 1 / FEET_PER_NM;
 const POLL_INTERVAL_MS = 120_000;
+const RETRY_INTERVAL_MS = 10_000;
 const MAX_SERVER_VOXELS = 12_000;
 const DEFAULT_MAX_RANGE_NM = 120;
 const MIN_VOXEL_HEIGHT_NM = 0.04;
@@ -61,25 +62,198 @@ interface RenderVoxel {
   heightBase: number;
   footprintNm: number;
   dbz: number;
+  altitudeFeetAgl: number;
 }
 
-function dbzToHex(dbz: number): number {
-  // Conventional aviation/NEXRAD-style reflectivity ramp.
-  // Includes bright low-end colors so weak returns remain visible in dark scenes.
-  if (dbz >= 70) return 0xffffff;
-  if (dbz >= 60) return 0xff33ff;
-  if (dbz >= 55) return 0xff00ff;
-  if (dbz >= 50) return 0xff0000;
-  if (dbz >= 45) return 0xff5500;
-  if (dbz >= 40) return 0xffaa00;
-  if (dbz >= 35) return 0xffff00;
-  if (dbz >= 30) return 0xb6ff00;
-  if (dbz >= 25) return 0x66ff33;
-  if (dbz >= 20) return 0x00ff00;
-  if (dbz >= 15) return 0x00ff66;
-  if (dbz >= 10) return 0x00ffcc;
-  if (dbz >= 5) return 0x00b4ff;
-  return 0x0077ff;
+interface DbzColorBand {
+  minDbz: number;
+  hex: number;
+}
+
+type PrecipPhase = 'rain' | 'mixed' | 'snow';
+
+const RAIN_FADE_START_FEET_AGL = 5_000;
+const RAIN_FADE_END_FEET_AGL = 13_000;
+const SNOW_FADE_START_FEET_AGL = 10_000;
+const SNOW_FADE_END_FEET_AGL = 20_000;
+const NEXRAD_COLOR_GAIN = 1.28;
+const MIN_VISIBLE_LUMINANCE = 58;
+
+// Discrete reflectivity bands sampled from the provided legend's rain bar.
+const RAIN_DBZ_COLOR_BANDS: DbzColorBand[] = [
+  { minDbz: 95, hex: 0xebebeb },
+  { minDbz: 90, hex: 0xd9d9d9 },
+  { minDbz: 85, hex: 0xc6c6c6 },
+  { minDbz: 80, hex: 0xb1b1b1 },
+  { minDbz: 75, hex: 0x9a9a9a },
+  { minDbz: 70, hex: 0x7b00bb },
+  { minDbz: 65, hex: 0x9a00d5 },
+  { minDbz: 60, hex: 0xba00e8 },
+  { minDbz: 55, hex: 0xd500f5 },
+  { minDbz: 50, hex: 0xe90000 },
+  { minDbz: 45, hex: 0xf92d00 },
+  { minDbz: 40, hex: 0xff5a00 },
+  { minDbz: 35, hex: 0xff8600 },
+  { minDbz: 30, hex: 0xffb000 },
+  { minDbz: 25, hex: 0xffd700 },
+  { minDbz: 20, hex: 0x23bc34 },
+  { minDbz: 15, hex: 0x2ed643 },
+  { minDbz: 10, hex: 0x39eb53 },
+  { minDbz: 5, hex: 0x49ff64 }
+];
+
+// Discrete reflectivity bands sampled from the provided legend's mixed bar.
+const MIXED_DBZ_COLOR_BANDS: DbzColorBand[] = [
+  { minDbz: 75, hex: 0x8f0b5f },
+  { minDbz: 70, hex: 0x9b0f67 },
+  { minDbz: 65, hex: 0xa71470 },
+  { minDbz: 60, hex: 0xb31979 },
+  { minDbz: 55, hex: 0xbf1f82 },
+  { minDbz: 50, hex: 0xc8288b },
+  { minDbz: 45, hex: 0xcf3895 },
+  { minDbz: 40, hex: 0xd54a9f },
+  { minDbz: 35, hex: 0xdb5ca9 },
+  { minDbz: 30, hex: 0xe16db2 },
+  { minDbz: 25, hex: 0xe67fbc },
+  { minDbz: 20, hex: 0xec94c7 },
+  { minDbz: 15, hex: 0xf2add2 },
+  { minDbz: 10, hex: 0xf7c3dd },
+  { minDbz: 5, hex: 0xfbd9e8 }
+];
+
+// Discrete reflectivity bands sampled from the provided legend's snow bar.
+const SNOW_DBZ_COLOR_BANDS: DbzColorBand[] = [
+  { minDbz: 75, hex: 0x001b4d },
+  { minDbz: 70, hex: 0x002568 },
+  { minDbz: 65, hex: 0x003185 },
+  { minDbz: 60, hex: 0x003ea3 },
+  { minDbz: 55, hex: 0x004bc1 },
+  { minDbz: 50, hex: 0x0058dc },
+  { minDbz: 45, hex: 0x0b6aef },
+  { minDbz: 40, hex: 0x1f7df9 },
+  { minDbz: 35, hex: 0x3791ff },
+  { minDbz: 30, hex: 0x52a5ff },
+  { minDbz: 25, hex: 0x6cb8ff },
+  { minDbz: 20, hex: 0x87cbff },
+  { minDbz: 15, hex: 0xa0dcff },
+  { minDbz: 10, hex: 0xbceaff },
+  { minDbz: 5, hex: 0xd7f5ff }
+];
+
+function dbzToBandHex(dbz: number, bands: DbzColorBand[]): number {
+  if (!Number.isFinite(dbz)) return bands[bands.length - 1].hex;
+  for (const band of bands) {
+    if (dbz >= band.minDbz) {
+      return band.hex;
+    }
+  }
+  return bands[bands.length - 1].hex;
+}
+
+function smoothStep(edge0: number, edge1: number, value: number): number {
+  if (edge1 <= edge0) return value >= edge1 ? 1 : 0;
+  const x = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return x * x * (3 - 2 * x);
+}
+
+function inferPhaseWeightsFromAltitudeAgl(altitudeFeetAgl: number): Record<PrecipPhase, number> {
+  if (!Number.isFinite(altitudeFeetAgl)) {
+    return { rain: 1, mixed: 0, snow: 0 };
+  }
+
+  const snow = smoothStep(SNOW_FADE_START_FEET_AGL, SNOW_FADE_END_FEET_AGL, altitudeFeetAgl);
+  const rain = 1 - smoothStep(RAIN_FADE_START_FEET_AGL, RAIN_FADE_END_FEET_AGL, altitudeFeetAgl);
+  const mixed = Math.max(0, 1 - rain - snow);
+  const total = rain + mixed + snow;
+  if (total <= 0) {
+    return { rain: 1, mixed: 0, snow: 0 };
+  }
+  return {
+    rain: rain / total,
+    mixed: mixed / total,
+    snow: snow / total
+  };
+}
+
+function hexChannel(hex: number, shift: number): number {
+  return (hex >> shift) & 0xff;
+}
+
+function blendHexByWeights(
+  rainHex: number,
+  mixedHex: number,
+  snowHex: number,
+  phaseWeights: Record<PrecipPhase, number>
+): number {
+  const rainWeight = phaseWeights.rain;
+  const mixedWeight = phaseWeights.mixed;
+  const snowWeight = phaseWeights.snow;
+
+  const red =
+    hexChannel(rainHex, 16) * rainWeight +
+    hexChannel(mixedHex, 16) * mixedWeight +
+    hexChannel(snowHex, 16) * snowWeight;
+  const green =
+    hexChannel(rainHex, 8) * rainWeight +
+    hexChannel(mixedHex, 8) * mixedWeight +
+    hexChannel(snowHex, 8) * snowWeight;
+  const blue =
+    hexChannel(rainHex, 0) * rainWeight +
+    hexChannel(mixedHex, 0) * mixedWeight +
+    hexChannel(snowHex, 0) * snowWeight;
+
+  const boostedRed = THREE.MathUtils.clamp(Math.round(red * NEXRAD_COLOR_GAIN), 0, 255);
+  const boostedGreen = THREE.MathUtils.clamp(Math.round(green * NEXRAD_COLOR_GAIN), 0, 255);
+  const boostedBlue = THREE.MathUtils.clamp(Math.round(blue * NEXRAD_COLOR_GAIN), 0, 255);
+
+  const luminance = 0.2126 * boostedRed + 0.7152 * boostedGreen + 0.0722 * boostedBlue;
+  if (luminance <= 0) {
+    return (boostedRed << 16) | (boostedGreen << 8) | boostedBlue;
+  }
+
+  if (luminance >= MIN_VISIBLE_LUMINANCE) {
+    return (boostedRed << 16) | (boostedGreen << 8) | boostedBlue;
+  }
+
+  const luminanceBoostScale = MIN_VISIBLE_LUMINANCE / luminance;
+  const liftedRed = THREE.MathUtils.clamp(Math.round(boostedRed * luminanceBoostScale), 0, 255);
+  const liftedGreen = THREE.MathUtils.clamp(Math.round(boostedGreen * luminanceBoostScale), 0, 255);
+  const liftedBlue = THREE.MathUtils.clamp(Math.round(boostedBlue * luminanceBoostScale), 0, 255);
+  return (liftedRed << 16) | (liftedGreen << 8) | liftedBlue;
+}
+
+function dbzToHex(dbz: number, altitudeFeetAgl: number): number {
+  const phaseWeights = inferPhaseWeightsFromAltitudeAgl(altitudeFeetAgl);
+  const rainHex = dbzToBandHex(dbz, RAIN_DBZ_COLOR_BANDS);
+  const mixedHex = dbzToBandHex(dbz, MIXED_DBZ_COLOR_BANDS);
+  const snowHex = dbzToBandHex(dbz, SNOW_DBZ_COLOR_BANDS);
+  return blendHexByWeights(rainHex, mixedHex, snowHex, phaseWeights);
+}
+
+function applyVoxelInstances(
+  mesh: THREE.InstancedMesh | null,
+  voxels: RenderVoxel[],
+  meshDummy: THREE.Object3D,
+  colorScratch: THREE.Color
+) {
+  if (!mesh) return;
+  const count = Math.min(voxels.length, MAX_SERVER_VOXELS);
+  for (let index = 0; index < count; index += 1) {
+    const voxel = voxels[index];
+    meshDummy.position.set(voxel.x, voxel.yBase, voxel.z);
+    meshDummy.scale.set(voxel.footprintNm, voxel.heightBase, voxel.footprintNm);
+    meshDummy.updateMatrix();
+    mesh.setMatrixAt(index, meshDummy.matrix);
+
+    colorScratch.setHex(dbzToHex(voxel.dbz, voxel.altitudeFeetAgl));
+    mesh.setColorAt(index, colorScratch);
+  }
+
+  mesh.count = count;
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) {
+    mesh.instanceColor.needsUpdate = true;
+  }
 }
 
 export function NexradVolumeOverlay({
@@ -93,21 +267,45 @@ export function NexradVolumeOverlay({
   applyEarthCurvatureCompensation = false
 }: NexradVolumeOverlayProps) {
   const [payload, setPayload] = useState<NexradVolumePayload | null>(null);
-  const meshRef = useRef<THREE.InstancedMesh | null>(null);
+  const baseMeshRef = useRef<THREE.InstancedMesh | null>(null);
+  const glowMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const meshDummy = useMemo(() => new THREE.Object3D(), []);
   const colorScratch = useMemo(() => new THREE.Color(), []);
 
-  const geometry = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
-  const material = useMemo(
+  const geometry = useMemo(() => {
+    const nextGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const positionAttribute = nextGeometry.getAttribute('position');
+    const colors = new Float32Array(positionAttribute.count * 3);
+    colors.fill(1);
+    nextGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return nextGeometry;
+  }, []);
+  const baseMaterial = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
-        // Keep additive blending for the vivid "magic" radar look, but render in the
-        // opaque queue to avoid camera-angle-dependent transparent instance sorting artifacts.
-        transparent: false,
+        transparent: true,
         opacity: 0.72,
+        depthWrite: true,
+        depthTest: true,
+        color: 0xffffff,
+        blending: THREE.NormalBlending,
+        side: THREE.FrontSide,
+        vertexColors: true,
+        toneMapped: false,
+        fog: false
+      }),
+    []
+  );
+  const glowMaterial = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.2,
         depthWrite: false,
         depthTest: true,
+        color: 0xffffff,
         blending: THREE.AdditiveBlending,
+        side: THREE.FrontSide,
         vertexColors: true,
         toneMapped: false,
         fog: false
@@ -116,9 +314,11 @@ export function NexradVolumeOverlay({
   );
 
   useEffect(() => {
-    const clampedOpacity = Math.min(1, Math.max(0.2, opacity));
-    material.opacity = clampedOpacity;
-  }, [material, opacity]);
+    const clampedOpacity = Math.min(1, Math.max(0, opacity));
+    // Keep a visible floor while allowing a true dense top-end at 100%.
+    baseMaterial.opacity = THREE.MathUtils.lerp(0.34, 1, clampedOpacity);
+    glowMaterial.opacity = THREE.MathUtils.lerp(0.06, 0.38, clampedOpacity);
+  }, [baseMaterial, glowMaterial, opacity]);
 
   useEffect(
     () => () => {
@@ -129,9 +329,16 @@ export function NexradVolumeOverlay({
 
   useEffect(
     () => () => {
-      material.dispose();
+      baseMaterial.dispose();
     },
-    [material]
+    [baseMaterial]
+  );
+
+  useEffect(
+    () => () => {
+      glowMaterial.dispose();
+    },
+    [glowMaterial]
   );
 
   useEffect(() => {
@@ -152,6 +359,7 @@ export function NexradVolumeOverlay({
       params.set('minDbz', String(minDbz));
       params.set('maxRangeNm', String(maxRangeNm));
       params.set('maxVoxels', String(MAX_SERVER_VOXELS));
+      let nextDelayMs = POLL_INTERVAL_MS;
 
       try {
         const response = await fetch(`/api/weather/nexrad?${params.toString()}`, {
@@ -169,11 +377,12 @@ export function NexradVolumeOverlay({
       } catch (error) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
           // Keep rendering the last successful payload when polling fails.
+          nextDelayMs = RETRY_INTERVAL_MS;
         }
       } finally {
         activeAbortController = null;
         if (!cancelled) {
-          timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
+          timeoutId = setTimeout(poll, nextDelayMs);
         }
       }
     };
@@ -193,6 +402,11 @@ export function NexradVolumeOverlay({
   }, [payload?.radar, refLat, refLon]);
 
   const renderVoxels = useMemo<RenderVoxel[]>(() => {
+    const radarElevationFeet = payload?.radar?.elevationFeet;
+    const normalizedRadarElevationFeet =
+      typeof radarElevationFeet === 'number' && Number.isFinite(radarElevationFeet)
+        ? radarElevationFeet
+        : 0;
     if (!enabled || !payload?.voxels || !radarOffset) return [];
 
     const next: RenderVoxel[] = [];
@@ -205,6 +419,7 @@ export function NexradVolumeOverlay({
         (applyEarthCurvatureCompensation ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM : 0);
       const yBase = correctedCenterFeet * ALTITUDE_SCALE;
       const heightBase = Math.max((topFeet - bottomFeet) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM);
+      const altitudeFeetAgl = correctedCenterFeet - normalizedRadarElevationFeet;
 
       if (!Number.isFinite(x) || !Number.isFinite(yBase) || !Number.isFinite(z)) continue;
 
@@ -214,7 +429,8 @@ export function NexradVolumeOverlay({
         z,
         heightBase,
         footprintNm,
-        dbz
+        dbz,
+        altitudeFeetAgl
       });
     }
 
@@ -222,32 +438,16 @@ export function NexradVolumeOverlay({
   }, [enabled, payload?.voxels, radarOffset, applyEarthCurvatureCompensation, refLat]);
 
   useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const meshes = [baseMeshRef.current, glowMeshRef.current];
+    for (const mesh of meshes) {
+      if (!mesh) continue;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    }
   }, []);
 
   useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
-
-    const count = Math.min(renderVoxels.length, MAX_SERVER_VOXELS);
-    for (let index = 0; index < count; index += 1) {
-      const voxel = renderVoxels[index];
-      meshDummy.position.set(voxel.x, voxel.yBase, voxel.z);
-      meshDummy.scale.set(voxel.footprintNm, voxel.heightBase, voxel.footprintNm);
-      meshDummy.updateMatrix();
-      mesh.setMatrixAt(index, meshDummy.matrix);
-
-      colorScratch.setHex(dbzToHex(voxel.dbz));
-      mesh.setColorAt(index, colorScratch);
-    }
-
-    mesh.count = count;
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) {
-      mesh.instanceColor.needsUpdate = true;
-    }
+    applyVoxelInstances(baseMeshRef.current, renderVoxels, meshDummy, colorScratch);
+    applyVoxelInstances(glowMeshRef.current, renderVoxels, meshDummy, colorScratch);
   }, [renderVoxels, meshDummy, colorScratch]);
 
   if (!enabled || !payload?.radar || renderVoxels.length === 0) {
@@ -257,9 +457,16 @@ export function NexradVolumeOverlay({
   return (
     <group scale={[1, verticalScale, 1]}>
       <instancedMesh
-        ref={meshRef}
-        args={[geometry, material, MAX_SERVER_VOXELS]}
+        ref={baseMeshRef}
+        args={[geometry, baseMaterial, MAX_SERVER_VOXELS]}
         frustumCulled={false}
+        renderOrder={80}
+      />
+      <instancedMesh
+        ref={glowMeshRef}
+        args={[geometry, glowMaterial, MAX_SERVER_VOXELS]}
+        frustumCulled={false}
+        renderOrder={81}
       />
     </group>
   );
