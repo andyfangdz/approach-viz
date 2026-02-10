@@ -501,8 +501,15 @@ textarea,
 }
 
 .legend-color.nexrad {
-  background: linear-gradient(90deg, #45c95f 0%, #ffe95a 45%, #ff4242 75%, #ff43f5 100%);
-  box-shadow: 0 0 8px rgba(255, 105, 72, 0.55);
+  background: linear-gradient(
+    90deg,
+    #00e400 0%,
+    #ffff00 38%,
+    #ff9900 58%,
+    #ff0000 78%,
+    #ff00ff 100%
+  );
+  box-shadow: 0 0 8px rgba(255, 128, 64, 0.6);
 }
 
 .legend-color.airspace-b {

@@ -57,6 +57,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 ### Rendering
 
 3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional NEXRAD volumetric weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
+NEXRAD volume intensity uses a conventional aviation reflectivity palette (green to magenta).
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes

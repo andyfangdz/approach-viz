@@ -63,12 +63,18 @@ interface RenderVoxel {
 }
 
 function dbzToHex(dbz: number): number {
-  if (dbz >= 65) return 0xff43f5;
-  if (dbz >= 55) return 0xff4242;
-  if (dbz >= 45) return 0xff9448;
-  if (dbz >= 35) return 0xffe95a;
-  if (dbz >= 25) return 0x8be35f;
-  return 0x45c95f;
+  // Conventional aviation/NEXRAD-style reflectivity ramp:
+  // green -> yellow -> orange -> red -> magenta
+  if (dbz >= 65) return 0xff00ff;
+  if (dbz >= 55) return 0xff0000;
+  if (dbz >= 50) return 0xff6600;
+  if (dbz >= 45) return 0xff9900;
+  if (dbz >= 40) return 0xffff00;
+  if (dbz >= 35) return 0xb5ff00;
+  if (dbz >= 30) return 0x7dff00;
+  if (dbz >= 25) return 0x00e400;
+  if (dbz >= 20) return 0x00c800;
+  return 0x009900;
 }
 
 export function NexradVolumeOverlay({
@@ -88,14 +94,10 @@ export function NexradVolumeOverlay({
   const geometry = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
   const material = useMemo(
     () =>
-      new THREE.MeshStandardMaterial({
+      new THREE.MeshBasicMaterial({
         transparent: true,
-        opacity: 0.36,
+        opacity: 0.55,
         depthWrite: false,
-        roughness: 0.35,
-        metalness: 0,
-        emissive: new THREE.Color('#111111'),
-        emissiveIntensity: 0.14,
         vertexColors: true,
         toneMapped: false
       }),
