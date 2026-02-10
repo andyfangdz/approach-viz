@@ -6,6 +6,11 @@ import {
   earthCurvatureDropNm,
   latLonToLocal
 } from '@/src/components/approach-path/coordinates';
+import {
+  buildElevationGrid,
+  sampleElevation,
+  type ElevationGrid
+} from '@/src/components/terrain-elevation';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
@@ -164,13 +169,16 @@ function toScenePoint(
   refLat: number,
   refLon: number,
   verticalScale: number,
-  applyEarthCurvatureCompensation: boolean
+  applyEarthCurvatureCompensation: boolean,
+  elevationGrid: ElevationGrid | null
 ): [number, number, number] {
   const local = latLonToLocal(lat, lon, refLat, refLon);
   const curvatureDropFeet = applyEarthCurvatureCompensation
     ? earthCurvatureDropNm(local.x, local.z, refLat) * FEET_PER_NM
     : 0;
-  const correctedAltitudeFeet = Math.max(0, altitudeFeet - curvatureDropFeet);
+  const terrainFloorFeet = elevationGrid ? sampleElevation(elevationGrid, lat, lon) : 0;
+  const clampedAltitudeFeet = Math.max(terrainFloorFeet, altitudeFeet);
+  const correctedAltitudeFeet = clampedAltitudeFeet - curvatureDropFeet;
   return [local.x, altToY(correctedAltitudeFeet, verticalScale), local.z];
 }
 
@@ -248,6 +256,7 @@ export function LiveTrafficOverlay({
   limit = DEFAULT_LIMIT
 }: LiveTrafficOverlayProps) {
   const [tracks, setTracks] = useState<Map<string, TrafficTrack>>(new Map());
+  const [elevationGrid, setElevationGrid] = useState<ElevationGrid | null>(null);
   const normalizedHistoryMinutes = normalizeHistoryMinutes(historyMinutes);
   const markerMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const markerDummy = useMemo(() => new THREE.Object3D(), []);
@@ -262,6 +271,16 @@ export function LiveTrafficOverlay({
       }),
     []
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    buildElevationGrid(refLat, refLon, radiusNm).then((grid) => {
+      if (!cancelled) setElevationGrid(grid);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [refLat, refLon, radiusNm]);
 
   useEffect(() => {
     let cancelled = false;
@@ -385,7 +404,8 @@ export function LiveTrafficOverlay({
           refLat,
           refLon,
           verticalScale,
-          applyEarthCurvatureCompensation
+          applyEarthCurvatureCompensation,
+          elevationGrid
         );
         const trailPoints = track.history.map((point) =>
           toScenePoint(
@@ -395,7 +415,8 @@ export function LiveTrafficOverlay({
             refLat,
             refLon,
             verticalScale,
-            applyEarthCurvatureCompensation
+            applyEarthCurvatureCompensation,
+            elevationGrid
           )
         );
         return {
@@ -410,7 +431,7 @@ export function LiveTrafficOverlay({
         (track) =>
           Number.isFinite(track.markerPosition[0]) && Number.isFinite(track.markerPosition[2])
       );
-  }, [tracks, refLat, refLon, verticalScale, applyEarthCurvatureCompensation]);
+  }, [tracks, refLat, refLon, elevationGrid, verticalScale, applyEarthCurvatureCompensation]);
 
   useEffect(() => {
     const markerMesh = markerMeshRef.current;
