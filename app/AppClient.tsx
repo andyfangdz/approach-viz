@@ -58,7 +58,7 @@ export function AppClient({
   const [didInitFromLocation, setDidInitFromLocation] = useState(false);
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [flattenBathymetry, setFlattenBathymetry] = useState(true);
-  const [liveTrafficEnabled, setLiveTrafficEnabled] = useState(false);
+  const [liveTrafficEnabled, setLiveTrafficEnabled] = useState(true);
   const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
     DEFAULT_TRAFFIC_HISTORY_MINUTES
   );

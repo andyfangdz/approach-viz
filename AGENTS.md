@@ -51,7 +51,7 @@ Rendering guidance is split into topic docs under `docs/`:
 - `docs/rendering-approach-geometry.md`
 - `docs/rendering-performance.md`
 - Satellite/3D Plate mode exposes a gear/options-panel `Flatten Bathymetry` toggle (enabled by default) that clamps bathymetry with curvature-compensated, vertical-scale-neutral local altitude (`worldY / verticalScale + curvatureDrop`) to avoid over-flattening distant above-sea terrain.
-- Options panel exposes `Live ADS-B Traffic` and `Traffic History` (`1..15 min`) controls; when enabled, aircraft markers/trails are polled from the ADSB proxy and rendered as an overlay in scene local-NM coordinates, with one-time initial backfill using the selected history window (default `3 min`).
+- Options panel exposes `Live ADS-B Traffic` and `Traffic History` (`1..15 min`) controls; live traffic is enabled by default, and aircraft markers/trails are polled from the ADSB proxy and rendered as an overlay in scene local-NM coordinates, with one-time initial backfill using the selected history window (default `3 min`).
 - Airspace sectors with floors at/near sea level (`<= 100 ft MSL`) omit bottom caps and bottom edge segments to prevent z-fighting shimmer against sea-level-aligned surfaces.
 - Missed direct fix-join legs (`CF`/`DF`/`TF`) with explicit downstream turn direction (`L`/`R`) render curved climbing-turn joins (not hard corners), and downstream `CF` legs with published course/radial intercept that course before the fix.
 
