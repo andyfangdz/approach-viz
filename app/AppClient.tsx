@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import type { Approach } from '@/src/cifp/parser';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
 import {
-  filterOptions,
   formatApproachLabel,
   isMobileViewport,
   readSurfaceModeFromSearch,
@@ -45,8 +44,6 @@ export function AppClient({
   const [airportOptionsLoading, setAirportOptionsLoading] = useState(
     initialAirportOptions.length === 0
   );
-  const [airportQuery, setAirportQuery] = useState('');
-  const [approachQuery, setApproachQuery] = useState('');
   const [sceneData, setSceneData] = useState<SceneData>(initialSceneData);
   const [selectedAirport, setSelectedAirport] = useState<string>(
     initialSceneData.airport?.id ?? initialAirportId
@@ -209,16 +206,6 @@ export function AppClient({
     [approachOptions, selectedApproach]
   );
 
-  const filteredAirportOptions = useMemo(
-    () => filterOptions(effectiveAirportOptions, airportQuery),
-    [effectiveAirportOptions, airportQuery]
-  );
-
-  const filteredApproachOptions = useMemo(
-    () => filterOptions(approachOptions, approachQuery),
-    [approachOptions, approachQuery]
-  );
-
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const activeErrorMessage = errorMessage || surfaceErrorMessage;
   const missedApproachStartAltitudeFeet =
@@ -280,22 +267,18 @@ export function AppClient({
       <HeaderControls
         selectorsCollapsed={selectorsCollapsed}
         onToggleSelectors={() => setSelectorsCollapsed((current) => !current)}
-        filteredAirportOptions={filteredAirportOptions}
+        effectiveAirportOptions={effectiveAirportOptions}
         selectedAirportOption={selectedAirportOption}
         airportOptionsLoading={airportOptionsLoading}
         effectiveAirportOptionsLength={effectiveAirportOptions.length}
-        airportQuery={airportQuery}
-        onAirportQueryChange={setAirportQuery}
         onAirportSelected={(airportId) => {
           setSelectedAirport(airportId);
           setSelectedApproach('');
           requestSceneData(airportId, '');
         }}
-        filteredApproachOptions={filteredApproachOptions}
+        approachOptions={approachOptions}
         selectedApproachOption={selectedApproachOption}
         approachOptionsLength={approachOptions.length}
-        approachQuery={approachQuery}
-        onApproachQueryChange={setApproachQuery}
         onApproachSelected={(approachId) => {
           setSelectedApproach(approachId);
           requestSceneData(selectedAirport, approachId);
@@ -324,7 +307,6 @@ export function AppClient({
             liveTrafficEnabled={liveTrafficEnabled}
             showTrafficCallsigns={showTrafficCallsigns}
             trafficHistoryMinutes={trafficHistoryMinutes}
-            selectedApproach={selectedApproach}
             surfaceMode={surfaceMode}
             satelliteRetryNonce={satelliteRetryNonce}
             satelliteRetryCount={satelliteRetryCount}

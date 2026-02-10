@@ -52,6 +52,12 @@ Rendering guidance is split into topic docs under `docs/`:
 - `docs/rendering-performance.md`
 - Satellite/3D Plate mode exposes a gear/options-panel `Flatten Bathymetry` toggle (enabled by default) that clamps bathymetry with curvature-compensated, vertical-scale-neutral local altitude (`worldY / verticalScale + curvatureDrop`) to avoid over-flattening distant above-sea terrain.
 - Options panel exposes `Live ADS-B Traffic`, `Show Traffic Callsigns`, and `Traffic History` (`1..15 min`) controls; live traffic is enabled by default, and aircraft markers/trails are polled from the ADSB proxy and rendered as an overlay in scene local-NM coordinates, with one-time initial backfill using the selected history window (default `3 min`). Callsign labels render as text-only overlays above traffic markers (no label box), and on-ground traffic targets are filtered out.
+- `SceneCanvas` is memoized so non-scene UI state updates (for example selector search typing/collapse toggles) do not re-render the Three.js subtree.
+- Airport/approach combobox search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header UI.
+- Live ADS-B markers reuse shared Three.js sphere geometry/material instances across aircraft markers to reduce per-refresh GPU object churn.
+- Live ADS-B aircraft markers render through a single `InstancedMesh` (capacity bounded by traffic query `limit`) instead of one mesh per target.
+- Three.js objects allocated imperatively (for example path tube geometries, airspace extrusion/edge geometries, traffic marker buffers, plate textures) must be disposed in effect cleanups when replaced/unmounted.
+- Airspace geometry is computed in base altitude units and scaled by `verticalScale` at the container group so vertical-scale slider changes do not rebuild airspace extrusion geometry.
 - Airspace sectors with floors at/near sea level (`<= 100 ft MSL`) omit bottom caps and bottom edge segments to prevent z-fighting shimmer against sea-level-aligned surfaces.
 - Missed direct fix-join legs (`CF`/`DF`/`TF`) with explicit downstream turn direction (`L`/`R`) render curved climbing-turn joins (not hard corners), and downstream `CF` legs with published course/radial intercept that course before the fix.
 

@@ -1,22 +1,19 @@
+import { useMemo, useState } from 'react';
 import Select from 'react-select';
-import { selectStyles } from '@/app/app-client-utils';
+import { filterOptions, selectStyles } from '@/app/app-client-utils';
 import type { HeaderControlsProps } from './types';
 
 export function HeaderControls({
   selectorsCollapsed,
   onToggleSelectors,
-  filteredAirportOptions,
+  effectiveAirportOptions,
   selectedAirportOption,
   airportOptionsLoading,
   effectiveAirportOptionsLength,
-  airportQuery,
-  onAirportQueryChange,
   onAirportSelected,
-  filteredApproachOptions,
+  approachOptions,
   selectedApproachOption,
   approachOptionsLength,
-  approachQuery,
-  onApproachQueryChange,
   onApproachSelected,
   verticalScale,
   onVerticalScaleChange,
@@ -25,6 +22,17 @@ export function HeaderControls({
   onRecenterScene,
   menuPortalTarget
 }: HeaderControlsProps) {
+  const [airportQuery, setAirportQuery] = useState('');
+  const [approachQuery, setApproachQuery] = useState('');
+  const filteredAirportOptions = useMemo(
+    () => filterOptions(effectiveAirportOptions, airportQuery),
+    [effectiveAirportOptions, airportQuery]
+  );
+  const filteredApproachOptions = useMemo(
+    () => filterOptions(approachOptions, approachQuery),
+    [approachOptions, approachQuery]
+  );
+
   return (
     <header>
       <div className="header-row">
@@ -66,13 +74,13 @@ export function HeaderControls({
                 menuPosition="fixed"
                 inputValue={airportQuery}
                 onInputChange={(value, meta) => {
-                  if (meta.action === 'input-change') onAirportQueryChange(value);
-                  if (meta.action === 'menu-close') onAirportQueryChange('');
+                  if (meta.action === 'input-change') setAirportQuery(value);
+                  if (meta.action === 'menu-close') setAirportQuery('');
                 }}
                 onChange={(nextOption) => {
                   const nextAirportId = nextOption?.value;
                   if (!nextAirportId || nextAirportId === selectedAirportOption?.value) return;
-                  onAirportQueryChange('');
+                  setAirportQuery('');
                   onAirportSelected(nextAirportId);
                 }}
               />
@@ -101,13 +109,13 @@ export function HeaderControls({
                 menuPosition="fixed"
                 inputValue={approachQuery}
                 onInputChange={(value, meta) => {
-                  if (meta.action === 'input-change') onApproachQueryChange(value);
-                  if (meta.action === 'menu-close') onApproachQueryChange('');
+                  if (meta.action === 'input-change') setApproachQuery(value);
+                  if (meta.action === 'menu-close') setApproachQuery('');
                 }}
                 onChange={(nextOption) => {
                   const nextApproachId = nextOption?.value;
                   if (!nextApproachId || nextApproachId === selectedApproachOption?.value) return;
-                  onApproachQueryChange('');
+                  setApproachQuery('');
                   onApproachSelected(nextApproachId);
                 }}
               />

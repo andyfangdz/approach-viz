@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
@@ -60,6 +60,13 @@ export function PathTube({
     }
     return new THREE.TubeGeometry(polyline, Math.max(points.length * 8, 48), 0.08, 8, false);
   }, [points]);
+
+  useEffect(
+    () => () => {
+      tubeGeometry?.dispose();
+    },
+    [tubeGeometry]
+  );
 
   if (!tubeGeometry) return null;
 

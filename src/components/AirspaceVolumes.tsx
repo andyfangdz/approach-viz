@@ -3,7 +3,7 @@
  * Renders translucent Class B/C/D airspace boundaries
  */
 
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 
 const ALTITUDE_SCALE = 1 / 6076.12;
@@ -52,8 +52,8 @@ function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number)
   return { x, z };
 }
 
-function altToY(altFeet: number, verticalScale: number): number {
-  return altFeet * ALTITUDE_SCALE * verticalScale;
+function altToBaseY(altFeet: number): number {
+  return altFeet * ALTITUDE_SCALE;
 }
 
 function shouldHideBottomCap(lowerAltFeet: number): boolean {
@@ -151,13 +151,11 @@ function stripBottomEdgeSegments(
 function AirspaceVolume({
   feature,
   refLat,
-  refLon,
-  verticalScale
+  refLon
 }: {
   feature: AirspaceFeature;
   refLat: number;
   refLon: number;
-  verticalScale: number;
 }) {
   const color = COLORS[feature.class];
   if (!color) return null;
@@ -182,8 +180,8 @@ function AirspaceVolume({
         }
       }
 
-      const lowerY = altToY(feature.lowerAlt, verticalScale);
-      const upperY = altToY(feature.upperAlt, verticalScale);
+      const lowerY = altToBaseY(feature.lowerAlt);
+      const upperY = altToBaseY(feature.upperAlt);
       const height = upperY - lowerY;
 
       if (height <= 0) continue;
@@ -201,42 +199,39 @@ function AirspaceVolume({
       // Translate so bottom is at lowerY
       geo.translate(0, lowerY, 0);
       if (shouldHideBottomCap(feature.lowerAlt)) {
-        stripBottomCapTriangles(geo, lowerY, Math.max(altToY(1, verticalScale), 1e-6));
+        stripBottomCapTriangles(geo, lowerY, Math.max(altToBaseY(1), 1e-6));
       }
       meshes.push(geo);
     }
 
     if (meshes.length === 0) return { geometry: null, edgesGeometry: null };
 
-    // Merge all geometries
-    const mergedGeo =
-      meshes.length === 1
-        ? meshes[0]
-        : meshes.reduce((acc, geo) => {
-            // For simplicity, just use the first one
-            // In production, use BufferGeometryUtils.mergeGeometries
-            return acc;
-          }, meshes[0]);
+    // Keep current rendering behavior (first ring geometry) but dispose unused
+    // ring geometries immediately to avoid GPU memory leaks.
+    const mergedGeo = meshes[0];
+    for (let i = 1; i < meshes.length; i += 1) {
+      meshes[i].dispose();
+    }
 
     const edgesGeometry = new THREE.EdgesGeometry(mergedGeo);
     if (shouldHideBottomCap(feature.lowerAlt)) {
       stripBottomEdgeSegments(
         edgesGeometry,
-        altToY(feature.lowerAlt, verticalScale),
-        Math.max(altToY(1, verticalScale), 1e-6)
+        altToBaseY(feature.lowerAlt),
+        Math.max(altToBaseY(1), 1e-6)
       );
     }
 
     return { geometry: mergedGeo, edgesGeometry };
-  }, [feature, refLat, refLon, verticalScale]);
+  }, [feature, refLat, refLon]);
 
-  const wireframe = useMemo(() => {
-    if (!edgesGeometry) return null;
-    return new THREE.LineSegments(
-      edgesGeometry,
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.4 })
-    );
-  }, [edgesGeometry, color]);
+  useEffect(
+    () => () => {
+      geometry?.dispose();
+      edgesGeometry?.dispose();
+    },
+    [geometry, edgesGeometry]
+  );
 
   if (!geometry) return null;
 
@@ -251,7 +246,11 @@ function AirspaceVolume({
           depthWrite={false}
         />
       </mesh>
-      {wireframe && <primitive object={wireframe} />}
+      {edgesGeometry && (
+        <lineSegments geometry={edgesGeometry}>
+          <lineBasicMaterial color={color} transparent opacity={0.4} />
+        </lineSegments>
+      )}
     </group>
   );
 }
@@ -263,14 +262,13 @@ export const AirspaceVolumes = memo(function AirspaceVolumes({
   verticalScale
 }: AirspaceVolumesProps) {
   return (
-    <group>
+    <group scale={[1, verticalScale, 1]}>
       {features.map((feature, i) => (
         <AirspaceVolume
           key={`${feature.name}-${i}`}
           feature={feature}
           refLat={refLat}
           refLon={refLon}
-          verticalScale={verticalScale}
         />
       ))}
     </group>

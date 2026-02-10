@@ -406,6 +406,9 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   const fatalErrorReportedRef = useRef(false);
   const patchedMaterialsRef = useRef<Set<THREE.Material>>(new Set());
   const patchedStateRef = useRef<WeakMap<THREE.Material, PatchedMaterialState>>(new WeakMap());
+  const disposeListenerRef = useRef<WeakMap<THREE.Material, (event: THREE.Event) => void>>(
+    new WeakMap()
+  );
   const [plateTexture, setPlateTexture] = useState<THREE.CanvasTexture | null>(null);
   const [plateHomography, setPlateHomography] = useState<THREE.Matrix3 | null>(null);
   const [plateLoading, setPlateLoading] = useState(false);
@@ -492,6 +495,22 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       plateTexture?.dispose();
     },
     [plateTexture]
+  );
+
+  useEffect(
+    () => () => {
+      for (const material of patchedMaterialsRef.current) {
+        const disposeListener = disposeListenerRef.current.get(material);
+        if (disposeListener) {
+          material.removeEventListener('dispose', disposeListener);
+        }
+      }
+      patchedMaterialsRef.current.clear();
+      patchedStateRef.current = new WeakMap();
+      disposeListenerRef.current = new WeakMap();
+      tilesRendererRef.current = null;
+    },
+    []
   );
 
   const syncPatchedMaterials = useCallback(() => {
@@ -624,6 +643,17 @@ if (uPlateEnabled > 0.5) {
 
       patchedMaterialsRef.current.add(material);
       patchedStateRef.current.set(material, { uniforms });
+      const handleDispose = () => {
+        patchedMaterialsRef.current.delete(material);
+        patchedStateRef.current.delete(material);
+        const disposeListener = disposeListenerRef.current.get(material);
+        if (disposeListener) {
+          material.removeEventListener('dispose', disposeListener);
+          disposeListenerRef.current.delete(material);
+        }
+      };
+      disposeListenerRef.current.set(material, handleDispose);
+      material.addEventListener('dispose', handleDispose);
       material.needsUpdate = true;
     },
     [overlayEnabled, plateHomography, plateTexture, flattenBathymetryUniformValue, verticalScale]

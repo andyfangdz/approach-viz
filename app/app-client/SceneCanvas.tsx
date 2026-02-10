@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, type RefObject } from 'react';
+import { Suspense, memo, useEffect, useRef, type RefObject } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Environment, Html, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
@@ -49,7 +49,7 @@ function RecenterCamera({
   return null;
 }
 
-export function SceneCanvas({
+export const SceneCanvas = memo(function SceneCanvas({
   airport,
   sceneData,
   contextApproach,
@@ -59,7 +59,6 @@ export function SceneCanvas({
   liveTrafficEnabled,
   showTrafficCallsigns,
   trafficHistoryMinutes,
-  selectedApproach,
   surfaceMode,
   satelliteRetryNonce,
   satelliteRetryCount,
@@ -183,4 +182,4 @@ export function SceneCanvas({
       </Suspense>
     </Canvas>
   );
-}
+});

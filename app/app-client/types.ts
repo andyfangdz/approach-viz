@@ -8,18 +8,14 @@ export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
 export interface HeaderControlsProps {
   selectorsCollapsed: boolean;
   onToggleSelectors: () => void;
-  filteredAirportOptions: SelectOption[];
+  effectiveAirportOptions: SelectOption[];
   selectedAirportOption: SelectOption | null;
   airportOptionsLoading: boolean;
   effectiveAirportOptionsLength: number;
-  airportQuery: string;
-  onAirportQueryChange: (query: string) => void;
   onAirportSelected: (airportId: string) => void;
-  filteredApproachOptions: SelectOption[];
+  approachOptions: SelectOption[];
   selectedApproachOption: SelectOption | null;
   approachOptionsLength: number;
-  approachQuery: string;
-  onApproachQueryChange: (query: string) => void;
   onApproachSelected: (approachId: string) => void;
   verticalScale: number;
   onVerticalScaleChange: (verticalScale: number) => void;
@@ -39,7 +35,6 @@ export interface SceneCanvasProps {
   liveTrafficEnabled: boolean;
   showTrafficCallsigns: boolean;
   trafficHistoryMinutes: number;
-  selectedApproach: string;
   surfaceMode: SurfaceMode;
   satelliteRetryNonce: number;
   satelliteRetryCount: number;

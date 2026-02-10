@@ -1,5 +1,6 @@
 import { Html, Line } from '@react-three/drei';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import * as THREE from 'three';
 import {
   altToY,
   earthCurvatureDropNm,
@@ -214,6 +215,19 @@ export function LiveTrafficOverlay({
 }: LiveTrafficOverlayProps) {
   const [tracks, setTracks] = useState<Map<string, TrafficTrack>>(new Map());
   const normalizedHistoryMinutes = normalizeHistoryMinutes(historyMinutes);
+  const markerMeshRef = useRef<THREE.InstancedMesh | null>(null);
+  const markerDummy = useMemo(() => new THREE.Object3D(), []);
+  const markerGeometry = useMemo(() => new THREE.SphereGeometry(0.055, 10, 10), []);
+  const markerMaterial = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#67f2ff',
+        emissive: '#3fd3ff',
+        emissiveIntensity: 0.85,
+        toneMapped: false
+      }),
+    []
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -298,6 +312,20 @@ export function LiveTrafficOverlay({
     });
   }, [normalizedHistoryMinutes]);
 
+  useEffect(
+    () => () => {
+      markerGeometry.dispose();
+      markerMaterial.dispose();
+    },
+    [markerGeometry, markerMaterial]
+  );
+
+  useEffect(() => {
+    const markerMesh = markerMeshRef.current;
+    if (!markerMesh) return;
+    markerMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }, []);
+
   const renderTracks = useMemo(() => {
     return Array.from(tracks.values())
       .map((track) => {
@@ -336,6 +364,20 @@ export function LiveTrafficOverlay({
       );
   }, [tracks, refLat, refLon, verticalScale, applyEarthCurvatureCompensation]);
 
+  useEffect(() => {
+    const markerMesh = markerMeshRef.current;
+    if (!markerMesh) return;
+    const nextCount = Math.min(limit, renderTracks.length);
+    for (let index = 0; index < nextCount; index += 1) {
+      const [x, y, z] = renderTracks[index].markerPosition;
+      markerDummy.position.set(x, y, z);
+      markerDummy.updateMatrix();
+      markerMesh.setMatrixAt(index, markerDummy.matrix);
+    }
+    markerMesh.count = nextCount;
+    markerMesh.instanceMatrix.needsUpdate = true;
+  }, [renderTracks, markerDummy, limit]);
+
   return (
     <group>
       {renderTracks.map((track) => {
@@ -363,15 +405,6 @@ export function LiveTrafficOverlay({
               opacity={0.9}
               lineWidth={2}
             />
-            <mesh position={track.markerPosition}>
-              <sphereGeometry args={[0.055, 10, 10]} />
-              <meshStandardMaterial
-                color="#67f2ff"
-                emissive="#3fd3ff"
-                emissiveIntensity={0.85}
-                toneMapped={false}
-              />
-            </mesh>
             {showCallsignLabels && track.callsignLabel && (
               <Html
                 position={[
@@ -390,6 +423,11 @@ export function LiveTrafficOverlay({
           </group>
         );
       })}
+      <instancedMesh
+        ref={markerMeshRef}
+        args={[markerGeometry, markerMaterial, Math.max(1, limit)]}
+        frustumCulled={false}
+      />
     </group>
   );
 }
