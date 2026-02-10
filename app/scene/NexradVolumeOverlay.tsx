@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
+import { earthCurvatureDropNm } from './approach-path/coordinates';
 
 const FEET_PER_NM = 6076.12;
 const ALTITUDE_SCALE = 1 / FEET_PER_NM;
@@ -308,19 +308,14 @@ export function NexradVolumeOverlay({
     };
   }, [enabled, refLat, refLon, minDbz, maxRangeNm]);
 
-  const radarOffset = useMemo(() => {
-    if (!payload?.radar) return null;
-    return latLonToLocal(payload.radar.lat, payload.radar.lon, refLat, refLon);
-  }, [payload?.radar, refLat, refLon]);
-
   const renderVoxels = useMemo<RenderVoxel[]>(() => {
-    if (!enabled || !payload?.voxels || !radarOffset) return [];
+    if (!enabled || !payload?.voxels) return [];
 
     const next: RenderVoxel[] = [];
     for (const voxel of payload.voxels) {
       const [offsetXNm, offsetZNm, bottomFeet, topFeet, dbz, footprintNm] = voxel;
-      const x = radarOffset.x + offsetXNm;
-      const z = radarOffset.z + offsetZNm;
+      const x = offsetXNm;
+      const z = offsetZNm;
       const correctedCenterFeet =
         (bottomFeet + topFeet) / 2 -
         (applyEarthCurvatureCompensation ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM : 0);
@@ -340,7 +335,7 @@ export function NexradVolumeOverlay({
     }
 
     return next;
-  }, [enabled, payload?.voxels, radarOffset, applyEarthCurvatureCompensation, refLat]);
+  }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat]);
 
   useEffect(() => {
     const meshes = [baseMeshRef.current, glowMeshRef.current];
@@ -355,7 +350,7 @@ export function NexradVolumeOverlay({
     applyVoxelInstances(glowMeshRef.current, renderVoxels, meshDummy, colorScratch);
   }, [renderVoxels, meshDummy, colorScratch]);
 
-  if (!enabled || !payload?.radar || renderVoxels.length === 0) {
+  if (!enabled || renderVoxels.length === 0) {
     return null;
   }
 

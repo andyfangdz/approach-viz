@@ -42,6 +42,7 @@ External data feeds and their ingestion paths.
 - Sources: Iowa State Mesonet radar metadata endpoint (`json/radar.py?operation=available`) and the Unidata AWS public bucket `s3://unidata-nexrad-level3`.
 - Fetched through same-origin proxy `app/api/weather/nexrad/route.ts` so browser clients avoid direct CORS/multi-origin fetch complexity.
 - Runtime parser extends `nexrad-level-3-data` with super-resolution reflectivity product code `153` (`N0B/N1B/N2B/N3B`) and converts radial bins into capped 3D voxel payloads.
+- Proxy builds a local mosaic from multiple nearby NEXRAD sites (distance/cap bounded), merges overlapping voxels on a coarse local grid, and emits request-origin local NM offsets for scene rendering.
 - Route applies per-request cache, dBZ threshold filtering, range limiting, and voxel-count decimation before returning scene-ready overlay data.
 
 ## Airport Coverage

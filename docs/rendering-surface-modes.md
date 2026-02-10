@@ -10,6 +10,7 @@
 ## Surface-Independent Overlays
 
 - NEXRAD Level 3 volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
+- NEXRAD overlay volume is a local mosaic assembled from multiple nearby radar sites (distance/cap bounded), not a single-radar sweep.
 - In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
 - NEXRAD voxel coloring uses a discrete aviation reflectivity rain ramp only; because Level 3 reflectivity does not carry hydrometeor phase, the renderer does not infer rain/mixed/snow type from altitude.
 - NEXRAD color gain is applied with channel-safe scaling (hue-preserving boost without RGB clipping) so distant/high-altitude bins stay cyan/blue instead of bleaching toward white.

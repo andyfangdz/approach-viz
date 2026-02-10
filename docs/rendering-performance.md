@@ -12,6 +12,7 @@
 - Live ADS-B marker meshes reuse shared sphere geometry/material instances rather than allocating one geometry/material pair per aircraft marker.
 - Live ADS-B aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead while still updating positions every poll.
 - NEXRAD volumetric weather is polled at a slower cadence (`~120s`) through a same-origin proxy, with server-side range/threshold filtering plus max-voxel decimation to bound payload size.
+- NEXRAD proxy mosaic assembly caps contributing radar sites and merge-quantizes overlapping voxels before response decimation, limiting payload growth in dense multi-radar regions.
 - NEXRAD voxels render through one `InstancedMesh` (shared box geometry/material) with per-instance transforms/colors, keeping draw calls bounded even during dense precipitation events.
 - In-scene `Html` labels (waypoints/holds/runways/turn constraints/callsigns) use a capped `zIndexRange` so app UI overlays (selectors/options/legend) stay visually on top.
 - Three.js resources allocated imperatively in hooks (`TubeGeometry`, airspace extrusions/edges, traffic marker buffers, plate textures) are explicitly disposed in effect cleanup paths to prevent GPU memory growth across scene updates.

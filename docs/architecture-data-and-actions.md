@@ -46,7 +46,8 @@
 ## NEXRAD Weather Access
 
 - NEXRAD Level 3 volumetric weather is fetched through same-origin proxy `app/api/weather/nexrad/route.ts`.
-- The proxy resolves nearest radar metadata via Iowa State Mesonet, fetches latest super-resolution reflectivity scans (`N0B/N1B/N2B/N3B`) from `unidata-nexrad-level3`, and parses radial bins into capped voxel payloads.
+- The proxy resolves multiple nearby radar sites via Iowa State Mesonet, fetches latest super-resolution reflectivity scans (`N0B/N1B/N2B/N3B`) per selected site from `unidata-nexrad-level3`, and assembles a merged mosaic voxel payload.
+- Mosaic voxels are converted to request-origin local NM offsets on the server, so client rendering is independent of any single radar anchor.
 - Super-resolution product code `153` is enabled by extending the runtime parser product map (`nexrad-level-3-data`) with `N0B/N1B/N2B/N3B` abbreviations.
 - Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
 - `next.config.ts` marks `nexrad-level-3-data` as a `serverExternalPackages` dependency so Turbopack does not attempt to statically bundle its dynamic `require()` loader logic.
