@@ -102,6 +102,36 @@ function trimHistory(history: TrafficHistoryPoint[], cutoffMs: number): TrafficH
   return history.slice(firstValidIndex);
 }
 
+function mergeHistorySamples(
+  existingHistory: TrafficHistoryPoint[],
+  backfilledHistory: TrafficHistoryPoint[]
+): TrafficHistoryPoint[] {
+  if (existingHistory.length === 0) return [...backfilledHistory];
+  if (backfilledHistory.length === 0) return [...existingHistory];
+
+  const merged = [...existingHistory, ...backfilledHistory].sort(
+    (left, right) => left.timestampMs - right.timestampMs
+  );
+  const deduped: TrafficHistoryPoint[] = [];
+
+  for (const point of merged) {
+    const lastPoint = deduped[deduped.length - 1];
+    if (!lastPoint) {
+      deduped.push(point);
+      continue;
+    }
+
+    if (point.timestampMs === lastPoint.timestampMs) {
+      deduped[deduped.length - 1] = point;
+      continue;
+    }
+
+    deduped.push(point);
+  }
+
+  return deduped;
+}
+
 function normalizeRemoteHistory(
   remoteHistory: LiveTrafficHistoryPoint[] | undefined,
   historyCutoffMs: number
@@ -166,7 +196,7 @@ function mergeTracks(
     };
 
     const backfilledHistory = normalizeRemoteHistory(historyByHex?.[aircraft.hex], historyCutoffMs);
-    const nextHistory = existing ? [...existing.history] : backfilledHistory;
+    const nextHistory = mergeHistorySamples(existing?.history ?? [], backfilledHistory);
     const lastPoint = nextHistory[nextHistory.length - 1];
     if (!lastPoint) {
       nextHistory.push(nextPoint);
