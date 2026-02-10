@@ -74,15 +74,11 @@ export const SceneCanvas = memo(function SceneCanvas({
     const list: SceneAirport[] = [
       { lat: airport.lat, lon: airport.lon, elevation: airport.elevation }
     ];
-    for (const nearby of sceneData.nearbyAirports) {
-      list.push({
-        lat: nearby.airport.lat,
-        lon: nearby.airport.lon,
-        elevation: nearby.airport.elevation
-      });
+    for (const ea of sceneData.elevationAirports) {
+      list.push({ lat: ea.lat, lon: ea.lon, elevation: ea.elevation });
     }
     return list;
-  }, [airport, sceneData.nearbyAirports]);
+  }, [airport, sceneData.elevationAirports]);
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const showFlatPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
   const showTerrainSurface =

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import KDBush from 'kdbush';
 import { parseCIFP } from '../src/cifp/parser';
 
 interface ApproachMinimumsDb {
@@ -329,6 +330,28 @@ function main() {
 
   db.close();
   console.log(`✅ SQLite DB built at ${DB_PATH}`);
+
+  // Build kdbush spatial index for all airports
+  const airports = Array.from(parsed.airports.values()).filter(
+    (a) => Number.isFinite(a.lat) && Number.isFinite(a.lon)
+  );
+  const index = new KDBush(airports.length);
+  const meta: Array<{ id: string; lat: number; lon: number; elevation: number }> = [];
+  for (const airport of airports) {
+    index.add(airport.lat, airport.lon);
+    meta.push({ id: airport.id, lat: airport.lat, lon: airport.lon, elevation: airport.elevation });
+  }
+  index.finish();
+
+  fs.writeFileSync(
+    path.join(DB_DIR, 'airport-spatial.bin'),
+    Buffer.from(index.data)
+  );
+  fs.writeFileSync(
+    path.join(DB_DIR, 'airport-spatial-meta.json'),
+    JSON.stringify(meta)
+  );
+  console.log(`✅ Airport spatial index built (${airports.length} airports)`);
 }
 
 main();

@@ -58,6 +58,12 @@ export interface NearbyAirport {
   distanceNm: number;
 }
 
+export interface ElevationAirport {
+  lat: number;
+  lon: number;
+  elevation: number;
+}
+
 export interface SceneData {
   airport: Airport | null;
   geoidSeparationFeet: number;
@@ -68,6 +74,7 @@ export interface SceneData {
   waypoints: Waypoint[];
   runways: RunwayThreshold[];
   nearbyAirports: NearbyAirport[];
+  elevationAirports: ElevationAirport[];
   airspace: AirspaceFeature[];
   minimumsSummary: MinimumsSummary | null;
   approachPlate: ApproachPlate | null;

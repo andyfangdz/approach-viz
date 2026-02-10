@@ -56,7 +56,7 @@ Rendering guidance is split into topic docs under `docs/`:
 - Options-panel values are persisted to browser `localStorage` and restored on load (vertical scale, terrain radius, bathymetry toggle, traffic toggles, traffic history).
 - `SceneCanvas` is memoized so non-scene UI state updates (for example selector search typing/collapse toggles) do not re-render the Three.js subtree.
 - Airport/approach combobox search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header UI.
-- Live ADS-B aircraft without a reported altitude are placed at the nearest scene airport's field elevation (selected airport + nearby airports already in the scene payload) so they render on the surface instead of underground. Aircraft with valid altitude reports are rendered at their reported altitude without clamping.
+- Live ADS-B aircraft without a reported altitude are placed at the nearest airport's field elevation so they render on the surface instead of underground. The scene payload includes `elevationAirports` covering the full 80 NM traffic radius (sourced from a kdbush spatial index), providing field-elevation coverage far beyond the 20 NM nearby airports list. Aircraft with valid altitude reports are rendered at their reported altitude without clamping.
 - Live ADS-B markers reuse shared Three.js sphere geometry/material instances across aircraft markers to reduce per-refresh GPU object churn.
 - Live ADS-B aircraft markers render through a single `InstancedMesh` (capacity bounded by traffic query `limit`) instead of one mesh per target.
 - Three.js objects allocated imperatively (for example path tube geometries, airspace extrusion/edge geometries, traffic marker buffers, plate textures) must be disposed in effect cleanups when replaced/unmounted.
@@ -94,7 +94,7 @@ Rendering guidance is split into topic docs under `docs/`:
 
 ## Architecture Notes
 
-- Server-side data is backed by `data/approach-viz.sqlite`, with scene payloads assembled through Next.js server actions.
+- Server-side data is backed by `data/approach-viz.sqlite` plus a kdbush spatial index (`data/airport-spatial.bin` + `data/airport-spatial-meta.json`) built at `build-db` time. The spatial index accelerates nearby-airport queries in scene-data assembly and provides elevation-airport coverage for the full traffic radius. Scene payloads are assembled through Next.js server actions.
 - `app/actions.ts` is a thin wrapper; server logic lives in `app/actions-lib/*` and feeds App Router page loaders plus client refresh actions.
 - The client runtime is coordinated in `app/AppClient.tsx`, with UI sections in `app/app-client/*` and scene/math primitives in `src/components/*` and `src/components/approach-path/*`.
 - FAA plate PDFs are fetched through `app/api/faa-plate/route.ts`; plate metadata and minima matching are resolved server-side before payload delivery.
@@ -118,6 +118,7 @@ Server actions (app/actions.ts)
   |
   v
 Actions lib (app/actions-lib/*) ---> SQLite (data/approach-viz.sqlite)
+  |                                  kdbush spatial index (data/airport-spatial.*)
   |                                  External metadata (CIFP/minima/plates)
   v
 Scene payload
