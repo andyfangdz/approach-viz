@@ -158,6 +158,61 @@ header {
   color: var(--text-primary);
 }
 
+.adsb-controls {
+  gap: 6px;
+}
+
+.adsb-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.adsb-toggle-button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 48px;
+  text-align: center;
+}
+
+.adsb-toggle-button.active {
+  background: rgba(0, 229, 255, 0.18);
+  color: #00e5ff;
+  border-color: rgba(0, 229, 255, 0.4);
+}
+
+.adsb-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #00e5ff;
+}
+
+.adsb-error {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--accent-gold);
+  cursor: help;
+}
+
+.adsb-history-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.adsb-history-row input[type='range'] {
+  width: 100px;
+  accent-color: #00e5ff;
+}
+
+.adsb-history-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 .library-select {
   width: 100%;
   min-width: 220px;

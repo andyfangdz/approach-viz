@@ -19,6 +19,7 @@ import { SATELLITE_MAX_RETRIES, DEFAULT_VERTICAL_SCALE } from '@/app/app-client/
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import type { SurfaceMode } from '@/app/app-client/types';
 import type { AirportOption, SceneData } from '@/lib/types';
+import { useAdsbTraffic } from '@/src/hooks/useAdsbTraffic';
 
 interface AppClientProps {
   initialAirportOptions: AirportOption[];
@@ -57,6 +58,8 @@ export function AppClient({
   const [satelliteRetryCount, setSatelliteRetryCount] = useState(0);
   const [satelliteRetryNonce, setSatelliteRetryNonce] = useState(0);
   const [recenterNonce, setRecenterNonce] = useState(0);
+  const [adsbEnabled, setAdsbEnabled] = useState(false);
+  const [adsbHistoryLength, setAdsbHistoryLength] = useState(15);
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
@@ -137,6 +140,11 @@ export function AppClient({
   );
 
   const airport = sceneData.airport;
+  const { traffic: adsbTraffic, error: adsbError } = useAdsbTraffic(
+    adsbEnabled,
+    airport?.lat,
+    airport?.lon
+  );
   const menuPortalTarget = typeof document === 'undefined' ? undefined : document.body;
   const currentApproach = useMemo(() => sceneApproachToRuntimeApproach(sceneData), [sceneData]);
   const contextApproach = useMemo<Approach | null>(() => {
@@ -293,6 +301,12 @@ export function AppClient({
         surfaceMode={surfaceMode}
         onSurfaceModeSelected={handleSurfaceModeSelected}
         onRecenterScene={() => setRecenterNonce((current) => current + 1)}
+        adsbEnabled={adsbEnabled}
+        onAdsbToggle={() => setAdsbEnabled((current) => !current)}
+        adsbHistoryLength={adsbHistoryLength}
+        onAdsbHistoryLengthChange={setAdsbHistoryLength}
+        adsbTrafficCount={adsbTraffic.size}
+        adsbError={adsbError}
         menuPortalTarget={menuPortalTarget}
       />
 
@@ -316,6 +330,8 @@ export function AppClient({
             recenterNonce={recenterNonce}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             onSatelliteRuntimeError={handleSatelliteRuntimeError}
+            adsbTraffic={adsbTraffic}
+            adsbHistoryLength={adsbHistoryLength}
           />
         )}
 

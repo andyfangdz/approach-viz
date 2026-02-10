@@ -2,6 +2,7 @@ import { Suspense, useEffect, useRef, type RefObject } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Environment, Html, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { AdsbTraffic } from '@/src/components/AdsbTraffic';
 import { AirspaceVolumes } from '@/src/components/AirspaceVolumes';
 import { ApproachPath } from '@/src/components/ApproachPath';
 import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
@@ -61,7 +62,9 @@ export function SceneCanvas({
   surfaceErrorMessage,
   recenterNonce,
   missedApproachStartAltitudeFeet,
-  onSatelliteRuntimeError
+  onSatelliteRuntimeError,
+  adsbTraffic,
+  adsbHistoryLength
 }: SceneCanvasProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const hasApproachPlate = Boolean(sceneData.approachPlate);
@@ -157,6 +160,16 @@ export function SceneCanvas({
             refLat={airport.lat}
             refLon={airport.lon}
             verticalScale={verticalScale}
+          />
+        )}
+
+        {adsbTraffic.size > 0 && (
+          <AdsbTraffic
+            traffic={adsbTraffic}
+            refLat={airport.lat}
+            refLon={airport.lon}
+            verticalScale={verticalScale}
+            historyLength={adsbHistoryLength}
           />
         )}
 
