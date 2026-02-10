@@ -287,6 +287,34 @@ textarea,
   background: rgba(0, 255, 204, 0.08);
 }
 
+.options-panel-fab {
+  position: absolute;
+  bottom: 76px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(18, 18, 31, 0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 10;
+  transition:
+    border-color 0.2s,
+    color 0.2s,
+    background 0.2s;
+}
+
+.options-panel-fab:hover {
+  border-color: var(--accent-cyan);
+  color: var(--text-primary);
+  background: rgba(0, 255, 204, 0.08);
+}
+
 /* Expanded panel */
 .info-panel {
   position: absolute;
@@ -304,6 +332,19 @@ textarea,
 .info-panel.compact {
   padding: 10px 14px;
   min-width: 0;
+}
+
+.options-panel {
+  position: absolute;
+  right: 24px;
+  bottom: 76px;
+  background: rgba(18, 18, 31, 0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  min-width: 0;
+  z-index: 10;
 }
 
 .info-panel h3 {
@@ -461,6 +502,37 @@ textarea,
   margin-top: 2px;
 }
 
+.options-toggle-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.options-toggle-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.options-toggle-title {
+  font-size: 11px;
+}
+
+.options-toggle-note {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.options-toggle-row input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent-cyan);
+}
+
 .help-panel {
   position: absolute;
   bottom: 24px;
@@ -538,12 +610,23 @@ textarea,
     left: 12px;
   }
 
+  .options-panel-fab {
+    bottom: 12px;
+    right: 12px;
+  }
+
   .info-panel {
     left: 12px;
     right: 12px;
     bottom: 12px;
     min-width: 0;
     padding: 10px 12px;
+  }
+
+  .options-panel {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
   }
 
   .help-panel {

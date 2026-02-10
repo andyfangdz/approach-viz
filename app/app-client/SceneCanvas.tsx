@@ -54,6 +54,7 @@ export function SceneCanvas({
   contextApproach,
   waypoints,
   verticalScale,
+  flattenBathymetry,
   selectedApproach,
   surfaceMode,
   satelliteRetryNonce,
@@ -129,6 +130,7 @@ export function SceneCanvas({
                 airportElevationFeet={airport.elevation}
                 geoidSeparationFeet={sceneData.geoidSeparationFeet}
                 verticalScale={verticalScale}
+                flattenBathymetry={flattenBathymetry}
                 plateOverlay={surfaceMode === '3dplate' ? sceneData.approachPlate : null}
                 onRuntimeError={onSatelliteRuntimeError}
               />

@@ -35,6 +35,7 @@ export interface SceneCanvasProps {
   contextApproach: Approach | null;
   waypoints: Map<string, Waypoint>;
   verticalScale: number;
+  flattenBathymetry: boolean;
   selectedApproach: string;
   surfaceMode: SurfaceMode;
   satelliteRetryNonce: number;
@@ -54,4 +55,11 @@ export interface InfoPanelProps {
   hasApproachPlate: boolean;
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
+}
+
+export interface OptionsPanelProps {
+  optionsCollapsed: boolean;
+  onToggleOptions: () => void;
+  flattenBathymetry: boolean;
+  onFlattenBathymetryChange: (enabled: boolean) => void;
 }

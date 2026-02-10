@@ -15,6 +15,7 @@ import {
 import { HeaderControls } from '@/app/app-client/HeaderControls';
 import { HelpPanel } from '@/app/app-client/HelpPanel';
 import { InfoPanel } from '@/app/app-client/InfoPanel';
+import { OptionsPanel } from '@/app/app-client/OptionsPanel';
 import { SATELLITE_MAX_RETRIES, DEFAULT_VERTICAL_SCALE } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import type { SurfaceMode } from '@/app/app-client/types';
@@ -35,6 +36,7 @@ export function AppClient({
 }: AppClientProps) {
   const [selectorsCollapsed, setSelectorsCollapsed] = useState(false);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
+  const [optionsCollapsed, setOptionsCollapsed] = useState(true);
   const [airportOptions, setAirportOptions] = useState<AirportOption[]>(initialAirportOptions);
   const [airportOptionsLoading, setAirportOptionsLoading] = useState(
     initialAirportOptions.length === 0
@@ -51,6 +53,7 @@ export function AppClient({
   const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>('terrain');
   const [didInitFromLocation, setDidInitFromLocation] = useState(false);
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
+  const [flattenBathymetry, setFlattenBathymetry] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
@@ -308,6 +311,7 @@ export function AppClient({
             contextApproach={contextApproach}
             waypoints={waypoints}
             verticalScale={verticalScale}
+            flattenBathymetry={flattenBathymetry}
             selectedApproach={selectedApproach}
             surfaceMode={surfaceMode}
             satelliteRetryNonce={satelliteRetryNonce}
@@ -328,6 +332,13 @@ export function AppClient({
           hasApproachPlate={hasApproachPlate}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
+        />
+
+        <OptionsPanel
+          optionsCollapsed={optionsCollapsed}
+          onToggleOptions={() => setOptionsCollapsed((current) => !current)}
+          flattenBathymetry={flattenBathymetry}
+          onFlattenBathymetryChange={setFlattenBathymetry}
         />
 
         <HelpPanel errorMessage={activeErrorMessage} />

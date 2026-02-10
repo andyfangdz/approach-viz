@@ -17,6 +17,7 @@ import type { ApproachPlate } from '@/lib/types';
 const METERS_TO_NM = 1 / 1852;
 const FEET_TO_METERS = 0.3048;
 const FEET_TO_NM = 1 / 6076.12;
+const SEA_LEVEL_Y = 0;
 const SATELLITE_TILES_ERROR_TARGET = 12;
 const PLATE_RENDER_SCALE = 4;
 const DEG_TO_RAD = Math.PI / 180;
@@ -40,6 +41,7 @@ interface SatelliteSurfaceProps {
   airportElevationFeet: number;
   geoidSeparationFeet: number;
   verticalScale: number;
+  flattenBathymetry: boolean;
   plateOverlay: ApproachPlate | null;
   onRuntimeError?: (message: string, error?: Error) => void;
 }
@@ -66,6 +68,8 @@ interface PatchedMaterialUniforms {
   uPlateMap: { value: THREE.Texture };
   uPlateEnabled: { value: number };
   uPlateHomography: { value: THREE.Matrix3 };
+  uSeaLevelY: { value: number };
+  uFlattenBathymetry: { value: number };
 }
 
 interface PatchedMaterialState {
@@ -389,6 +393,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   airportElevationFeet,
   geoidSeparationFeet,
   verticalScale,
+  flattenBathymetry,
   plateOverlay,
   onRuntimeError
 }: SatelliteSurfaceProps) {
@@ -408,6 +413,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   const safeGeoidSeparationFeet = Number.isFinite(geoidSeparationFeet) ? geoidSeparationFeet : 0;
 
   const overlayEnabled = Boolean(plateOverlay && plateTexture && plateHomography);
+  const flattenBathymetryUniformValue = flattenBathymetry ? 1 : 0;
 
   const ecefToLocal = useMemo(
     () =>
@@ -495,13 +501,14 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       if (!state) continue;
       state.uniforms.uPlateMap.value = textureValue;
       state.uniforms.uPlateEnabled.value = enabledValue;
+      state.uniforms.uFlattenBathymetry.value = flattenBathymetryUniformValue;
       if (homographyValue) {
         state.uniforms.uPlateHomography.value.copy(homographyValue);
       } else {
         state.uniforms.uPlateHomography.value.identity();
       }
     }
-  }, [overlayEnabled, plateTexture, plateHomography]);
+  }, [overlayEnabled, plateTexture, plateHomography, flattenBathymetryUniformValue]);
 
   const patchMaterial = useCallback(
     (material: THREE.Material) => {
@@ -520,23 +527,49 @@ export const SatelliteSurface = memo(function SatelliteSurface({
             overlayEnabled && plateHomography
               ? plateHomography.clone()
               : new THREE.Matrix3().identity()
-        }
+        },
+        uSeaLevelY: { value: SEA_LEVEL_Y },
+        uFlattenBathymetry: { value: flattenBathymetryUniformValue }
       };
 
       patchable.onBeforeCompile = (shader, renderer) => {
         shader.uniforms.uPlateMap = uniforms.uPlateMap;
         shader.uniforms.uPlateEnabled = uniforms.uPlateEnabled;
         shader.uniforms.uPlateHomography = uniforms.uPlateHomography;
+        shader.uniforms.uSeaLevelY = uniforms.uSeaLevelY;
+        shader.uniforms.uFlattenBathymetry = uniforms.uFlattenBathymetry;
 
         shader.vertexShader = shader.vertexShader.replace(
           '#include <common>',
           `#include <common>
-varying vec3 vPlateWorldPos;`
+uniform float uSeaLevelY;
+uniform float uFlattenBathymetry;
+varying vec3 vPlateWorldPos;
+vec4 seaLevelClampedWorldPosition;`
         );
         shader.vertexShader = shader.vertexShader.replace(
           '#include <project_vertex>',
           `#include <project_vertex>
-vPlateWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+vec4 seaLevelTransformedPosition = vec4(transformed, 1.0);
+#ifdef USE_BATCHING
+seaLevelTransformedPosition = batchingMatrix * seaLevelTransformedPosition;
+#endif
+#ifdef USE_INSTANCING
+seaLevelTransformedPosition = instanceMatrix * seaLevelTransformedPosition;
+#endif
+seaLevelClampedWorldPosition = modelMatrix * seaLevelTransformedPosition;
+if (uFlattenBathymetry > 0.5) {
+  seaLevelClampedWorldPosition.y = max(seaLevelClampedWorldPosition.y, uSeaLevelY);
+}
+mvPosition = viewMatrix * seaLevelClampedWorldPosition;
+gl_Position = projectionMatrix * mvPosition;
+vPlateWorldPos = seaLevelClampedWorldPosition.xyz;`
+        );
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <worldpos_vertex>',
+          `#if defined( USE_ENVMAP ) || defined( DISTANCE ) || defined ( USE_SHADOWMAP ) || defined ( USE_TRANSMISSION ) || NUM_SPOT_LIGHT_COORDS > 0
+vec4 worldPosition = seaLevelClampedWorldPosition;
+#endif`
         );
 
         shader.fragmentShader = shader.fragmentShader.replace(
@@ -569,14 +602,14 @@ if (uPlateEnabled > 0.5) {
       };
       patchable.customProgramCacheKey = () => {
         const baseKey = originalCustomProgramCacheKey ? originalCustomProgramCacheKey() : '';
-        return `${baseKey}|faa-plate-overlay-v1`;
+        return `${baseKey}|faa-plate-overlay-v3`;
       };
 
       patchedMaterialsRef.current.add(material);
       patchedStateRef.current.set(material, { uniforms });
       material.needsUpdate = true;
     },
-    [overlayEnabled, plateHomography, plateTexture]
+    [overlayEnabled, plateHomography, plateTexture, flattenBathymetryUniformValue]
   );
 
   const patchSceneMaterials = useCallback(

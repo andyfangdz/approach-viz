@@ -49,6 +49,8 @@ Rendering guidance is split into topic docs under `docs/`:
 - `docs/rendering-surface-modes.md`
 - `docs/rendering-approach-geometry.md`
 - `docs/rendering-performance.md`
+- Satellite/3D Plate mode exposes a gear/options-panel `Flatten Bathymetry` toggle (enabled by default) that clamps Google 3D Tiles world-Y to sea level (`0` in app MSL frame).
+- Airspace sectors with floors at/near sea level (`<= 100 ft MSL`) omit bottom caps and bottom edge segments to prevent z-fighting shimmer against sea-level-aligned surfaces.
 - Missed direct fix-join legs (`CF`/`DF`/`TF`) with explicit downstream turn direction (`L`/`R`) render curved climbing-turn joins (not hard corners), and downstream `CF` legs with published course/radial intercept that course before the fix.
 
 ## URL State

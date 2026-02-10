@@ -9,6 +9,8 @@ import * as THREE from 'three';
 const ALTITUDE_SCALE = 1 / 6076.12;
 const DEG_TO_RAD = Math.PI / 180;
 const METERS_TO_NM = 1 / 1852;
+const SEA_LEVEL_FEET = 0;
+const SEA_LEVEL_BOTTOM_CAP_HIDE_THRESHOLD_FEET = 100;
 const WGS84_SEMI_MAJOR_METERS = 6378137;
 const WGS84_FLATTENING = 1 / 298.257223563;
 const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
@@ -54,6 +56,98 @@ function altToY(altFeet: number, verticalScale: number): number {
   return altFeet * ALTITUDE_SCALE * verticalScale;
 }
 
+function shouldHideBottomCap(lowerAltFeet: number): boolean {
+  return lowerAltFeet <= SEA_LEVEL_FEET + SEA_LEVEL_BOTTOM_CAP_HIDE_THRESHOLD_FEET;
+}
+
+function stripBottomCapTriangles(
+  geometry: THREE.BufferGeometry,
+  bottomY: number,
+  epsilonY: number
+): void {
+  if (geometry.getIndex()) {
+    const nonIndexed = geometry.toNonIndexed();
+    geometry.copy(nonIndexed);
+    nonIndexed.dispose();
+  }
+
+  const position = geometry.getAttribute('position');
+  if (!(position instanceof THREE.BufferAttribute)) return;
+
+  const normal = geometry.getAttribute('normal');
+  const uv = geometry.getAttribute('uv');
+  const hasNormal = normal instanceof THREE.BufferAttribute;
+  const hasUv = uv instanceof THREE.BufferAttribute;
+
+  const keptPositions: number[] = [];
+  const keptNormals: number[] = [];
+  const keptUvs: number[] = [];
+
+  for (let i = 0; i < position.count; i += 3) {
+    const ay = position.getY(i);
+    const by = position.getY(i + 1);
+    const cy = position.getY(i + 2);
+    const isBottomCapTriangle =
+      Math.abs(ay - bottomY) <= epsilonY &&
+      Math.abs(by - bottomY) <= epsilonY &&
+      Math.abs(cy - bottomY) <= epsilonY;
+    if (isBottomCapTriangle) continue;
+
+    for (let j = 0; j < 3; j += 1) {
+      const vi = i + j;
+      keptPositions.push(position.getX(vi), position.getY(vi), position.getZ(vi));
+      if (hasNormal) {
+        keptNormals.push(normal.getX(vi), normal.getY(vi), normal.getZ(vi));
+      }
+      if (hasUv) {
+        keptUvs.push(uv.getX(vi), uv.getY(vi));
+      }
+    }
+  }
+
+  if (keptPositions.length === position.array.length) return;
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(keptPositions, 3));
+  if (hasUv) {
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(keptUvs, 2));
+  }
+  if (hasNormal) {
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(keptNormals, 3));
+  } else {
+    geometry.deleteAttribute('normal');
+    geometry.computeVertexNormals();
+  }
+  geometry.clearGroups();
+}
+
+function stripBottomEdgeSegments(
+  geometry: THREE.BufferGeometry,
+  bottomY: number,
+  epsilonY: number
+): void {
+  const position = geometry.getAttribute('position');
+  if (!(position instanceof THREE.BufferAttribute)) return;
+
+  const keptPositions: number[] = [];
+  for (let i = 0; i < position.count; i += 2) {
+    const aY = position.getY(i);
+    const bY = position.getY(i + 1);
+    const isBottomEdge = Math.abs(aY - bottomY) <= epsilonY && Math.abs(bY - bottomY) <= epsilonY;
+    if (isBottomEdge) continue;
+
+    keptPositions.push(
+      position.getX(i),
+      position.getY(i),
+      position.getZ(i),
+      position.getX(i + 1),
+      position.getY(i + 1),
+      position.getZ(i + 1)
+    );
+  }
+
+  if (keptPositions.length === position.array.length) return;
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(keptPositions, 3));
+}
+
 function AirspaceVolume({
   feature,
   refLat,
@@ -69,7 +163,7 @@ function AirspaceVolume({
   if (!color) return null;
 
   const { geometry, edgesGeometry } = useMemo(() => {
-    const meshes: THREE.ExtrudeGeometry[] = [];
+    const meshes: THREE.BufferGeometry[] = [];
 
     for (const ring of feature.coordinates) {
       const shape = new THREE.Shape();
@@ -106,6 +200,9 @@ function AirspaceVolume({
       // After rotation, geometry spans worldY=0 to worldY=height
       // Translate so bottom is at lowerY
       geo.translate(0, lowerY, 0);
+      if (shouldHideBottomCap(feature.lowerAlt)) {
+        stripBottomCapTriangles(geo, lowerY, Math.max(altToY(1, verticalScale), 1e-6));
+      }
       meshes.push(geo);
     }
 
@@ -121,10 +218,16 @@ function AirspaceVolume({
             return acc;
           }, meshes[0]);
 
-    return {
-      geometry: mergedGeo,
-      edgesGeometry: new THREE.EdgesGeometry(mergedGeo)
-    };
+    const edgesGeometry = new THREE.EdgesGeometry(mergedGeo);
+    if (shouldHideBottomCap(feature.lowerAlt)) {
+      stripBottomEdgeSegments(
+        edgesGeometry,
+        altToY(feature.lowerAlt, verticalScale),
+        Math.max(altToY(1, verticalScale), 1e-6)
+      );
+    }
+
+    return { geometry: mergedGeo, edgesGeometry };
   }, [feature, refLat, refLon, verticalScale]);
 
   const wireframe = useMemo(() => {
