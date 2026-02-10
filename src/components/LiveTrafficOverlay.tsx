@@ -29,6 +29,7 @@ interface LiveTrafficAircraft {
   flight: string | null;
   lat: number;
   lon: number;
+  isOnGround?: boolean;
   altitudeFeet: number | null;
   groundSpeedKt: number | null;
   trackDeg: number | null;
@@ -152,7 +153,7 @@ function mergeTracks(
   const staleCutoffMs = nowMs - Math.max(STALE_TRACK_GRACE_MS, historyMinutes * 60_000);
 
   for (const aircraft of aircraftList) {
-    if (!aircraft.hex) continue;
+    if (!aircraft.hex || aircraft.isOnGround) continue;
     const existing = previousTracks.get(aircraft.hex);
     const nextPoint: TrafficHistoryPoint = {
       lat: aircraft.lat,

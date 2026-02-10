@@ -16,6 +16,7 @@ interface Tar1090Aircraft {
   flight: string | null;
   lat: number;
   lon: number;
+  isOnGround: boolean;
   altitudeFeet: number | null;
   groundSpeedKt: number | null;
   trackDeg: number | null;
@@ -251,6 +252,8 @@ function decodeBinCraftAircraft(payload: Uint8Array): Tar1090Aircraft[] {
     const groundSpeedKt = (validity73 & 128) !== 0 ? normalizeSpeedKt(s16[17] / 10) : null;
     const trackDeg = (u8[74] & 8) !== 0 ? normalizeHeading(s16[20] / 90) : null;
     const flight = (validity73 & 8) !== 0 ? decodeFlight(u8) : null;
+    const airground = u8[68] & 15;
+    const isOnGround = airground === 1;
 
     const seenSeconds = binCraftVersion >= BINCRAFT_S32_SEEN_VERSION ? s32[1] / 10 : u16[3] / 10;
     const seenPosSeconds =
@@ -261,6 +264,7 @@ function decodeBinCraftAircraft(payload: Uint8Array): Tar1090Aircraft[] {
       flight,
       lat,
       lon,
+      isOnGround,
       altitudeFeet,
       groundSpeedKt,
       trackDeg,
@@ -468,7 +472,8 @@ export async function GET(request: NextRequest) {
   try {
     const { aircraft, source, baseUrl } = await fetchAdsbxTraffic(bounds);
     const filteredAircraft = aircraft.filter(
-      (candidate) => distanceNm(lat, lon, candidate.lat, candidate.lon) <= radiusNm
+      (candidate) =>
+        distanceNm(lat, lon, candidate.lat, candidate.lon) <= radiusNm && !candidate.isOnGround
     );
 
     filteredAircraft.sort((a, b) => {
