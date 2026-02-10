@@ -18,6 +18,7 @@ const METERS_TO_NM = 1 / 1852;
 const FEET_TO_METERS = 0.3048;
 const FEET_TO_NM = 1 / 6076.12;
 const SEA_LEVEL_Y = 0;
+const EARTH_RADIUS_NM = 3440.065;
 const SATELLITE_TILES_ERROR_TARGET = 12;
 const PLATE_RENDER_SCALE = 4;
 const DEG_TO_RAD = Math.PI / 180;
@@ -70,6 +71,8 @@ interface PatchedMaterialUniforms {
   uPlateHomography: { value: THREE.Matrix3 };
   uSeaLevelY: { value: number };
   uFlattenBathymetry: { value: number };
+  uEarthRadiusNm: { value: number };
+  uVerticalScale: { value: number };
 }
 
 interface PatchedMaterialState {
@@ -502,13 +505,15 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       state.uniforms.uPlateMap.value = textureValue;
       state.uniforms.uPlateEnabled.value = enabledValue;
       state.uniforms.uFlattenBathymetry.value = flattenBathymetryUniformValue;
+      state.uniforms.uEarthRadiusNm.value = EARTH_RADIUS_NM;
+      state.uniforms.uVerticalScale.value = verticalScale;
       if (homographyValue) {
         state.uniforms.uPlateHomography.value.copy(homographyValue);
       } else {
         state.uniforms.uPlateHomography.value.identity();
       }
     }
-  }, [overlayEnabled, plateTexture, plateHomography, flattenBathymetryUniformValue]);
+  }, [overlayEnabled, plateTexture, plateHomography, flattenBathymetryUniformValue, verticalScale]);
 
   const patchMaterial = useCallback(
     (material: THREE.Material) => {
@@ -529,7 +534,9 @@ export const SatelliteSurface = memo(function SatelliteSurface({
               : new THREE.Matrix3().identity()
         },
         uSeaLevelY: { value: SEA_LEVEL_Y },
-        uFlattenBathymetry: { value: flattenBathymetryUniformValue }
+        uFlattenBathymetry: { value: flattenBathymetryUniformValue },
+        uEarthRadiusNm: { value: EARTH_RADIUS_NM },
+        uVerticalScale: { value: verticalScale }
       };
 
       patchable.onBeforeCompile = (shader, renderer) => {
@@ -538,12 +545,16 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         shader.uniforms.uPlateHomography = uniforms.uPlateHomography;
         shader.uniforms.uSeaLevelY = uniforms.uSeaLevelY;
         shader.uniforms.uFlattenBathymetry = uniforms.uFlattenBathymetry;
+        shader.uniforms.uEarthRadiusNm = uniforms.uEarthRadiusNm;
+        shader.uniforms.uVerticalScale = uniforms.uVerticalScale;
 
         shader.vertexShader = shader.vertexShader.replace(
           '#include <common>',
           `#include <common>
 uniform float uSeaLevelY;
 uniform float uFlattenBathymetry;
+uniform float uEarthRadiusNm;
+uniform float uVerticalScale;
 varying vec3 vPlateWorldPos;
 vec4 seaLevelClampedWorldPosition;`
         );
@@ -559,7 +570,13 @@ seaLevelTransformedPosition = instanceMatrix * seaLevelTransformedPosition;
 #endif
 seaLevelClampedWorldPosition = modelMatrix * seaLevelTransformedPosition;
 if (uFlattenBathymetry > 0.5) {
-  seaLevelClampedWorldPosition.y = max(seaLevelClampedWorldPosition.y, uSeaLevelY);
+  float verticalScaleSafe = max(uVerticalScale, 1e-5);
+  float unscaledY = seaLevelClampedWorldPosition.y / verticalScaleSafe;
+  float distanceNm = length(seaLevelClampedWorldPosition.xz);
+  float curvatureDropNm = (distanceNm * distanceNm) / (2.0 * max(uEarthRadiusNm, 1.0));
+  float approxMslAltitudeNm = unscaledY + curvatureDropNm;
+  approxMslAltitudeNm = max(approxMslAltitudeNm, uSeaLevelY);
+  seaLevelClampedWorldPosition.y = (approxMslAltitudeNm - curvatureDropNm) * verticalScaleSafe;
 }
 mvPosition = viewMatrix * seaLevelClampedWorldPosition;
 gl_Position = projectionMatrix * mvPosition;
@@ -602,14 +619,14 @@ if (uPlateEnabled > 0.5) {
       };
       patchable.customProgramCacheKey = () => {
         const baseKey = originalCustomProgramCacheKey ? originalCustomProgramCacheKey() : '';
-        return `${baseKey}|faa-plate-overlay-v3`;
+        return `${baseKey}|faa-plate-overlay-v4`;
       };
 
       patchedMaterialsRef.current.add(material);
       patchedStateRef.current.set(material, { uniforms });
       material.needsUpdate = true;
     },
-    [overlayEnabled, plateHomography, plateTexture, flattenBathymetryUniformValue]
+    [overlayEnabled, plateHomography, plateTexture, flattenBathymetryUniformValue, verticalScale]
   );
 
   const patchSceneMaterials = useCallback(
