@@ -101,19 +101,23 @@ export function NexradVolumeOverlay({
   const material = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
-        transparent: true,
+        // Keep additive blending for the vivid "magic" radar look, but render in the
+        // opaque queue to avoid camera-angle-dependent transparent instance sorting artifacts.
+        transparent: false,
         opacity: 0.72,
         depthWrite: false,
+        depthTest: true,
         blending: THREE.AdditiveBlending,
         vertexColors: true,
-        toneMapped: false
+        toneMapped: false,
+        fog: false
       }),
     []
   );
 
   useEffect(() => {
-    material.opacity = opacity;
-    material.needsUpdate = true;
+    const clampedOpacity = Math.min(1, Math.max(0.2, opacity));
+    material.opacity = clampedOpacity;
   }, [material, opacity]);
 
   useEffect(
