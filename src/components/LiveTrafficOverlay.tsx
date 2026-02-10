@@ -407,9 +407,16 @@ export function LiveTrafficOverlay({
   }, []);
 
   const renderTracks = useMemo(() => {
-    const resolveAltitude = (lat: number, lon: number, altFeet: number | null): number => {
-      if (altFeet !== null) return altFeet;
-      return nearestSceneAirportElevation(sceneAirports, lat, lon);
+    const resolveAltitude = (
+      lat: number,
+      lon: number,
+      altFeet: number | null,
+      isOnGround?: boolean
+    ): number => {
+      if (isOnGround || altFeet === null) {
+        return nearestSceneAirportElevation(sceneAirports, lat, lon);
+      }
+      return altFeet;
     };
 
     return Array.from(tracks.values())
@@ -417,7 +424,8 @@ export function LiveTrafficOverlay({
         const markerAltitudeFeet = resolveAltitude(
           track.aircraft.lat,
           track.aircraft.lon,
-          normalizeAltitudeFeet(track.aircraft)
+          normalizeAltitudeFeet(track.aircraft),
+          track.aircraft.isOnGround
         );
         const markerPosition = toScenePoint(
           track.aircraft.lat,
