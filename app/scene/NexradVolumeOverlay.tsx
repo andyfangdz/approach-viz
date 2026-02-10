@@ -8,10 +8,11 @@ const MIN_RADIUS_NM = 20;
 const MAX_RADIUS_NM = 160;
 const DEFAULT_HORIZONTAL_SIZE_NM = 0.5;
 const DEFAULT_VERTICAL_SIZE_FEET = 2500;
-const MAX_CLIENT_VOXELS = 6000;
+const MAX_CLIENT_VOXELS = 2200;
 const POLL_INTERVAL_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 18_000;
 const FEET_PER_NM = 6076.12;
+const VOXEL_VERTICAL_THICKNESS_FACTOR = 0.5;
 
 interface NexradVolumeOverlayProps {
   refLat: number;
@@ -104,7 +105,7 @@ export function NexradVolumeOverlay({
       new THREE.MeshBasicMaterial({
         vertexColors: true,
         transparent: true,
-        opacity: 0.45,
+        opacity: 0.3,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         toneMapped: false
@@ -208,7 +209,11 @@ export function NexradVolumeOverlay({
     const markerMesh = markerMeshRef.current;
     if (!markerMesh) return;
 
-    const verticalSizeNm = renderState.verticalSizeFeet * ALTITUDE_SCALE * verticalScale;
+    const verticalSizeNm =
+      renderState.verticalSizeFeet *
+      ALTITUDE_SCALE *
+      verticalScale *
+      VOXEL_VERTICAL_THICKNESS_FACTOR;
     const nextCount = Math.min(MAX_CLIENT_VOXELS, renderState.voxels.length);
 
     for (let index = 0; index < nextCount; index += 1) {

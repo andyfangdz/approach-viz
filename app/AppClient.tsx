@@ -49,7 +49,7 @@ interface PersistedOptionsState {
   trafficHistoryMinutes?: number;
 }
 
-const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
+const OPTIONS_STORAGE_KEY = 'approach-viz:options:v2';
 
 function clampValue(value: number, min: number, max: number, fallback = min): number {
   if (!Number.isFinite(value)) return fallback;

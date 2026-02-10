@@ -86,6 +86,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   const showTerrainSurface =
     surfaceMode === 'terrain' || (surfaceMode === 'plate' && !hasApproachPlate);
   const showTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dplate';
+  const nexradResetKey = `${airport.id}:${surfaceMode}:${terrainRadiusNm}`;
 
   return (
     <Canvas
@@ -156,15 +157,26 @@ export const SceneCanvas = memo(function SceneCanvas({
         )}
 
         {nexradVolumeEnabled && (
-          <NexradVolumeOverlay
-            refLat={airport.lat}
-            refLon={airport.lon}
-            verticalScale={verticalScale}
-            radiusNm={Math.max(terrainRadiusNm, 60)}
-            applyEarthCurvatureCompensation={
-              surfaceMode === 'satellite' || surfaceMode === '3dplate'
-            }
-          />
+          <SceneErrorBoundary
+            resetKey={nexradResetKey}
+            onError={(error) => {
+              console.error(
+                'NEXRAD volume overlay crashed and was disabled for this scene.',
+                error
+              );
+            }}
+            fallback={null}
+          >
+            <NexradVolumeOverlay
+              refLat={airport.lat}
+              refLon={airport.lon}
+              verticalScale={verticalScale}
+              radiusNm={Math.max(terrainRadiusNm, 60)}
+              applyEarthCurvatureCompensation={
+                surfaceMode === 'satellite' || surfaceMode === '3dplate'
+              }
+            />
+          </SceneErrorBoundary>
         )}
 
         {contextApproach && (
