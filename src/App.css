@@ -252,6 +252,24 @@ textarea,
   border: 1px solid var(--border);
 }
 
+.traffic-callsign-label {
+  display: inline-block;
+  padding: 2px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(103, 242, 255, 0.55);
+  background: rgba(8, 16, 28, 0.78);
+  color: #c8f9ff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
+  white-space: nowrap;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

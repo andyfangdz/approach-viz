@@ -1,4 +1,4 @@
-import { Line } from '@react-three/drei';
+import { Html, Line } from '@react-three/drei';
 import { useEffect, useMemo, useState } from 'react';
 import {
   altToY,
@@ -17,6 +17,7 @@ interface LiveTrafficOverlayProps {
   refLat: number;
   refLon: number;
   verticalScale: number;
+  showCallsignLabels?: boolean;
   historyMinutes: number;
   applyEarthCurvatureCompensation?: boolean;
   radiusNm?: number;
@@ -68,6 +69,12 @@ function normalizeTrack(trackDeg: number | null): number {
   if (trackDeg === null || !Number.isFinite(trackDeg)) return 0;
   const wrapped = trackDeg % 360;
   return wrapped < 0 ? wrapped + 360 : wrapped;
+}
+
+function normalizeCallsignLabel(flight: string | null): string | null {
+  if (!flight) return null;
+  const trimmed = flight.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function normalizeAltitudeFeet(aircraft: LiveTrafficAircraft): number {
@@ -198,6 +205,7 @@ export function LiveTrafficOverlay({
   refLat,
   refLon,
   verticalScale,
+  showCallsignLabels = false,
   historyMinutes,
   applyEarthCurvatureCompensation = false,
   radiusNm = DEFAULT_RADIUS_NM,
@@ -315,6 +323,7 @@ export function LiveTrafficOverlay({
         );
         return {
           hex: track.aircraft.hex,
+          callsignLabel: normalizeCallsignLabel(track.aircraft.flight),
           headingDeg: normalizeTrack(track.aircraft.trackDeg),
           markerPosition,
           trailPoints
@@ -362,6 +371,21 @@ export function LiveTrafficOverlay({
                 toneMapped={false}
               />
             </mesh>
+            {showCallsignLabels && track.callsignLabel && (
+              <Html
+                position={[
+                  track.markerPosition[0],
+                  track.markerPosition[1] + 0.18,
+                  track.markerPosition[2]
+                ]}
+                center
+                distanceFactor={14}
+                transform={false}
+                sprite
+              >
+                <span className="traffic-callsign-label">{track.callsignLabel}</span>
+              </Html>
+            )}
           </group>
         );
       })}

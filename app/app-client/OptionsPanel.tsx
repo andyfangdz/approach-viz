@@ -7,6 +7,8 @@ export function OptionsPanel({
   onFlattenBathymetryChange,
   liveTrafficEnabled,
   onLiveTrafficEnabledChange,
+  showTrafficCallsigns,
+  onShowTrafficCallsignsChange,
   trafficHistoryMinutes,
   onTrafficHistoryMinutesChange
 }: OptionsPanelProps) {
@@ -80,6 +82,20 @@ export function OptionsPanel({
           checked={liveTrafficEnabled}
           onChange={(event) => onLiveTrafficEnabledChange(event.target.checked)}
           aria-label="Enable live ADS-B traffic"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Show Traffic Callsigns</span>
+          <span className="options-toggle-note">Overlay labels near traffic targets</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={showTrafficCallsigns}
+          disabled={!liveTrafficEnabled}
+          onChange={(event) => onShowTrafficCallsignsChange(event.target.checked)}
+          aria-label="Show traffic callsign labels"
         />
       </label>
 

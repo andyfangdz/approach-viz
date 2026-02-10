@@ -57,6 +57,7 @@ export function SceneCanvas({
   verticalScale,
   flattenBathymetry,
   liveTrafficEnabled,
+  showTrafficCallsigns,
   trafficHistoryMinutes,
   selectedApproach,
   surfaceMode,
@@ -170,6 +171,7 @@ export function SceneCanvas({
             refLat={airport.lat}
             refLon={airport.lon}
             verticalScale={verticalScale}
+            showCallsignLabels={showTrafficCallsigns}
             historyMinutes={trafficHistoryMinutes}
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'

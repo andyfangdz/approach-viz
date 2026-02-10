@@ -4,7 +4,7 @@
 
 - `app/AppClient.tsx` coordinates client state and effects.
 - Picker formatting/filtering/runtime conversion helpers are delegated to `app/app-client-utils.ts`.
-- Optional live traffic state (enable flag + history retention minutes) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
+- Optional live traffic state (enable flag + callsign-label toggle + history retention minutes) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
 - Major UI sections are delegated to `app/app-client/*`:
 - `HeaderControls`
 - `SceneCanvas`
