@@ -102,21 +102,32 @@ export function NexradVolumeOverlay({
     () =>
       new THREE.MeshBasicMaterial({
         transparent: true,
-        opacity,
+        opacity: 0.72,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         vertexColors: true,
         toneMapped: false
       }),
-    [opacity]
+    []
   );
+
+  useEffect(() => {
+    material.opacity = opacity;
+    material.needsUpdate = true;
+  }, [material, opacity]);
 
   useEffect(
     () => () => {
       geometry.dispose();
+    },
+    [geometry]
+  );
+
+  useEffect(
+    () => () => {
       material.dispose();
     },
-    [geometry, material]
+    [material]
   );
 
   useEffect(() => {
