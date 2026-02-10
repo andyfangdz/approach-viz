@@ -47,6 +47,6 @@
     "@types/three": "^0.182.0",
     "prettier": "^3.8.1",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.3"
+    "typescript": "5.9.3"
   }
 }

@@ -23,6 +23,12 @@ export function HeaderControls({
   surfaceMode,
   onSurfaceModeSelected,
   onRecenterScene,
+  adsbEnabled,
+  onAdsbToggle,
+  adsbHistoryLength,
+  onAdsbHistoryLengthChange,
+  adsbTrafficCount,
+  adsbError,
   menuPortalTarget
 }: HeaderControlsProps) {
   return (
@@ -161,6 +167,39 @@ export function HeaderControls({
                 Satellite
               </button>
             </div>
+          </div>
+
+          <div className="control-group adsb-controls">
+            <label>Live Traffic</label>
+            <div className="adsb-toggle-row">
+              <button
+                type="button"
+                className={`surface-toggle-button adsb-toggle-button ${adsbEnabled ? 'active' : ''}`}
+                onClick={onAdsbToggle}
+              >
+                {adsbEnabled ? 'ON' : 'OFF'}
+              </button>
+              {adsbEnabled && adsbTrafficCount > 0 && (
+                <span className="adsb-count">{adsbTrafficCount} acft</span>
+              )}
+              {adsbEnabled && adsbError && (
+                <span className="adsb-error" title={adsbError}>No API key</span>
+              )}
+            </div>
+            {adsbEnabled && (
+              <div className="adsb-history-row">
+                <label className="adsb-history-label">History</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={60}
+                  step={1}
+                  value={adsbHistoryLength}
+                  onChange={(event) => onAdsbHistoryLengthChange(parseInt(event.target.value, 10))}
+                />
+                <span className="control-value">{adsbHistoryLength}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
