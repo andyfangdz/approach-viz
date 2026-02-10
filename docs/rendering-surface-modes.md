@@ -12,6 +12,7 @@
 - NEXRAD Level 3 volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
 - In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
 - NEXRAD voxel coloring follows discrete aviation legend ramps for rain, mixed, and snow; because Level 3 reflectivity does not carry hydrometeor phase, phase tinting uses altitude-weighted blending above radar (`rain fade 5,000-13,000 ft AGL`, `snow fade 10,000-20,000 ft AGL`, mixed in-between) to avoid abrupt color-band transitions.
+- NEXRAD color gain is applied with channel-safe scaling (hue-preserving boost without RGB clipping) so distant/high-altitude bins stay cyan/blue instead of bleaching toward white.
 - NEXRAD voxels render in two passes: a primary alpha pass (`transparent=true`, `NormalBlending`, `FrontSide`, `depthWrite=true`) for stable density control plus a lighter additive glow pass (`AdditiveBlending`, `FrontSide`) for radar-style bloom.
 - NEXRAD voxels render without scene fog contribution so echoes keep their intended color/intensity.
 - NEXRAD overlay opacity is user-configurable in the options panel so voxel intensity can be tuned per-surface and time-of-day visibility needs.

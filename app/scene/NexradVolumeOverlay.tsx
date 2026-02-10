@@ -135,9 +135,9 @@ const SNOW_DBZ_COLOR_BANDS: DbzColorBand[] = [
   { minDbz: 30, hex: 0x52a5ff },
   { minDbz: 25, hex: 0x6cb8ff },
   { minDbz: 20, hex: 0x87cbff },
-  { minDbz: 15, hex: 0xa0dcff },
-  { minDbz: 10, hex: 0xbceaff },
-  { minDbz: 5, hex: 0xd7f5ff }
+  { minDbz: 15, hex: 0x9ad6ff },
+  { minDbz: 10, hex: 0xb0e2ff },
+  { minDbz: 5, hex: 0xc6ecff }
 ];
 
 function dbzToBandHex(dbz: number, bands: DbzColorBand[]): number {
@@ -202,9 +202,12 @@ function blendHexByWeights(
     hexChannel(mixedHex, 0) * mixedWeight +
     hexChannel(snowHex, 0) * snowWeight;
 
-  const boostedRed = THREE.MathUtils.clamp(Math.round(red * NEXRAD_COLOR_GAIN), 0, 255);
-  const boostedGreen = THREE.MathUtils.clamp(Math.round(green * NEXRAD_COLOR_GAIN), 0, 255);
-  const boostedBlue = THREE.MathUtils.clamp(Math.round(blue * NEXRAD_COLOR_GAIN), 0, 255);
+  // Preserve hue while preventing bright bins from clipping to white.
+  const peakChannel = Math.max(red, green, blue, 1);
+  const safeGainScale = Math.min(NEXRAD_COLOR_GAIN, 255 / peakChannel);
+  const boostedRed = THREE.MathUtils.clamp(Math.round(red * safeGainScale), 0, 255);
+  const boostedGreen = THREE.MathUtils.clamp(Math.round(green * safeGainScale), 0, 255);
+  const boostedBlue = THREE.MathUtils.clamp(Math.round(blue * safeGainScale), 0, 255);
 
   const luminance = 0.2126 * boostedRed + 0.7152 * boostedGreen + 0.0722 * boostedBlue;
   if (luminance <= 0) {
