@@ -375,7 +375,7 @@ export function LiveTrafficOverlay({
               <Html
                 position={[
                   track.markerPosition[0],
-                  track.markerPosition[1] + 0.18,
+                  track.markerPosition[1] + 0.3,
                   track.markerPosition[2]
                 ]}
                 center
