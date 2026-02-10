@@ -7,6 +7,7 @@ export function InfoPanel({
   surfaceLegendClass,
   surfaceLegendLabel,
   surfaceMode,
+  liveTrafficEnabled,
   hasApproachPlate,
   sceneData,
   selectedApproachSource
@@ -67,6 +68,12 @@ export function InfoPanel({
           <div className={`legend-color ${surfaceLegendClass}`} />
           <span>{surfaceLegendLabel}</span>
         </div>
+        {liveTrafficEnabled && (
+          <div className="legend-item">
+            <div className="legend-color traffic" />
+            <span>Live Traffic</span>
+          </div>
+        )}
         <div className="legend-item">
           <div className="legend-color airspace-b" />
           <span>B</span>

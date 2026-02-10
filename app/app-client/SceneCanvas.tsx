@@ -8,6 +8,7 @@ import { ApproachPlateSurface } from '@/src/components/ApproachPlateSurface';
 import { SatelliteSurface } from '@/src/components/SatelliteSurface';
 import { SceneErrorBoundary } from '@/src/components/SceneErrorBoundary';
 import { TerrainWireframe } from '@/src/components/TerrainWireframe';
+import { LiveTrafficOverlay } from '@/src/components/LiveTrafficOverlay';
 import {
   CAMERA_POSITION,
   DIRECTIONAL_LIGHT_POSITION,
@@ -55,6 +56,8 @@ export function SceneCanvas({
   waypoints,
   verticalScale,
   flattenBathymetry,
+  liveTrafficEnabled,
+  trafficHistoryMinutes,
   selectedApproach,
   surfaceMode,
   satelliteRetryNonce,
@@ -159,6 +162,18 @@ export function SceneCanvas({
             refLat={airport.lat}
             refLon={airport.lon}
             verticalScale={verticalScale}
+          />
+        )}
+
+        {liveTrafficEnabled && (
+          <LiveTrafficOverlay
+            refLat={airport.lat}
+            refLon={airport.lon}
+            verticalScale={verticalScale}
+            historyMinutes={trafficHistoryMinutes}
+            applyEarthCurvatureCompensation={
+              surfaceMode === 'satellite' || surfaceMode === '3dplate'
+            }
           />
         )}
 

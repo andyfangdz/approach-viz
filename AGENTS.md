@@ -35,6 +35,7 @@
 - Approach minimums (MDA/DA): `ammaraskar/faa-instrument-approach-db` release asset `approaches.json`
 - FAA approach plates (PDF): `aeronav.faa.gov/d-tpp/<cycle>/<plate_file>` (fetched server-side via proxy route)
 - Terrain wireframe: Terrarium elevation tiles from `https://elevation-tiles-prod.s3.amazonaws.com/terrarium`
+- Live aircraft traffic: ADSB Exchange tar1090 `binCraft+zstd` feed (`/re-api/?binCraft&zstd&box=...`) via same-origin proxy route with server-side zstd/binCraft decoding; optional initial trail backfill comes from tar1090 trace files (`/data/traces/<suffix>/trace_recent_<hex>.json`) when `historyMinutes` is requested (primary override: `ADSBX_TAR1090_BASE_URL`, optional comma-separated fallback hosts: `ADSBX_TAR1090_FALLBACK_BASE_URLS`)
 
 ## Airport Coverage
 
@@ -50,6 +51,7 @@ Rendering guidance is split into topic docs under `docs/`:
 - `docs/rendering-approach-geometry.md`
 - `docs/rendering-performance.md`
 - Satellite/3D Plate mode exposes a gear/options-panel `Flatten Bathymetry` toggle (enabled by default) that clamps bathymetry with curvature-compensated, vertical-scale-neutral local altitude (`worldY / verticalScale + curvatureDrop`) to avoid over-flattening distant above-sea terrain.
+- Options panel exposes `Live ADS-B Traffic` and `Traffic History` (`1..15 min`) controls; when enabled, aircraft markers/trails are polled from the ADSB proxy and rendered as an overlay in scene local-NM coordinates, with one-time initial backfill using the selected history window (default `3 min`).
 - Airspace sectors with floors at/near sea level (`<= 100 ft MSL`) omit bottom caps and bottom edge segments to prevent z-fighting shimmer against sea-level-aligned surfaces.
 - Missed direct fix-join legs (`CF`/`DF`/`TF`) with explicit downstream turn direction (`L`/`R`) render curved climbing-turn joins (not hard corners), and downstream `CF` legs with published course/radial intercept that course before the fix.
 
@@ -81,6 +83,7 @@ Rendering guidance is split into topic docs under `docs/`:
 - `app/actions.ts` is a thin wrapper; server logic lives in `app/actions-lib/*` and feeds App Router page loaders plus client refresh actions.
 - The client runtime is coordinated in `app/AppClient.tsx`, with UI sections in `app/app-client/*` and scene/math primitives in `src/components/*` and `src/components/approach-path/*`.
 - FAA plate PDFs are fetched through `app/api/faa-plate/route.ts`; plate metadata and minima matching are resolved server-side before payload delivery.
+- Live ADS-B traffic is fetched through `app/api/traffic/adsbx/route.ts` and rendered client-side by `src/components/LiveTrafficOverlay.tsx`.
 - Build-time geometry remains CIFP-only; selector data may include minima/plate-only procedures with explicit geometry-unavailable status.
 - CI parser coverage runs in `.github/workflows/parser-tests.yml`; Vercel Analytics is enabled in `app/layout.tsx`.
 
@@ -110,6 +113,7 @@ AppClient (app/AppClient.tsx)
   +--> UI sections (app/app-client/*)
   +--> Scene components (src/components/*, src/components/approach-path/*)
   +--> FAA plate proxy (app/api/faa-plate/route.ts)
+  +--> ADS-B traffic proxy (app/api/traffic/adsbx/route.ts)
 ```
 
 Architecture details are split into topic docs under `docs/`:

@@ -16,7 +16,11 @@ import { HeaderControls } from '@/app/app-client/HeaderControls';
 import { HelpPanel } from '@/app/app-client/HelpPanel';
 import { InfoPanel } from '@/app/app-client/InfoPanel';
 import { OptionsPanel } from '@/app/app-client/OptionsPanel';
-import { SATELLITE_MAX_RETRIES, DEFAULT_VERTICAL_SCALE } from '@/app/app-client/constants';
+import {
+  SATELLITE_MAX_RETRIES,
+  DEFAULT_VERTICAL_SCALE,
+  DEFAULT_TRAFFIC_HISTORY_MINUTES
+} from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import type { SurfaceMode } from '@/app/app-client/types';
 import type { AirportOption, SceneData } from '@/lib/types';
@@ -54,6 +58,10 @@ export function AppClient({
   const [didInitFromLocation, setDidInitFromLocation] = useState(false);
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [flattenBathymetry, setFlattenBathymetry] = useState(true);
+  const [liveTrafficEnabled, setLiveTrafficEnabled] = useState(false);
+  const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
+    DEFAULT_TRAFFIC_HISTORY_MINUTES
+  );
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
@@ -312,6 +320,8 @@ export function AppClient({
             waypoints={waypoints}
             verticalScale={verticalScale}
             flattenBathymetry={flattenBathymetry}
+            liveTrafficEnabled={liveTrafficEnabled}
+            trafficHistoryMinutes={trafficHistoryMinutes}
             selectedApproach={selectedApproach}
             surfaceMode={surfaceMode}
             satelliteRetryNonce={satelliteRetryNonce}
@@ -329,6 +339,7 @@ export function AppClient({
           surfaceLegendClass={surfaceLegendClass}
           surfaceLegendLabel={surfaceLegendLabel}
           surfaceMode={surfaceMode}
+          liveTrafficEnabled={liveTrafficEnabled}
           hasApproachPlate={hasApproachPlate}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
@@ -339,6 +350,12 @@ export function AppClient({
           onToggleOptions={() => setOptionsCollapsed((current) => !current)}
           flattenBathymetry={flattenBathymetry}
           onFlattenBathymetryChange={setFlattenBathymetry}
+          liveTrafficEnabled={liveTrafficEnabled}
+          onLiveTrafficEnabledChange={setLiveTrafficEnabled}
+          trafficHistoryMinutes={trafficHistoryMinutes}
+          onTrafficHistoryMinutesChange={(minutes) =>
+            setTrafficHistoryMinutes(Math.min(15, Math.max(1, Math.round(minutes))))
+          }
         />
 
         <HelpPanel errorMessage={activeErrorMessage} />

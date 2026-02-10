@@ -4,6 +4,7 @@
 
 - `app/AppClient.tsx` coordinates client state and effects.
 - Picker formatting/filtering/runtime conversion helpers are delegated to `app/app-client-utils.ts`.
+- Optional live traffic state (enable flag + history retention minutes) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
 - Major UI sections are delegated to `app/app-client/*`:
 - `HeaderControls`
 - `SceneCanvas`
@@ -15,6 +16,7 @@
 
 - `src/components/ApproachPath.tsx` is an orchestration layer.
 - Geometry/altitude/math/marker primitives are split into `src/components/approach-path/*`.
+- `src/components/LiveTrafficOverlay.tsx` handles ADS-B polling, one-time initial history backfill request (based on selected history window), history pruning, and marker/trail rendering as an optional overlay group.
 - `src/components/approach-path/path-builder.ts` provides pure path-geometry assembly used by `PathTube`, supporting deterministic unit tests for final/transition/missed behavior.
 - `src/components/approach-path/runway-geometry.ts` provides pure runway pairing/reciprocal-stub geometry logic used by `AirportMarker`.
 

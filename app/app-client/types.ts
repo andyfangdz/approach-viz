@@ -36,6 +36,8 @@ export interface SceneCanvasProps {
   waypoints: Map<string, Waypoint>;
   verticalScale: number;
   flattenBathymetry: boolean;
+  liveTrafficEnabled: boolean;
+  trafficHistoryMinutes: number;
   selectedApproach: string;
   surfaceMode: SurfaceMode;
   satelliteRetryNonce: number;
@@ -52,6 +54,7 @@ export interface InfoPanelProps {
   surfaceLegendClass: 'terrain' | 'plate' | 'satellite';
   surfaceLegendLabel: string;
   surfaceMode: SurfaceMode;
+  liveTrafficEnabled: boolean;
   hasApproachPlate: boolean;
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
@@ -62,4 +65,8 @@ export interface OptionsPanelProps {
   onToggleOptions: () => void;
   flattenBathymetry: boolean;
   onFlattenBathymetryChange: (enabled: boolean) => void;
+  liveTrafficEnabled: boolean;
+  onLiveTrafficEnabledChange: (enabled: boolean) => void;
+  trafficHistoryMinutes: number;
+  onTrafficHistoryMinutesChange: (minutes: number) => void;
 }

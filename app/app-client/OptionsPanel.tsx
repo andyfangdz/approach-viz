@@ -4,7 +4,11 @@ export function OptionsPanel({
   optionsCollapsed,
   onToggleOptions,
   flattenBathymetry,
-  onFlattenBathymetryChange
+  onFlattenBathymetryChange,
+  liveTrafficEnabled,
+  onLiveTrafficEnabledChange,
+  trafficHistoryMinutes,
+  onTrafficHistoryMinutesChange
 }: OptionsPanelProps) {
   if (optionsCollapsed) {
     return (
@@ -63,6 +67,36 @@ export function OptionsPanel({
           checked={flattenBathymetry}
           onChange={(event) => onFlattenBathymetryChange(event.target.checked)}
           aria-label="Flatten bathymetry"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Live ADS-B Traffic</span>
+          <span className="options-toggle-note">ADSB Exchange tar1090 feed</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={liveTrafficEnabled}
+          onChange={(event) => onLiveTrafficEnabledChange(event.target.checked)}
+          aria-label="Enable live ADS-B traffic"
+        />
+      </label>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Traffic History</span>
+          <span className="options-toggle-note">{trafficHistoryMinutes} min trail retention</span>
+        </span>
+        <input
+          type="range"
+          min={1}
+          max={15}
+          step={1}
+          value={trafficHistoryMinutes}
+          disabled={!liveTrafficEnabled}
+          onChange={(event) => onTrafficHistoryMinutesChange(Number(event.target.value))}
+          aria-label="Traffic history minutes"
         />
       </label>
     </div>

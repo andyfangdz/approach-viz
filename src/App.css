@@ -449,6 +449,11 @@ textarea,
   box-shadow: 0 0 8px rgba(138, 201, 38, 0.55);
 }
 
+.legend-color.traffic {
+  background: #67f2ff;
+  box-shadow: 0 0 8px rgba(103, 242, 255, 0.6);
+}
+
 .legend-color.airspace-b {
   background: rgba(0, 102, 255, 0.6);
 }
@@ -530,6 +535,19 @@ textarea,
 .options-toggle-row input[type='checkbox'] {
   width: 14px;
   height: 14px;
+  accent-color: var(--accent-cyan);
+}
+
+.options-slider-row {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.options-slider-row input[type='range'] {
+  width: 100%;
   accent-color: var(--accent-cyan);
 }
 
