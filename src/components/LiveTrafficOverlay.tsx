@@ -170,7 +170,7 @@ function toScenePoint(
   const curvatureDropFeet = applyEarthCurvatureCompensation
     ? earthCurvatureDropNm(local.x, local.z, refLat) * FEET_PER_NM
     : 0;
-  const correctedAltitudeFeet = altitudeFeet - curvatureDropFeet;
+  const correctedAltitudeFeet = Math.max(0, altitudeFeet - curvatureDropFeet);
   return [local.x, altToY(correctedAltitudeFeet, verticalScale), local.z];
 }
 
