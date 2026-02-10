@@ -63,18 +63,22 @@ interface RenderVoxel {
 }
 
 function dbzToHex(dbz: number): number {
-  // Conventional aviation/NEXRAD-style reflectivity ramp:
-  // green -> yellow -> orange -> red -> magenta
-  if (dbz >= 65) return 0xff00ff;
-  if (dbz >= 55) return 0xff0000;
-  if (dbz >= 50) return 0xff6600;
-  if (dbz >= 45) return 0xff9900;
-  if (dbz >= 40) return 0xffff00;
-  if (dbz >= 35) return 0xb5ff00;
-  if (dbz >= 30) return 0x7dff00;
-  if (dbz >= 25) return 0x00e400;
-  if (dbz >= 20) return 0x00c800;
-  return 0x009900;
+  // Conventional aviation/NEXRAD-style reflectivity ramp.
+  // Includes bright low-end colors so weak returns remain visible in dark scenes.
+  if (dbz >= 70) return 0xffffff;
+  if (dbz >= 60) return 0xff33ff;
+  if (dbz >= 55) return 0xff00ff;
+  if (dbz >= 50) return 0xff0000;
+  if (dbz >= 45) return 0xff5500;
+  if (dbz >= 40) return 0xffaa00;
+  if (dbz >= 35) return 0xffff00;
+  if (dbz >= 30) return 0xb6ff00;
+  if (dbz >= 25) return 0x66ff33;
+  if (dbz >= 20) return 0x00ff00;
+  if (dbz >= 15) return 0x00ff66;
+  if (dbz >= 10) return 0x00ffcc;
+  if (dbz >= 5) return 0x00b4ff;
+  return 0x0077ff;
 }
 
 export function NexradVolumeOverlay({
@@ -96,8 +100,9 @@ export function NexradVolumeOverlay({
     () =>
       new THREE.MeshBasicMaterial({
         transparent: true,
-        opacity: 0.55,
+        opacity: 0.48,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
         vertexColors: true,
         toneMapped: false
       }),

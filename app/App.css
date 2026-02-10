@@ -503,10 +503,10 @@ textarea,
 .legend-color.nexrad {
   background: linear-gradient(
     90deg,
-    #00e400 0%,
-    #ffff00 38%,
-    #ff9900 58%,
-    #ff0000 78%,
+    #00ff00 0%,
+    #ffff00 36%,
+    #ff9900 56%,
+    #ff0000 76%,
     #ff00ff 100%
   );
   box-shadow: 0 0 8px rgba(255, 128, 64, 0.6);
