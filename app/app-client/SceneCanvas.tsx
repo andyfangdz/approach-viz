@@ -55,6 +55,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   contextApproach,
   waypoints,
   verticalScale,
+  terrainRadiusNm,
   flattenBathymetry,
   liveTrafficEnabled,
   hideGroundTraffic,
@@ -99,6 +100,7 @@ export const SceneCanvas = memo(function SceneCanvas({
           <TerrainWireframe
             refLat={airport.lat}
             refLon={airport.lon}
+            radiusNm={terrainRadiusNm}
             verticalScale={verticalScale}
           />
         )}

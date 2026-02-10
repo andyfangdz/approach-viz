@@ -51,7 +51,9 @@ Rendering guidance is split into topic docs under `docs/`:
 - `docs/rendering-approach-geometry.md`
 - `docs/rendering-performance.md`
 - Satellite/3D Plate mode exposes a gear/options-panel `Flatten Bathymetry` toggle (enabled by default) that clamps bathymetry with curvature-compensated, vertical-scale-neutral local altitude (`worldY / verticalScale + curvatureDrop`) to avoid over-flattening distant above-sea terrain.
-- Options panel exposes `Vertical Scale` (`1.0..15.0x`, step `0.5x`), `Live ADS-B Traffic`, `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (`1..15 min`) controls; live traffic is enabled by default, `Hide Ground Traffic` is enabled by default, and aircraft markers/trails are polled from the ADSB proxy and rendered as an overlay in scene local-NM coordinates, with one-time initial backfill using the selected history window (default `3 min`) plus trail-extension backfill when history retention is increased. Callsign labels render as text-only overlays above traffic markers (no label box).
+- Terrain wireframe mode samples Terrarium elevation over a default `50 NM` radius around the selected airport reference.
+- Options panel exposes `Vertical Scale` (`1.0..15.0x`, step `0.5x`), `Terrain Radius` (`20..80 NM`, step `5`, default `50`), `Live ADS-B Traffic`, `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (`1..15 min`) controls; live traffic is enabled by default, `Hide Ground Traffic` is enabled by default, and aircraft markers/trails are polled from the ADSB proxy and rendered as an overlay in scene local-NM coordinates, with one-time initial backfill using the selected history window (default `3 min`) plus trail-extension backfill when history retention is increased. Callsign labels render as text-only overlays above traffic markers (no label box).
+- Options-panel values are persisted to browser `localStorage` and restored on load (vertical scale, terrain radius, bathymetry toggle, traffic toggles, traffic history).
 - `SceneCanvas` is memoized so non-scene UI state updates (for example selector search typing/collapse toggles) do not re-render the Three.js subtree.
 - Airport/approach combobox search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header UI.
 - Live ADS-B markers reuse shared Three.js sphere geometry/material instances across aircraft markers to reduce per-refresh GPU object churn.
@@ -78,6 +80,7 @@ Rendering guidance is split into topic docs under `docs/`:
 - On small screens (`<=900px`), selectors are collapsed by default.
 - On small screens (`<=900px`), legend content is collapsed by default.
 - On small screens (`<=900px`), floating legend/options/recenter controls use safe-area-aware elevated bottom offset (`env(safe-area-inset-bottom) + 68px`) to reduce iOS address-bar overlap.
+- On small screens (`<=900px`), the expanded options panel also uses the same safe-area-aware elevated bottom offset so panel content stays clear of iOS browser chrome.
 - Bottom-right help panel is error-only; static drag/scroll interaction hints are not shown.
 - Touch/drag interactions in the 3D scene should suppress iOS text selection/callout overlays (`user-select: none`, `touch-action: none` on scene surface), while selector text inputs remain editable.
 

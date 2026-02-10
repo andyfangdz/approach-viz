@@ -17,8 +17,12 @@ import { InfoPanel } from '@/app/app-client/InfoPanel';
 import { OptionsPanel } from '@/app/app-client/OptionsPanel';
 import {
   SATELLITE_MAX_RETRIES,
+  DEFAULT_TERRAIN_RADIUS_NM,
   DEFAULT_VERTICAL_SCALE,
-  DEFAULT_TRAFFIC_HISTORY_MINUTES
+  DEFAULT_TRAFFIC_HISTORY_MINUTES,
+  MIN_TERRAIN_RADIUS_NM,
+  MAX_TERRAIN_RADIUS_NM,
+  TERRAIN_RADIUS_STEP_NM
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import type { SurfaceMode } from '@/app/app-client/types';
@@ -29,6 +33,29 @@ interface AppClientProps {
   initialSceneData: SceneData;
   initialAirportId: string;
   initialApproachId: string;
+}
+
+interface PersistedOptionsState {
+  verticalScale?: number;
+  terrainRadiusNm?: number;
+  flattenBathymetry?: boolean;
+  liveTrafficEnabled?: boolean;
+  hideGroundTraffic?: boolean;
+  showTrafficCallsigns?: boolean;
+  trafficHistoryMinutes?: number;
+}
+
+const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
+
+function clampValue(value: number, min: number, max: number, fallback = min): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeTerrainRadiusNm(radiusNm: number): number {
+  if (!Number.isFinite(radiusNm)) return DEFAULT_TERRAIN_RADIUS_NM;
+  const snapped = Math.round(radiusNm / TERRAIN_RADIUS_STEP_NM) * TERRAIN_RADIUS_STEP_NM;
+  return clampValue(snapped, MIN_TERRAIN_RADIUS_NM, MAX_TERRAIN_RADIUS_NM);
 }
 
 export function AppClient({
@@ -53,7 +80,9 @@ export function AppClient({
   );
   const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>('terrain');
   const [didInitFromLocation, setDidInitFromLocation] = useState(false);
+  const [didInitFromStorage, setDidInitFromStorage] = useState(false);
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
+  const [terrainRadiusNm, setTerrainRadiusNm] = useState<number>(DEFAULT_TERRAIN_RADIUS_NM);
   const [flattenBathymetry, setFlattenBathymetry] = useState(true);
   const [liveTrafficEnabled, setLiveTrafficEnabled] = useState(true);
   const [hideGroundTraffic, setHideGroundTraffic] = useState(true);
@@ -80,8 +109,69 @@ export function AppClient({
     if (modeFromQuery) {
       setSurfaceMode(modeFromQuery);
     }
+    try {
+      const raw = window.localStorage.getItem(OPTIONS_STORAGE_KEY);
+      if (raw) {
+        const persisted = JSON.parse(raw) as PersistedOptionsState;
+        if (typeof persisted.verticalScale === 'number') {
+          setVerticalScale(clampValue(persisted.verticalScale, 1, 15, DEFAULT_VERTICAL_SCALE));
+        }
+        if (typeof persisted.terrainRadiusNm === 'number') {
+          setTerrainRadiusNm(normalizeTerrainRadiusNm(persisted.terrainRadiusNm));
+        }
+        if (typeof persisted.flattenBathymetry === 'boolean') {
+          setFlattenBathymetry(persisted.flattenBathymetry);
+        }
+        if (typeof persisted.liveTrafficEnabled === 'boolean') {
+          setLiveTrafficEnabled(persisted.liveTrafficEnabled);
+        }
+        if (typeof persisted.hideGroundTraffic === 'boolean') {
+          setHideGroundTraffic(persisted.hideGroundTraffic);
+        }
+        if (typeof persisted.showTrafficCallsigns === 'boolean') {
+          setShowTrafficCallsigns(persisted.showTrafficCallsigns);
+        }
+        if (typeof persisted.trafficHistoryMinutes === 'number') {
+          setTrafficHistoryMinutes(
+            clampValue(
+              Math.round(persisted.trafficHistoryMinutes),
+              1,
+              15,
+              DEFAULT_TRAFFIC_HISTORY_MINUTES
+            )
+          );
+        }
+      }
+    } catch (error) {
+      console.warn('Unable to restore saved options', error);
+    } finally {
+      setDidInitFromStorage(true);
+    }
     setDidInitFromLocation(true);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !didInitFromStorage) return;
+    const persisted: PersistedOptionsState = {
+      verticalScale,
+      terrainRadiusNm,
+      flattenBathymetry,
+      liveTrafficEnabled,
+      hideGroundTraffic,
+      showTrafficCallsigns,
+      trafficHistoryMinutes
+    };
+    window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
+  }, [
+    didInitFromStorage,
+    verticalScale,
+    terrainRadiusNm,
+    flattenBathymetry,
+    liveTrafficEnabled,
+    hideGroundTraffic,
+    showTrafficCallsigns,
+    trafficHistoryMinutes
+  ]);
 
   useEffect(() => {
     setSceneData(initialSceneData);
@@ -301,6 +391,7 @@ export function AppClient({
             contextApproach={contextApproach}
             waypoints={waypoints}
             verticalScale={verticalScale}
+            terrainRadiusNm={terrainRadiusNm}
             flattenBathymetry={flattenBathymetry}
             liveTrafficEnabled={liveTrafficEnabled}
             hideGroundTraffic={hideGroundTraffic}
@@ -350,7 +441,13 @@ export function AppClient({
           optionsCollapsed={optionsCollapsed}
           onToggleOptions={() => setOptionsCollapsed((current) => !current)}
           verticalScale={verticalScale}
-          onVerticalScaleChange={setVerticalScale}
+          onVerticalScaleChange={(scale) =>
+            setVerticalScale(clampValue(scale, 1, 15, DEFAULT_VERTICAL_SCALE))
+          }
+          terrainRadiusNm={terrainRadiusNm}
+          onTerrainRadiusNmChange={(radiusNm) =>
+            setTerrainRadiusNm(normalizeTerrainRadiusNm(radiusNm))
+          }
           flattenBathymetry={flattenBathymetry}
           onFlattenBathymetryChange={setFlattenBathymetry}
           liveTrafficEnabled={liveTrafficEnabled}
@@ -361,7 +458,9 @@ export function AppClient({
           onShowTrafficCallsignsChange={setShowTrafficCallsigns}
           trafficHistoryMinutes={trafficHistoryMinutes}
           onTrafficHistoryMinutesChange={(minutes) =>
-            setTrafficHistoryMinutes(Math.min(15, Math.max(1, Math.round(minutes))))
+            setTrafficHistoryMinutes(
+              clampValue(Math.round(minutes), 1, 15, DEFAULT_TRAFFIC_HISTORY_MINUTES)
+            )
           }
         />
 

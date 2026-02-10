@@ -1,10 +1,17 @@
 import type { OptionsPanelProps } from './types';
+import {
+  MAX_TERRAIN_RADIUS_NM,
+  MIN_TERRAIN_RADIUS_NM,
+  TERRAIN_RADIUS_STEP_NM
+} from './constants';
 
 export function OptionsPanel({
   optionsCollapsed,
   onToggleOptions,
   verticalScale,
   onVerticalScaleChange,
+  terrainRadiusNm,
+  onTerrainRadiusNmChange,
   flattenBathymetry,
   onFlattenBathymetryChange,
   liveTrafficEnabled,
@@ -75,6 +82,21 @@ export function OptionsPanel({
           value={verticalScale}
           onChange={(event) => onVerticalScaleChange(parseFloat(event.target.value))}
           aria-label="Vertical scale"
+        />
+      </label>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Terrain Radius ({terrainRadiusNm} NM)</span>
+        </span>
+        <input
+          type="range"
+          min={MIN_TERRAIN_RADIUS_NM}
+          max={MAX_TERRAIN_RADIUS_NM}
+          step={TERRAIN_RADIUS_STEP_NM}
+          value={terrainRadiusNm}
+          onChange={(event) => onTerrainRadiusNmChange(Number(event.target.value))}
+          aria-label="Terrain radius nautical miles"
         />
       </label>
 

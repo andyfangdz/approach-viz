@@ -5,7 +5,7 @@ const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 
 const TILE_SIZE = 256;
 const TILE_ZOOM = 10;
-const TERRAIN_RADIUS_NM = 30;
+const TERRAIN_RADIUS_NM = 50;
 const GRID_SEGMENTS = 140;
 const TILE_BASE_URL = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium';
 

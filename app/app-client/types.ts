@@ -28,6 +28,7 @@ export interface SceneCanvasProps {
   contextApproach: Approach | null;
   waypoints: Map<string, Waypoint>;
   verticalScale: number;
+  terrainRadiusNm: number;
   flattenBathymetry: boolean;
   liveTrafficEnabled: boolean;
   hideGroundTraffic: boolean;
@@ -59,6 +60,8 @@ export interface OptionsPanelProps {
   onToggleOptions: () => void;
   verticalScale: number;
   onVerticalScaleChange: (scale: number) => void;
+  terrainRadiusNm: number;
+  onTerrainRadiusNmChange: (radiusNm: number) => void;
   flattenBathymetry: boolean;
   onFlattenBathymetryChange: (enabled: boolean) => void;
   liveTrafficEnabled: boolean;

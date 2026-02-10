@@ -693,7 +693,7 @@ textarea,
   .options-panel {
     left: 12px;
     right: 12px;
-    bottom: 12px;
+    bottom: var(--floating-control-bottom);
   }
 
   .help-panel {
