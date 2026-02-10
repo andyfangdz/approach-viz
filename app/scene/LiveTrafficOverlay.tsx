@@ -1,11 +1,7 @@
 import { Html, Line } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import {
-  altToY,
-  earthCurvatureDropNm,
-  latLonToLocal
-} from './approach-path/coordinates';
+import { altToY, earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
@@ -246,11 +242,7 @@ function mergeTracks(
   return nextTracks;
 }
 
-function nearestSceneAirportElevation(
-  airports: SceneAirport[],
-  lat: number,
-  lon: number
-): number {
+function nearestSceneAirportElevation(airports: SceneAirport[], lat: number, lon: number): number {
   if (airports.length === 0) return 0;
   const cosLat = Math.cos(lat * (Math.PI / 180));
   let bestDistSq = Number.POSITIVE_INFINITY;

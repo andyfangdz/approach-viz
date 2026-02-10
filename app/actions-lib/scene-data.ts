@@ -140,9 +140,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
         distanceNm: c.distNm
       };
     })
-    .filter(
-      (item): item is NonNullable<typeof item> => item !== null && item.runways.length > 0
-    )
+    .filter((item): item is NonNullable<typeof item> => item !== null && item.runways.length > 0)
     .slice(0, 8);
 
   // Elevation-only airports covering the full traffic radius (80 NM)

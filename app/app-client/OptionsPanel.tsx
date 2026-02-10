@@ -23,7 +23,11 @@ export function OptionsPanel({
   showTrafficCallsigns,
   onShowTrafficCallsignsChange,
   trafficHistoryMinutes,
-  onTrafficHistoryMinutesChange
+  onTrafficHistoryMinutesChange,
+  nexradEnabled,
+  onNexradEnabledChange,
+  nexradOpacity,
+  onNexradOpacityChange
 }: OptionsPanelProps) {
   if (optionsCollapsed) {
     return (
@@ -167,6 +171,36 @@ export function OptionsPanel({
           disabled={!liveTrafficEnabled}
           onChange={(event) => onTrafficHistoryMinutesChange(Number(event.target.value))}
           aria-label="Traffic history minutes"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">NEXRAD Weather Radar</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={nexradEnabled}
+          onChange={(event) => onNexradEnabledChange(event.target.checked)}
+          aria-label="Enable NEXRAD weather radar"
+        />
+      </label>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">
+            Radar Opacity ({Math.round(nexradOpacity * 100)}%)
+          </span>
+        </span>
+        <input
+          type="range"
+          min={0.1}
+          max={1.0}
+          step={0.05}
+          value={nexradOpacity}
+          disabled={!nexradEnabled}
+          onChange={(event) => onNexradOpacityChange(parseFloat(event.target.value))}
+          aria-label="NEXRAD radar opacity"
         />
       </label>
     </div>

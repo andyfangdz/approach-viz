@@ -39,6 +39,8 @@ export interface SceneCanvasProps {
   satelliteRetryCount: number;
   surfaceErrorMessage: string;
   recenterNonce: number;
+  nexradEnabled: boolean;
+  nexradOpacity: number;
   missedApproachStartAltitudeFeet?: number;
   onSatelliteRuntimeError: (message: string, error?: Error) => void;
 }
@@ -72,4 +74,8 @@ export interface OptionsPanelProps {
   onShowTrafficCallsignsChange: (enabled: boolean) => void;
   trafficHistoryMinutes: number;
   onTrafficHistoryMinutesChange: (minutes: number) => void;
+  nexradEnabled: boolean;
+  onNexradEnabledChange: (enabled: boolean) => void;
+  nexradOpacity: number;
+  onNexradOpacityChange: (opacity: number) => void;
 }

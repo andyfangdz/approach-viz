@@ -20,6 +20,7 @@ import {
   DEFAULT_TERRAIN_RADIUS_NM,
   DEFAULT_VERTICAL_SCALE,
   DEFAULT_TRAFFIC_HISTORY_MINUTES,
+  DEFAULT_NEXRAD_OPACITY,
   MIN_TERRAIN_RADIUS_NM,
   MAX_TERRAIN_RADIUS_NM,
   TERRAIN_RADIUS_STEP_NM,
@@ -45,6 +46,8 @@ interface PersistedOptionsState {
   hideGroundTraffic?: boolean;
   showTrafficCallsigns?: boolean;
   trafficHistoryMinutes?: number;
+  nexradEnabled?: boolean;
+  nexradOpacity?: number;
 }
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
@@ -92,6 +95,8 @@ export function AppClient({
   const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
     DEFAULT_TRAFFIC_HISTORY_MINUTES
   );
+  const [nexradEnabled, setNexradEnabled] = useState(false);
+  const [nexradOpacity, setNexradOpacity] = useState<number>(DEFAULT_NEXRAD_OPACITY);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
@@ -143,6 +148,12 @@ export function AppClient({
             )
           );
         }
+        if (typeof persisted.nexradEnabled === 'boolean') {
+          setNexradEnabled(persisted.nexradEnabled);
+        }
+        if (typeof persisted.nexradOpacity === 'number') {
+          setNexradOpacity(clampValue(persisted.nexradOpacity, 0.1, 1.0, DEFAULT_NEXRAD_OPACITY));
+        }
       }
     } catch (error) {
       console.warn('Unable to restore saved options', error);
@@ -161,7 +172,9 @@ export function AppClient({
       liveTrafficEnabled,
       hideGroundTraffic,
       showTrafficCallsigns,
-      trafficHistoryMinutes
+      trafficHistoryMinutes,
+      nexradEnabled,
+      nexradOpacity
     };
     window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
   }, [
@@ -172,7 +185,9 @@ export function AppClient({
     liveTrafficEnabled,
     hideGroundTraffic,
     showTrafficCallsigns,
-    trafficHistoryMinutes
+    trafficHistoryMinutes,
+    nexradEnabled,
+    nexradOpacity
   ]);
 
   useEffect(() => {
@@ -402,6 +417,8 @@ export function AppClient({
             surfaceMode={surfaceMode}
             satelliteRetryNonce={satelliteRetryNonce}
             satelliteRetryCount={satelliteRetryCount}
+            nexradEnabled={nexradEnabled}
+            nexradOpacity={nexradOpacity}
             surfaceErrorMessage={surfaceErrorMessage}
             recenterNonce={recenterNonce}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
@@ -468,6 +485,12 @@ export function AppClient({
                 DEFAULT_TRAFFIC_HISTORY_MINUTES
               )
             )
+          }
+          nexradEnabled={nexradEnabled}
+          onNexradEnabledChange={setNexradEnabled}
+          nexradOpacity={nexradOpacity}
+          onNexradOpacityChange={(opacity) =>
+            setNexradOpacity(clampValue(opacity, 0.1, 1.0, DEFAULT_NEXRAD_OPACITY))
           }
         />
 
