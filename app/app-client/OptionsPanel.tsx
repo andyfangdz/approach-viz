@@ -3,6 +3,8 @@ import type { OptionsPanelProps } from './types';
 export function OptionsPanel({
   optionsCollapsed,
   onToggleOptions,
+  verticalScale,
+  onVerticalScaleChange,
   flattenBathymetry,
   onFlattenBathymetryChange,
   liveTrafficEnabled,
@@ -60,6 +62,21 @@ export function OptionsPanel({
           </svg>
         </button>
       </div>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Vertical Scale ({verticalScale.toFixed(1)}x)</span>
+        </span>
+        <input
+          type="range"
+          min={1}
+          max={15}
+          step={0.5}
+          value={verticalScale}
+          onChange={(event) => onVerticalScaleChange(parseFloat(event.target.value))}
+          aria-label="Vertical scale"
+        />
+      </label>
 
       <label className="options-toggle-row">
         <span className="options-toggle-copy">

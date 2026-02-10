@@ -51,7 +51,7 @@ Rendering guidance is split into topic docs under `docs/`:
 - `docs/rendering-approach-geometry.md`
 - `docs/rendering-performance.md`
 - Satellite/3D Plate mode exposes a gear/options-panel `Flatten Bathymetry` toggle (enabled by default) that clamps bathymetry with curvature-compensated, vertical-scale-neutral local altitude (`worldY / verticalScale + curvatureDrop`) to avoid over-flattening distant above-sea terrain.
-- Options panel exposes `Live ADS-B Traffic`, `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (`1..15 min`) controls; live traffic is enabled by default, `Hide Ground Traffic` is enabled by default, and aircraft markers/trails are polled from the ADSB proxy and rendered as an overlay in scene local-NM coordinates, with one-time initial backfill using the selected history window (default `3 min`). Callsign labels render as text-only overlays above traffic markers (no label box).
+- Options panel exposes `Vertical Scale` (`1.0..15.0x`, step `0.5x`), `Live ADS-B Traffic`, `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (`1..15 min`) controls; live traffic is enabled by default, `Hide Ground Traffic` is enabled by default, and aircraft markers/trails are polled from the ADSB proxy and rendered as an overlay in scene local-NM coordinates, with one-time initial backfill using the selected history window (default `3 min`). Callsign labels render as text-only overlays above traffic markers (no label box).
 - `SceneCanvas` is memoized so non-scene UI state updates (for example selector search typing/collapse toggles) do not re-render the Three.js subtree.
 - Airport/approach combobox search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header UI.
 - Live ADS-B markers reuse shared Three.js sphere geometry/material instances across aircraft markers to reduce per-refresh GPU object churn.
@@ -60,6 +60,10 @@ Rendering guidance is split into topic docs under `docs/`:
 - Airspace geometry is computed in base altitude units and scaled by `verticalScale` at the container group so vertical-scale slider changes do not rebuild airspace extrusion geometry.
 - Airspace sectors with floors at/near sea level (`<= 100 ft MSL`) omit bottom caps and bottom edge segments to prevent z-fighting shimmer against sea-level-aligned surfaces.
 - Missed direct fix-join legs (`CF`/`DF`/`TF`) with explicit downstream turn direction (`L`/`R`) render curved climbing-turn joins (not hard corners), and downstream `CF` legs with published course/radial intercept that course before the fix.
+- Recenter camera control is a dedicated bottom-right floating button (`recenter-fab`) stacked above the options FAB instead of living in the header action row.
+- Header selector-collapse toggle uses chevron icon states (up/down) with accessible show/hide labels.
+- Expanded selector controls render as an overlay panel anchored beneath the header row (absolute-positioned), so opening selectors does not push/reflow the scene canvas.
+- Scene `Html` labels (waypoints, holds, runway text, turn constraints, traffic callsigns) use capped `zIndexRange` so selector/options/legend overlays remain above scene text.
 
 ## URL State
 
@@ -73,6 +77,7 @@ Rendering guidance is split into topic docs under `docs/`:
 
 - On small screens (`<=900px`), selectors are collapsed by default.
 - On small screens (`<=900px`), legend content is collapsed by default.
+- On small screens (`<=900px`), floating legend/options/recenter controls use safe-area-aware elevated bottom offset (`env(safe-area-inset-bottom) + 68px`) to reduce iOS address-bar overlap.
 - Bottom-right help panel is error-only; static drag/scroll interaction hints are not shown.
 - Touch/drag interactions in the 3D scene should suppress iOS text selection/callout overlays (`user-select: none`, `touch-action: none` on scene surface), while selector text inputs remain editable.
 

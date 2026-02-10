@@ -72,6 +72,7 @@ export function AirportMarker({
               <Html
                 position={[0, 0.15, 0]}
                 center
+                zIndexRange={[40, 0]}
                 style={{
                   color: airportLabelColor,
                   fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
@@ -92,6 +93,7 @@ export function AirportMarker({
       <Html
         position={[pos.x, airportBaseY + 0.5, pos.z]}
         center
+        zIndexRange={[40, 0]}
         style={{
           color: airportLabelColor,
           fontFamily: "'JetBrains Mono', 'SF Mono', monospace",

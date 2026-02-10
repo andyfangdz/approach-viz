@@ -15,11 +15,8 @@ export function HeaderControls({
   selectedApproachOption,
   approachOptionsLength,
   onApproachSelected,
-  verticalScale,
-  onVerticalScaleChange,
   surfaceMode,
   onSurfaceModeSelected,
-  onRecenterScene,
   menuPortalTarget
 }: HeaderControlsProps) {
   const [airportQuery, setAirportQuery] = useState('');
@@ -32,6 +29,7 @@ export function HeaderControls({
     () => filterOptions(approachOptions, approachQuery),
     [approachOptions, approachQuery]
   );
+  const selectorsToggleLabel = selectorsCollapsed ? 'Show selectors' : 'Hide selectors';
 
   return (
     <header>
@@ -43,11 +41,32 @@ export function HeaderControls({
           </div>
         </div>
         <div className="header-actions">
-          <button type="button" className="panel-toggle" onClick={onRecenterScene}>
-            Recenter View
-          </button>
-          <button type="button" className="panel-toggle" onClick={onToggleSelectors}>
-            {selectorsCollapsed ? 'Show Selectors' : 'Hide Selectors'}
+          <button
+            type="button"
+            className="panel-toggle icon-only"
+            onClick={onToggleSelectors}
+            aria-label={selectorsToggleLabel}
+            title={selectorsToggleLabel}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              {selectorsCollapsed ? (
+                <path
+                  d="M3 5.25 7 9.25 11 5.25"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ) : (
+                <path
+                  d="M3 8.75 7 4.75 11 8.75"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              )}
+            </svg>
           </button>
         </div>
       </div>
@@ -120,21 +139,6 @@ export function HeaderControls({
                 }}
               />
             </div>
-          </div>
-
-          <div className="control-group vertical-scale">
-            <label>Vertical</label>
-            <div className="vertical-scale-row">
-              <input
-                type="range"
-                min={1}
-                max={15}
-                step={0.5}
-                value={verticalScale}
-                onChange={(event) => onVerticalScaleChange(parseFloat(event.target.value))}
-              />
-            </div>
-            <span className="control-value">{verticalScale.toFixed(1)}x</span>
           </div>
 
           <div className="control-group">

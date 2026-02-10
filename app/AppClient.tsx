@@ -284,11 +284,8 @@ export function AppClient({
           setSelectedApproach(approachId);
           requestSceneData(selectedAirport, approachId);
         }}
-        verticalScale={verticalScale}
-        onVerticalScaleChange={setVerticalScale}
         surfaceMode={surfaceMode}
         onSurfaceModeSelected={handleSurfaceModeSelected}
-        onRecenterScene={() => setRecenterNonce((current) => current + 1)}
         menuPortalTarget={menuPortalTarget}
       />
 
@@ -319,6 +316,24 @@ export function AppClient({
           />
         )}
 
+        <button
+          type="button"
+          className="recenter-fab"
+          onClick={() => setRecenterNonce((current) => current + 1)}
+          title="Recenter view"
+          aria-label="Recenter view"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M12 4v3M12 17v3M4 12h3M17 12h3"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+            />
+            <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.7" />
+          </svg>
+        </button>
+
         <InfoPanel
           legendCollapsed={legendCollapsed}
           onToggleLegend={() => setLegendCollapsed((current) => !current)}
@@ -334,6 +349,8 @@ export function AppClient({
         <OptionsPanel
           optionsCollapsed={optionsCollapsed}
           onToggleOptions={() => setOptionsCollapsed((current) => !current)}
+          verticalScale={verticalScale}
+          onVerticalScaleChange={setVerticalScale}
           flattenBathymetry={flattenBathymetry}
           onFlattenBathymetryChange={setFlattenBathymetry}
           liveTrafficEnabled={liveTrafficEnabled}

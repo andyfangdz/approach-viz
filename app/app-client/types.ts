@@ -17,11 +17,8 @@ export interface HeaderControlsProps {
   selectedApproachOption: SelectOption | null;
   approachOptionsLength: number;
   onApproachSelected: (approachId: string) => void;
-  verticalScale: number;
-  onVerticalScaleChange: (verticalScale: number) => void;
   surfaceMode: SurfaceMode;
   onSurfaceModeSelected: (mode: SurfaceMode) => void;
-  onRecenterScene: () => void;
   menuPortalTarget?: HTMLElement;
 }
 
@@ -60,6 +57,8 @@ export interface InfoPanelProps {
 export interface OptionsPanelProps {
   optionsCollapsed: boolean;
   onToggleOptions: () => void;
+  verticalScale: number;
+  onVerticalScaleChange: (scale: number) => void;
   flattenBathymetry: boolean;
   onFlattenBathymetryChange: (enabled: boolean) => void;
   liveTrafficEnabled: boolean;

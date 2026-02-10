@@ -89,6 +89,7 @@ export function PathTube({
           key={`turn-alt-${index}-${label.text}`}
           position={label.position}
           center
+          zIndexRange={[40, 0]}
           style={{
             color,
             fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
