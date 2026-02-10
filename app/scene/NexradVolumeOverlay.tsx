@@ -14,6 +14,7 @@ interface NexradVolumeOverlayProps {
   refLon: number;
   verticalScale: number;
   minDbz: number;
+  opacity?: number;
   enabled?: boolean;
   maxRangeNm?: number;
   applyEarthCurvatureCompensation?: boolean;
@@ -86,6 +87,7 @@ export function NexradVolumeOverlay({
   refLon,
   verticalScale,
   minDbz,
+  opacity = 0.72,
   enabled = false,
   maxRangeNm = DEFAULT_MAX_RANGE_NM,
   applyEarthCurvatureCompensation = false
@@ -100,13 +102,13 @@ export function NexradVolumeOverlay({
     () =>
       new THREE.MeshBasicMaterial({
         transparent: true,
-        opacity: 0.48,
+        opacity,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         vertexColors: true,
         toneMapped: false
       }),
-    []
+    [opacity]
   );
 
   useEffect(

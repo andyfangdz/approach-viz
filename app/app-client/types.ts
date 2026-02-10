@@ -36,6 +36,7 @@ export interface SceneCanvasProps {
   trafficHistoryMinutes: number;
   nexradVolumeEnabled: boolean;
   nexradMinDbz: number;
+  nexradOpacity: number;
   surfaceMode: SurfaceMode;
   satelliteRetryNonce: number;
   satelliteRetryCount: number;
@@ -73,6 +74,8 @@ export interface OptionsPanelProps {
   onNexradVolumeEnabledChange: (enabled: boolean) => void;
   nexradMinDbz: number;
   onNexradMinDbzChange: (dbz: number) => void;
+  nexradOpacity: number;
+  onNexradOpacityChange: (opacity: number) => void;
   hideGroundTraffic: boolean;
   onHideGroundTrafficChange: (enabled: boolean) => void;
   showTrafficCallsigns: boolean;

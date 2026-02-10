@@ -64,6 +64,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   trafficHistoryMinutes,
   nexradVolumeEnabled,
   nexradMinDbz,
+  nexradOpacity,
   surfaceMode,
   satelliteRetryNonce,
   satelliteRetryCount,
@@ -202,6 +203,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             verticalScale={verticalScale}
             minDbz={nexradMinDbz}
             enabled={nexradVolumeEnabled}
+            opacity={nexradOpacity}
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'
             }

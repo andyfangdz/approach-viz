@@ -5,8 +5,8 @@
 - `app/AppClient.tsx` coordinates client state and effects.
 - Picker formatting/filtering/runtime conversion helpers are delegated to `app/app-client-utils.ts`.
 - Optional live traffic state (enable flag + hide-ground toggle + callsign-label toggle + history retention minutes) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
-- Optional NEXRAD state (enable toggle + reflectivity threshold dBZ) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
-- Options-panel state (vertical scale, terrain radius, bathymetry, traffic toggles/history window, NEXRAD toggles/threshold) is persisted in browser `localStorage` and restored on client startup.
+- Optional NEXRAD state (enable toggle + reflectivity threshold dBZ + opacity) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
+- Options-panel state (vertical scale, terrain radius, bathymetry, traffic toggles/history window, NEXRAD toggles/threshold/opacity) is persisted in browser `localStorage` and restored on client startup.
 - Major UI sections are delegated to `app/app-client/*`:
 - `HeaderControls`
 - `SceneCanvas`

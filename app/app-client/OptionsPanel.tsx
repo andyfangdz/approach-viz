@@ -6,7 +6,9 @@ import {
   MIN_TERRAIN_RADIUS_NM,
   TERRAIN_RADIUS_STEP_NM,
   MIN_NEXRAD_MIN_DBZ,
-  MAX_NEXRAD_MIN_DBZ
+  MAX_NEXRAD_MIN_DBZ,
+  MIN_NEXRAD_OPACITY,
+  MAX_NEXRAD_OPACITY
 } from './constants';
 
 export function OptionsPanel({
@@ -24,6 +26,8 @@ export function OptionsPanel({
   onNexradVolumeEnabledChange,
   nexradMinDbz,
   onNexradMinDbzChange,
+  nexradOpacity,
+  onNexradOpacityChange,
   hideGroundTraffic,
   onHideGroundTrafficChange,
   showTrafficCallsigns,
@@ -157,6 +161,24 @@ export function OptionsPanel({
           disabled={!nexradVolumeEnabled}
           onChange={(event) => onNexradMinDbzChange(Number(event.target.value))}
           aria-label="NEXRAD reflectivity threshold dBZ"
+        />
+      </label>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">
+            NEXRAD Opacity ({Math.round(nexradOpacity * 100)}%)
+          </span>
+        </span>
+        <input
+          type="range"
+          min={MIN_NEXRAD_OPACITY}
+          max={MAX_NEXRAD_OPACITY}
+          step={0.05}
+          value={nexradOpacity}
+          disabled={!nexradVolumeEnabled}
+          onChange={(event) => onNexradOpacityChange(Number(event.target.value))}
+          aria-label="NEXRAD volume opacity"
         />
       </label>
 

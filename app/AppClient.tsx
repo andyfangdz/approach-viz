@@ -22,13 +22,16 @@ import {
   DEFAULT_TRAFFIC_HISTORY_MINUTES,
   DEFAULT_NEXRAD_VOLUME_ENABLED,
   DEFAULT_NEXRAD_MIN_DBZ,
+  DEFAULT_NEXRAD_OPACITY,
   MIN_TERRAIN_RADIUS_NM,
   MAX_TERRAIN_RADIUS_NM,
   TERRAIN_RADIUS_STEP_NM,
   MIN_TRAFFIC_HISTORY_MINUTES,
   MAX_TRAFFIC_HISTORY_MINUTES,
   MIN_NEXRAD_MIN_DBZ,
-  MAX_NEXRAD_MIN_DBZ
+  MAX_NEXRAD_MIN_DBZ,
+  MIN_NEXRAD_OPACITY,
+  MAX_NEXRAD_OPACITY
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import type { SurfaceMode } from '@/app/app-client/types';
@@ -51,6 +54,7 @@ interface PersistedOptionsState {
   trafficHistoryMinutes?: number;
   nexradVolumeEnabled?: boolean;
   nexradMinDbz?: number;
+  nexradOpacity?: number;
 }
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
@@ -71,6 +75,17 @@ function normalizeNexradMinDbz(dbz: number): number {
   return Math.round(
     clampValue(dbz, MIN_NEXRAD_MIN_DBZ, MAX_NEXRAD_MIN_DBZ, DEFAULT_NEXRAD_MIN_DBZ)
   );
+}
+
+function normalizeNexradOpacity(opacity: number): number {
+  if (!Number.isFinite(opacity)) return DEFAULT_NEXRAD_OPACITY;
+  const clamped = clampValue(
+    opacity,
+    MIN_NEXRAD_OPACITY,
+    MAX_NEXRAD_OPACITY,
+    DEFAULT_NEXRAD_OPACITY
+  );
+  return Math.round(clamped * 100) / 100;
 }
 
 export function AppClient({
@@ -107,6 +122,7 @@ export function AppClient({
   );
   const [nexradVolumeEnabled, setNexradVolumeEnabled] = useState(DEFAULT_NEXRAD_VOLUME_ENABLED);
   const [nexradMinDbz, setNexradMinDbz] = useState(DEFAULT_NEXRAD_MIN_DBZ);
+  const [nexradOpacity, setNexradOpacity] = useState(DEFAULT_NEXRAD_OPACITY);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
@@ -164,6 +180,9 @@ export function AppClient({
         if (typeof persisted.nexradMinDbz === 'number') {
           setNexradMinDbz(normalizeNexradMinDbz(persisted.nexradMinDbz));
         }
+        if (typeof persisted.nexradOpacity === 'number') {
+          setNexradOpacity(normalizeNexradOpacity(persisted.nexradOpacity));
+        }
       }
     } catch (error) {
       console.warn('Unable to restore saved options', error);
@@ -184,7 +203,8 @@ export function AppClient({
       showTrafficCallsigns,
       trafficHistoryMinutes,
       nexradVolumeEnabled,
-      nexradMinDbz
+      nexradMinDbz,
+      nexradOpacity
     };
     window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
   }, [
@@ -197,7 +217,8 @@ export function AppClient({
     showTrafficCallsigns,
     trafficHistoryMinutes,
     nexradVolumeEnabled,
-    nexradMinDbz
+    nexradMinDbz,
+    nexradOpacity
   ]);
 
   useEffect(() => {
@@ -426,6 +447,7 @@ export function AppClient({
             trafficHistoryMinutes={trafficHistoryMinutes}
             nexradVolumeEnabled={nexradVolumeEnabled}
             nexradMinDbz={nexradMinDbz}
+            nexradOpacity={nexradOpacity}
             surfaceMode={surfaceMode}
             satelliteRetryNonce={satelliteRetryNonce}
             satelliteRetryCount={satelliteRetryCount}
@@ -486,6 +508,8 @@ export function AppClient({
           onNexradVolumeEnabledChange={setNexradVolumeEnabled}
           nexradMinDbz={nexradMinDbz}
           onNexradMinDbzChange={(dbz) => setNexradMinDbz(normalizeNexradMinDbz(dbz))}
+          nexradOpacity={nexradOpacity}
+          onNexradOpacityChange={(opacity) => setNexradOpacity(normalizeNexradOpacity(opacity))}
           hideGroundTraffic={hideGroundTraffic}
           onHideGroundTrafficChange={setHideGroundTraffic}
           showTrafficCallsigns={showTrafficCallsigns}

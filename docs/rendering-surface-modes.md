@@ -13,6 +13,7 @@
 - In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
 - NEXRAD voxel coloring follows a traditional aviation reflectivity ramp (`green -> yellow -> orange -> red -> magenta`) by increasing dBZ intensity.
 - NEXRAD voxel material uses additive blending so weather echoes brighten the scene instead of darkening terrain when many translucent voxels overlap.
+- NEXRAD overlay opacity is user-configurable in the options panel so voxel intensity can be tuned per-surface and time-of-day visibility needs.
 
 ## Shared Vertical-Scale Behavior
 
