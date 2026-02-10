@@ -1,4 +1,4 @@
-import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
+import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { ALTITUDE_SCALE } from './constants';
 
 const DEG_TO_RAD = Math.PI / 180;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
+import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { MAX_VI_TURN_RADIUS_NM, MIN_VI_TURN_RADIUS_NM } from './constants';
 import {
   altToY,

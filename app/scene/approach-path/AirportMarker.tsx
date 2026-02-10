@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Html } from '@react-three/drei';
-import type { Airport, RunwayThreshold } from '@/src/cifp/parser';
+import type { Airport, RunwayThreshold } from '@/lib/cifp/parser';
 import { altToY, earthCurvatureDropNm, latLonToLocal } from './coordinates';
 import { buildRunwaySegments } from './runway-geometry';
 

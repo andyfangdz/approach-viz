@@ -1,5 +1,5 @@
 import type { ApproachOption, SerializedApproach } from '@/lib/types';
-import type { Approach } from '@/src/cifp/parser';
+import type { Approach } from '@/lib/cifp/parser';
 import type { ApproachRow } from './types';
 
 export function rowToApproachOption(row: ApproachRow): ApproachOption {

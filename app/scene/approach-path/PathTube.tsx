@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import type { ApproachLeg, Waypoint } from '@/src/cifp/parser';
+import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { buildPathGeometry } from './path-builder';
 import { VerticalLines } from './VerticalLines';
 

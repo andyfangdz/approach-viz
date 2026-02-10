@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Analytics } from '@vercel/analytics/next';
-import '@/src/App.css';
+import '@/app/App.css';
 
 export const metadata: Metadata = {
   title: 'ApproachViz',

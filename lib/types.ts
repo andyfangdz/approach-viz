@@ -1,4 +1,4 @@
-import type { Airport, ApproachLeg, RunwayThreshold, Waypoint } from '@/src/cifp/parser';
+import type { Airport, ApproachLeg, RunwayThreshold, Waypoint } from '@/lib/cifp/parser';
 
 export interface AirspaceFeature {
   type: string;

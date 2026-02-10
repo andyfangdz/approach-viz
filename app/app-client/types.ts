@@ -1,5 +1,5 @@
-import type { Approach } from '@/src/cifp/parser';
-import type { Waypoint } from '@/src/cifp/parser';
+import type { Approach } from '@/lib/cifp/parser';
+import type { Waypoint } from '@/lib/cifp/parser';
 import type { SelectOption } from '@/app/app-client-utils';
 import type { SceneData } from '@/lib/types';
 
