@@ -55,6 +55,7 @@ const TRACE_HISTORY_MAX_AIRCRAFT = 80;
 const TRACE_HISTORY_BATCH_SIZE = 8;
 const TRACE_REQUEST_TIMEOUT_MS = 3500;
 const TRACE_HISTORY_MAX_POINTS_PER_AIRCRAFT = 240;
+const DEFAULT_HIDE_GROUND_TRAFFIC = true;
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -140,6 +141,14 @@ function normalizeTimestampMs(value: number): number | null {
   const timestampMs = Math.round(value);
   if (timestampMs < 946684800000) return null;
   return timestampMs;
+}
+
+function parseBooleanQueryParam(value: string | null, fallback: boolean): boolean {
+  if (value === null) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
 }
 
 function toRadians(deg: number): number {
@@ -467,13 +476,18 @@ export async function GET(request: NextRequest) {
     0,
     MAX_HISTORY_MINUTES
   );
+  const hideGroundTraffic = parseBooleanQueryParam(
+    request.nextUrl.searchParams.get('hideGround'),
+    DEFAULT_HIDE_GROUND_TRAFFIC
+  );
   const bounds = buildBoundingBox(lat, lon, radiusNm);
 
   try {
     const { aircraft, source, baseUrl } = await fetchAdsbxTraffic(bounds);
     const filteredAircraft = aircraft.filter(
       (candidate) =>
-        distanceNm(lat, lon, candidate.lat, candidate.lon) <= radiusNm && !candidate.isOnGround
+        distanceNm(lat, lon, candidate.lat, candidate.lon) <= radiusNm &&
+        (!hideGroundTraffic || !candidate.isOnGround)
     );
 
     filteredAircraft.sort((a, b) => {

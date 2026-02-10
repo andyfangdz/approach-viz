@@ -18,6 +18,7 @@ interface LiveTrafficOverlayProps {
   refLat: number;
   refLon: number;
   verticalScale: number;
+  hideGroundTargets?: boolean;
   showCallsignLabels?: boolean;
   historyMinutes: number;
   applyEarthCurvatureCompensation?: boolean;
@@ -147,6 +148,7 @@ function mergeTracks(
   aircraftList: LiveTrafficAircraft[],
   nowMs: number,
   historyMinutes: number,
+  hideGroundTargets: boolean,
   historyByHex?: Record<string, LiveTrafficHistoryPoint[]>
 ): Map<string, TrafficTrack> {
   const nextTracks = new Map<string, TrafficTrack>();
@@ -154,7 +156,7 @@ function mergeTracks(
   const staleCutoffMs = nowMs - Math.max(STALE_TRACK_GRACE_MS, historyMinutes * 60_000);
 
   for (const aircraft of aircraftList) {
-    if (!aircraft.hex || aircraft.isOnGround) continue;
+    if (!aircraft.hex || (hideGroundTargets && aircraft.isOnGround)) continue;
     const existing = previousTracks.get(aircraft.hex);
     const nextPoint: TrafficHistoryPoint = {
       lat: aircraft.lat,
@@ -207,6 +209,7 @@ export function LiveTrafficOverlay({
   refLat,
   refLon,
   verticalScale,
+  hideGroundTargets = true,
   showCallsignLabels = false,
   historyMinutes,
   applyEarthCurvatureCompensation = false,
@@ -242,6 +245,7 @@ export function LiveTrafficOverlay({
       params.set('lon', refLon.toFixed(6));
       params.set('radiusNm', String(radiusNm));
       params.set('limit', String(limit));
+      params.set('hideGround', hideGroundTargets ? '1' : '0');
       if (shouldRequestHistoryBackfill) {
         params.set('historyMinutes', String(normalizedHistoryMinutes));
       }
@@ -263,6 +267,7 @@ export function LiveTrafficOverlay({
             nextAircraft,
             nowMs,
             normalizedHistoryMinutes,
+            hideGroundTargets,
             backfilledHistory
           )
         );
@@ -297,7 +302,7 @@ export function LiveTrafficOverlay({
       if (timeoutId) clearTimeout(timeoutId);
       if (activeAbortController) activeAbortController.abort();
     };
-  }, [refLat, refLon, radiusNm, limit, normalizedHistoryMinutes]);
+  }, [refLat, refLon, radiusNm, limit, normalizedHistoryMinutes, hideGroundTargets]);
 
   useEffect(() => {
     const cutoffMs = Date.now() - normalizedHistoryMinutes * 60_000;
@@ -311,6 +316,18 @@ export function LiveTrafficOverlay({
       return nextTracks;
     });
   }, [normalizedHistoryMinutes]);
+
+  useEffect(() => {
+    if (!hideGroundTargets) return;
+    setTracks((previousTracks) => {
+      const nextTracks = new Map<string, TrafficTrack>();
+      for (const [hex, track] of previousTracks.entries()) {
+        if (track.aircraft.isOnGround) continue;
+        nextTracks.set(hex, track);
+      }
+      return nextTracks;
+    });
+  }, [hideGroundTargets]);
 
   useEffect(
     () => () => {

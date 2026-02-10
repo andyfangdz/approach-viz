@@ -56,6 +56,7 @@ export function AppClient({
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [flattenBathymetry, setFlattenBathymetry] = useState(true);
   const [liveTrafficEnabled, setLiveTrafficEnabled] = useState(true);
+  const [hideGroundTraffic, setHideGroundTraffic] = useState(true);
   const [showTrafficCallsigns, setShowTrafficCallsigns] = useState(false);
   const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
     DEFAULT_TRAFFIC_HISTORY_MINUTES
@@ -305,6 +306,7 @@ export function AppClient({
             verticalScale={verticalScale}
             flattenBathymetry={flattenBathymetry}
             liveTrafficEnabled={liveTrafficEnabled}
+            hideGroundTraffic={hideGroundTraffic}
             showTrafficCallsigns={showTrafficCallsigns}
             trafficHistoryMinutes={trafficHistoryMinutes}
             surfaceMode={surfaceMode}
@@ -336,6 +338,8 @@ export function AppClient({
           onFlattenBathymetryChange={setFlattenBathymetry}
           liveTrafficEnabled={liveTrafficEnabled}
           onLiveTrafficEnabledChange={setLiveTrafficEnabled}
+          hideGroundTraffic={hideGroundTraffic}
+          onHideGroundTrafficChange={setHideGroundTraffic}
           showTrafficCallsigns={showTrafficCallsigns}
           onShowTrafficCallsignsChange={setShowTrafficCallsigns}
           trafficHistoryMinutes={trafficHistoryMinutes}

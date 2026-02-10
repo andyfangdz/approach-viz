@@ -7,6 +7,8 @@ export function OptionsPanel({
   onFlattenBathymetryChange,
   liveTrafficEnabled,
   onLiveTrafficEnabledChange,
+  hideGroundTraffic,
+  onHideGroundTrafficChange,
   showTrafficCallsigns,
   onShowTrafficCallsignsChange,
   trafficHistoryMinutes,
@@ -62,7 +64,6 @@ export function OptionsPanel({
       <label className="options-toggle-row">
         <span className="options-toggle-copy">
           <span className="options-toggle-title">Flatten Bathymetry</span>
-          <span className="options-toggle-note">Satellite and 3D Plate sea-level clamp</span>
         </span>
         <input
           type="checkbox"
@@ -75,7 +76,6 @@ export function OptionsPanel({
       <label className="options-toggle-row">
         <span className="options-toggle-copy">
           <span className="options-toggle-title">Live ADS-B Traffic</span>
-          <span className="options-toggle-note">ADSB Exchange tar1090 feed</span>
         </span>
         <input
           type="checkbox"
@@ -87,8 +87,20 @@ export function OptionsPanel({
 
       <label className="options-toggle-row">
         <span className="options-toggle-copy">
+          <span className="options-toggle-title">Hide Ground Traffic</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={hideGroundTraffic}
+          disabled={!liveTrafficEnabled}
+          onChange={(event) => onHideGroundTrafficChange(event.target.checked)}
+          aria-label="Hide ground traffic targets"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
           <span className="options-toggle-title">Show Traffic Callsigns</span>
-          <span className="options-toggle-note">Overlay labels near traffic targets</span>
         </span>
         <input
           type="checkbox"
@@ -101,8 +113,9 @@ export function OptionsPanel({
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">Traffic History</span>
-          <span className="options-toggle-note">{trafficHistoryMinutes} min trail retention</span>
+          <span className="options-toggle-title">
+            Traffic History ({trafficHistoryMinutes} min)
+          </span>
         </span>
         <input
           type="range"

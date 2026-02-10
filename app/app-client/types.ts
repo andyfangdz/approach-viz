@@ -33,6 +33,7 @@ export interface SceneCanvasProps {
   verticalScale: number;
   flattenBathymetry: boolean;
   liveTrafficEnabled: boolean;
+  hideGroundTraffic: boolean;
   showTrafficCallsigns: boolean;
   trafficHistoryMinutes: number;
   surfaceMode: SurfaceMode;
@@ -63,6 +64,8 @@ export interface OptionsPanelProps {
   onFlattenBathymetryChange: (enabled: boolean) => void;
   liveTrafficEnabled: boolean;
   onLiveTrafficEnabledChange: (enabled: boolean) => void;
+  hideGroundTraffic: boolean;
+  onHideGroundTrafficChange: (enabled: boolean) => void;
   showTrafficCallsigns: boolean;
   onShowTrafficCallsignsChange: (enabled: boolean) => void;
   trafficHistoryMinutes: number;

@@ -57,6 +57,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   verticalScale,
   flattenBathymetry,
   liveTrafficEnabled,
+  hideGroundTraffic,
   showTrafficCallsigns,
   trafficHistoryMinutes,
   surfaceMode,
@@ -170,6 +171,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             refLat={airport.lat}
             refLon={airport.lon}
             verticalScale={verticalScale}
+            hideGroundTargets={hideGroundTraffic}
             showCallsignLabels={showTrafficCallsigns}
             historyMinutes={trafficHistoryMinutes}
             applyEarthCurvatureCompensation={
