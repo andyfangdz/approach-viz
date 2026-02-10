@@ -1,5 +1,7 @@
 import type { OptionsPanelProps } from './types';
 import {
+  MAX_TRAFFIC_HISTORY_MINUTES,
+  MIN_TRAFFIC_HISTORY_MINUTES,
   MAX_TERRAIN_RADIUS_NM,
   MIN_TERRAIN_RADIUS_NM,
   TERRAIN_RADIUS_STEP_NM
@@ -158,8 +160,8 @@ export function OptionsPanel({
         </span>
         <input
           type="range"
-          min={1}
-          max={15}
+          min={MIN_TRAFFIC_HISTORY_MINUTES}
+          max={MAX_TRAFFIC_HISTORY_MINUTES}
           step={1}
           value={trafficHistoryMinutes}
           disabled={!liveTrafficEnabled}

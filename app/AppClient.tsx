@@ -22,7 +22,9 @@ import {
   DEFAULT_TRAFFIC_HISTORY_MINUTES,
   MIN_TERRAIN_RADIUS_NM,
   MAX_TERRAIN_RADIUS_NM,
-  TERRAIN_RADIUS_STEP_NM
+  TERRAIN_RADIUS_STEP_NM,
+  MIN_TRAFFIC_HISTORY_MINUTES,
+  MAX_TRAFFIC_HISTORY_MINUTES
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import type { SurfaceMode } from '@/app/app-client/types';
@@ -135,8 +137,8 @@ export function AppClient({
           setTrafficHistoryMinutes(
             clampValue(
               Math.round(persisted.trafficHistoryMinutes),
-              1,
-              15,
+              MIN_TRAFFIC_HISTORY_MINUTES,
+              MAX_TRAFFIC_HISTORY_MINUTES,
               DEFAULT_TRAFFIC_HISTORY_MINUTES
             )
           );
@@ -459,7 +461,12 @@ export function AppClient({
           trafficHistoryMinutes={trafficHistoryMinutes}
           onTrafficHistoryMinutesChange={(minutes) =>
             setTrafficHistoryMinutes(
-              clampValue(Math.round(minutes), 1, 15, DEFAULT_TRAFFIC_HISTORY_MINUTES)
+              clampValue(
+                Math.round(minutes),
+                MIN_TRAFFIC_HISTORY_MINUTES,
+                MAX_TRAFFIC_HISTORY_MINUTES,
+                DEFAULT_TRAFFIC_HISTORY_MINUTES
+              )
             )
           }
         />

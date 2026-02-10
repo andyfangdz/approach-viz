@@ -9,6 +9,7 @@ import {
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
+const MAX_HISTORY_MINUTES = 30;
 const POLL_INTERVAL_MS = 5000;
 const STALE_TRACK_GRACE_MS = 20000;
 const MIN_SAMPLE_DISTANCE_NM = 0.03;
@@ -65,7 +66,7 @@ interface TrafficTrack {
 
 function normalizeHistoryMinutes(historyMinutes: number): number {
   if (!Number.isFinite(historyMinutes)) return 3;
-  return Math.min(15, Math.max(1, historyMinutes));
+  return Math.min(MAX_HISTORY_MINUTES, Math.max(1, historyMinutes));
 }
 
 function normalizeTrack(trackDeg: number | null): number {
