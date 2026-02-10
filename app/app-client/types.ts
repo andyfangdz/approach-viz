@@ -30,6 +30,7 @@ export interface SceneCanvasProps {
   verticalScale: number;
   terrainRadiusNm: number;
   flattenBathymetry: boolean;
+  nexradVolumeEnabled: boolean;
   liveTrafficEnabled: boolean;
   hideGroundTraffic: boolean;
   showTrafficCallsigns: boolean;
@@ -49,6 +50,7 @@ export interface InfoPanelProps {
   surfaceLegendClass: 'terrain' | 'plate' | 'satellite';
   surfaceLegendLabel: string;
   surfaceMode: SurfaceMode;
+  nexradVolumeEnabled: boolean;
   liveTrafficEnabled: boolean;
   hasApproachPlate: boolean;
   sceneData: SceneData;
@@ -64,6 +66,8 @@ export interface OptionsPanelProps {
   onTerrainRadiusNmChange: (radiusNm: number) => void;
   flattenBathymetry: boolean;
   onFlattenBathymetryChange: (enabled: boolean) => void;
+  nexradVolumeEnabled: boolean;
+  onNexradVolumeEnabledChange: (enabled: boolean) => void;
   liveTrafficEnabled: boolean;
   onLiveTrafficEnabledChange: (enabled: boolean) => void;
   hideGroundTraffic: boolean;

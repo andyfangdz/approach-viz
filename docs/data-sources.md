@@ -37,6 +37,13 @@ External data feeds and their ingestion paths.
 - Optional initial trail backfill from tar1090 trace files (`/data/traces/<suffix>/trace_recent_<hex>.json`) when `historyMinutes` is requested.
 - Primary host override: `ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts: `ADSBX_TAR1090_FALLBACK_BASE_URLS`.
 
+## Live NEXRAD Level II Volume
+
+- Source: Unidata public S3 bucket `unidata-nexrad-level2` (latest archive volume by nearest WSR-88D station).
+- Station metadata comes from `api.weather.gov/radar/stations?stationType=WSR-88D`; nearest station is selected relative to the current airport reference.
+- Fetched through same-origin proxy `app/api/weather/nexrad/route.ts`, then decoded server-side with `nexrad-level-2-data`.
+- Reflectivity gates are decimated/quantized into local-NM voxels (max range `~100 NM`, top 8 elevations) before being sent to the client overlay.
+
 ## Airport Coverage
 
 - The airport/approach selectors expose all airports present in parsed FAA CIFP data (not a curated list).

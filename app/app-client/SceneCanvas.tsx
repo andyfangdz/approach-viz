@@ -5,6 +5,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { AirspaceVolumes } from '@/app/scene/AirspaceVolumes';
 import { ApproachPath } from '@/app/scene/ApproachPath';
 import { ApproachPlateSurface } from '@/app/scene/ApproachPlateSurface';
+import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
 import { SatelliteSurface } from '@/app/scene/SatelliteSurface';
 import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
 import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
@@ -57,6 +58,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   verticalScale,
   terrainRadiusNm,
   flattenBathymetry,
+  nexradVolumeEnabled,
   liveTrafficEnabled,
   hideGroundTraffic,
   showTrafficCallsigns,
@@ -84,6 +86,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   const showTerrainSurface =
     surfaceMode === 'terrain' || (surfaceMode === 'plate' && !hasApproachPlate);
   const showTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dplate';
+  const nexradResetKey = `${airport.id}:${surfaceMode}:${terrainRadiusNm}`;
 
   return (
     <Canvas
@@ -150,6 +153,29 @@ export const SceneCanvas = memo(function SceneCanvas({
                 onRuntimeError={onSatelliteRuntimeError}
               />
             )}
+          </SceneErrorBoundary>
+        )}
+
+        {nexradVolumeEnabled && (
+          <SceneErrorBoundary
+            resetKey={nexradResetKey}
+            onError={(error) => {
+              console.error(
+                'NEXRAD volume overlay crashed and was disabled for this scene.',
+                error
+              );
+            }}
+            fallback={null}
+          >
+            <NexradVolumeOverlay
+              refLat={airport.lat}
+              refLon={airport.lon}
+              verticalScale={verticalScale}
+              radiusNm={Math.max(terrainRadiusNm, 60)}
+              applyEarthCurvatureCompensation={
+                surfaceMode === 'satellite' || surfaceMode === '3dplate'
+              }
+            />
           </SceneErrorBoundary>
         )}
 

@@ -1,5 +1,6 @@
 export const DEFAULT_VERTICAL_SCALE = 3;
 export const DEFAULT_TERRAIN_RADIUS_NM = 50;
+export const DEFAULT_NEXRAD_VOLUME_ENABLED = false;
 export const MIN_TERRAIN_RADIUS_NM = 20;
 export const MAX_TERRAIN_RADIUS_NM = 80;
 export const TERRAIN_RADIUS_STEP_NM = 5;
