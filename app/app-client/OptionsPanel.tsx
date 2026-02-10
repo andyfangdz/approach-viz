@@ -16,6 +16,8 @@ export function OptionsPanel({
   onTerrainRadiusNmChange,
   flattenBathymetry,
   onFlattenBathymetryChange,
+  nexradVolumeEnabled,
+  onNexradVolumeEnabledChange,
   liveTrafficEnabled,
   onLiveTrafficEnabledChange,
   hideGroundTraffic,
@@ -123,6 +125,19 @@ export function OptionsPanel({
           checked={liveTrafficEnabled}
           onChange={(event) => onLiveTrafficEnabledChange(event.target.checked)}
           aria-label="Enable live ADS-B traffic"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">3D NEXRAD Volume</span>
+          <span className="options-toggle-note">Live Level II reflectivity voxels</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={nexradVolumeEnabled}
+          onChange={(event) => onNexradVolumeEnabledChange(event.target.checked)}
+          aria-label="Enable 3D NEXRAD volume"
         />
       </label>
 

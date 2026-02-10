@@ -5,6 +5,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { AirspaceVolumes } from '@/app/scene/AirspaceVolumes';
 import { ApproachPath } from '@/app/scene/ApproachPath';
 import { ApproachPlateSurface } from '@/app/scene/ApproachPlateSurface';
+import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
 import { SatelliteSurface } from '@/app/scene/SatelliteSurface';
 import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
 import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
@@ -57,6 +58,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   verticalScale,
   terrainRadiusNm,
   flattenBathymetry,
+  nexradVolumeEnabled,
   liveTrafficEnabled,
   hideGroundTraffic,
   showTrafficCallsigns,
@@ -151,6 +153,18 @@ export const SceneCanvas = memo(function SceneCanvas({
               />
             )}
           </SceneErrorBoundary>
+        )}
+
+        {nexradVolumeEnabled && (
+          <NexradVolumeOverlay
+            refLat={airport.lat}
+            refLon={airport.lon}
+            verticalScale={verticalScale}
+            radiusNm={Math.max(terrainRadiusNm, 60)}
+            applyEarthCurvatureCompensation={
+              surfaceMode === 'satellite' || surfaceMode === '3dplate'
+            }
+          />
         )}
 
         {contextApproach && (

@@ -18,6 +18,7 @@ import { OptionsPanel } from '@/app/app-client/OptionsPanel';
 import {
   SATELLITE_MAX_RETRIES,
   DEFAULT_TERRAIN_RADIUS_NM,
+  DEFAULT_NEXRAD_VOLUME_ENABLED,
   DEFAULT_VERTICAL_SCALE,
   DEFAULT_TRAFFIC_HISTORY_MINUTES,
   MIN_TERRAIN_RADIUS_NM,
@@ -41,6 +42,7 @@ interface PersistedOptionsState {
   verticalScale?: number;
   terrainRadiusNm?: number;
   flattenBathymetry?: boolean;
+  nexradVolumeEnabled?: boolean;
   liveTrafficEnabled?: boolean;
   hideGroundTraffic?: boolean;
   showTrafficCallsigns?: boolean;
@@ -86,6 +88,9 @@ export function AppClient({
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [terrainRadiusNm, setTerrainRadiusNm] = useState<number>(DEFAULT_TERRAIN_RADIUS_NM);
   const [flattenBathymetry, setFlattenBathymetry] = useState(true);
+  const [nexradVolumeEnabled, setNexradVolumeEnabled] = useState<boolean>(
+    DEFAULT_NEXRAD_VOLUME_ENABLED
+  );
   const [liveTrafficEnabled, setLiveTrafficEnabled] = useState(true);
   const [hideGroundTraffic, setHideGroundTraffic] = useState(false);
   const [showTrafficCallsigns, setShowTrafficCallsigns] = useState(false);
@@ -124,6 +129,9 @@ export function AppClient({
         if (typeof persisted.flattenBathymetry === 'boolean') {
           setFlattenBathymetry(persisted.flattenBathymetry);
         }
+        if (typeof persisted.nexradVolumeEnabled === 'boolean') {
+          setNexradVolumeEnabled(persisted.nexradVolumeEnabled);
+        }
         if (typeof persisted.liveTrafficEnabled === 'boolean') {
           setLiveTrafficEnabled(persisted.liveTrafficEnabled);
         }
@@ -158,6 +166,7 @@ export function AppClient({
       verticalScale,
       terrainRadiusNm,
       flattenBathymetry,
+      nexradVolumeEnabled,
       liveTrafficEnabled,
       hideGroundTraffic,
       showTrafficCallsigns,
@@ -169,6 +178,7 @@ export function AppClient({
     verticalScale,
     terrainRadiusNm,
     flattenBathymetry,
+    nexradVolumeEnabled,
     liveTrafficEnabled,
     hideGroundTraffic,
     showTrafficCallsigns,
@@ -395,6 +405,7 @@ export function AppClient({
             verticalScale={verticalScale}
             terrainRadiusNm={terrainRadiusNm}
             flattenBathymetry={flattenBathymetry}
+            nexradVolumeEnabled={nexradVolumeEnabled}
             liveTrafficEnabled={liveTrafficEnabled}
             hideGroundTraffic={hideGroundTraffic}
             showTrafficCallsigns={showTrafficCallsigns}
@@ -433,6 +444,7 @@ export function AppClient({
           surfaceLegendClass={surfaceLegendClass}
           surfaceLegendLabel={surfaceLegendLabel}
           surfaceMode={surfaceMode}
+          nexradVolumeEnabled={nexradVolumeEnabled}
           liveTrafficEnabled={liveTrafficEnabled}
           hasApproachPlate={hasApproachPlate}
           sceneData={sceneData}
@@ -452,6 +464,8 @@ export function AppClient({
           }
           flattenBathymetry={flattenBathymetry}
           onFlattenBathymetryChange={setFlattenBathymetry}
+          nexradVolumeEnabled={nexradVolumeEnabled}
+          onNexradVolumeEnabledChange={setNexradVolumeEnabled}
           liveTrafficEnabled={liveTrafficEnabled}
           onLiveTrafficEnabledChange={setLiveTrafficEnabled}
           hideGroundTraffic={hideGroundTraffic}

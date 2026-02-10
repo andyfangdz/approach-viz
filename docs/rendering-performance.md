@@ -11,6 +11,8 @@
 - Live ADS-B callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled to avoid persistent label clutter.
 - Live ADS-B marker meshes reuse shared sphere geometry/material instances rather than allocating one geometry/material pair per aircraft marker.
 - Live ADS-B aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead while still updating positions every poll.
+- Live NEXRAD volume polling is slower (`120s`) and proxied server-side; decode/voxelization happens on the server and station volumes are cached in-memory by latest Level II key to avoid repeated parse work between polls.
+- Live NEXRAD voxels are rendered with one `InstancedMesh` (fixed-capacity box geometry + per-instance colors), avoiding per-voxel React mesh overhead.
 - In-scene `Html` labels (waypoints/holds/runways/turn constraints/callsigns) use a capped `zIndexRange` so app UI overlays (selectors/options/legend) stay visually on top.
 - Three.js resources allocated imperatively in hooks (`TubeGeometry`, airspace extrusions/edges, traffic marker buffers, plate textures) are explicitly disposed in effect cleanup paths to prevent GPU memory growth across scene updates.
 - Airspace extrusions are built in base altitude units and Y-scaled at the group level, avoiding expensive airspace geometry rebuilds when only `verticalScale` changes.

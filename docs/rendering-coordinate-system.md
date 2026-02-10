@@ -8,6 +8,8 @@
 - Live ADS-B aircraft without a reported altitude are placed at the nearest airport's field elevation (sourced from a kdbush spatial index covering the full 80 NM traffic radius) so they render on the surface instead of underground. Aircraft with valid altitude reports are rendered at their reported altitude without clamping.
 - Optional live ADS-B callsign labels are anchored slightly above each marker in the same local coordinate frame, follow marker altitude updates, and render as text-only overlays (no bounding box).
 - In satellite/3D plate modes, live ADS-B traffic altitude is curvature-compensated (`altitudeFeet - earthCurvatureDrop`) so markers remain aligned to curved tiled surfaces.
+- Live NEXRAD voxels are generated server-side in a nearest-radar local frame, transformed into the selected-airport local NM frame, and rendered using the same altitude transform as approach/traffic layers.
+- In satellite/3D plate modes, NEXRAD voxel altitude also applies curvature-drop compensation to keep the volume visually aligned with curved tiled terrain.
 - Airspace sectors with floors at/near sea level (<= `100 ft MSL`) omit their bottom caps and bottom perimeter edge segments to avoid coplanar shimmering against sea-level-aligned surface meshes (plate and clamped satellite/3D tiles).
 - A bottom-right floating `Recenter View` control resets camera position and orbit target to airport-centered defaults.
 - On mobile (`<=900px`), floating legend/options/recenter controls use an elevated safe-area-aware bottom offset (`env(safe-area-inset-bottom) + 68px`) to avoid iOS browser chrome overlap.

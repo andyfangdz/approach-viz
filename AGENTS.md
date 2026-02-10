@@ -42,7 +42,7 @@ Each area below has a one-sentence summary; full details live in the linked `doc
 
 ### Data Sources
 
-CIFP, airspace, minimums, plate PDFs, terrain tiles, and live ADS-B traffic are ingested from FAA and third-party feeds into SQLite at build time, with live data proxied at runtime. → [`docs/data-sources.md`](docs/data-sources.md)
+CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and live NEXRAD Level II radar volume data are ingested from FAA/third-party feeds into SQLite at build time or proxied at runtime. → [`docs/data-sources.md`](docs/data-sources.md)
 
 ### Architecture
 
@@ -54,7 +54,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 
 ### Rendering
 
-3D approach paths, airspace volumes, terrain/satellite surfaces, and live traffic are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
+3D approach paths, airspace volumes, terrain/satellite surfaces, live ADS-B traffic, and live NEXRAD volume voxels are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes

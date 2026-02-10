@@ -495,6 +495,11 @@ textarea,
   box-shadow: 0 0 8px rgba(138, 201, 38, 0.55);
 }
 
+.legend-color.nexrad {
+  background: #c75dff;
+  box-shadow: 0 0 8px rgba(199, 93, 255, 0.6);
+}
+
 .legend-color.traffic {
   background: #67f2ff;
   box-shadow: 0 0 8px rgba(103, 242, 255, 0.6);
