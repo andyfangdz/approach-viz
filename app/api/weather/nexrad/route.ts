@@ -11,7 +11,8 @@ type NexradVoxelTuple = [
   bottomFeet: number,
   topFeet: number,
   dbz: number,
-  footprintNm: number
+  footprintXNm: number,
+  footprintYNm: number
 ];
 
 interface NexradLayerSummary {
@@ -81,7 +82,13 @@ interface ParsedMrmsLevel {
 }
 
 const MRMS_BUCKET_URL = 'https://noaa-mrms-pds.s3.amazonaws.com';
-const MRMS_CONUS_PREFIX = 'CONUS';
+const MRMS_DOMAIN_PREFIX_PREFERENCES = [
+  'CONUS_0.5km',
+  'CONUS_0.5KM',
+  'unsupported/CONUS_0.5km',
+  'unsupported/CONUS_0.5KM',
+  'CONUS'
+] as const;
 const MRMS_PRODUCT_PREFIX = 'MergedReflectivityQC';
 const MRMS_BASE_LEVEL_TAG = '00.50';
 const MRMS_LEVEL_TAGS = [
@@ -253,6 +260,7 @@ function isMrmsGrib2Key(key: string): boolean {
 
 async function findRecentBaseLevelKeys(
   now: Date,
+  domainPrefix: string,
   limit = MAX_BASE_KEY_CANDIDATES
 ): Promise<string[]> {
   const candidates: string[] = [];
@@ -260,7 +268,7 @@ async function findRecentBaseLevelKeys(
   for (let dayOffset = 0; dayOffset <= 1; dayOffset += 1) {
     const date = new Date(now.getTime() - dayOffset * 24 * 60 * 60_000);
     const day = formatDateCompactUTC(date);
-    const prefix = `${MRMS_CONUS_PREFIX}/${MRMS_PRODUCT_PREFIX}_${MRMS_BASE_LEVEL_TAG}/${day}/`;
+    const prefix = `${domainPrefix}/${MRMS_PRODUCT_PREFIX}_${MRMS_BASE_LEVEL_TAG}/${day}/`;
     const keys = (await listKeysForPrefix(prefix)).filter(isMrmsGrib2Key);
     if (keys.length === 0) continue;
 
@@ -293,8 +301,13 @@ function parseScanTimeFromTimestamp(timestamp: string): string | null {
   return `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
 }
 
-function buildLevelKey(levelTag: string, datePart: string, timestamp: string): string {
-  return `${MRMS_CONUS_PREFIX}/${MRMS_PRODUCT_PREFIX}_${levelTag}/${datePart}/MRMS_${MRMS_PRODUCT_PREFIX}_${levelTag}_${timestamp}.grib2.gz`;
+function buildLevelKey(
+  domainPrefix: string,
+  levelTag: string,
+  datePart: string,
+  timestamp: string
+): string {
+  return `${domainPrefix}/${MRMS_PRODUCT_PREFIX}_${levelTag}/${datePart}/MRMS_${MRMS_PRODUCT_PREFIX}_${levelTag}_${timestamp}.grib2.gz`;
 }
 
 function readGribSignedScaledInt32(buffer: Buffer, offset: number, scale = 1_000_000): number {
@@ -440,6 +453,7 @@ async function mapWithConcurrency<T, R>(
 }
 
 async function fetchMrmsLevelsForTimestamp(
+  domainPrefix: string,
   datePart: string,
   timestamp: string
 ): Promise<ParsedMrmsLevel[]> {
@@ -447,7 +461,7 @@ async function fetchMrmsLevelsForTimestamp(
     [...MRMS_LEVEL_TAGS],
     LEVEL_FETCH_CONCURRENCY,
     async (levelTag): Promise<ParsedMrmsLevel | null> => {
-      const key = buildLevelKey(levelTag, datePart, timestamp);
+      const key = buildLevelKey(domainPrefix, levelTag, datePart, timestamp);
       const levelKm = Number(levelTag);
       if (!Number.isFinite(levelKm)) {
         return null;
@@ -595,7 +609,8 @@ function buildVoxelsFromMrmsLevels(
       const rowOffset = row * grid.nx;
       const footprintXNm =
         Math.abs(grid.diDeg) * 60 * Math.max(0.05, Math.cos(latDeg * DEG_TO_RAD));
-      const footprintNm = clamp(Math.max(footprintXNm, footprintYNm), 0.2, 3.5);
+      const footprintYNmSafe = Math.max(0.05, footprintYNm);
+      const footprintXNmSafe = Math.max(0.05, footprintXNm);
 
       for (let col = colStart; col <= colEnd; col += 1) {
         const packedValue = values[rowOffset + col];
@@ -616,7 +631,8 @@ function buildVoxelsFromMrmsLevels(
           Math.round(bottomFeet),
           Math.round(topFeet),
           round1(dbz),
-          round3(footprintNm)
+          round3(footprintXNmSafe),
+          round3(footprintYNmSafe)
         ]);
         levelVoxelCount += 1;
       }
@@ -695,7 +711,19 @@ export async function GET(request: NextRequest) {
 
   try {
     const now = new Date();
-    const baseKeys = await findRecentBaseLevelKeys(now);
+    let selectedDomainPrefix =
+      MRMS_DOMAIN_PREFIX_PREFERENCES[MRMS_DOMAIN_PREFIX_PREFERENCES.length - 1];
+    let baseKeys: string[] = [];
+    for (const candidateDomainPrefix of MRMS_DOMAIN_PREFIX_PREFERENCES) {
+      const candidateBaseKeys = await findRecentBaseLevelKeys(now, candidateDomainPrefix);
+      if (candidateBaseKeys.length === 0) {
+        continue;
+      }
+      selectedDomainPrefix = candidateDomainPrefix;
+      baseKeys = candidateBaseKeys;
+      break;
+    }
+
     if (baseKeys.length === 0) {
       throw new Error('No recent MRMS base-level reflectivity files were available.');
     }
@@ -707,7 +735,11 @@ export async function GET(request: NextRequest) {
       const timestamp = extractTimestampFromKey(baseKey);
       if (!datePart || !timestamp) continue;
 
-      const candidateLevels = await fetchMrmsLevelsForTimestamp(datePart, timestamp);
+      const candidateLevels = await fetchMrmsLevelsForTimestamp(
+        selectedDomainPrefix,
+        datePart,
+        timestamp
+      );
       if (candidateLevels.length === 0) {
         continue;
       }
@@ -733,7 +765,7 @@ export async function GET(request: NextRequest) {
     const scanTime = parseScanTimeFromTimestamp(selectedTimestamp) ?? now.toISOString();
 
     const layerSummaries: NexradLayerSummary[] = parsedLevels.map((level) => ({
-      product: `${MRMS_PRODUCT_PREFIX}_${level.levelTag}`,
+      product: `${selectedDomainPrefix}/${MRMS_PRODUCT_PREFIX}_${level.levelTag}`,
       elevationAngleDeg: round1(level.levelKm),
       sourceKey: level.key,
       scanTime,

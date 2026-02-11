@@ -48,7 +48,7 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
-- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`), probes several recent base timestamps (newest-first), decodes GRIB2 template `5.41` PNG payloads with `fast-png`, and emits request-origin voxel mosaics.
+- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`), preferring `CONUS_0.5km` paths when available and falling back to `CONUS`, probes several recent base timestamps (newest-first), decodes GRIB2 template `5.41` PNG payloads with `fast-png`, and emits request-origin voxel mosaics.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI
@@ -59,7 +59,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional MRMS volumetric precipitation weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
 MRMS volume intensity uses a discrete aviation reflectivity rain ramp (no synthetic rain/snow phase inference), with clip-safe color gain (preserves hue, avoids distant whitening), rendered as a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place).
 MRMS client polling keeps the last successful voxel payload when transient API error payloads arrive, preventing abrupt volume disappearance during upstream hiccups.
-MRMS rendering uses a higher client voxel request budget and slight footprint/height overlap to reduce decimation speckle and make precipitation fields visually continuous.
+MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), avoiding heuristic cube-size inflation.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes

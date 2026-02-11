@@ -9,8 +9,6 @@ const RETRY_INTERVAL_MS = 10_000;
 const MAX_SERVER_VOXELS = 20_000;
 const DEFAULT_MAX_RANGE_NM = 120;
 const MIN_VOXEL_HEIGHT_NM = 0.04;
-const VOXEL_FOOTPRINT_OVERLAP = 1.18;
-const VOXEL_HEIGHT_OVERLAP = 1.1;
 
 interface NexradVolumeOverlayProps {
   refLat: number;
@@ -29,7 +27,8 @@ type NexradVoxelTuple = [
   bottomFeet: number,
   topFeet: number,
   dbz: number,
-  footprintNm: number
+  footprintXNm: number,
+  footprintYNm?: number
 ];
 
 interface NexradRadarPayload {
@@ -62,7 +61,8 @@ interface RenderVoxel {
   yBase: number;
   z: number;
   heightBase: number;
-  footprintNm: number;
+  footprintXNm: number;
+  footprintYNm: number;
   dbz: number;
 }
 
@@ -155,7 +155,7 @@ function applyVoxelInstances(
   for (let index = 0; index < count; index += 1) {
     const voxel = voxels[index];
     meshDummy.position.set(voxel.x, voxel.yBase, voxel.z);
-    meshDummy.scale.set(voxel.footprintNm, voxel.heightBase, voxel.footprintNm);
+    meshDummy.scale.set(voxel.footprintXNm, voxel.heightBase, voxel.footprintYNm);
     meshDummy.updateMatrix();
     mesh.setMatrixAt(index, meshDummy.matrix);
 
@@ -325,7 +325,7 @@ export function NexradVolumeOverlay({
 
     const next: RenderVoxel[] = [];
     for (const voxel of payload.voxels) {
-      const [offsetXNm, offsetZNm, bottomFeet, topFeet, dbz, footprintNm] = voxel;
+      const [offsetXNm, offsetZNm, bottomFeet, topFeet, dbz, footprintXNm, footprintYNm] = voxel;
       if (dbz < minDbz) continue;
       const x = offsetXNm;
       const z = offsetZNm;
@@ -333,18 +333,32 @@ export function NexradVolumeOverlay({
         (bottomFeet + topFeet) / 2 -
         (applyEarthCurvatureCompensation ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM : 0);
       const yBase = correctedCenterFeet * ALTITUDE_SCALE;
-      const heightBase =
-        Math.max((topFeet - bottomFeet) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM) *
-        VOXEL_HEIGHT_OVERLAP;
+      const heightBase = Math.max((topFeet - bottomFeet) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM);
+      const footprintXNmSafe = Number.isFinite(footprintXNm) ? footprintXNm : NaN;
+      const footprintYNmSafe =
+        typeof footprintYNm === 'number' && Number.isFinite(footprintYNm)
+          ? footprintYNm
+          : footprintXNmSafe;
 
-      if (!Number.isFinite(x) || !Number.isFinite(yBase) || !Number.isFinite(z)) continue;
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(yBase) ||
+        !Number.isFinite(z) ||
+        !Number.isFinite(footprintXNmSafe) ||
+        !Number.isFinite(footprintYNmSafe) ||
+        footprintXNmSafe <= 0 ||
+        footprintYNmSafe <= 0
+      ) {
+        continue;
+      }
 
       next.push({
         x,
         yBase,
         z,
         heightBase,
-        footprintNm: footprintNm * VOXEL_FOOTPRINT_OVERLAP,
+        footprintXNm: footprintXNmSafe,
+        footprintYNm: footprintYNmSafe,
         dbz
       });
     }

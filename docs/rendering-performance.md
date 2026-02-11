@@ -15,7 +15,7 @@
 - MRMS proxy ingestion crops each decoded reflectivity level to the request AOI and stacks only available altitude slices before response decimation.
 - MRMS overlay polling keeps rendering the last successful payload when the API returns a transient error payload, avoiding abrupt disappear/reappear flicker.
 - MRMS voxels render through one `InstancedMesh` (shared box geometry/material) with per-instance transforms/colors, keeping draw calls bounded even during dense precipitation events.
-- MRMS rendering applies a small voxel overlap factor (footprint + vertical depth) to visually close decimation gaps without changing underlying reflectivity bins.
+- MRMS rendering uses dataset-derived voxel dimensions (X/Y footprint from grid spacing + per-level altitude thickness), so visual cell size tracks source resolution instead of a heuristic overlap factor.
 - In-scene `Html` labels (waypoints/holds/runways/turn constraints/callsigns) use a capped `zIndexRange` so app UI overlays (selectors/options/legend) stay visually on top.
 - Three.js resources allocated imperatively in hooks (`TubeGeometry`, airspace extrusions/edges, traffic marker buffers, plate textures) are explicitly disposed in effect cleanup paths to prevent GPU memory growth across scene updates.
 - Airspace extrusions are built in base altitude units and Y-scaled at the group level, avoiding expensive airspace geometry rebuilds when only `verticalScale` changes.
