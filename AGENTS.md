@@ -48,7 +48,7 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
-- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`), preferring `CONUS_0.5km` paths when available and falling back to `CONUS`, probes several recent base timestamps (newest-first), decodes GRIB2 template `5.41` PNG payloads with `fast-png`, and emits request-origin voxel mosaics.
+- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`) under `CONUS`, probes several recent base timestamps (newest-first), decodes GRIB2 template `5.41` PNG payloads with `fast-png`, and emits request-origin voxel mosaics.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI

@@ -39,7 +39,7 @@ External data feeds and their ingestion paths.
 
 ## MRMS 3D Volumetric Weather
 
-- Source: NOAA MRMS AWS open data bucket `s3://noaa-mrms-pds` (`MergedReflectivityQC_<height_km>` products), preferring `CONUS_0.5km` roots when available and falling back to `CONUS`.
+- Source: NOAA MRMS AWS open data bucket `s3://noaa-mrms-pds` (`CONUS/MergedReflectivityQC_<height_km>` products).
 - Fetched through same-origin proxy `app/api/weather/nexrad/route.ts` so browser clients avoid direct CORS/multi-origin fetch complexity.
 - Runtime parser fetches the latest MRMS timestamp, loads available reflectivity altitude slices (`00.50..19.00 km`), and decodes GRIB2 template `5.41` PNG payloads via `fast-png`.
 - Proxy converts decoded MRMS cells to request-origin local NM 3D voxels with per-level altitude bounds and dataset-derived X/Y footprint, then applies dBZ threshold, AOI range culling, and voxel-count decimation.
