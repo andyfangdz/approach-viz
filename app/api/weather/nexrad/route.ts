@@ -124,6 +124,8 @@ const CACHE_TTL_MS = 75_000;
 const MIN_DBZ_DEFAULT = 20;
 const MAX_RANGE_DEFAULT_NM = 120;
 const MAX_VOXELS_DEFAULT = 12_000;
+const MAX_BASE_KEY_CANDIDATES = 6;
+const LEVEL_FETCH_CONCURRENCY = 8;
 const FEET_PER_KM = 3280.84;
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -245,18 +247,33 @@ async function listKeysForPrefix(prefix: string): Promise<string[]> {
   return keys;
 }
 
-async function findLatestBaseLevelKey(now: Date): Promise<string | null> {
+function isMrmsGrib2Key(key: string): boolean {
+  return key.endsWith('.grib2.gz');
+}
+
+async function findRecentBaseLevelKeys(
+  now: Date,
+  limit = MAX_BASE_KEY_CANDIDATES
+): Promise<string[]> {
+  const candidates: string[] = [];
+
   for (let dayOffset = 0; dayOffset <= 1; dayOffset += 1) {
     const date = new Date(now.getTime() - dayOffset * 24 * 60 * 60_000);
     const day = formatDateCompactUTC(date);
     const prefix = `${MRMS_CONUS_PREFIX}/${MRMS_PRODUCT_PREFIX}_${MRMS_BASE_LEVEL_TAG}/${day}/`;
-    const keys = await listKeysForPrefix(prefix);
-    if (keys.length > 0) {
-      return keys[keys.length - 1];
+    const keys = (await listKeysForPrefix(prefix)).filter(isMrmsGrib2Key);
+    if (keys.length === 0) continue;
+
+    keys.sort();
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      candidates.push(keys[index]);
+      if (candidates.length >= limit) {
+        return candidates;
+      }
     }
   }
 
-  return null;
+  return candidates;
 }
 
 function extractDateFromKey(key: string): string | null {
@@ -396,6 +413,64 @@ function parseMrmsGrib(buffer: Buffer): ParsedMrmsField {
     bitmapIndicator,
     values: decoded.data
   };
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+
+  const normalizedConcurrency = clampInt(concurrency, 1, items.length);
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: normalizedConcurrency }, async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await mapper(items[currentIndex]);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+async function fetchMrmsLevelsForTimestamp(
+  datePart: string,
+  timestamp: string
+): Promise<ParsedMrmsLevel[]> {
+  const results = await mapWithConcurrency(
+    [...MRMS_LEVEL_TAGS],
+    LEVEL_FETCH_CONCURRENCY,
+    async (levelTag): Promise<ParsedMrmsLevel | null> => {
+      const key = buildLevelKey(levelTag, datePart, timestamp);
+      const levelKm = Number(levelTag);
+      if (!Number.isFinite(levelKm)) {
+        return null;
+      }
+
+      try {
+        const zipped = await fetchBuffer(`${MRMS_BUCKET_URL}/${key}`);
+        const gribBuffer = zlib.gunzipSync(zipped);
+        const parsed = parseMrmsGrib(gribBuffer);
+        return {
+          levelTag,
+          levelKm,
+          key,
+          parsed
+        };
+      } catch {
+        // Tolerate missing level slices so the 3D stack still renders from available altitudes.
+        return null;
+      }
+    }
+  );
+
+  return results.filter((level): level is ParsedMrmsLevel => level !== null);
 }
 
 function limitVoxels(voxels: NexradVoxelTuple[], maxVoxels: number): NexradVoxelTuple[] {
@@ -620,39 +695,29 @@ export async function GET(request: NextRequest) {
 
   try {
     const now = new Date();
-    const baseKey = await findLatestBaseLevelKey(now);
-    if (!baseKey) {
+    const baseKeys = await findRecentBaseLevelKeys(now);
+    if (baseKeys.length === 0) {
       throw new Error('No recent MRMS base-level reflectivity files were available.');
     }
 
-    const datePart = extractDateFromKey(baseKey);
-    const timestamp = extractTimestampFromKey(baseKey);
-    if (!datePart || !timestamp) {
-      throw new Error(`Unable to parse MRMS timestamp from key: ${baseKey}`);
-    }
+    let parsedLevels: ParsedMrmsLevel[] = [];
+    let selectedTimestamp: string | null = null;
+    for (const baseKey of baseKeys) {
+      const datePart = extractDateFromKey(baseKey);
+      const timestamp = extractTimestampFromKey(baseKey);
+      if (!datePart || !timestamp) continue;
 
-    const parsedLevels: ParsedMrmsLevel[] = [];
-    for (const levelTag of MRMS_LEVEL_TAGS) {
-      const key = buildLevelKey(levelTag, datePart, timestamp);
-      const levelKm = Number(levelTag);
-      if (!Number.isFinite(levelKm)) continue;
-
-      try {
-        const zipped = await fetchBuffer(`${MRMS_BUCKET_URL}/${key}`);
-        const gribBuffer = zlib.gunzipSync(zipped);
-        const parsed = parseMrmsGrib(gribBuffer);
-        parsedLevels.push({
-          levelTag,
-          levelKm,
-          key,
-          parsed
-        });
-      } catch {
-        // Tolerate missing level slices so the 3D stack still renders from available altitudes.
+      const candidateLevels = await fetchMrmsLevelsForTimestamp(datePart, timestamp);
+      if (candidateLevels.length === 0) {
+        continue;
       }
+
+      parsedLevels = candidateLevels;
+      selectedTimestamp = timestamp;
+      break;
     }
 
-    if (parsedLevels.length === 0) {
+    if (parsedLevels.length === 0 || !selectedTimestamp) {
       throw new Error('No MRMS 3D reflectivity levels were decoded for the latest scan time.');
     }
 
@@ -665,7 +730,7 @@ export async function GET(request: NextRequest) {
     );
     const voxels = limitVoxels(rawVoxels, maxVoxels);
     const voxelSampleRatio = rawVoxels.length > 0 ? voxels.length / rawVoxels.length : 0;
-    const scanTime = parseScanTimeFromTimestamp(timestamp) ?? now.toISOString();
+    const scanTime = parseScanTimeFromTimestamp(selectedTimestamp) ?? now.toISOString();
 
     const layerSummaries: NexradLayerSummary[] = parsedLevels.map((level) => ({
       product: `${MRMS_PRODUCT_PREFIX}_${level.levelTag}`,

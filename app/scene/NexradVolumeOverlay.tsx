@@ -6,9 +6,11 @@ const FEET_PER_NM = 6076.12;
 const ALTITUDE_SCALE = 1 / FEET_PER_NM;
 const POLL_INTERVAL_MS = 120_000;
 const RETRY_INTERVAL_MS = 10_000;
-const MAX_SERVER_VOXELS = 12_000;
+const MAX_SERVER_VOXELS = 20_000;
 const DEFAULT_MAX_RANGE_NM = 120;
 const MIN_VOXEL_HEIGHT_NM = 0.04;
+const VOXEL_FOOTPRINT_OVERLAP = 1.18;
+const VOXEL_HEIGHT_OVERLAP = 1.1;
 
 interface NexradVolumeOverlayProps {
   refLat: number;
@@ -284,7 +286,17 @@ export function NexradVolumeOverlay({
 
         const nextPayload = (await response.json()) as NexradVolumePayload;
         if (!cancelled) {
-          setPayload(nextPayload);
+          setPayload((previousPayload) => {
+            if (
+              nextPayload.error &&
+              previousPayload &&
+              Array.isArray(previousPayload.voxels) &&
+              previousPayload.voxels.length > 0
+            ) {
+              return previousPayload;
+            }
+            return nextPayload;
+          });
         }
       } catch (error) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -314,13 +326,16 @@ export function NexradVolumeOverlay({
     const next: RenderVoxel[] = [];
     for (const voxel of payload.voxels) {
       const [offsetXNm, offsetZNm, bottomFeet, topFeet, dbz, footprintNm] = voxel;
+      if (dbz < minDbz) continue;
       const x = offsetXNm;
       const z = offsetZNm;
       const correctedCenterFeet =
         (bottomFeet + topFeet) / 2 -
         (applyEarthCurvatureCompensation ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM : 0);
       const yBase = correctedCenterFeet * ALTITUDE_SCALE;
-      const heightBase = Math.max((topFeet - bottomFeet) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM);
+      const heightBase =
+        Math.max((topFeet - bottomFeet) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM) *
+        VOXEL_HEIGHT_OVERLAP;
 
       if (!Number.isFinite(x) || !Number.isFinite(yBase) || !Number.isFinite(z)) continue;
 
@@ -329,13 +344,13 @@ export function NexradVolumeOverlay({
         yBase,
         z,
         heightBase,
-        footprintNm,
+        footprintNm: footprintNm * VOXEL_FOOTPRINT_OVERLAP,
         dbz
       });
     }
 
     return next;
-  }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat]);
+  }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat, minDbz]);
 
   useEffect(() => {
     const meshes = [baseMeshRef.current, glowMeshRef.current];
