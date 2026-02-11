@@ -128,7 +128,11 @@ const MAX_VOXELS_DEFAULT = 12_000;
 const MAX_BASE_KEY_CANDIDATES = 6;
 const LEVEL_FETCH_CONCURRENCY = 8;
 const FEET_PER_KM = 3280.84;
+const METERS_TO_NM = 1 / 1852;
 const DEG_TO_RAD = Math.PI / 180;
+const WGS84_SEMI_MAJOR_METERS = 6378137;
+const WGS84_FLATTENING = 1 / 298.257223563;
+const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 
 const responseCache = new Map<string, CacheEntry>();
 
@@ -164,6 +168,23 @@ function shortestLonDeltaDegrees(lonDeg360: number, originLonDeg360: number): nu
   if (delta > 180) delta -= 360;
   if (delta < -180) delta += 360;
   return delta;
+}
+
+function projectionScalesNmPerDegree(latDeg: number): {
+  eastNmPerLonDeg: number;
+  northNmPerLatDeg: number;
+} {
+  const phi = latDeg * DEG_TO_RAD;
+  const sinPhi = Math.sin(phi);
+  const cosPhi = Math.cos(phi);
+  const denom = Math.sqrt(1 - WGS84_E2 * sinPhi * sinPhi);
+  const primeVerticalMeters = WGS84_SEMI_MAJOR_METERS / denom;
+  const meridionalMeters = (WGS84_SEMI_MAJOR_METERS * (1 - WGS84_E2)) / (denom * denom * denom);
+
+  return {
+    eastNmPerLonDeg: (Math.PI / 180) * primeVerticalMeters * cosPhi * METERS_TO_NM,
+    northNmPerLatDeg: (Math.PI / 180) * meridionalMeters * METERS_TO_NM
+  };
 }
 
 function formatDateCompactUTC(date: Date): string {
@@ -522,12 +543,13 @@ function buildVoxelsFromMrmsLevels(
   const levelVoxelCounts = new Map<string, number>();
 
   const originLon360 = toLon360(originLon);
-  const originLatRad = originLat * DEG_TO_RAD;
-  const cosLat = Math.max(0.05, Math.cos(originLatRad));
+  const { eastNmPerLonDeg, northNmPerLatDeg } = projectionScalesNmPerDegree(originLat);
+  const eastNmPerLonDegSafe = Math.max(Math.abs(eastNmPerLonDeg), 1e-6);
+  const northNmPerLatDegSafe = Math.max(Math.abs(northNmPerLatDeg), 1e-6);
   const maxRangeSquaredNm = maxRangeNm * maxRangeNm;
 
-  const latPaddingDeg = maxRangeNm / 60;
-  const lonPaddingDeg = maxRangeNm / (60 * cosLat);
+  const latPaddingDeg = maxRangeNm / northNmPerLatDegSafe;
+  const lonPaddingDeg = maxRangeNm / eastNmPerLonDegSafe;
   const latMin = originLat - latPaddingDeg;
   const latMax = originLat + latPaddingDeg;
   const lonMin360 = originLon360 - lonPaddingDeg;
@@ -585,7 +607,8 @@ function buildVoxelsFromMrmsLevels(
 
     const binaryScale = Math.pow(2, packing.binaryScaleFactor);
     const decimalScale = Math.pow(10, packing.decimalScaleFactor);
-    const footprintYNm = Math.abs(grid.djDeg) * 60;
+    const footprintXNmSafe = Math.max(0.05, Math.abs(grid.diDeg) * eastNmPerLonDegSafe);
+    const footprintYNmSafe = Math.max(0.05, Math.abs(grid.djDeg) * northNmPerLatDegSafe);
 
     let levelVoxelCount = 0;
 
@@ -594,10 +617,6 @@ function buildVoxelsFromMrmsLevels(
       if (!Number.isFinite(latDeg)) continue;
 
       const rowOffset = row * grid.nx;
-      const footprintXNm =
-        Math.abs(grid.diDeg) * 60 * Math.max(0.05, Math.cos(latDeg * DEG_TO_RAD));
-      const footprintYNmSafe = Math.max(0.05, footprintYNm);
-      const footprintXNmSafe = Math.max(0.05, footprintXNm);
 
       for (let col = colStart; col <= colEnd; col += 1) {
         const packedValue = values[rowOffset + col];
@@ -608,8 +627,8 @@ function buildVoxelsFromMrmsLevels(
 
         const lonDeg360 = toLon360(grid.lo1Deg360 + col * lonStepDeg);
         const deltaLonDeg = shortestLonDeltaDegrees(lonDeg360, originLon360);
-        const xNm = deltaLonDeg * 60 * cosLat;
-        const zNm = -(latDeg - originLat) * 60;
+        const xNm = deltaLonDeg * eastNmPerLonDegSafe;
+        const zNm = -(latDeg - originLat) * northNmPerLatDegSafe;
         if (xNm * xNm + zNm * zNm > maxRangeSquaredNm) continue;
 
         voxels.push([

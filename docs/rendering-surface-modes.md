@@ -18,7 +18,7 @@
 - MRMS voxels render without scene fog contribution so echoes keep their intended color/intensity.
 - MRMS overlay opacity is user-configurable in the options panel so voxel intensity can be tuned per-surface and time-of-day visibility needs.
 - MRMS opacity slider updates mutate both voxel-pass opacities in place (no voxel remount/rebuild), so adjusting transparency does not drop the rendered volume.
-- MRMS voxel dimensions are derived from decoded MRMS grid spacing (independent X/Y footprint) and per-level altitude bounds so rendered cell size matches source data resolution.
+- MRMS voxel dimensions are derived from decoded MRMS grid spacing (independent X/Y footprint) and per-level altitude bounds, using the same local projection scales as voxel center placement so rendered cell size matches source data resolution without row-dependent drift.
 
 ## Shared Vertical-Scale Behavior
 

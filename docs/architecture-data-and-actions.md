@@ -48,7 +48,7 @@
 - 3D precipitation weather is fetched through same-origin proxy `app/api/weather/nexrad/route.ts`.
 - The proxy targets NOAA MRMS AWS products under `CONUS` (`CONUS/MergedReflectivityQC_<height_km>`), probes several newest base-level `00.50` timestamps, and uses the first timestamp that yields decodable altitude slices across the stack (`00.50..19.00 km`).
 - Each slice is GRIB2 (`template 5.41`) with PNG-compressed field data; the route gunzips, parses GRIB sections, and decodes Section 7 PNG payloads with `fast-png`.
-- Decoded cells are transformed server-side into request-origin local NM voxel tuples with per-level altitude bounds plus per-cell X/Y footprint from the dataset grid spacing, then filtered by dBZ/range before response decimation.
+- Decoded cells are transformed server-side into request-origin local NM voxel tuples with per-level altitude bounds plus per-cell X/Y footprint from dataset grid spacing; both voxel centers and footprint dimensions use the same origin-local projection scales before dBZ/range filtering and response decimation.
 - Altitude-slice fetch/decode is concurrency-limited (worker pool) rather than strictly serial, reducing first-load latency and timeout risk.
 - Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
 
