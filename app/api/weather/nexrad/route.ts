@@ -12,7 +12,8 @@ type NexradVoxelTuple = [
   topFeet: number,
   dbz: number,
   footprintXNm: number,
-  footprintYNm: number
+  footprintYNm: number,
+  phaseCode: number
 ];
 
 interface NexradLayerSummary {
@@ -81,9 +82,17 @@ interface ParsedMrmsLevel {
   parsed: ParsedMrmsField;
 }
 
+interface ParsedMrmsAuxField {
+  product: string;
+  key: string;
+  parsed: ParsedMrmsField;
+}
+
 const MRMS_BUCKET_URL = 'https://noaa-mrms-pds.s3.amazonaws.com';
 const MRMS_CONUS_PREFIX = 'CONUS';
 const MRMS_PRODUCT_PREFIX = 'MergedReflectivityQC';
+const MRMS_PRECIP_FLAG_PRODUCT = 'PrecipFlag_00.00';
+const MRMS_MODEL_FREEZING_HEIGHT_PRODUCT = 'Model_0degC_Height_00.50';
 const MRMS_BASE_LEVEL_TAG = '00.50';
 const MRMS_LEVEL_TAGS = [
   '00.50',
@@ -127,12 +136,21 @@ const MAX_RANGE_DEFAULT_NM = 120;
 const MAX_VOXELS_DEFAULT = 12_000;
 const MAX_BASE_KEY_CANDIDATES = 6;
 const LEVEL_FETCH_CONCURRENCY = 8;
+const AUX_PRECIP_FLAG_LOOKBACK_STEPS = 15;
+const AUX_MODEL_LOOKBACK_STEPS = 24;
+const PRECIP_FLAG_STEP_SECONDS = 120;
+const MODEL_STEP_SECONDS = 3600;
 const FEET_PER_KM = 3280.84;
+const FEET_PER_METER = 3.28084;
 const METERS_TO_NM = 1 / 1852;
 const DEG_TO_RAD = Math.PI / 180;
 const WGS84_SEMI_MAJOR_METERS = 6378137;
 const WGS84_FLATTENING = 1 / 298.257223563;
 const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
+const PHASE_RAIN = 0;
+const PHASE_MIXED = 1;
+const PHASE_SNOW = 2;
+const FREEZING_LEVEL_TRANSITION_FEET = 1500;
 
 const responseCache = new Map<string, CacheEntry>();
 
@@ -315,8 +333,45 @@ function parseScanTimeFromTimestamp(timestamp: string): string | null {
   return `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
 }
 
+function parseTimestampUtc(timestamp: string): Date | null {
+  const match = timestamp.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second] = match;
+  const parsedDate = new Date(
+    Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second)
+    )
+  );
+  return Number.isFinite(parsedDate.getTime()) ? parsedDate : null;
+}
+
+function formatTimestampCompactUTC(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getUTCDate()}`.padStart(2, '0');
+  const hour = `${date.getUTCHours()}`.padStart(2, '0');
+  const minute = `${date.getUTCMinutes()}`.padStart(2, '0');
+  const second = `${date.getUTCSeconds()}`.padStart(2, '0');
+  return `${year}${month}${day}-${hour}${minute}${second}`;
+}
+
+function floorDateToStepSeconds(date: Date, stepSeconds: number): Date {
+  const stepMs = Math.max(1, stepSeconds) * 1000;
+  const flooredMs = Math.floor(date.getTime() / stepMs) * stepMs;
+  return new Date(flooredMs);
+}
+
 function buildLevelKey(levelTag: string, datePart: string, timestamp: string): string {
   return `${MRMS_CONUS_PREFIX}/${MRMS_PRODUCT_PREFIX}_${levelTag}/${datePart}/MRMS_${MRMS_PRODUCT_PREFIX}_${levelTag}_${timestamp}.grib2.gz`;
+}
+
+function buildAuxProductKey(product: string, datePart: string, timestamp: string): string {
+  return `${MRMS_CONUS_PREFIX}/${product}/${datePart}/MRMS_${product}_${timestamp}.grib2.gz`;
 }
 
 function readGribSignedScaledInt32(buffer: Buffer, offset: number, scale = 1_000_000): number {
@@ -495,6 +550,148 @@ async function fetchMrmsLevelsForTimestamp(
   return results.filter((level): level is ParsedMrmsLevel => level !== null);
 }
 
+async function fetchAuxFieldNearTimestamp(
+  product: string,
+  targetTimestamp: string,
+  stepSeconds: number,
+  maxSteps: number
+): Promise<ParsedMrmsAuxField | null> {
+  const targetDate = parseTimestampUtc(targetTimestamp);
+  if (!targetDate) return null;
+
+  const flooredStartDate = floorDateToStepSeconds(targetDate, stepSeconds);
+  const stepMs = Math.max(1, stepSeconds) * 1000;
+
+  for (let step = 0; step <= maxSteps; step += 1) {
+    const candidateDate = new Date(flooredStartDate.getTime() - step * stepMs);
+    const candidateDatePart = formatDateCompactUTC(candidateDate);
+    const candidateTimestamp = formatTimestampCompactUTC(candidateDate);
+    const key = buildAuxProductKey(product, candidateDatePart, candidateTimestamp);
+
+    try {
+      const zipped = await fetchBuffer(`${MRMS_BUCKET_URL}/${key}`);
+      const gribBuffer = zlib.gunzipSync(zipped);
+      return {
+        product,
+        key,
+        parsed: parseMrmsGrib(gribBuffer)
+      };
+    } catch {
+      // Try earlier steps for sparse-cadence products (e.g., hourly model fields).
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function decodePackedValue(packing: ParsedMrmsPacking, packedValue: number): number {
+  const binaryScale = Math.pow(2, packing.binaryScaleFactor);
+  const decimalScale = Math.pow(10, packing.decimalScaleFactor);
+  return (packing.referenceValue + packedValue * binaryScale) / decimalScale;
+}
+
+function createFieldSampler(
+  field: ParsedMrmsField | null
+): ((latDeg: number, lonDeg360: number) => number | null) | null {
+  if (!field) return null;
+
+  const { grid, packing, values } = field;
+  const latStepDeg =
+    (grid.scanningMode & 0x40) === 0 ? -Math.abs(grid.djDeg) : Math.abs(grid.djDeg);
+  const lonStepDeg =
+    (grid.scanningMode & 0x80) === 0 ? Math.abs(grid.diDeg) : -Math.abs(grid.diDeg);
+  if (
+    !Number.isFinite(latStepDeg) ||
+    !Number.isFinite(lonStepDeg) ||
+    latStepDeg === 0 ||
+    lonStepDeg === 0
+  ) {
+    return null;
+  }
+
+  return (latDeg: number, lonDeg360: number) => {
+    const row = Math.round((latDeg - grid.la1Deg) / latStepDeg);
+    const col = Math.round((lonDeg360 - grid.lo1Deg360) / lonStepDeg);
+    if (row < 0 || row >= grid.ny || col < 0 || col >= grid.nx) {
+      return null;
+    }
+
+    const packedValue = values[row * grid.nx + col];
+    if (!Number.isFinite(packedValue)) {
+      return null;
+    }
+
+    return decodePackedValue(packing, packedValue);
+  };
+}
+
+function phaseFromPrecipFlag(precipFlagValue: number | null): number | null {
+  if (!Number.isFinite(precipFlagValue)) return null;
+  const flagCode = Math.round(precipFlagValue as number);
+
+  if (flagCode === 3) return PHASE_SNOW;
+  if (flagCode === 7) return PHASE_MIXED;
+  if (flagCode === 1 || flagCode === 6 || flagCode === 10 || flagCode === 91 || flagCode === 96) {
+    return PHASE_RAIN;
+  }
+
+  // Unknown / no precip / no coverage -> let other signals decide.
+  return null;
+}
+
+function phaseFromFreezingLevel(
+  voxelMidFeet: number,
+  freezingLevelMetersMsl: number | null
+): number | null {
+  if (!Number.isFinite(voxelMidFeet) || !Number.isFinite(freezingLevelMetersMsl)) return null;
+  const freezingLevelFeet = (freezingLevelMetersMsl as number) * FEET_PER_METER;
+  if (!Number.isFinite(freezingLevelFeet) || freezingLevelFeet <= 0) return null;
+
+  if (voxelMidFeet >= freezingLevelFeet + FREEZING_LEVEL_TRANSITION_FEET) {
+    return PHASE_SNOW;
+  }
+  if (voxelMidFeet <= freezingLevelFeet - FREEZING_LEVEL_TRANSITION_FEET) {
+    return PHASE_RAIN;
+  }
+  return PHASE_MIXED;
+}
+
+function resolveVoxelPhase(
+  latDeg: number,
+  lonDeg360: number,
+  voxelMidFeet: number,
+  precipFlagSampler: ((latDeg: number, lonDeg360: number) => number | null) | null,
+  freezingLevelSampler: ((latDeg: number, lonDeg360: number) => number | null) | null
+): number {
+  const phaseFromFlag = precipFlagSampler
+    ? phaseFromPrecipFlag(precipFlagSampler(latDeg, lonDeg360))
+    : null;
+  const phaseFromFreezing = freezingLevelSampler
+    ? phaseFromFreezingLevel(voxelMidFeet, freezingLevelSampler(latDeg, lonDeg360))
+    : null;
+
+  if (phaseFromFlag === null && phaseFromFreezing === null) {
+    return PHASE_RAIN;
+  }
+  if (phaseFromFlag === null) {
+    return phaseFromFreezing as number;
+  }
+  if (phaseFromFreezing === null) {
+    return phaseFromFlag;
+  }
+  if (phaseFromFlag === phaseFromFreezing) {
+    return phaseFromFlag;
+  }
+  if (phaseFromFlag === PHASE_MIXED || phaseFromFreezing === PHASE_MIXED) {
+    return PHASE_MIXED;
+  }
+
+  // When the near-surface classification conflicts with 3D freezing level, prioritize
+  // the freezing-level-derived phase for volumetric depiction.
+  return phaseFromFreezing;
+}
+
 function limitVoxels(voxels: NexradVoxelTuple[], maxVoxels: number): NexradVoxelTuple[] {
   if (voxels.length <= maxVoxels) return voxels;
 
@@ -536,11 +733,17 @@ function buildVoxelsFromMrmsLevels(
   originLat: number,
   originLon: number,
   minDbz: number,
-  maxRangeNm: number
+  maxRangeNm: number,
+  options?: {
+    precipFlagField?: ParsedMrmsField | null;
+    freezingLevelField?: ParsedMrmsField | null;
+  }
 ): { voxels: NexradVoxelTuple[]; levelVoxelCounts: Map<string, number> } {
   const sortedLevels = [...levels].sort((left, right) => left.levelKm - right.levelKm);
   const voxels: NexradVoxelTuple[] = [];
   const levelVoxelCounts = new Map<string, number>();
+  const precipFlagSampler = createFieldSampler(options?.precipFlagField ?? null);
+  const freezingLevelSampler = createFieldSampler(options?.freezingLevelField ?? null);
 
   const originLon360 = toLon360(originLon);
   const { eastNmPerLonDeg, northNmPerLatDeg } = projectionScalesNmPerDegree(originLat);
@@ -605,8 +808,6 @@ function buildVoxelsFromMrmsLevels(
       );
     }
 
-    const binaryScale = Math.pow(2, packing.binaryScaleFactor);
-    const decimalScale = Math.pow(10, packing.decimalScaleFactor);
     const footprintXNmSafe = Math.max(0.05, Math.abs(grid.diDeg) * eastNmPerLonDegSafe);
     const footprintYNmSafe = Math.max(0.05, Math.abs(grid.djDeg) * northNmPerLatDegSafe);
 
@@ -622,7 +823,7 @@ function buildVoxelsFromMrmsLevels(
         const packedValue = values[rowOffset + col];
         if (!Number.isFinite(packedValue)) continue;
 
-        const dbz = (packing.referenceValue + packedValue * binaryScale) / decimalScale;
+        const dbz = decodePackedValue(packing, packedValue);
         if (!Number.isFinite(dbz) || dbz < minDbz) continue;
 
         const lonDeg360 = toLon360(grid.lo1Deg360 + col * lonStepDeg);
@@ -631,6 +832,15 @@ function buildVoxelsFromMrmsLevels(
         const zNm = -(latDeg - originLat) * northNmPerLatDegSafe;
         if (xNm * xNm + zNm * zNm > maxRangeSquaredNm) continue;
 
+        const voxelMidFeet = (bottomFeet + topFeet) / 2;
+        const phaseCode = resolveVoxelPhase(
+          latDeg,
+          lonDeg360,
+          voxelMidFeet,
+          precipFlagSampler,
+          freezingLevelSampler
+        );
+
         voxels.push([
           round3(xNm),
           round3(zNm),
@@ -638,7 +848,8 @@ function buildVoxelsFromMrmsLevels(
           Math.round(topFeet),
           round1(dbz),
           round3(footprintXNmSafe),
-          round3(footprintYNmSafe)
+          round3(footprintYNmSafe),
+          phaseCode
         ]);
         levelVoxelCount += 1;
       }
@@ -743,12 +954,31 @@ export async function GET(request: NextRequest) {
       throw new Error('No MRMS 3D reflectivity levels were decoded for the latest scan time.');
     }
 
+    const [precipFlagField, freezingLevelField] = await Promise.all([
+      fetchAuxFieldNearTimestamp(
+        MRMS_PRECIP_FLAG_PRODUCT,
+        selectedTimestamp,
+        PRECIP_FLAG_STEP_SECONDS,
+        AUX_PRECIP_FLAG_LOOKBACK_STEPS
+      ),
+      fetchAuxFieldNearTimestamp(
+        MRMS_MODEL_FREEZING_HEIGHT_PRODUCT,
+        selectedTimestamp,
+        MODEL_STEP_SECONDS,
+        AUX_MODEL_LOOKBACK_STEPS
+      )
+    ]);
+
     const { voxels: rawVoxels, levelVoxelCounts } = buildVoxelsFromMrmsLevels(
       parsedLevels,
       lat,
       lon,
       minDbz,
-      maxRangeNm
+      maxRangeNm,
+      {
+        precipFlagField: precipFlagField?.parsed ?? null,
+        freezingLevelField: freezingLevelField?.parsed ?? null
+      }
     );
     const voxels = limitVoxels(rawVoxels, maxVoxels);
     const voxelSampleRatio = rawVoxels.length > 0 ? voxels.length / rawVoxels.length : 0;

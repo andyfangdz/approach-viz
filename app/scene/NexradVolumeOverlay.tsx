@@ -28,7 +28,8 @@ type NexradVoxelTuple = [
   topFeet: number,
   dbz: number,
   footprintXNm: number,
-  footprintYNm?: number
+  footprintYNm?: number,
+  phaseCode?: number
 ];
 
 interface NexradRadarPayload {
@@ -64,6 +65,7 @@ interface RenderVoxel {
   footprintXNm: number;
   footprintYNm: number;
   dbz: number;
+  phaseCode: number;
 }
 
 interface DbzColorBand {
@@ -73,6 +75,9 @@ interface DbzColorBand {
 
 const NEXRAD_COLOR_GAIN = 1.28;
 const MIN_VISIBLE_LUMINANCE = 58;
+const PHASE_RAIN = 0;
+const PHASE_MIXED = 1;
+const PHASE_SNOW = 2;
 
 // Discrete reflectivity bands sampled from the provided legend's rain bar.
 const RAIN_DBZ_COLOR_BANDS: DbzColorBand[] = [
@@ -95,6 +100,42 @@ const RAIN_DBZ_COLOR_BANDS: DbzColorBand[] = [
   { minDbz: 15, hex: 0x2ed643 },
   { minDbz: 10, hex: 0x39eb53 },
   { minDbz: 5, hex: 0x49ff64 }
+];
+
+const MIXED_DBZ_COLOR_BANDS: DbzColorBand[] = [
+  { minDbz: 75, hex: 0x6b006b },
+  { minDbz: 70, hex: 0x7d0072 },
+  { minDbz: 65, hex: 0x8f0079 },
+  { minDbz: 60, hex: 0xa10080 },
+  { minDbz: 55, hex: 0xb30086 },
+  { minDbz: 50, hex: 0xc30d8d },
+  { minDbz: 45, hex: 0xc92096 },
+  { minDbz: 40, hex: 0xd0339f },
+  { minDbz: 35, hex: 0xd746a7 },
+  { minDbz: 30, hex: 0xdd59b0 },
+  { minDbz: 25, hex: 0xe46db9 },
+  { minDbz: 20, hex: 0xea80c2 },
+  { minDbz: 15, hex: 0xf093cb },
+  { minDbz: 10, hex: 0xf5a6d3 },
+  { minDbz: 5, hex: 0xfab8dc }
+];
+
+const SNOW_DBZ_COLOR_BANDS: DbzColorBand[] = [
+  { minDbz: 75, hex: 0x031763 },
+  { minDbz: 70, hex: 0x041f82 },
+  { minDbz: 65, hex: 0x062aa3 },
+  { minDbz: 60, hex: 0x0837c4 },
+  { minDbz: 55, hex: 0x0a46e6 },
+  { minDbz: 50, hex: 0x0f5aff },
+  { minDbz: 45, hex: 0x146eff },
+  { minDbz: 40, hex: 0x1a82ff },
+  { minDbz: 35, hex: 0x2196ff },
+  { minDbz: 30, hex: 0x27a7ff },
+  { minDbz: 25, hex: 0x31b8ff },
+  { minDbz: 20, hex: 0x43c4ff },
+  { minDbz: 15, hex: 0x56d0ff },
+  { minDbz: 10, hex: 0x69dcff },
+  { minDbz: 5, hex: 0x7de8ff }
 ];
 
 function dbzToBandHex(dbz: number, bands: DbzColorBand[]): number {
@@ -139,9 +180,14 @@ function applyVisibilityGain(hex: number): number {
   return (liftedRed << 16) | (liftedGreen << 8) | liftedBlue;
 }
 
-function dbzToHex(dbz: number): number {
-  const rainHex = dbzToBandHex(dbz, RAIN_DBZ_COLOR_BANDS);
-  return applyVisibilityGain(rainHex);
+function dbzToHex(dbz: number, phaseCode: number): number {
+  const bands =
+    phaseCode === PHASE_SNOW
+      ? SNOW_DBZ_COLOR_BANDS
+      : phaseCode === PHASE_MIXED
+        ? MIXED_DBZ_COLOR_BANDS
+        : RAIN_DBZ_COLOR_BANDS;
+  return applyVisibilityGain(dbzToBandHex(dbz, bands));
 }
 
 function applyVoxelInstances(
@@ -159,7 +205,7 @@ function applyVoxelInstances(
     meshDummy.updateMatrix();
     mesh.setMatrixAt(index, meshDummy.matrix);
 
-    colorScratch.setHex(dbzToHex(voxel.dbz));
+    colorScratch.setHex(dbzToHex(voxel.dbz, voxel.phaseCode));
     mesh.setColorAt(index, colorScratch);
   }
 
@@ -325,7 +371,16 @@ export function NexradVolumeOverlay({
 
     const next: RenderVoxel[] = [];
     for (const voxel of payload.voxels) {
-      const [offsetXNm, offsetZNm, bottomFeet, topFeet, dbz, footprintXNm, footprintYNm] = voxel;
+      const [
+        offsetXNm,
+        offsetZNm,
+        bottomFeet,
+        topFeet,
+        dbz,
+        footprintXNm,
+        footprintYNm,
+        phaseCode
+      ] = voxel;
       if (dbz < minDbz) continue;
       const x = offsetXNm;
       const z = offsetZNm;
@@ -359,7 +414,11 @@ export function NexradVolumeOverlay({
         heightBase,
         footprintXNm: footprintXNmSafe,
         footprintYNm: footprintYNmSafe,
-        dbz
+        dbz,
+        phaseCode:
+          typeof phaseCode === 'number' && Number.isFinite(phaseCode)
+            ? Math.round(phaseCode)
+            : PHASE_RAIN
       });
     }
 

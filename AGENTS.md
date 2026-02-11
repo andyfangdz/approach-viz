@@ -48,7 +48,7 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
-- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`) under `CONUS`, probes several recent base timestamps (newest-first), decodes GRIB2 template `5.41` PNG payloads with `fast-png`, and emits request-origin voxel mosaics.
+- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`) under `CONUS`, plus phase-assist fields (`PrecipFlag_00.00`, `Model_0degC_Height_00.50`), probes recent base timestamps (newest-first), decodes GRIB2 template `5.41` PNG payloads with `fast-png`, and emits request-origin voxel mosaics with per-voxel phase codes.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI
@@ -57,7 +57,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 ### Rendering
 
 3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional MRMS volumetric precipitation weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
-MRMS volume intensity uses a discrete aviation reflectivity rain ramp (no synthetic rain/snow phase inference), with clip-safe color gain (preserves hue, avoids distant whitening), rendered as a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place).
+MRMS volume intensity uses phase-aware reflectivity coloring (rain/mixed/snow): `PrecipFlag_00.00` and `Model_0degC_Height_00.50` are blended server-side into voxel phase codes, then rendered with phase-specific aviation palettes and clip-safe color gain (preserves hue, avoids distant whitening) in a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place).
 MRMS client polling keeps the last successful voxel payload when transient API error payloads arrive, preventing abrupt volume disappearance during upstream hiccups.
 MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), using the same origin-local projection scales for both voxel placement and footprint sizing to keep cell spacing contiguous.
 
