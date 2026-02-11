@@ -135,7 +135,6 @@ const MIN_DBZ_DEFAULT = 20;
 const MAX_RANGE_DEFAULT_NM = 120;
 const MAX_VOXELS_DEFAULT = 12_000;
 const MAX_BASE_KEY_CANDIDATES = 6;
-const LEVEL_FETCH_CONCURRENCY = 8;
 const AUX_PRECIP_FLAG_LOOKBACK_STEPS = 15;
 const AUX_MODEL_LOOKBACK_STEPS = 24;
 const PRECIP_FLAG_STEP_SECONDS = 120;
@@ -228,17 +227,27 @@ function parseTagValue(xml: string, tagName: string): string | null {
   return values.length > 0 ? values[0] : null;
 }
 
-async function fetchWithTimeout(url: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+  init?: RequestInit
+): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = new Headers({
+    accept: '*/*',
+    'user-agent': 'approach-viz/1.0'
+  });
+  if (init?.headers) {
+    const overrideHeaders = new Headers(init.headers);
+    overrideHeaders.forEach((value, key) => headers.set(key, value));
+  }
   try {
     return await fetch(url, {
       cache: 'no-store',
       signal: controller.signal,
-      headers: {
-        accept: '*/*',
-        'user-agent': 'approach-viz/1.0'
-      }
+      ...init,
+      headers
     });
   } finally {
     clearTimeout(timeoutId);
@@ -260,6 +269,31 @@ async function fetchBuffer(url: string): Promise<Buffer> {
   }
   const bytes = await response.arrayBuffer();
   return Buffer.from(bytes);
+}
+
+async function objectExists(url: string): Promise<boolean> {
+  try {
+    const headResponse = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS, {
+      method: 'HEAD'
+    });
+    if (headResponse.ok) return true;
+    if (headResponse.status !== 403 && headResponse.status !== 405) {
+      return false;
+    }
+  } catch {
+    // Fallback to ranged GET below.
+  }
+
+  try {
+    const rangeResponse = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS, {
+      headers: {
+        range: 'bytes=0-0'
+      }
+    });
+    return rangeResponse.ok || rangeResponse.status === 206;
+  } catch {
+    return false;
+  }
 }
 
 async function listKeysForPrefix(prefix: string): Promise<string[]> {
@@ -492,62 +526,41 @@ function parseMrmsGrib(buffer: Buffer): ParsedMrmsField {
   };
 }
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T) => Promise<R>
-): Promise<R[]> {
-  if (items.length === 0) return [];
-
-  const normalizedConcurrency = clampInt(concurrency, 1, items.length);
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-
-  const workers = Array.from({ length: normalizedConcurrency }, async () => {
-    while (true) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      if (currentIndex >= items.length) return;
-      results[currentIndex] = await mapper(items[currentIndex]);
-    }
+async function hasCompleteMrmsLevelSetForTimestamp(
+  datePart: string,
+  timestamp: string
+): Promise<boolean> {
+  const checks = MRMS_LEVEL_TAGS.map((levelTag) => {
+    const key = buildLevelKey(levelTag, datePart, timestamp);
+    return objectExists(`${MRMS_BUCKET_URL}/${key}`);
   });
-
-  await Promise.all(workers);
-  return results;
+  const results = await Promise.all(checks);
+  return results.every(Boolean);
 }
 
 async function fetchMrmsLevelsForTimestamp(
   datePart: string,
   timestamp: string
 ): Promise<ParsedMrmsLevel[]> {
-  const results = await mapWithConcurrency(
-    [...MRMS_LEVEL_TAGS],
-    LEVEL_FETCH_CONCURRENCY,
-    async (levelTag): Promise<ParsedMrmsLevel | null> => {
+  return await Promise.all(
+    MRMS_LEVEL_TAGS.map(async (levelTag): Promise<ParsedMrmsLevel> => {
       const key = buildLevelKey(levelTag, datePart, timestamp);
       const levelKm = Number(levelTag);
       if (!Number.isFinite(levelKm)) {
-        return null;
+        throw new Error(`Invalid MRMS level tag (${levelTag}).`);
       }
 
-      try {
-        const zipped = await fetchBuffer(`${MRMS_BUCKET_URL}/${key}`);
-        const gribBuffer = zlib.gunzipSync(zipped);
-        const parsed = parseMrmsGrib(gribBuffer);
-        return {
-          levelTag,
-          levelKm,
-          key,
-          parsed
-        };
-      } catch {
-        // Tolerate missing level slices so the 3D stack still renders from available altitudes.
-        return null;
-      }
-    }
+      const zipped = await fetchBuffer(`${MRMS_BUCKET_URL}/${key}`);
+      const gribBuffer = zlib.gunzipSync(zipped);
+      const parsed = parseMrmsGrib(gribBuffer);
+      return {
+        levelTag,
+        levelKm,
+        key,
+        parsed
+      };
+    })
   );
-
-  return results.filter((level): level is ParsedMrmsLevel => level !== null);
 }
 
 async function fetchAuxFieldNearTimestamp(
@@ -931,18 +944,26 @@ export async function GET(request: NextRequest) {
       const timestamp = extractTimestampFromKey(baseKey);
       if (!datePart || !timestamp) continue;
 
-      const candidateLevels = await fetchMrmsLevelsForTimestamp(datePart, timestamp);
-      if (candidateLevels.length === 0) {
+      const hasCompleteLevelSet = await hasCompleteMrmsLevelSetForTimestamp(datePart, timestamp);
+      if (!hasCompleteLevelSet) {
         continue;
       }
 
-      parsedLevels = candidateLevels;
-      selectedTimestamp = timestamp;
-      break;
+      try {
+        parsedLevels = await fetchMrmsLevelsForTimestamp(datePart, timestamp);
+        selectedTimestamp = timestamp;
+        break;
+      } catch {
+        // If fetching/decoding fails for this scan, try the next-most-recent
+        // timestamp that also has a complete level key set.
+        continue;
+      }
     }
 
     if (parsedLevels.length === 0 || !selectedTimestamp) {
-      throw new Error('No MRMS 3D reflectivity levels were decoded for the latest scan time.');
+      throw new Error(
+        'No recent MRMS scan had complete level availability across all reflectivity slices.'
+      );
     }
 
     const [precipFlagField, freezingLevelField] = await Promise.all([

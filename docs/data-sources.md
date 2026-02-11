@@ -41,7 +41,7 @@ External data feeds and their ingestion paths.
 
 - Source: NOAA MRMS AWS open data bucket `s3://noaa-mrms-pds` (`CONUS/MergedReflectivityQC_<height_km>` products).
 - Fetched through same-origin proxy `app/api/weather/nexrad/route.ts` so browser clients avoid direct CORS/multi-origin fetch complexity.
-- Runtime parser fetches the latest MRMS timestamp, loads available reflectivity altitude slices (`00.50..19.00 km`), and decodes GRIB2 template `5.41` PNG payloads via `fast-png`.
+- Runtime parser scans recent MRMS timestamps, selects the newest timestamp with a complete reflectivity slice set (`00.50..19.00 km`), and decodes GRIB2 template `5.41` PNG payloads via `fast-png`.
 - Phase-assist products are fetched from the same bucket: `CONUS/PrecipFlag_00.00` and `CONUS/Model_0degC_Height_00.50` (nearest available timestamps at their native cadences).
 - Proxy converts decoded MRMS cells to request-origin local NM 3D voxels with per-level altitude bounds, dataset-derived X/Y footprint, and per-voxel phase code (rain/mixed/snow), with `PrecipFlag` precedence and freezing-level fallback only when precip-flag data is unavailable, then applies dBZ threshold, AOI range culling, and voxel-count decimation.
 - Route applies short in-memory cache and stale-cache fallback on upstream errors so overlay polling remains resilient.
