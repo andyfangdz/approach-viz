@@ -138,19 +138,19 @@ export function OptionsPanel({
 
       <label className="options-toggle-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">NEXRAD L3 Volume</span>
+          <span className="options-toggle-title">MRMS 3D Precip</span>
         </span>
         <input
           type="checkbox"
           checked={nexradVolumeEnabled}
           onChange={(event) => onNexradVolumeEnabledChange(event.target.checked)}
-          aria-label="Enable NEXRAD level 3 volumetric overlay"
+          aria-label="Enable MRMS 3D precipitation volume overlay"
         />
       </label>
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">NEXRAD Threshold ({nexradMinDbz} dBZ)</span>
+          <span className="options-toggle-title">MRMS Threshold ({nexradMinDbz} dBZ)</span>
         </span>
         <input
           type="range"
@@ -160,14 +160,14 @@ export function OptionsPanel({
           value={nexradMinDbz}
           disabled={!nexradVolumeEnabled}
           onChange={(event) => onNexradMinDbzChange(Number(event.target.value))}
-          aria-label="NEXRAD reflectivity threshold dBZ"
+          aria-label="MRMS reflectivity threshold dBZ"
         />
       </label>
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
           <span className="options-toggle-title">
-            NEXRAD Opacity ({Math.round(nexradOpacity * 100)}%)
+            MRMS Opacity ({Math.round(nexradOpacity * 100)}%)
           </span>
         </span>
         <input
@@ -178,7 +178,7 @@ export function OptionsPanel({
           value={nexradOpacity}
           disabled={!nexradVolumeEnabled}
           onChange={(event) => onNexradOpacityChange(Number(event.target.value))}
-          aria-label="NEXRAD volume opacity"
+          aria-label="MRMS volume opacity"
         />
       </label>
 

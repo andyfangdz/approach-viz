@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + `nexrad-level-3-data`
+- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + `fast-png`
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -42,14 +42,13 @@ Each area below has a one-sentence summary; full details live in the linked `doc
 
 ### Data Sources
 
-CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and runtime NEXRAD Level 3 weather are ingested/proxied from FAA and third-party feeds into SQLite (build-time) and same-origin API routes (runtime), including multi-radar NEXRAD mosaic assembly at runtime. → [`docs/data-sources.md`](docs/data-sources.md)
+CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and runtime MRMS 3D reflectivity weather are ingested/proxied from FAA and third-party feeds into SQLite (build-time) and same-origin API routes (runtime). → [`docs/data-sources.md`](docs/data-sources.md)
 
 ### Architecture
 
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
-- Build/runtime note: `nexrad-level-3-data` is configured as a server external package in `next.config.ts` because the parser uses dynamic `require()` patterns that Turbopack cannot statically bundle.
-- Runtime weather note: `app/api/weather/nexrad/route.ts` selects multiple nearby NEXRAD sites, parses super-res reflectivity scans per site, and returns a merged request-origin voxel mosaic.
+- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`), decodes GRIB2 template `5.41` PNG payloads with `fast-png`, and emits request-origin voxel mosaics.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI
@@ -57,8 +56,8 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 
 ### Rendering
 
-3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional NEXRAD volumetric weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
-NEXRAD volume intensity uses a discrete aviation reflectivity rain ramp (no synthetic rain/snow phase inference), with clip-safe color gain (preserves hue, avoids distant whitening), rendered as a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place) from a server-side multi-radar mosaic.
+3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional MRMS volumetric precipitation weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
+MRMS volume intensity uses a discrete aviation reflectivity rain ramp (no synthetic rain/snow phase inference), with clip-safe color gain (preserves hue, avoids distant whitening), rendered as a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place).
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes

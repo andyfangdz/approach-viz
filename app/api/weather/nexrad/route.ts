@@ -1,59 +1,9 @@
-import { createRequire } from 'node:module';
+import zlib from 'node:zlib';
 import { NextRequest, NextResponse } from 'next/server';
+import { decode as decodePng } from 'fast-png';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const require = createRequire(import.meta.url);
-
-type NexradParser = (file: Buffer, options?: { logger?: unknown }) => NexradLevel3File;
-
-interface NexradProductDefinition {
-  code: number;
-  abbreviation: string[];
-  description: string;
-  productDescription?: {
-    halfwords30_53?: (data: Buffer) => Record<string, unknown>;
-  };
-}
-
-interface NexradProductsModule {
-  products: Record<string, NexradProductDefinition>;
-  productAbbreviations: string[];
-}
-
-interface NexradRadial {
-  startAngle: number;
-  angleDelta: number;
-  bins: Array<number | null>;
-}
-
-interface NexradRadialPacket {
-  numberBins: number;
-  radials: NexradRadial[];
-}
-
-interface NexradProductDescription {
-  elevationAngle?: number;
-  height?: number;
-}
-
-interface NexradLevel3File {
-  radialPackets?: unknown;
-  productDescription?: NexradProductDescription;
-}
-
-interface RadarSite {
-  id: string;
-  name: string;
-  lat: number;
-  lon: number;
-  type: string;
-}
-
-interface NearbyRadarResponse {
-  radars?: RadarSite[];
-}
 
 type NexradVoxelTuple = [
   xNm: number,
@@ -90,81 +40,94 @@ interface NexradVolumePayload {
   error?: string;
 }
 
-interface SelectedRadar {
-  id: string;
-  name: string;
-  lat: number;
-  lon: number;
-  distanceToOriginNm: number;
-  offsetXNm: number;
-  offsetZNm: number;
-}
-
-interface ParsedLayer {
-  radar: SelectedRadar;
-  product: string;
-  elevationAngleDeg: number;
-  radarElevationFeet: number;
-  key: string;
-  scanTime: string;
-  radials: NexradRadial[];
-  numberBins: number;
-}
-
 interface CacheEntry {
   expiresAtMs: number;
   payload: NexradVolumePayload;
 }
 
-const parseLevel3 = require('nexrad-level-3-data') as NexradParser;
-const productsModule = require('nexrad-level-3-data/src/products') as NexradProductsModule;
+interface ParsedMrmsGrid {
+  nx: number;
+  ny: number;
+  la1Deg: number;
+  lo1Deg360: number;
+  la2Deg: number;
+  lo2Deg360: number;
+  diDeg: number;
+  djDeg: number;
+  scanningMode: number;
+}
 
-const IEM_RADAR_URL = 'https://mesonet.agron.iastate.edu/json/radar.py';
-const NEXRAD_BUCKET_URL = 'https://unidata-nexrad-level3.s3.amazonaws.com';
-const SUPER_RES_PRODUCTS = ['N0B', 'N1B', 'N2B', 'N3B'] as const;
+interface ParsedMrmsPacking {
+  dataPointCount: number;
+  templateNumber: number;
+  referenceValue: number;
+  binaryScaleFactor: number;
+  decimalScaleFactor: number;
+  bitsPerValue: number;
+}
+
+interface ParsedMrmsField {
+  grid: ParsedMrmsGrid;
+  packing: ParsedMrmsPacking;
+  bitmapIndicator: number;
+  values: Uint8Array | Uint8ClampedArray | Uint16Array | Uint32Array;
+}
+
+interface ParsedMrmsLevel {
+  levelTag: string;
+  levelKm: number;
+  key: string;
+  parsed: ParsedMrmsField;
+}
+
+const MRMS_BUCKET_URL = 'https://noaa-mrms-pds.s3.amazonaws.com';
+const MRMS_CONUS_PREFIX = 'CONUS';
+const MRMS_PRODUCT_PREFIX = 'MergedReflectivityQC';
+const MRMS_BASE_LEVEL_TAG = '00.50';
+const MRMS_LEVEL_TAGS = [
+  '00.50',
+  '00.75',
+  '01.00',
+  '01.25',
+  '01.50',
+  '01.75',
+  '02.00',
+  '02.25',
+  '02.50',
+  '02.75',
+  '03.00',
+  '03.50',
+  '04.00',
+  '04.50',
+  '05.00',
+  '05.50',
+  '06.00',
+  '06.50',
+  '07.00',
+  '07.50',
+  '08.00',
+  '08.50',
+  '09.00',
+  '10.00',
+  '11.00',
+  '12.00',
+  '13.00',
+  '14.00',
+  '15.00',
+  '16.00',
+  '17.00',
+  '18.00',
+  '19.00'
+] as const;
 const REQUEST_TIMEOUT_MS = 7000;
 const CACHE_TTL_MS = 75_000;
-const FEET_PER_NM = 6076.12;
-const EARTH_RADIUS_NM = 3440.065;
-const EARTH_REFRACTION_FACTOR = 4 / 3;
-const DEG_TO_RAD = Math.PI / 180;
 const MIN_DBZ_DEFAULT = 20;
 const MAX_RANGE_DEFAULT_NM = 120;
 const MAX_VOXELS_DEFAULT = 12_000;
-const TARGET_AZIMUTH_STEP_DEG = 1.5;
-const TARGET_RANGE_STEP_NM = 1.2;
-const MIN_VOXEL_THICKNESS_FEET = 500;
-const DEFAULT_SWEEP_HALF_WIDTH_DEG = 0.45;
-const MAX_MOSAIC_RADARS = 5;
-const MAX_MOSAIC_RADAR_DISTANCE_NM = 260;
-const MOSAIC_RADAR_RANGE_BUFFER_NM = 100;
-const RADAR_SWEEP_RANGE_PADDING_NM = 12;
-const MAX_RADAR_SWEEP_RANGE_NM = 248;
-const VOXEL_MERGE_XZ_STEP_NM = 0.7;
-const VOXEL_MERGE_ALTITUDE_STEP_FEET = 1200;
+const FEET_PER_KM = 3280.84;
+const DEG_TO_RAD = Math.PI / 180;
 
 const responseCache = new Map<string, CacheEntry>();
-
-function ensureSuperResolutionProductSupport() {
-  if (productsModule.products['153']) return;
-  const baseReflectivityProduct = productsModule.products['94'];
-  if (!baseReflectivityProduct) {
-    throw new Error('NEXRAD parser product map missing product 94 support.');
-  }
-
-  productsModule.products['153'] = {
-    ...baseReflectivityProduct,
-    code: 153,
-    abbreviation: [...SUPER_RES_PRODUCTS],
-    description: 'Digital Base Reflectivity (Super Resolution)'
-  };
-
-  for (const abbreviation of SUPER_RES_PRODUCTS) {
-    if (!productsModule.productAbbreviations.includes(abbreviation)) {
-      productsModule.productAbbreviations.push(abbreviation);
-    }
-  }
-}
 
 function toFiniteNumber(value: string | null): number | null {
   if (!value) return null;
@@ -176,12 +139,35 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function clampInt(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
 function round3(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function toLon360(lonDeg: number): number {
+  const normalized = lonDeg % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+}
+
+function shortestLonDeltaDegrees(lonDeg360: number, originLonDeg360: number): number {
+  let delta = lonDeg360 - originLonDeg360;
+  if (delta > 180) delta -= 360;
+  if (delta < -180) delta += 360;
+  return delta;
+}
+
+function formatDateCompactUTC(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getUTCDate()}`.padStart(2, '0');
+  return `${year}${month}${day}`;
 }
 
 function parseTagValues(xml: string, tagName: string): string[] {
@@ -217,14 +203,6 @@ async function fetchWithTimeout(url: string, timeoutMs = REQUEST_TIMEOUT_MS): Pr
   }
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetchWithTimeout(url);
-  if (!response.ok) {
-    throw new Error(`Request failed (${response.status}) for ${url}`);
-  }
-  return (await response.json()) as T;
-}
-
 async function fetchText(url: string): Promise<string> {
   const response = await fetchWithTimeout(url);
   if (!response.ok) {
@@ -242,115 +220,12 @@ async function fetchBuffer(url: string): Promise<Buffer> {
   return Buffer.from(bytes);
 }
 
-function toRadians(degrees: number): number {
-  return degrees * DEG_TO_RAD;
-}
-
-function distanceNm(latA: number, lonA: number, latB: number, lonB: number): number {
-  const latARad = toRadians(latA);
-  const latBRad = toRadians(latB);
-  const dLat = latBRad - latARad;
-  const dLon = toRadians(lonB - lonA);
-  const sinLat = Math.sin(dLat / 2);
-  const sinLon = Math.sin(dLon / 2);
-  const a = sinLat * sinLat + Math.cos(latARad) * Math.cos(latBRad) * sinLon * sinLon;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
-  return EARTH_RADIUS_NM * c;
-}
-
-function formatDatePrefixUTC(date: Date): string {
-  const year = date.getUTCFullYear();
-  const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getUTCDate()}`.padStart(2, '0');
-  return `${year}_${month}_${day}`;
-}
-
-function parseScanTimeFromKey(key: string): string | null {
-  const match = key.match(
-    /^[A-Z0-9]{3}_[A-Z0-9]{3}_(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})$/
-  );
-  if (!match) return null;
-  const [, year, month, day, hour, minute, second] = match;
-  return `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
-}
-
-function bearingRadians(latA: number, lonA: number, latB: number, lonB: number): number {
-  const latARad = toRadians(latA);
-  const latBRad = toRadians(latB);
-  const deltaLonRad = toRadians(lonB - lonA);
-  const y = Math.sin(deltaLonRad) * Math.cos(latBRad);
-  const x =
-    Math.cos(latARad) * Math.sin(latBRad) -
-    Math.sin(latARad) * Math.cos(latBRad) * Math.cos(deltaLonRad);
-  return Math.atan2(y, x);
-}
-
-function latLonToLocalNm(lat: number, lon: number, originLat: number, originLon: number) {
-  const distanceToOriginNm = distanceNm(originLat, originLon, lat, lon);
-  const bearingRad = bearingRadians(originLat, originLon, lat, lon);
-  const northNm = Math.cos(bearingRad) * distanceToOriginNm;
-  const eastNm = Math.sin(bearingRad) * distanceToOriginNm;
-  return { xNm: eastNm, zNm: -northNm, distanceToOriginNm };
-}
-
-function selectMosaicRadars(
-  radars: RadarSite[],
-  originLat: number,
-  originLon: number,
-  maxRangeNm: number
-): SelectedRadar[] {
-  const candidates = radars
-    .filter(
-      (radar) =>
-        radar.type === 'NEXRAD' &&
-        Number.isFinite(radar.lat) &&
-        Number.isFinite(radar.lon) &&
-        typeof radar.id === 'string' &&
-        radar.id.length > 0
-    )
-    .map((radar) => {
-      const local = latLonToLocalNm(radar.lat, radar.lon, originLat, originLon);
-      return {
-        id: radar.id,
-        name: radar.name,
-        lat: radar.lat,
-        lon: radar.lon,
-        distanceToOriginNm: local.distanceToOriginNm,
-        offsetXNm: local.xNm,
-        offsetZNm: local.zNm
-      } satisfies SelectedRadar;
-    })
-    .sort((left, right) => left.distanceToOriginNm - right.distanceToOriginNm);
-
-  if (candidates.length === 0) return [];
-
-  const preferredDistanceLimitNm = Math.min(
-    MAX_MOSAIC_RADAR_DISTANCE_NM,
-    maxRangeNm + MOSAIC_RADAR_RANGE_BUFFER_NM
-  );
-  const inRange = candidates.filter(
-    (radar) => radar.distanceToOriginNm <= preferredDistanceLimitNm
-  );
-  if (inRange.length === 0) {
-    return [candidates[0]];
-  }
-
-  return inRange.slice(0, MAX_MOSAIC_RADARS);
-}
-
-async function loadNearbyRadars(lat: number, lon: number): Promise<RadarSite[]> {
-  const start = new Date(Date.now() - 60 * 60_000).toISOString().slice(0, 16) + 'Z';
-  const url = `${IEM_RADAR_URL}?operation=available&lat=${lat.toFixed(6)}&lon=${lon.toFixed(6)}&start=${start}`;
-  const payload = await fetchJson<NearbyRadarResponse>(url);
-  return Array.isArray(payload.radars) ? payload.radars : [];
-}
-
 async function listKeysForPrefix(prefix: string): Promise<string[]> {
   const keys: string[] = [];
   let continuationToken: string | null = null;
 
   for (let page = 0; page < 4; page += 1) {
-    const url = new URL(NEXRAD_BUCKET_URL);
+    const url = new URL(MRMS_BUCKET_URL);
     url.searchParams.set('list-type', '2');
     url.searchParams.set('prefix', prefix);
     url.searchParams.set('max-keys', '1000');
@@ -370,114 +245,157 @@ async function listKeysForPrefix(prefix: string): Promise<string[]> {
   return keys;
 }
 
-async function findLatestProductKey(
-  radarId: string,
-  product: (typeof SUPER_RES_PRODUCTS)[number],
-  now: Date
-): Promise<string | null> {
+async function findLatestBaseLevelKey(now: Date): Promise<string | null> {
   for (let dayOffset = 0; dayOffset <= 1; dayOffset += 1) {
     const date = new Date(now.getTime() - dayOffset * 24 * 60 * 60_000);
-    const prefix = `${radarId}_${product}_${formatDatePrefixUTC(date)}_`;
+    const day = formatDateCompactUTC(date);
+    const prefix = `${MRMS_CONUS_PREFIX}/${MRMS_PRODUCT_PREFIX}_${MRMS_BASE_LEVEL_TAG}/${day}/`;
     const keys = await listKeysForPrefix(prefix);
     if (keys.length > 0) {
       return keys[keys.length - 1];
     }
   }
+
   return null;
 }
 
-async function loadRadarLayers(radar: SelectedRadar, now: Date): Promise<ParsedLayer[]> {
-  const latestKeys = await Promise.all(
-    SUPER_RES_PRODUCTS.map((product) => findLatestProductKey(radar.id, product, now))
-  );
-  const parsedLayers: ParsedLayer[] = [];
+function extractDateFromKey(key: string): string | null {
+  const match = key.match(/\/(\d{8})\//);
+  return match ? match[1] : null;
+}
 
-  for (const key of latestKeys) {
-    if (!key) continue;
-    const keyParts = key.split('_');
-    const product = keyParts[1] ?? '';
-    const scanTime = parseScanTimeFromKey(key) ?? now.toISOString();
+function extractTimestampFromKey(key: string): string | null {
+  const match = key.match(/_(\d{8}-\d{6})\.grib2\.gz$/);
+  return match ? match[1] : null;
+}
 
-    const buffer = await fetchBuffer(`${NEXRAD_BUCKET_URL}/${key}`);
-    const parsed = parseLevel3(buffer, { logger: false });
-    const radialPacket = asRadialPacket(parsed.radialPackets);
-    if (!radialPacket || radialPacket.radials.length === 0) continue;
+function parseScanTimeFromTimestamp(timestamp: string): string | null {
+  const match = timestamp.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second] = match;
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
+}
 
-    parsedLayers.push({
-      radar,
-      product,
-      elevationAngleDeg: Number.isFinite(parsed.productDescription?.elevationAngle)
-        ? Number(parsed.productDescription?.elevationAngle)
-        : 0.5,
-      radarElevationFeet: Number.isFinite(parsed.productDescription?.height)
-        ? Number(parsed.productDescription?.height)
-        : 0,
-      key,
-      scanTime,
-      radials: radialPacket.radials,
-      numberBins: radialPacket.numberBins
-    });
+function buildLevelKey(levelTag: string, datePart: string, timestamp: string): string {
+  return `${MRMS_CONUS_PREFIX}/${MRMS_PRODUCT_PREFIX}_${levelTag}/${datePart}/MRMS_${MRMS_PRODUCT_PREFIX}_${levelTag}_${timestamp}.grib2.gz`;
+}
+
+function readGribSignedScaledInt32(buffer: Buffer, offset: number, scale = 1_000_000): number {
+  const raw = buffer.readUInt32BE(offset);
+  const sign = (raw & 0x80000000) !== 0 ? -1 : 1;
+  const magnitude = raw & 0x7fffffff;
+  return (sign * magnitude) / scale;
+}
+
+function parseMrmsGrib(buffer: Buffer): ParsedMrmsField {
+  if (buffer.length < 20) {
+    throw new Error('MRMS GRIB payload is too small.');
   }
 
-  return parsedLayers;
-}
-
-function estimateGateSizeNm(numberBins: number): number {
-  if (numberBins >= 1700) return 0.134989;
-  if (numberBins >= 900) return 0.269978;
-  return 0.539956;
-}
-
-function beamHeightFeet(
-  rangeNm: number,
-  elevationAngleDeg: number,
-  radarElevationFeet: number
-): number {
-  const effectiveEarthRadiusNm = EARTH_RADIUS_NM * EARTH_REFRACTION_FACTOR;
-  const elevationAngleRad = toRadians(elevationAngleDeg);
-  const centerLineHeightNm =
-    Math.sqrt(
-      rangeNm * rangeNm +
-        effectiveEarthRadiusNm * effectiveEarthRadiusNm +
-        2 * rangeNm * effectiveEarthRadiusNm * Math.sin(elevationAngleRad)
-    ) - effectiveEarthRadiusNm;
-  return radarElevationFeet + centerLineHeightNm * FEET_PER_NM;
-}
-
-function asRadialPacket(radialPackets: unknown): NexradRadialPacket | null {
-  if (!Array.isArray(radialPackets)) return null;
-  for (const packet of radialPackets) {
-    if (!packet || Array.isArray(packet) || typeof packet !== 'object') continue;
-    const candidate = packet as Partial<NexradRadialPacket>;
-    if (typeof candidate.numberBins !== 'number') continue;
-    if (!Array.isArray(candidate.radials)) continue;
-    return {
-      numberBins: candidate.numberBins,
-      radials: candidate.radials.filter(
-        (radial): radial is NexradRadial =>
-          Boolean(radial) &&
-          typeof radial === 'object' &&
-          typeof (radial as NexradRadial).startAngle === 'number' &&
-          typeof (radial as NexradRadial).angleDelta === 'number' &&
-          Array.isArray((radial as NexradRadial).bins)
-      )
-    };
+  if (buffer.toString('ascii', 0, 4) !== 'GRIB') {
+    throw new Error('MRMS payload did not begin with GRIB indicator bytes.');
   }
-  return null;
-}
 
-function decimate<T>(items: T[], targetCount: number): T[] {
-  if (targetCount <= 0 || items.length === 0) return [];
-  if (items.length <= targetCount) return items;
+  let pointer = 16;
+  let grid: ParsedMrmsGrid | null = null;
+  let packing: ParsedMrmsPacking | null = null;
+  let bitmapIndicator = 255;
+  let section7Data: Buffer | null = null;
 
-  const result: T[] = [];
-  const step = items.length / targetCount;
-  let cursor = 0;
-  for (let index = 0; index < targetCount; index += 1) {
-    result.push(items[Math.floor(cursor)]);
-    cursor += step;
+  while (pointer + 5 <= buffer.length) {
+    if (buffer.toString('ascii', pointer, pointer + 4) === '7777') {
+      break;
+    }
+
+    const sectionLength = buffer.readUInt32BE(pointer);
+    const sectionNumber = buffer[pointer + 4];
+    if (sectionLength < 5 || pointer + sectionLength > buffer.length) {
+      throw new Error(`Invalid GRIB section length (${sectionLength}) at offset ${pointer}.`);
+    }
+
+    if (sectionNumber === 3) {
+      const templateNumber = buffer.readUInt16BE(pointer + 12);
+      if (templateNumber !== 0) {
+        throw new Error(`Unsupported MRMS grid definition template (${templateNumber}).`);
+      }
+
+      const nx = buffer.readUInt32BE(pointer + 30);
+      const ny = buffer.readUInt32BE(pointer + 34);
+      const la1Deg = readGribSignedScaledInt32(buffer, pointer + 46);
+      const lo1Deg360 = toLon360(readGribSignedScaledInt32(buffer, pointer + 50));
+      const la2Deg = readGribSignedScaledInt32(buffer, pointer + 55);
+      const lo2Deg360 = toLon360(readGribSignedScaledInt32(buffer, pointer + 59));
+      const diDeg = buffer.readUInt32BE(pointer + 63) / 1_000_000;
+      const djDeg = buffer.readUInt32BE(pointer + 67) / 1_000_000;
+      const scanningMode = buffer[pointer + 71];
+
+      grid = {
+        nx,
+        ny,
+        la1Deg,
+        lo1Deg360,
+        la2Deg,
+        lo2Deg360,
+        diDeg,
+        djDeg,
+        scanningMode
+      };
+    } else if (sectionNumber === 5) {
+      const templateNumber = buffer.readUInt16BE(pointer + 9);
+      if (templateNumber !== 41) {
+        throw new Error(`Unsupported MRMS data representation template (${templateNumber}).`);
+      }
+
+      packing = {
+        dataPointCount: buffer.readUInt32BE(pointer + 5),
+        templateNumber,
+        referenceValue: buffer.readFloatBE(pointer + 11),
+        binaryScaleFactor: buffer.readInt16BE(pointer + 15),
+        decimalScaleFactor: buffer.readInt16BE(pointer + 17),
+        bitsPerValue: buffer[pointer + 19]
+      };
+    } else if (sectionNumber === 6) {
+      bitmapIndicator = buffer[pointer + 5];
+    } else if (sectionNumber === 7) {
+      section7Data = buffer.subarray(pointer + 5, pointer + sectionLength);
+    }
+
+    pointer += sectionLength;
   }
-  return result;
+
+  if (!grid || !packing || !section7Data) {
+    throw new Error('MRMS GRIB payload did not include required sections 3/5/7.');
+  }
+
+  if (bitmapIndicator !== 255) {
+    throw new Error(`Unsupported MRMS bitmap indicator (${bitmapIndicator}); expected 255.`);
+  }
+
+  const decoded = decodePng(section7Data);
+  if (decoded.channels !== 1) {
+    throw new Error(
+      `Unsupported MRMS PNG channels (${decoded.channels}); expected single-channel.`
+    );
+  }
+
+  if (decoded.width !== grid.nx || decoded.height !== grid.ny) {
+    throw new Error(
+      `MRMS grid mismatch: section3 ${grid.nx}x${grid.ny}, png ${decoded.width}x${decoded.height}.`
+    );
+  }
+
+  if (decoded.data.length !== packing.dataPointCount) {
+    throw new Error(
+      `MRMS data-point mismatch: section5 ${packing.dataPointCount}, png ${decoded.data.length}.`
+    );
+  }
+
+  return {
+    grid,
+    packing,
+    bitmapIndicator,
+    values: decoded.data
+  };
 }
 
 function limitVoxels(voxels: NexradVoxelTuple[], maxVoxels: number): NexradVoxelTuple[] {
@@ -494,6 +412,20 @@ function limitVoxels(voxels: NexradVoxelTuple[], maxVoxels: number): NexradVoxel
     }
   }
 
+  const decimate = <T>(items: T[], targetCount: number): T[] => {
+    if (targetCount <= 0 || items.length === 0) return [];
+    if (items.length <= targetCount) return items;
+
+    const result: T[] = [];
+    const step = items.length / targetCount;
+    let cursor = 0;
+    for (let index = 0; index < targetCount; index += 1) {
+      result.push(items[Math.floor(cursor)]);
+      cursor += step;
+    }
+    return result;
+  };
+
   if (highIntensity.length >= maxVoxels) {
     return decimate(highIntensity, maxVoxels);
   }
@@ -502,150 +434,123 @@ function limitVoxels(voxels: NexradVoxelTuple[], maxVoxels: number): NexradVoxel
   return [...highIntensity, ...decimate(lowerIntensity, remaining)];
 }
 
-function mergeVoxelIntoMosaic(
-  voxels: NexradVoxelTuple[],
-  voxelIndexByKey: Map<string, number>,
-  xNm: number,
-  zNm: number,
-  bottomFeet: number,
-  topFeet: number,
-  dbz: number,
-  footprintNm: number
-) {
-  const centerFeet = (bottomFeet + topFeet) / 2;
-  const key = `${Math.round(xNm / VOXEL_MERGE_XZ_STEP_NM)}:${Math.round(
-    zNm / VOXEL_MERGE_XZ_STEP_NM
-  )}:${Math.round(centerFeet / VOXEL_MERGE_ALTITUDE_STEP_FEET)}`;
-  const existingIndex = voxelIndexByKey.get(key);
-  if (typeof existingIndex === 'number') {
-    const existing = voxels[existingIndex];
-    existing[2] = Math.min(existing[2], Math.round(bottomFeet));
-    existing[3] = Math.max(existing[3], Math.round(topFeet));
-    existing[4] = Math.max(existing[4], round1(dbz));
-    existing[5] = Math.max(existing[5], round3(footprintNm));
-    return;
-  }
-
-  const nextIndex = voxels.length;
-  voxels.push([
-    round3(xNm),
-    round3(zNm),
-    Math.round(bottomFeet),
-    Math.round(topFeet),
-    round1(dbz),
-    round3(footprintNm)
-  ]);
-  voxelIndexByKey.set(key, nextIndex);
-}
-
-function buildVoxels(
-  layers: ParsedLayer[],
+function buildVoxelsFromMrmsLevels(
+  levels: ParsedMrmsLevel[],
+  originLat: number,
+  originLon: number,
   minDbz: number,
-  queryRangeNm: number
-): { voxels: NexradVoxelTuple[]; layerVoxelCounts: Map<string, number> } {
-  const layersByRadar = new Map<string, ParsedLayer[]>();
-  for (const layer of layers) {
-    const existing = layersByRadar.get(layer.radar.id);
-    if (existing) {
-      existing.push(layer);
-    } else {
-      layersByRadar.set(layer.radar.id, [layer]);
-    }
-  }
-
+  maxRangeNm: number
+): { voxels: NexradVoxelTuple[]; levelVoxelCounts: Map<string, number> } {
+  const sortedLevels = [...levels].sort((left, right) => left.levelKm - right.levelKm);
   const voxels: NexradVoxelTuple[] = [];
-  const voxelIndexByKey = new Map<string, number>();
-  const layerVoxelCounts = new Map<string, number>();
+  const levelVoxelCounts = new Map<string, number>();
 
-  for (const radarLayers of layersByRadar.values()) {
-    const sortedLayers = [...radarLayers].sort(
-      (left, right) => left.elevationAngleDeg - right.elevationAngleDeg
+  const originLon360 = toLon360(originLon);
+  const originLatRad = originLat * DEG_TO_RAD;
+  const cosLat = Math.max(0.05, Math.cos(originLatRad));
+  const maxRangeSquaredNm = maxRangeNm * maxRangeNm;
+
+  const latPaddingDeg = maxRangeNm / 60;
+  const lonPaddingDeg = maxRangeNm / (60 * cosLat);
+  const latMin = originLat - latPaddingDeg;
+  const latMax = originLat + latPaddingDeg;
+  const lonMin360 = originLon360 - lonPaddingDeg;
+  const lonMax360 = originLon360 + lonPaddingDeg;
+  const lonBoundsWrapped = lonMin360 < 0 || lonMax360 >= 360;
+
+  for (let levelIndex = 0; levelIndex < sortedLevels.length; levelIndex += 1) {
+    const level = sortedLevels[levelIndex];
+    const previous = sortedLevels[levelIndex - 1];
+    const next = sortedLevels[levelIndex + 1];
+
+    const bottomKm = previous
+      ? (previous.levelKm + level.levelKm) / 2
+      : Math.max(0, level.levelKm - ((next?.levelKm ?? level.levelKm + 0.5) - level.levelKm) / 2);
+    const topKm = next
+      ? (level.levelKm + next.levelKm) / 2
+      : level.levelKm + (level.levelKm - (previous?.levelKm ?? level.levelKm - 0.5)) / 2;
+
+    const bottomFeet = bottomKm * FEET_PER_KM;
+    const topFeet = topKm * FEET_PER_KM;
+
+    const { grid, packing, values } = level.parsed;
+    const latStepDeg =
+      (grid.scanningMode & 0x40) === 0 ? -Math.abs(grid.djDeg) : Math.abs(grid.djDeg);
+    const lonStepDeg =
+      (grid.scanningMode & 0x80) === 0 ? Math.abs(grid.diDeg) : -Math.abs(grid.diDeg);
+    const rowFromLat = (lat: number) => (lat - grid.la1Deg) / latStepDeg;
+
+    const rowStart = clampInt(
+      Math.floor(Math.min(rowFromLat(latMin), rowFromLat(latMax)) - 1),
+      0,
+      grid.ny - 1
     );
-    if (sortedLayers.length === 0) continue;
-
-    const radarDistanceNm = sortedLayers[0].radar.distanceToOriginNm;
-    const radarRangeNm = Math.min(
-      MAX_RADAR_SWEEP_RANGE_NM,
-      queryRangeNm + radarDistanceNm + RADAR_SWEEP_RANGE_PADDING_NM
+    const rowEnd = clampInt(
+      Math.ceil(Math.max(rowFromLat(latMin), rowFromLat(latMax)) + 1),
+      0,
+      grid.ny - 1
     );
 
-    for (let layerIndex = 0; layerIndex < sortedLayers.length; layerIndex += 1) {
-      const layer = sortedLayers[layerIndex];
-      const previousLayer = sortedLayers[layerIndex - 1];
-      const nextLayer = sortedLayers[layerIndex + 1];
+    let colStart = 0;
+    let colEnd = grid.nx - 1;
+    if (!lonBoundsWrapped) {
+      const colFromLon = (lon: number) => (lon - grid.lo1Deg360) / lonStepDeg;
+      colStart = clampInt(
+        Math.floor(Math.min(colFromLon(lonMin360), colFromLon(lonMax360)) - 1),
+        0,
+        grid.nx - 1
+      );
+      colEnd = clampInt(
+        Math.ceil(Math.max(colFromLon(lonMin360), colFromLon(lonMax360)) + 1),
+        0,
+        grid.nx - 1
+      );
+    }
 
-      const centerAngleDeg = layer.elevationAngleDeg;
-      const lowerAngleDeg = previousLayer
-        ? (previousLayer.elevationAngleDeg + centerAngleDeg) / 2
-        : Math.max(0.1, centerAngleDeg - DEFAULT_SWEEP_HALF_WIDTH_DEG);
-      const upperAngleDeg = nextLayer
-        ? (centerAngleDeg + nextLayer.elevationAngleDeg) / 2
-        : centerAngleDeg + DEFAULT_SWEEP_HALF_WIDTH_DEG;
+    const binaryScale = Math.pow(2, packing.binaryScaleFactor);
+    const decimalScale = Math.pow(10, packing.decimalScaleFactor);
+    const footprintYNm = Math.abs(grid.djDeg) * 60;
 
-      const firstAngleDelta =
-        layer.radials.find((radial) => Number.isFinite(radial.angleDelta))?.angleDelta ?? 0.5;
-      const azimuthStepDeg = Math.max(0.2, firstAngleDelta);
-      const radialStride = Math.max(1, Math.round(TARGET_AZIMUTH_STEP_DEG / azimuthStepDeg));
+    let levelVoxelCount = 0;
 
-      const gateSizeNm = estimateGateSizeNm(layer.numberBins);
-      const binStride = Math.max(1, Math.round(TARGET_RANGE_STEP_NM / gateSizeNm));
+    for (let row = rowStart; row <= rowEnd; row += 1) {
+      const latDeg = grid.la1Deg + row * latStepDeg;
+      if (!Number.isFinite(latDeg)) continue;
 
-      const maxBinExclusive = Math.min(layer.numberBins, Math.floor(radarRangeNm / gateSizeNm));
-      if (maxBinExclusive <= 0) continue;
+      const rowOffset = row * grid.nx;
+      const footprintXNm =
+        Math.abs(grid.diDeg) * 60 * Math.max(0.05, Math.cos(latDeg * DEG_TO_RAD));
+      const footprintNm = clamp(Math.max(footprintXNm, footprintYNm), 0.2, 3.5);
 
-      for (let radialIndex = 0; radialIndex < layer.radials.length; radialIndex += radialStride) {
-        const radial = layer.radials[radialIndex];
-        const binLimit = Math.min(maxBinExclusive, radial.bins.length);
-        if (binLimit <= 0) continue;
+      for (let col = colStart; col <= colEnd; col += 1) {
+        const packedValue = values[rowOffset + col];
+        if (!Number.isFinite(packedValue)) continue;
 
-        const azimuthDeg = radial.startAngle + radial.angleDelta / 2;
-        const azimuthRad = toRadians(azimuthDeg);
+        const dbz = (packing.referenceValue + packedValue * binaryScale) / decimalScale;
+        if (!Number.isFinite(dbz) || dbz < minDbz) continue;
 
-        for (let binIndex = 0; binIndex < binLimit; binIndex += binStride) {
-          const dbz = radial.bins[binIndex];
-          if (typeof dbz !== 'number' || !Number.isFinite(dbz) || dbz < minDbz) continue;
+        const lonDeg360 = toLon360(grid.lo1Deg360 + col * lonStepDeg);
+        const deltaLonDeg = shortestLonDeltaDegrees(lonDeg360, originLon360);
+        const xNm = deltaLonDeg * 60 * cosLat;
+        const zNm = -(latDeg - originLat) * 60;
+        if (xNm * xNm + zNm * zNm > maxRangeSquaredNm) continue;
 
-          const rangeNm = (binIndex + 0.5) * gateSizeNm;
-          const radarLocalXNm = Math.sin(azimuthRad) * rangeNm;
-          const radarLocalZNm = -Math.cos(azimuthRad) * rangeNm;
-          const xNm = layer.radar.offsetXNm + radarLocalXNm;
-          const zNm = layer.radar.offsetZNm + radarLocalZNm;
-          const distanceToOriginNm = Math.hypot(xNm, zNm);
-          if (distanceToOriginNm > queryRangeNm) continue;
-
-          let bottomFeet = beamHeightFeet(rangeNm, lowerAngleDeg, layer.radarElevationFeet);
-          let topFeet = beamHeightFeet(rangeNm, upperAngleDeg, layer.radarElevationFeet);
-          if (topFeet < bottomFeet) {
-            const swap = topFeet;
-            topFeet = bottomFeet;
-            bottomFeet = swap;
-          }
-          if (topFeet - bottomFeet < MIN_VOXEL_THICKNESS_FEET) {
-            const midpointFeet = (topFeet + bottomFeet) / 2;
-            bottomFeet = midpointFeet - MIN_VOXEL_THICKNESS_FEET / 2;
-            topFeet = midpointFeet + MIN_VOXEL_THICKNESS_FEET / 2;
-          }
-
-          const azimuthFootprintNm = rangeNm * toRadians(radialStride * azimuthStepDeg);
-          const radialFootprintNm = gateSizeNm * binStride;
-          const footprintNm = clamp(Math.max(azimuthFootprintNm, radialFootprintNm), 0.2, 3.5);
-          mergeVoxelIntoMosaic(
-            voxels,
-            voxelIndexByKey,
-            xNm,
-            zNm,
-            bottomFeet,
-            topFeet,
-            dbz,
-            footprintNm
-          );
-          layerVoxelCounts.set(layer.key, (layerVoxelCounts.get(layer.key) ?? 0) + 1);
-        }
+        voxels.push([
+          round3(xNm),
+          round3(zNm),
+          Math.round(bottomFeet),
+          Math.round(topFeet),
+          round1(dbz),
+          round3(footprintNm)
+        ]);
+        levelVoxelCount += 1;
       }
     }
+
+    levelVoxelCounts.set(level.key, levelVoxelCount);
   }
 
-  return { voxels, layerVoxelCounts };
+  return { voxels, levelVoxelCounts };
 }
 
 function buildCacheKey(
@@ -655,7 +560,7 @@ function buildCacheKey(
   maxRangeNm: number,
   maxVoxels: number
 ): string {
-  return `${lat.toFixed(2)}:${lon.toFixed(2)}:${minDbz.toFixed(1)}:${maxRangeNm.toFixed(1)}:${maxVoxels}`;
+  return `mrms:${lat.toFixed(2)}:${lon.toFixed(2)}:${minDbz.toFixed(1)}:${maxRangeNm.toFixed(1)}:${maxVoxels}`;
 }
 
 function cleanupExpiredCacheEntries(nowMs: number) {
@@ -714,67 +619,65 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    ensureSuperResolutionProductSupport();
-
     const now = new Date();
-    const nearbyRadars = await loadNearbyRadars(lat, lon);
-    const selectedRadars = selectMosaicRadars(nearbyRadars, lat, lon, maxRangeNm);
-    if (selectedRadars.length === 0) {
-      throw new Error('Unable to resolve nearby NEXRAD radar sites for mosaic assembly.');
+    const baseKey = await findLatestBaseLevelKey(now);
+    if (!baseKey) {
+      throw new Error('No recent MRMS base-level reflectivity files were available.');
     }
 
-    const parsedLayers = (
-      await Promise.all(
-        selectedRadars.map(async (radar) => {
-          try {
-            return await loadRadarLayers(radar, now);
-          } catch {
-            // Keep mosaic resilient if one radar fails upstream.
-            return [];
-          }
-        })
-      )
-    ).flat();
-
-    if (parsedLayers.length === 0) {
-      throw new Error(
-        'No recent NEXRAD super-resolution reflectivity scans were available for nearby radars.'
-      );
+    const datePart = extractDateFromKey(baseKey);
+    const timestamp = extractTimestampFromKey(baseKey);
+    if (!datePart || !timestamp) {
+      throw new Error(`Unable to parse MRMS timestamp from key: ${baseKey}`);
     }
 
-    const radarElevationById = new Map<string, number>();
-    for (const layer of parsedLayers) {
-      if (!radarElevationById.has(layer.radar.id)) {
-        radarElevationById.set(layer.radar.id, layer.radarElevationFeet);
+    const parsedLevels: ParsedMrmsLevel[] = [];
+    for (const levelTag of MRMS_LEVEL_TAGS) {
+      const key = buildLevelKey(levelTag, datePart, timestamp);
+      const levelKm = Number(levelTag);
+      if (!Number.isFinite(levelKm)) continue;
+
+      try {
+        const zipped = await fetchBuffer(`${MRMS_BUCKET_URL}/${key}`);
+        const gribBuffer = zlib.gunzipSync(zipped);
+        const parsed = parseMrmsGrib(gribBuffer);
+        parsedLevels.push({
+          levelTag,
+          levelKm,
+          key,
+          parsed
+        });
+      } catch {
+        // Tolerate missing level slices so the 3D stack still renders from available altitudes.
       }
     }
-    const activeRadarIds = new Set(parsedLayers.map((layer) => layer.radar.id));
-    const activeRadarPayloads: NexradRadarPayload[] = selectedRadars
-      .filter((radar) => activeRadarIds.has(radar.id))
-      .map((radar) => ({
-        id: radar.id,
-        name: radar.name,
-        lat: round3(radar.lat),
-        lon: round3(radar.lon),
-        elevationFeet: Math.round(radarElevationById.get(radar.id) ?? 0)
-      }));
 
-    const { voxels: rawVoxels, layerVoxelCounts } = buildVoxels(parsedLayers, minDbz, maxRangeNm);
+    if (parsedLevels.length === 0) {
+      throw new Error('No MRMS 3D reflectivity levels were decoded for the latest scan time.');
+    }
+
+    const { voxels: rawVoxels, levelVoxelCounts } = buildVoxelsFromMrmsLevels(
+      parsedLevels,
+      lat,
+      lon,
+      minDbz,
+      maxRangeNm
+    );
     const voxels = limitVoxels(rawVoxels, maxVoxels);
     const voxelSampleRatio = rawVoxels.length > 0 ? voxels.length / rawVoxels.length : 0;
+    const scanTime = parseScanTimeFromTimestamp(timestamp) ?? now.toISOString();
 
-    const layerSummaries: NexradLayerSummary[] = parsedLayers.map((layer) => ({
-      product: layer.product,
-      elevationAngleDeg: round1(layer.elevationAngleDeg),
-      sourceKey: layer.key,
-      scanTime: layer.scanTime,
-      voxelCount: Math.round((layerVoxelCounts.get(layer.key) ?? 0) * voxelSampleRatio)
+    const layerSummaries: NexradLayerSummary[] = parsedLevels.map((level) => ({
+      product: `${MRMS_PRODUCT_PREFIX}_${level.levelTag}`,
+      elevationAngleDeg: round1(level.levelKm),
+      sourceKey: level.key,
+      scanTime,
+      voxelCount: Math.round((levelVoxelCounts.get(level.key) ?? 0) * voxelSampleRatio)
     }));
 
     const payload: NexradVolumePayload = {
       generatedAt: now.toISOString(),
-      radar: activeRadarPayloads[0] ?? null,
-      radars: activeRadarPayloads,
+      radar: null,
       layerSummaries,
       voxels
     };
@@ -790,7 +693,7 @@ export async function GET(request: NextRequest) {
       }
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown NEXRAD error';
+    const message = error instanceof Error ? error.message : 'Unknown MRMS weather error';
 
     if (cacheEntry) {
       return NextResponse.json(

@@ -9,15 +9,15 @@
 
 ## Surface-Independent Overlays
 
-- NEXRAD Level 3 volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
-- NEXRAD overlay volume is a local mosaic assembled from multiple nearby radar sites (distance/cap bounded), not a single-radar sweep.
+- MRMS 3D volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
+- MRMS overlay volume is assembled from multi-radar merged reflectivity slices (`00.50..19.00 km`) and rendered as a stacked 3D precipitation field.
 - In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
-- NEXRAD voxel coloring uses a discrete aviation reflectivity rain ramp only; because Level 3 reflectivity does not carry hydrometeor phase, the renderer does not infer rain/mixed/snow type from altitude.
-- NEXRAD color gain is applied with channel-safe scaling (hue-preserving boost without RGB clipping) so distant/high-altitude bins stay cyan/blue instead of bleaching toward white.
-- NEXRAD voxels render in two passes: a primary alpha pass (`transparent=true`, `NormalBlending`, `FrontSide`, `depthWrite=true`) for stable density control plus a lighter additive glow pass (`AdditiveBlending`, `FrontSide`) for radar-style bloom.
-- NEXRAD voxels render without scene fog contribution so echoes keep their intended color/intensity.
-- NEXRAD overlay opacity is user-configurable in the options panel so voxel intensity can be tuned per-surface and time-of-day visibility needs.
-- NEXRAD opacity slider updates mutate both voxel-pass opacities in place (no voxel remount/rebuild), so adjusting transparency does not drop the rendered volume.
+- MRMS voxel coloring uses a discrete aviation reflectivity rain ramp only; no synthetic rain/mixed/snow type is inferred from altitude.
+- MRMS color gain is applied with channel-safe scaling (hue-preserving boost without RGB clipping) so distant/high-altitude bins stay cyan/blue instead of bleaching toward white.
+- MRMS voxels render in two passes: a primary alpha pass (`transparent=true`, `NormalBlending`, `FrontSide`, `depthWrite=true`) for stable density control plus a lighter additive glow pass (`AdditiveBlending`, `FrontSide`) for radar-style bloom.
+- MRMS voxels render without scene fog contribution so echoes keep their intended color/intensity.
+- MRMS overlay opacity is user-configurable in the options panel so voxel intensity can be tuned per-surface and time-of-day visibility needs.
+- MRMS opacity slider updates mutate both voxel-pass opacities in place (no voxel remount/rebuild), so adjusting transparency does not drop the rendered volume.
 
 ## Shared Vertical-Scale Behavior
 

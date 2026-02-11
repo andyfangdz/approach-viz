@@ -37,13 +37,13 @@ External data feeds and their ingestion paths.
 - Optional initial trail backfill from tar1090 trace files (`/data/traces/<suffix>/trace_recent_<hex>.json`) when `historyMinutes` is requested.
 - Primary host override: `ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts: `ADSBX_TAR1090_FALLBACK_BASE_URLS`.
 
-## NEXRAD Level 3 Volumetric Weather
+## MRMS 3D Volumetric Weather
 
-- Sources: Iowa State Mesonet radar metadata endpoint (`json/radar.py?operation=available`) and the Unidata AWS public bucket `s3://unidata-nexrad-level3`.
+- Source: NOAA MRMS AWS open data bucket `s3://noaa-mrms-pds` (`CONUS/MergedReflectivityQC_<height_km>` products).
 - Fetched through same-origin proxy `app/api/weather/nexrad/route.ts` so browser clients avoid direct CORS/multi-origin fetch complexity.
-- Runtime parser extends `nexrad-level-3-data` with super-resolution reflectivity product code `153` (`N0B/N1B/N2B/N3B`) and converts radial bins into capped 3D voxel payloads.
-- Proxy builds a local mosaic from multiple nearby NEXRAD sites (distance/cap bounded), merges overlapping voxels on a coarse local grid, and emits request-origin local NM offsets for scene rendering.
-- Route applies per-request cache, dBZ threshold filtering, range limiting, and voxel-count decimation before returning scene-ready overlay data.
+- Runtime parser fetches the latest MRMS timestamp, loads available reflectivity altitude slices (`00.50..19.00 km`), and decodes GRIB2 template `5.41` PNG payloads via `fast-png`.
+- Proxy converts decoded MRMS cells to request-origin local NM 3D voxels with per-level altitude bounds, then applies dBZ threshold, AOI range culling, and voxel-count decimation.
+- Route applies short in-memory cache and stale-cache fallback on upstream errors so overlay polling remains resilient.
 
 ## Airport Coverage
 

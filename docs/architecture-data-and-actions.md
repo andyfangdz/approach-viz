@@ -43,14 +43,13 @@
 - On upstream fetch failures, the proxy returns an empty `aircraft` array with an `error` field (HTTP 200) so client polling remains non-fatal.
 - Client traffic rendering is optional and independent from SQLite/server-action scene payload assembly.
 
-## NEXRAD Weather Access
+## MRMS Weather Access
 
-- NEXRAD Level 3 volumetric weather is fetched through same-origin proxy `app/api/weather/nexrad/route.ts`.
-- The proxy resolves multiple nearby radar sites via Iowa State Mesonet, fetches latest super-resolution reflectivity scans (`N0B/N1B/N2B/N3B`) per selected site from `unidata-nexrad-level3`, and assembles a merged mosaic voxel payload.
-- Mosaic voxels are converted to request-origin local NM offsets on the server, so client rendering is independent of any single radar anchor.
-- Super-resolution product code `153` is enabled by extending the runtime parser product map (`nexrad-level-3-data`) with `N0B/N1B/N2B/N3B` abbreviations.
+- 3D precipitation weather is fetched through same-origin proxy `app/api/weather/nexrad/route.ts`.
+- The proxy targets NOAA MRMS AWS products (`CONUS/MergedReflectivityQC_<height_km>`), finds the latest timestamp from base level `00.50`, and fetches matching altitude slices across the full stack (`00.50..19.00 km`).
+- Each slice is GRIB2 (`template 5.41`) with PNG-compressed field data; the route gunzips, parses GRIB sections, and decodes Section 7 PNG payloads with `fast-png`.
+- Decoded cells are transformed server-side into request-origin local NM voxel tuples with per-level altitude bounds and then filtered by dBZ/range before response decimation.
 - Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
-- `next.config.ts` marks `nexrad-level-3-data` as a `serverExternalPackages` dependency so Turbopack does not attempt to statically bundle its dynamic `require()` loader logic.
 
 ## CI and Instrumentation
 

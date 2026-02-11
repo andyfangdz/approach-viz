@@ -78,7 +78,7 @@ export function InfoPanel({
         {nexradVolumeEnabled && (
           <div className="legend-item">
             <div className="legend-color nexrad" />
-            <span>NEXRAD Volume</span>
+            <span>MRMS 3D Precip</span>
           </div>
         )}
         <div className="legend-item">
