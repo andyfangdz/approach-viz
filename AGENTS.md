@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + `fast-png`
+- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + `fast-png` + `dd-trace`
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -24,7 +24,7 @@
 - Run geometry unit tests (path/curve/runway math): `npm run test:geometry`
 - Format codebase with Prettier: `npm run format`
 - Verify Prettier formatting: `npm run format:check`
-- Dev server: `npm run dev`
+- Dev server: `npm run dev` (loads `.env.local`, preloads Datadog tracer, then starts `next dev`)
 - Production build (also refreshes data): `npm run build`
 - Run production server: `npm run start`
 
@@ -32,7 +32,7 @@
 
 - `app/` — Next.js routes, server actions (`actions-lib/`), API proxies (`api/`), client UI (`app-client/`), and 3D scene components (`scene/`)
 - `lib/` — shared types, SQLite singleton, spatial index, and CIFP parser (`cifp/`)
-- `scripts/` — data download and database build scripts
+- `scripts/` — data download/build scripts plus dev launcher (`dev-with-ddtrace.mjs`)
 - `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
 - `data/` — build-time artifacts (SQLite DB, spatial index binaries)
 
@@ -49,6 +49,7 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
 - Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`) under `CONUS`, plus phase-assist fields (`PrecipFlag_00.00`, `Model_0degC_Height_00.50`), probes recent base timestamps (newest-first), decodes GRIB2 template `5.41` PNG payloads with `fast-png`, and emits request-origin voxel mosaics with per-voxel phase codes.
+- Runtime tracing note: local dev startup (`npm run dev`) runs through `scripts/dev-with-ddtrace.mjs`, which preloads env vars (including `DD_API_KEY`) and starts Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so Datadog tracing initializes before server modules.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI

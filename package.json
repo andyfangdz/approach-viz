@@ -12,7 +12,7 @@
     "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "dev": "npm run prepare-data && next dev",
+    "dev": "npm run prepare-data && node scripts/dev-with-ddtrace.mjs",
     "build": "npm run prepare-data && next build",
     "start": "next start"
   },
@@ -31,6 +31,7 @@
     "@vercel/analytics": "^1.6.1",
     "3d-tiles-renderer": "^0.4.21",
     "better-sqlite3": "^11.8.1",
+    "dd-trace": "^5.85.0",
     "egm96-universal": "^1.1.1",
     "fast-png": "^8.0.0",
     "kdbush": "^4.0.2",
