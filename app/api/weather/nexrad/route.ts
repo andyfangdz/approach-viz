@@ -1,4 +1,5 @@
 import zlib from 'node:zlib';
+import { promisify } from 'node:util';
 import { NextRequest, NextResponse } from 'next/server';
 import { decode as decodePng } from 'fast-png';
 
@@ -45,6 +46,16 @@ interface NexradVolumePayload {
 interface CacheEntry {
   expiresAtMs: number;
   payload: NexradVolumePayload;
+}
+
+interface MrmsLevelTimestampCacheEntry {
+  expiresAtMs: number;
+  timestamps: Set<string>;
+}
+
+interface MrmsTimestampCandidate {
+  datePart: string;
+  timestamp: string;
 }
 
 interface ParsedMrmsGrid {
@@ -135,6 +146,7 @@ const MIN_DBZ_DEFAULT = 20;
 const MAX_RANGE_DEFAULT_NM = 120;
 const MAX_VOXELS_DEFAULT = 12_000;
 const MAX_BASE_KEY_CANDIDATES = 6;
+const LEVEL_TIMESTAMP_CACHE_TTL_MS = 120_000;
 const AUX_PRECIP_FLAG_LOOKBACK_STEPS = 15;
 const AUX_MODEL_LOOKBACK_STEPS = 24;
 const PRECIP_FLAG_STEP_SECONDS = 120;
@@ -150,8 +162,10 @@ const PHASE_RAIN = 0;
 const PHASE_MIXED = 1;
 const PHASE_SNOW = 2;
 const FREEZING_LEVEL_TRANSITION_FEET = 1500;
+const gunzipAsync = promisify(zlib.gunzip);
 
 const responseCache = new Map<string, CacheEntry>();
+const levelTimestampCache = new Map<string, MrmsLevelTimestampCacheEntry>();
 
 function toFiniteNumber(value: string | null): number | null {
   if (!value) return null;
@@ -271,31 +285,6 @@ async function fetchBuffer(url: string): Promise<Buffer> {
   return Buffer.from(bytes);
 }
 
-async function objectExists(url: string): Promise<boolean> {
-  try {
-    const headResponse = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS, {
-      method: 'HEAD'
-    });
-    if (headResponse.ok) return true;
-    if (headResponse.status !== 403 && headResponse.status !== 405) {
-      return false;
-    }
-  } catch {
-    // Fallback to ranged GET below.
-  }
-
-  try {
-    const rangeResponse = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS, {
-      headers: {
-        range: 'bytes=0-0'
-      }
-    });
-    return rangeResponse.ok || rangeResponse.status === 206;
-  } catch {
-    return false;
-  }
-}
-
 async function listKeysForPrefix(prefix: string): Promise<string[]> {
   const keys: string[] = [];
   let continuationToken: string | null = null;
@@ -358,6 +347,91 @@ function extractDateFromKey(key: string): string | null {
 function extractTimestampFromKey(key: string): string | null {
   const match = key.match(/_(\d{8}-\d{6})\.grib2\.gz$/);
   return match ? match[1] : null;
+}
+
+function buildLevelTimestampCacheKey(levelTag: string, datePart: string): string {
+  return `${levelTag}:${datePart}`;
+}
+
+function cleanupExpiredLevelTimestampCacheEntries(nowMs: number) {
+  for (const [key, entry] of levelTimestampCache.entries()) {
+    if (entry.expiresAtMs <= nowMs) {
+      levelTimestampCache.delete(key);
+    }
+  }
+}
+
+async function fetchLevelTimestampsForDate(
+  levelTag: string,
+  datePart: string
+): Promise<Set<string>> {
+  const cacheKey = buildLevelTimestampCacheKey(levelTag, datePart);
+  const nowMs = Date.now();
+  const cachedEntry = levelTimestampCache.get(cacheKey);
+  if (cachedEntry && cachedEntry.expiresAtMs > nowMs) {
+    return cachedEntry.timestamps;
+  }
+
+  const prefix = `${MRMS_CONUS_PREFIX}/${MRMS_PRODUCT_PREFIX}_${levelTag}/${datePart}/`;
+  const keys = await listKeysForPrefix(prefix);
+  const timestamps = new Set<string>();
+  for (const key of keys) {
+    if (!isMrmsGrib2Key(key)) continue;
+    const timestamp = extractTimestampFromKey(key);
+    if (!timestamp) continue;
+    timestamps.add(timestamp);
+  }
+
+  levelTimestampCache.set(cacheKey, {
+    expiresAtMs: nowMs + LEVEL_TIMESTAMP_CACHE_TTL_MS,
+    timestamps
+  });
+  return timestamps;
+}
+
+function buildTimestampCandidates(baseKeys: string[]): MrmsTimestampCandidate[] {
+  const candidates: MrmsTimestampCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const baseKey of baseKeys) {
+    const datePart = extractDateFromKey(baseKey);
+    const timestamp = extractTimestampFromKey(baseKey);
+    if (!datePart || !timestamp) continue;
+    const dedupeKey = `${datePart}:${timestamp}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    candidates.push({ datePart, timestamp });
+  }
+
+  return candidates;
+}
+
+async function findCompleteTimestampCandidates(
+  baseKeys: string[]
+): Promise<MrmsTimestampCandidate[]> {
+  const candidates = buildTimestampCandidates(baseKeys);
+  if (candidates.length === 0) return [];
+
+  const availabilityByLevelAndDate = new Map<string, Set<string>>();
+  const uniqueDateParts = new Set(candidates.map((candidate) => candidate.datePart));
+
+  await Promise.all(
+    Array.from(uniqueDateParts).flatMap((datePart) =>
+      MRMS_LEVEL_TAGS.map(async (levelTag) => {
+        const timestamps = await fetchLevelTimestampsForDate(levelTag, datePart);
+        availabilityByLevelAndDate.set(buildLevelTimestampCacheKey(levelTag, datePart), timestamps);
+      })
+    )
+  );
+
+  return candidates.filter((candidate) =>
+    MRMS_LEVEL_TAGS.every((levelTag) => {
+      const timestamps = availabilityByLevelAndDate.get(
+        buildLevelTimestampCacheKey(levelTag, candidate.datePart)
+      );
+      return Boolean(timestamps?.has(candidate.timestamp));
+    })
+  );
 }
 
 function parseScanTimeFromTimestamp(timestamp: string): string | null {
@@ -526,18 +600,6 @@ function parseMrmsGrib(buffer: Buffer): ParsedMrmsField {
   };
 }
 
-async function hasCompleteMrmsLevelSetForTimestamp(
-  datePart: string,
-  timestamp: string
-): Promise<boolean> {
-  const checks = MRMS_LEVEL_TAGS.map((levelTag) => {
-    const key = buildLevelKey(levelTag, datePart, timestamp);
-    return objectExists(`${MRMS_BUCKET_URL}/${key}`);
-  });
-  const results = await Promise.all(checks);
-  return results.every(Boolean);
-}
-
 async function fetchMrmsLevelsForTimestamp(
   datePart: string,
   timestamp: string
@@ -551,7 +613,7 @@ async function fetchMrmsLevelsForTimestamp(
       }
 
       const zipped = await fetchBuffer(`${MRMS_BUCKET_URL}/${key}`);
-      const gribBuffer = zlib.gunzipSync(zipped);
+      const gribBuffer = await gunzipAsync(zipped);
       const parsed = parseMrmsGrib(gribBuffer);
       return {
         levelTag,
@@ -583,7 +645,7 @@ async function fetchAuxFieldNearTimestamp(
 
     try {
       const zipped = await fetchBuffer(`${MRMS_BUCKET_URL}/${key}`);
-      const gribBuffer = zlib.gunzipSync(zipped);
+      const gribBuffer = await gunzipAsync(zipped);
       return {
         product,
         key,
@@ -920,6 +982,7 @@ export async function GET(request: NextRequest) {
   const cacheKey = buildCacheKey(lat, lon, minDbz, maxRangeNm, maxVoxels);
   const nowMs = Date.now();
   cleanupExpiredCacheEntries(nowMs);
+  cleanupExpiredLevelTimestampCacheEntries(nowMs);
 
   const cacheEntry = responseCache.get(cacheKey);
   if (cacheEntry && cacheEntry.expiresAtMs > nowMs) {
@@ -937,32 +1000,29 @@ export async function GET(request: NextRequest) {
       throw new Error('No recent MRMS base-level reflectivity files were available.');
     }
 
+    const completeCandidates = await findCompleteTimestampCandidates(baseKeys);
+    if (completeCandidates.length === 0) {
+      throw new Error(
+        'No recent MRMS scan had complete level availability across all reflectivity slices.'
+      );
+    }
+
     let parsedLevels: ParsedMrmsLevel[] = [];
     let selectedTimestamp: string | null = null;
-    for (const baseKey of baseKeys) {
-      const datePart = extractDateFromKey(baseKey);
-      const timestamp = extractTimestampFromKey(baseKey);
-      if (!datePart || !timestamp) continue;
-
-      const hasCompleteLevelSet = await hasCompleteMrmsLevelSetForTimestamp(datePart, timestamp);
-      if (!hasCompleteLevelSet) {
-        continue;
-      }
-
+    for (const candidate of completeCandidates) {
       try {
-        parsedLevels = await fetchMrmsLevelsForTimestamp(datePart, timestamp);
-        selectedTimestamp = timestamp;
+        parsedLevels = await fetchMrmsLevelsForTimestamp(candidate.datePart, candidate.timestamp);
+        selectedTimestamp = candidate.timestamp;
         break;
       } catch {
-        // If fetching/decoding fails for this scan, try the next-most-recent
-        // timestamp that also has a complete level key set.
+        // If fetching/decoding fails for this complete candidate, try the next-most-recent one.
         continue;
       }
     }
 
     if (parsedLevels.length === 0 || !selectedTimestamp) {
       throw new Error(
-        'No recent MRMS scan had complete level availability across all reflectivity slices.'
+        'No recent MRMS scan had complete fetch/decode coverage across all reflectivity slices.'
       );
     }
 

@@ -48,7 +48,7 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
-- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`) under `CONUS`, plus phase-assist fields (`PrecipFlag_00.00`, `Model_0degC_Height_00.50`), probes recent base timestamps (newest-first), selects the latest timestamp with a complete configured reflectivity level set, fetches/decodes those levels in full parallel using GRIB2 template `5.41` PNG payloads via `fast-png`, and emits request-origin voxel mosaics with per-voxel phase codes.
+- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`) under `CONUS`, plus phase-assist fields (`PrecipFlag_00.00`, `Model_0degC_Height_00.50`), probes recent base timestamps (newest-first), uses cached per-level/day S3 key indexes to find complete candidates, fetches/decodes all configured reflectivity levels in full parallel per candidate, and emits request-origin voxel mosaics with per-voxel phase codes.
 - Runtime tracing note: local dev startup (`npm run dev`) runs through `scripts/dev-with-ddtrace.mjs`, which preloads env vars (including `DD_API_KEY`) and starts Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so Datadog tracing initializes before server modules.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
