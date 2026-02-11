@@ -142,9 +142,9 @@ const MRMS_LEVEL_TAGS = [
 ] as const;
 const REQUEST_TIMEOUT_MS = 7000;
 const CACHE_TTL_MS = 75_000;
-const MIN_DBZ_DEFAULT = 20;
+const MIN_DBZ_DEFAULT = 5;
 const MAX_RANGE_DEFAULT_NM = 120;
-const MAX_VOXELS_DEFAULT = 12_000;
+const MAX_VOXELS_DEFAULT = 100_000;
 const MAX_BASE_KEY_CANDIDATES = 6;
 const LEVEL_TIMESTAMP_CACHE_TTL_MS = 120_000;
 const AUX_PRECIP_FLAG_LOOKBACK_STEPS = 15;
@@ -975,7 +975,7 @@ export async function GET(request: NextRequest) {
     clamp(
       toFiniteNumber(request.nextUrl.searchParams.get('maxVoxels')) ?? MAX_VOXELS_DEFAULT,
       200,
-      30_000
+      200_000
     )
   );
 
