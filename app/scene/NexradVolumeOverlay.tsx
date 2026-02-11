@@ -192,6 +192,33 @@ function dbzToHex(dbz: number, phaseCode: number): number {
   return applyVisibilityGain(dbzToBandHex(dbz, bands));
 }
 
+function sampleVoxels(voxels: RenderVoxel[], maxCount: number): RenderVoxel[] {
+  if (voxels.length <= maxCount) return voxels;
+
+  const high: RenderVoxel[] = [];
+  const low: RenderVoxel[] = [];
+  for (const v of voxels) {
+    if (v.dbz >= 45) high.push(v);
+    else low.push(v);
+  }
+
+  const decimate = (items: RenderVoxel[], target: number): RenderVoxel[] => {
+    if (target <= 0 || items.length === 0) return [];
+    if (items.length <= target) return items;
+    const result: RenderVoxel[] = [];
+    const step = items.length / target;
+    let cursor = 0;
+    for (let i = 0; i < target; i += 1) {
+      result.push(items[Math.floor(cursor)]);
+      cursor += step;
+    }
+    return result;
+  };
+
+  if (high.length >= maxCount) return decimate(high, maxCount);
+  return [...high, ...decimate(low, maxCount - high.length)];
+}
+
 function applyVoxelInstances(
   mesh: THREE.InstancedMesh | null,
   voxels: RenderVoxel[],
@@ -199,7 +226,7 @@ function applyVoxelInstances(
   colorScratch: THREE.Color
 ) {
   if (!mesh) return;
-  const count = Math.min(voxels.length, MAX_VOXEL_INSTANCES);
+  const count = voxels.length;
   for (let index = 0; index < count; index += 1) {
     const voxel = voxels[index];
     meshDummy.position.set(voxel.x, voxel.yBase, voxel.z);
@@ -445,7 +472,7 @@ export function NexradVolumeOverlay({
       });
     }
 
-    return next;
+    return sampleVoxels(next, MAX_VOXEL_INSTANCES);
   }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat, minDbz]);
 
   const phaseCounts = useMemo(() => {

@@ -62,7 +62,7 @@ MRMS volume intensity uses phase-aware reflectivity coloring (rain/mixed/snow): 
 MRMS client polling keeps the last successful voxel payload when transient API error payloads arrive, preventing abrupt volume disappearance during upstream hiccups.
 MRMS client polling also clears prior payload immediately when airport context changes, so stale voxels do not linger from the previous location while new volume data is loading.
 MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), using the same origin-local projection scales for both voxel placement and footprint sizing to keep cell spacing contiguous.
-MRMS default reflectivity threshold is 5 dBZ (matching standard aviation radar depiction), with a user-adjustable slider (5–60 dBZ); server voxel budget defaults to 100k (max 200k) to maintain dense geographic coverage across all 33 altitude slices within the 120 NM default radius.
+MRMS default reflectivity threshold is 5 dBZ (matching standard aviation radar depiction), with a user-adjustable slider (5–60 dBZ); voxel decimation is performed client-side with a 100k instance cap (priority-aware: high-intensity ≥ 45 dBZ kept first) to maintain dense geographic coverage across all 33 altitude slices within the 120 NM default radius.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes

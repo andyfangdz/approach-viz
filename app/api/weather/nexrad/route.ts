@@ -144,7 +144,6 @@ const REQUEST_TIMEOUT_MS = 7000;
 const CACHE_TTL_MS = 75_000;
 const MIN_DBZ_DEFAULT = 5;
 const MAX_RANGE_DEFAULT_NM = 120;
-const MAX_VOXELS_DEFAULT = 100_000;
 const MAX_BASE_KEY_CANDIDATES = 6;
 const LEVEL_TIMESTAMP_CACHE_TTL_MS = 120_000;
 const AUX_PRECIP_FLAG_LOOKBACK_STEPS = 15;
@@ -758,42 +757,6 @@ function resolveVoxelPhase(
   return phaseFromFreezing ?? PHASE_RAIN;
 }
 
-function limitVoxels(voxels: NexradVoxelTuple[], maxVoxels: number): NexradVoxelTuple[] {
-  if (voxels.length <= maxVoxels) return voxels;
-
-  const highIntensity: NexradVoxelTuple[] = [];
-  const lowerIntensity: NexradVoxelTuple[] = [];
-
-  for (const voxel of voxels) {
-    if (voxel[4] >= 45) {
-      highIntensity.push(voxel);
-    } else {
-      lowerIntensity.push(voxel);
-    }
-  }
-
-  const decimate = <T>(items: T[], targetCount: number): T[] => {
-    if (targetCount <= 0 || items.length === 0) return [];
-    if (items.length <= targetCount) return items;
-
-    const result: T[] = [];
-    const step = items.length / targetCount;
-    let cursor = 0;
-    for (let index = 0; index < targetCount; index += 1) {
-      result.push(items[Math.floor(cursor)]);
-      cursor += step;
-    }
-    return result;
-  };
-
-  if (highIntensity.length >= maxVoxels) {
-    return decimate(highIntensity, maxVoxels);
-  }
-
-  const remaining = maxVoxels - highIntensity.length;
-  return [...highIntensity, ...decimate(lowerIntensity, remaining)];
-}
-
 function buildVoxelsFromMrmsLevels(
   levels: ParsedMrmsLevel[],
   originLat: number,
@@ -927,14 +890,8 @@ function buildVoxelsFromMrmsLevels(
   return { voxels, levelVoxelCounts };
 }
 
-function buildCacheKey(
-  lat: number,
-  lon: number,
-  minDbz: number,
-  maxRangeNm: number,
-  maxVoxels: number
-): string {
-  return `mrms:${lat.toFixed(2)}:${lon.toFixed(2)}:${minDbz.toFixed(1)}:${maxRangeNm.toFixed(1)}:${maxVoxels}`;
+function buildCacheKey(lat: number, lon: number, minDbz: number, maxRangeNm: number): string {
+  return `mrms:${lat.toFixed(2)}:${lon.toFixed(2)}:${minDbz.toFixed(1)}:${maxRangeNm.toFixed(1)}`;
 }
 
 function cleanupExpiredCacheEntries(nowMs: number) {
@@ -971,15 +928,8 @@ export async function GET(request: NextRequest) {
     30,
     220
   );
-  const maxVoxels = Math.round(
-    clamp(
-      toFiniteNumber(request.nextUrl.searchParams.get('maxVoxels')) ?? MAX_VOXELS_DEFAULT,
-      200,
-      200_000
-    )
-  );
 
-  const cacheKey = buildCacheKey(lat, lon, minDbz, maxRangeNm, maxVoxels);
+  const cacheKey = buildCacheKey(lat, lon, minDbz, maxRangeNm);
   const nowMs = Date.now();
   cleanupExpiredCacheEntries(nowMs);
   cleanupExpiredLevelTimestampCacheEntries(nowMs);
@@ -1041,7 +991,7 @@ export async function GET(request: NextRequest) {
       )
     ]);
 
-    const { voxels: rawVoxels, levelVoxelCounts } = buildVoxelsFromMrmsLevels(
+    const { voxels, levelVoxelCounts } = buildVoxelsFromMrmsLevels(
       parsedLevels,
       lat,
       lon,
@@ -1052,8 +1002,6 @@ export async function GET(request: NextRequest) {
         freezingLevelField: freezingLevelField?.parsed ?? null
       }
     );
-    const voxels = limitVoxels(rawVoxels, maxVoxels);
-    const voxelSampleRatio = rawVoxels.length > 0 ? voxels.length / rawVoxels.length : 0;
     const scanTime = parseScanTimeFromTimestamp(selectedTimestamp) ?? now.toISOString();
 
     const layerSummaries: NexradLayerSummary[] = parsedLevels.map((level) => ({
@@ -1061,7 +1009,7 @@ export async function GET(request: NextRequest) {
       elevationAngleDeg: round1(level.levelKm),
       sourceKey: level.key,
       scanTime,
-      voxelCount: Math.round((levelVoxelCounts.get(level.key) ?? 0) * voxelSampleRatio)
+      voxelCount: levelVoxelCounts.get(level.key) ?? 0
     }));
 
     const payload: NexradVolumePayload = {
