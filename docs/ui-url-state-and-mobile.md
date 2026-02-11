@@ -9,9 +9,15 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 ## Options Panel
 
-- Exposed controls: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle, `Live ADS-B Traffic`, `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (1–30 min).
-- Live traffic is enabled by default; `Hide Ground Traffic` is disabled by default; default history window is 3 min.
+- Exposed controls: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle, `Live ADS-B Traffic`, `MRMS 3D Precip`, `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (20–100%), `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (1–30 min).
+- Live traffic is enabled by default; MRMS volumetric overlay is disabled by default; `Hide Ground Traffic` is disabled by default; default traffic history window is 3 min.
 - All options-panel values are persisted to browser `localStorage` and restored on load.
+
+## Runtime Status and Debug UI
+
+- When MRMS overlay polling is active, a top-right in-scene status chip (`Loading MRMS...`) appears beneath the navbar/selector region.
+- A right-side debug FAB expands into a runtime diagnostics panel with current context plus MRMS/traffic telemetry (enabled/loading/stale/error, voxel/track counts, phase mix, poll timestamps, and backfill state).
+- MRMS and traffic debug panel state is fed from scene overlays via callback props, so telemetry reflects the currently rendered overlay state rather than cached UI assumptions.
 
 ## Header and Selector Layout
 

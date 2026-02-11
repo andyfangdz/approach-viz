@@ -1,11 +1,8 @@
 import { Html, Line } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import {
-  altToY,
-  earthCurvatureDropNm,
-  latLonToLocal
-} from './approach-path/coordinates';
+import type { TrafficDebugState } from '@/app/app-client/types';
+import { altToY, earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
@@ -32,6 +29,7 @@ interface LiveTrafficOverlayProps {
   applyEarthCurvatureCompensation?: boolean;
   radiusNm?: number;
   limit?: number;
+  onDebugChange?: (debug: TrafficDebugState) => void;
 }
 
 interface LiveTrafficAircraft {
@@ -246,11 +244,7 @@ function mergeTracks(
   return nextTracks;
 }
 
-function nearestSceneAirportElevation(
-  airports: SceneAirport[],
-  lat: number,
-  lon: number
-): number {
+function nearestSceneAirportElevation(airports: SceneAirport[], lat: number, lon: number): number {
   if (airports.length === 0) return 0;
   const cosLat = Math.cos(lat * (Math.PI / 180));
   let bestDistSq = Number.POSITIVE_INFINITY;
@@ -277,9 +271,14 @@ export function LiveTrafficOverlay({
   historyMinutes,
   applyEarthCurvatureCompensation = false,
   radiusNm = DEFAULT_RADIUS_NM,
-  limit = DEFAULT_LIMIT
+  limit = DEFAULT_LIMIT,
+  onDebugChange
 }: LiveTrafficOverlayProps) {
   const [tracks, setTracks] = useState<Map<string, TrafficTrack>>(new Map());
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [lastPollAt, setLastPollAt] = useState<string | null>(null);
+  const [historyBackfillPending, setHistoryBackfillPending] = useState(true);
   const normalizedHistoryMinutes = normalizeHistoryMinutes(historyMinutes);
   const markerMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const markerDummy = useMemo(() => new THREE.Object3D(), []);
@@ -296,12 +295,21 @@ export function LiveTrafficOverlay({
   );
 
   useEffect(() => {
+    setTracks(new Map());
+    setIsLoading(true);
+    setLastError(null);
+    setLastPollAt(null);
+    setHistoryBackfillPending(true);
+
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let activeAbortController: AbortController | null = null;
     let shouldRequestHistoryBackfill = true;
 
     const poll = async () => {
+      if (!cancelled) {
+        setIsLoading(true);
+      }
       activeAbortController = new AbortController();
       const params = new URLSearchParams();
       params.set('lat', refLat.toFixed(6));
@@ -334,9 +342,16 @@ export function LiveTrafficOverlay({
             backfilledHistory
           )
         );
+        setLastError(null);
+        setLastPollAt(new Date(nowMs).toISOString());
+        if (shouldRequestHistoryBackfill) {
+          setHistoryBackfillPending(false);
+        }
         shouldRequestHistoryBackfill = false;
       } catch (error) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          setLastError(error instanceof Error ? error.message : 'Traffic poll failed');
+          setLastPollAt(new Date().toISOString());
           const nowMs = Date.now();
           const staleCutoffMs = nowMs - normalizedHistoryMinutes * 60_000;
           setTracks((previousTracks) => {
@@ -351,6 +366,9 @@ export function LiveTrafficOverlay({
           });
         }
       } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
         activeAbortController = null;
         if (!cancelled) {
           timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
@@ -460,6 +478,67 @@ export function LiveTrafficOverlay({
           Number.isFinite(track.markerPosition[0]) && Number.isFinite(track.markerPosition[2])
       );
   }, [tracks, refLat, refLon, sceneAirports, verticalScale, applyEarthCurvatureCompensation]);
+
+  const historyPointCount = useMemo(() => {
+    let total = 0;
+    for (const track of tracks.values()) {
+      total += track.history.length;
+    }
+    return total;
+  }, [tracks]);
+
+  const debugState = useMemo<TrafficDebugState>(
+    () => ({
+      enabled: true,
+      loading: isLoading,
+      error: lastError,
+      lastPollAt,
+      historyBackfillPending,
+      trackCount: tracks.size,
+      renderedTrackCount: renderTracks.length,
+      historyPointCount,
+      radiusNm,
+      limit,
+      historyMinutes: normalizedHistoryMinutes
+    }),
+    [
+      isLoading,
+      lastError,
+      lastPollAt,
+      historyBackfillPending,
+      tracks.size,
+      renderTracks.length,
+      historyPointCount,
+      radiusNm,
+      limit,
+      normalizedHistoryMinutes
+    ]
+  );
+
+  useEffect(() => {
+    if (!onDebugChange) return;
+    onDebugChange(debugState);
+  }, [onDebugChange, debugState]);
+
+  useEffect(
+    () => () => {
+      if (!onDebugChange) return;
+      onDebugChange({
+        enabled: false,
+        loading: false,
+        error: null,
+        lastPollAt: null,
+        historyBackfillPending: false,
+        trackCount: 0,
+        renderedTrackCount: 0,
+        historyPointCount: 0,
+        radiusNm,
+        limit,
+        historyMinutes: normalizedHistoryMinutes
+      });
+    },
+    [onDebugChange, radiusNm, limit, normalizedHistoryMinutes]
+  );
 
   useEffect(() => {
     const markerMesh = markerMeshRef.current;

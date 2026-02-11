@@ -43,6 +43,17 @@
 - On upstream fetch failures, the proxy returns an empty `aircraft` array with an `error` field (HTTP 200) so client polling remains non-fatal.
 - Client traffic rendering is optional and independent from SQLite/server-action scene payload assembly.
 
+## MRMS Weather Access
+
+- 3D precipitation weather is fetched through same-origin proxy `app/api/weather/nexrad/route.ts`.
+- The proxy targets NOAA MRMS AWS products under `CONUS` (`CONUS/MergedReflectivityQC_<height_km>`), probes several newest base-level `00.50` timestamps, and uses the first timestamp that yields decodable altitude slices across the stack (`00.50..19.00 km`).
+- Each slice is GRIB2 (`template 5.41`) with PNG-compressed field data; the route gunzips, parses GRIB sections, and decodes Section 7 PNG payloads with `fast-png`.
+- Phase auxiliaries are fetched near the selected reflectivity timestamp: `PrecipFlag_00.00` (2-min cadence, short lookback) and `Model_0degC_Height_00.50` (hourly cadence, longer lookback).
+- Decoded cells are transformed server-side into request-origin local NM voxel tuples with per-level altitude bounds plus per-cell X/Y footprint from dataset grid spacing; both voxel centers and footprint dimensions use the same origin-local projection scales before dBZ/range filtering and response decimation.
+- Per-voxel precipitation phase codes are resolved server-side with `PrecipFlag` as the primary classifier (rain/mixed/snow), and freezing-level-relative classification is used only as fallback when precip-flag data is unavailable for that scan.
+- Altitude-slice fetch/decode is concurrency-limited (worker pool) rather than strictly serial, reducing first-load latency and timeout risk.
+- Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
+
 ## CI and Instrumentation
 
 - CI workflow `.github/workflows/parser-tests.yml` runs `npm run test:parser` on push/PR.

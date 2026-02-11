@@ -15,19 +15,27 @@ import { HeaderControls } from '@/app/app-client/HeaderControls';
 import { HelpPanel } from '@/app/app-client/HelpPanel';
 import { InfoPanel } from '@/app/app-client/InfoPanel';
 import { OptionsPanel } from '@/app/app-client/OptionsPanel';
+import { DebugPanel } from '@/app/app-client/DebugPanel';
 import {
   SATELLITE_MAX_RETRIES,
   DEFAULT_TERRAIN_RADIUS_NM,
   DEFAULT_VERTICAL_SCALE,
   DEFAULT_TRAFFIC_HISTORY_MINUTES,
+  DEFAULT_NEXRAD_VOLUME_ENABLED,
+  DEFAULT_NEXRAD_MIN_DBZ,
+  DEFAULT_NEXRAD_OPACITY,
   MIN_TERRAIN_RADIUS_NM,
   MAX_TERRAIN_RADIUS_NM,
   TERRAIN_RADIUS_STEP_NM,
   MIN_TRAFFIC_HISTORY_MINUTES,
-  MAX_TRAFFIC_HISTORY_MINUTES
+  MAX_TRAFFIC_HISTORY_MINUTES,
+  MIN_NEXRAD_MIN_DBZ,
+  MAX_NEXRAD_MIN_DBZ,
+  MIN_NEXRAD_OPACITY,
+  MAX_NEXRAD_OPACITY
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
-import type { SurfaceMode } from '@/app/app-client/types';
+import type { NexradDebugState, SurfaceMode, TrafficDebugState } from '@/app/app-client/types';
 import type { AirportOption, SceneData } from '@/lib/types';
 
 interface AppClientProps {
@@ -45,9 +53,42 @@ interface PersistedOptionsState {
   hideGroundTraffic?: boolean;
   showTrafficCallsigns?: boolean;
   trafficHistoryMinutes?: number;
+  nexradVolumeEnabled?: boolean;
+  nexradMinDbz?: number;
+  nexradOpacity?: number;
 }
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
+const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
+  enabled: false,
+  loading: false,
+  stale: false,
+  error: null,
+  generatedAt: null,
+  scanTime: null,
+  lastPollAt: null,
+  layerCount: 0,
+  voxelCount: 0,
+  renderedVoxelCount: 0,
+  phaseCounts: {
+    rain: 0,
+    mixed: 0,
+    snow: 0
+  }
+};
+const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
+  enabled: false,
+  loading: false,
+  error: null,
+  lastPollAt: null,
+  historyBackfillPending: false,
+  trackCount: 0,
+  renderedTrackCount: 0,
+  historyPointCount: 0,
+  radiusNm: 80,
+  limit: 250,
+  historyMinutes: DEFAULT_TRAFFIC_HISTORY_MINUTES
+};
 
 function clampValue(value: number, min: number, max: number, fallback = min): number {
   if (!Number.isFinite(value)) return fallback;
@@ -60,6 +101,24 @@ function normalizeTerrainRadiusNm(radiusNm: number): number {
   return clampValue(snapped, MIN_TERRAIN_RADIUS_NM, MAX_TERRAIN_RADIUS_NM);
 }
 
+function normalizeNexradMinDbz(dbz: number): number {
+  if (!Number.isFinite(dbz)) return DEFAULT_NEXRAD_MIN_DBZ;
+  return Math.round(
+    clampValue(dbz, MIN_NEXRAD_MIN_DBZ, MAX_NEXRAD_MIN_DBZ, DEFAULT_NEXRAD_MIN_DBZ)
+  );
+}
+
+function normalizeNexradOpacity(opacity: number): number {
+  if (!Number.isFinite(opacity)) return DEFAULT_NEXRAD_OPACITY;
+  const clamped = clampValue(
+    opacity,
+    MIN_NEXRAD_OPACITY,
+    MAX_NEXRAD_OPACITY,
+    DEFAULT_NEXRAD_OPACITY
+  );
+  return Math.round(clamped * 100) / 100;
+}
+
 export function AppClient({
   initialAirportOptions,
   initialSceneData,
@@ -69,6 +128,7 @@ export function AppClient({
   const [selectorsCollapsed, setSelectorsCollapsed] = useState(false);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [optionsCollapsed, setOptionsCollapsed] = useState(true);
+  const [debugCollapsed, setDebugCollapsed] = useState(true);
   const [airportOptions, setAirportOptions] = useState<AirportOption[]>(initialAirportOptions);
   const [airportOptionsLoading, setAirportOptionsLoading] = useState(
     initialAirportOptions.length === 0
@@ -92,12 +152,17 @@ export function AppClient({
   const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
     DEFAULT_TRAFFIC_HISTORY_MINUTES
   );
+  const [nexradVolumeEnabled, setNexradVolumeEnabled] = useState(DEFAULT_NEXRAD_VOLUME_ENABLED);
+  const [nexradMinDbz, setNexradMinDbz] = useState(DEFAULT_NEXRAD_MIN_DBZ);
+  const [nexradOpacity, setNexradOpacity] = useState(DEFAULT_NEXRAD_OPACITY);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
   const [satelliteRetryCount, setSatelliteRetryCount] = useState(0);
   const [satelliteRetryNonce, setSatelliteRetryNonce] = useState(0);
   const [recenterNonce, setRecenterNonce] = useState(0);
+  const [nexradDebug, setNexradDebug] = useState<NexradDebugState>(EMPTY_NEXRAD_DEBUG_STATE);
+  const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
@@ -143,6 +208,15 @@ export function AppClient({
             )
           );
         }
+        if (typeof persisted.nexradVolumeEnabled === 'boolean') {
+          setNexradVolumeEnabled(persisted.nexradVolumeEnabled);
+        }
+        if (typeof persisted.nexradMinDbz === 'number') {
+          setNexradMinDbz(normalizeNexradMinDbz(persisted.nexradMinDbz));
+        }
+        if (typeof persisted.nexradOpacity === 'number') {
+          setNexradOpacity(normalizeNexradOpacity(persisted.nexradOpacity));
+        }
       }
     } catch (error) {
       console.warn('Unable to restore saved options', error);
@@ -161,7 +235,10 @@ export function AppClient({
       liveTrafficEnabled,
       hideGroundTraffic,
       showTrafficCallsigns,
-      trafficHistoryMinutes
+      trafficHistoryMinutes,
+      nexradVolumeEnabled,
+      nexradMinDbz,
+      nexradOpacity
     };
     window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
   }, [
@@ -172,7 +249,10 @@ export function AppClient({
     liveTrafficEnabled,
     hideGroundTraffic,
     showTrafficCallsigns,
-    trafficHistoryMinutes
+    trafficHistoryMinutes,
+    nexradVolumeEnabled,
+    nexradMinDbz,
+    nexradOpacity
   ]);
 
   useEffect(() => {
@@ -301,6 +381,7 @@ export function AppClient({
 
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const activeErrorMessage = errorMessage || surfaceErrorMessage;
+  const showMrmsLoadingIndicator = nexradVolumeEnabled && nexradDebug.loading;
   const missedApproachStartAltitudeFeet =
     sceneData.minimumsSummary?.da?.altitude ??
     sceneData.minimumsSummary?.mda?.altitude ??
@@ -399,6 +480,9 @@ export function AppClient({
             hideGroundTraffic={hideGroundTraffic}
             showTrafficCallsigns={showTrafficCallsigns}
             trafficHistoryMinutes={trafficHistoryMinutes}
+            nexradVolumeEnabled={nexradVolumeEnabled}
+            nexradMinDbz={nexradMinDbz}
+            nexradOpacity={nexradOpacity}
             surfaceMode={surfaceMode}
             satelliteRetryNonce={satelliteRetryNonce}
             satelliteRetryCount={satelliteRetryCount}
@@ -406,7 +490,16 @@ export function AppClient({
             recenterNonce={recenterNonce}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             onSatelliteRuntimeError={handleSatelliteRuntimeError}
+            onNexradDebugChange={setNexradDebug}
+            onTrafficDebugChange={setTrafficDebug}
           />
+        )}
+
+        {showMrmsLoadingIndicator && (
+          <div className="mrms-loading-indicator" role="status" aria-live="polite">
+            <span className="mrms-loading-spinner" aria-hidden="true" />
+            <span>Loading MRMS...</span>
+          </div>
         )}
 
         <button
@@ -427,6 +520,16 @@ export function AppClient({
           </svg>
         </button>
 
+        <DebugPanel
+          debugCollapsed={debugCollapsed}
+          onToggleDebug={() => setDebugCollapsed((current) => !current)}
+          airportId={selectedAirport}
+          approachId={selectedApproach}
+          surfaceMode={surfaceMode}
+          nexradDebug={nexradDebug}
+          trafficDebug={trafficDebug}
+        />
+
         <InfoPanel
           legendCollapsed={legendCollapsed}
           onToggleLegend={() => setLegendCollapsed((current) => !current)}
@@ -434,6 +537,7 @@ export function AppClient({
           surfaceLegendLabel={surfaceLegendLabel}
           surfaceMode={surfaceMode}
           liveTrafficEnabled={liveTrafficEnabled}
+          nexradVolumeEnabled={nexradVolumeEnabled}
           hasApproachPlate={hasApproachPlate}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
@@ -454,6 +558,12 @@ export function AppClient({
           onFlattenBathymetryChange={setFlattenBathymetry}
           liveTrafficEnabled={liveTrafficEnabled}
           onLiveTrafficEnabledChange={setLiveTrafficEnabled}
+          nexradVolumeEnabled={nexradVolumeEnabled}
+          onNexradVolumeEnabledChange={setNexradVolumeEnabled}
+          nexradMinDbz={nexradMinDbz}
+          onNexradMinDbzChange={(dbz) => setNexradMinDbz(normalizeNexradMinDbz(dbz))}
+          nexradOpacity={nexradOpacity}
+          onNexradOpacityChange={(opacity) => setNexradOpacity(normalizeNexradOpacity(opacity))}
           hideGroundTraffic={hideGroundTraffic}
           onHideGroundTrafficChange={setHideGroundTraffic}
           showTrafficCallsigns={showTrafficCallsigns}

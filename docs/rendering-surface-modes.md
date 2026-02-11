@@ -7,6 +7,19 @@
 - `3D Plate`: FAA plate texture projected onto Google Photorealistic 3D Tiles terrain using the same `3d-tiles-renderer` pipeline as Satellite mode.
 - `Satellite`: Google Earth Photorealistic 3D Tiles rendered via `3d-tiles-renderer`, transformed into the app's local frame using `@takram/three-geospatial`.
 
+## Surface-Independent Overlays
+
+- MRMS 3D volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
+- MRMS overlay volume is assembled from multi-radar merged reflectivity slices (`00.50..19.00 km`) and rendered as a stacked 3D precipitation field.
+- In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
+- MRMS voxel coloring is phase-aware (rain/mixed/snow): server-side phase codes prioritize MRMS `PrecipFlag` classes and fall back to freezing-level-relative classification only when precip-flag data is unavailable for the scan, then the client applies phase-specific aviation reflectivity palettes.
+- MRMS color gain is applied with channel-safe scaling (hue-preserving boost without RGB clipping) so distant/high-altitude bins stay cyan/blue instead of bleaching toward white.
+- MRMS voxels render in two passes: a primary alpha pass (`transparent=true`, `NormalBlending`, `FrontSide`, `depthWrite=true`) for stable density control plus a lighter additive glow pass (`AdditiveBlending`, `FrontSide`) for radar-style bloom.
+- MRMS voxels render without scene fog contribution so echoes keep their intended color/intensity.
+- MRMS overlay opacity is user-configurable in the options panel so voxel intensity can be tuned per-surface and time-of-day visibility needs.
+- MRMS opacity slider updates mutate both voxel-pass opacities in place (no voxel remount/rebuild), so adjusting transparency does not drop the rendered volume.
+- MRMS voxel dimensions are derived from decoded MRMS grid spacing (independent X/Y footprint) and per-level altitude bounds, using the same local projection scales as voxel center placement so rendered cell size matches source data resolution without row-dependent drift.
+
 ## Shared Vertical-Scale Behavior
 
 - Terrain wireframe elevation samples are fetched/decoded per-airport reference and reused across vertical-scale changes; vertical exaggeration updates apply via Y-scale transform (no tile refetch/rebuild on slider changes).

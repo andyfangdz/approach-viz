@@ -5,6 +5,38 @@ import type { SceneData } from '@/lib/types';
 
 export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
 
+export interface NexradDebugState {
+  enabled: boolean;
+  loading: boolean;
+  stale: boolean;
+  error: string | null;
+  generatedAt: string | null;
+  scanTime: string | null;
+  lastPollAt: string | null;
+  layerCount: number;
+  voxelCount: number;
+  renderedVoxelCount: number;
+  phaseCounts: {
+    rain: number;
+    mixed: number;
+    snow: number;
+  };
+}
+
+export interface TrafficDebugState {
+  enabled: boolean;
+  loading: boolean;
+  error: string | null;
+  lastPollAt: string | null;
+  historyBackfillPending: boolean;
+  trackCount: number;
+  renderedTrackCount: number;
+  historyPointCount: number;
+  radiusNm: number;
+  limit: number;
+  historyMinutes: number;
+}
+
 export interface HeaderControlsProps {
   selectorsCollapsed: boolean;
   onToggleSelectors: () => void;
@@ -34,6 +66,9 @@ export interface SceneCanvasProps {
   hideGroundTraffic: boolean;
   showTrafficCallsigns: boolean;
   trafficHistoryMinutes: number;
+  nexradVolumeEnabled: boolean;
+  nexradMinDbz: number;
+  nexradOpacity: number;
   surfaceMode: SurfaceMode;
   satelliteRetryNonce: number;
   satelliteRetryCount: number;
@@ -41,6 +76,8 @@ export interface SceneCanvasProps {
   recenterNonce: number;
   missedApproachStartAltitudeFeet?: number;
   onSatelliteRuntimeError: (message: string, error?: Error) => void;
+  onNexradDebugChange?: (debug: NexradDebugState) => void;
+  onTrafficDebugChange?: (debug: TrafficDebugState) => void;
 }
 
 export interface InfoPanelProps {
@@ -50,6 +87,7 @@ export interface InfoPanelProps {
   surfaceLegendLabel: string;
   surfaceMode: SurfaceMode;
   liveTrafficEnabled: boolean;
+  nexradVolumeEnabled: boolean;
   hasApproachPlate: boolean;
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
@@ -66,6 +104,12 @@ export interface OptionsPanelProps {
   onFlattenBathymetryChange: (enabled: boolean) => void;
   liveTrafficEnabled: boolean;
   onLiveTrafficEnabledChange: (enabled: boolean) => void;
+  nexradVolumeEnabled: boolean;
+  onNexradVolumeEnabledChange: (enabled: boolean) => void;
+  nexradMinDbz: number;
+  onNexradMinDbzChange: (dbz: number) => void;
+  nexradOpacity: number;
+  onNexradOpacityChange: (opacity: number) => void;
   hideGroundTraffic: boolean;
   onHideGroundTrafficChange: (enabled: boolean) => void;
   showTrafficCallsigns: boolean;

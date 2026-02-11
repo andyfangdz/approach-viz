@@ -11,6 +11,12 @@
 - Live ADS-B callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled to avoid persistent label clutter.
 - Live ADS-B marker meshes reuse shared sphere geometry/material instances rather than allocating one geometry/material pair per aircraft marker.
 - Live ADS-B aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead while still updating positions every poll.
+- MRMS volumetric weather is polled at a slower cadence (`~120s`) through a same-origin proxy, with server-side range/threshold filtering plus max-voxel decimation to bound payload size; client requests currently cap at `20,000` voxels per poll.
+- MRMS proxy ingestion crops each decoded reflectivity level to the request AOI and stacks only available altitude slices before response decimation.
+- MRMS overlay polling keeps rendering the last successful payload when the API returns a transient error payload, avoiding abrupt disappear/reappear flicker.
+- MRMS overlay clears prior payload immediately when airport context changes (ref lat/lon or threshold inputs), preventing stale weather columns from lingering at the previous location while the next poll is in flight.
+- MRMS voxels render through one `InstancedMesh` (shared box geometry/material) with per-instance transforms/colors, keeping draw calls bounded even during dense precipitation events.
+- MRMS rendering uses dataset-derived voxel dimensions (X/Y footprint from grid spacing + per-level altitude thickness), so visual cell size tracks source resolution instead of a heuristic overlap factor.
 - In-scene `Html` labels (waypoints/holds/runways/turn constraints/callsigns) use a capped `zIndexRange` so app UI overlays (selectors/options/legend) stay visually on top.
 - Three.js resources allocated imperatively in hooks (`TubeGeometry`, airspace extrusions/edges, traffic marker buffers, plate textures) are explicitly disposed in effect cleanup paths to prevent GPU memory growth across scene updates.
 - Airspace extrusions are built in base altitude units and Y-scaled at the group level, avoiding expensive airspace geometry rebuilds when only `verticalScale` changes.

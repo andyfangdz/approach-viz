@@ -32,6 +32,7 @@
     "3d-tiles-renderer": "^0.4.21",
     "better-sqlite3": "^11.8.1",
     "egm96-universal": "^1.1.1",
+    "fast-png": "^8.0.0",
     "kdbush": "^4.0.2",
     "next": "^16.1.6",
     "pdfjs-dist": "^4.10.38",
