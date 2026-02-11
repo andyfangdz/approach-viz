@@ -7,7 +7,7 @@ const FEET_PER_NM = 6076.12;
 const ALTITUDE_SCALE = 1 / FEET_PER_NM;
 const POLL_INTERVAL_MS = 120_000;
 const RETRY_INTERVAL_MS = 10_000;
-const MAX_SERVER_VOXELS = 150_000;
+const MAX_VOXEL_INSTANCES = 100_000;
 const DEFAULT_MAX_RANGE_NM = 120;
 const MIN_VOXEL_HEIGHT_NM = 0.04;
 
@@ -199,7 +199,7 @@ function applyVoxelInstances(
   colorScratch: THREE.Color
 ) {
   if (!mesh) return;
-  const count = Math.min(voxels.length, MAX_SERVER_VOXELS);
+  const count = Math.min(voxels.length, MAX_VOXEL_INSTANCES);
   for (let index = 0; index < count; index += 1) {
     const voxel = voxels[index];
     meshDummy.position.set(voxel.x, voxel.yBase, voxel.z);
@@ -335,7 +335,6 @@ export function NexradVolumeOverlay({
       params.set('lon', refLon.toFixed(6));
       params.set('minDbz', String(minDbz));
       params.set('maxRangeNm', String(maxRangeNm));
-      params.set('maxVoxels', String(MAX_SERVER_VOXELS));
       let nextDelayMs = POLL_INTERVAL_MS;
 
       try {
@@ -528,13 +527,13 @@ export function NexradVolumeOverlay({
     <group scale={[1, verticalScale, 1]}>
       <instancedMesh
         ref={baseMeshRef}
-        args={[geometry, baseMaterial, MAX_SERVER_VOXELS]}
+        args={[geometry, baseMaterial, MAX_VOXEL_INSTANCES]}
         frustumCulled={false}
         renderOrder={80}
       />
       <instancedMesh
         ref={glowMeshRef}
-        args={[geometry, glowMaterial, MAX_SERVER_VOXELS]}
+        args={[geometry, glowMaterial, MAX_VOXEL_INSTANCES]}
         frustumCulled={false}
         renderOrder={81}
       />
