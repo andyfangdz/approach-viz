@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
+import type { NexradDebugState } from '@/app/app-client/types';
 import { earthCurvatureDropNm } from './approach-path/coordinates';
 
 const FEET_PER_NM = 6076.12;
@@ -19,6 +20,7 @@ interface NexradVolumeOverlayProps {
   enabled?: boolean;
   maxRangeNm?: number;
   applyEarthCurvatureCompensation?: boolean;
+  onDebugChange?: (debug: NexradDebugState) => void;
 }
 
 type NexradVoxelTuple = [
@@ -224,9 +226,13 @@ export function NexradVolumeOverlay({
   opacity = 0.72,
   enabled = false,
   maxRangeNm = DEFAULT_MAX_RANGE_NM,
-  applyEarthCurvatureCompensation = false
+  applyEarthCurvatureCompensation = false,
+  onDebugChange
 }: NexradVolumeOverlayProps) {
   const [payload, setPayload] = useState<NexradVolumePayload | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [lastPollAt, setLastPollAt] = useState<string | null>(null);
   const baseMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const glowMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const meshDummy = useMemo(() => new THREE.Object3D(), []);
@@ -304,14 +310,25 @@ export function NexradVolumeOverlay({
   useEffect(() => {
     if (!enabled) {
       setPayload(null);
+      setIsLoading(false);
+      setLastError(null);
+      setLastPollAt(null);
       return;
     }
+
+    setPayload(null);
+    setIsLoading(true);
+    setLastError(null);
+    setLastPollAt(null);
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let activeAbortController: AbortController | null = null;
 
     const poll = async () => {
+      if (!cancelled) {
+        setIsLoading(true);
+      }
       activeAbortController = new AbortController();
       const params = new URLSearchParams();
       params.set('lat', refLat.toFixed(6));
@@ -332,6 +349,8 @@ export function NexradVolumeOverlay({
 
         const nextPayload = (await response.json()) as NexradVolumePayload;
         if (!cancelled) {
+          setLastError(nextPayload.error ?? null);
+          setLastPollAt(new Date().toISOString());
           setPayload((previousPayload) => {
             if (
               nextPayload.error &&
@@ -347,9 +366,14 @@ export function NexradVolumeOverlay({
       } catch (error) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
           // Keep rendering the last successful payload when polling fails.
+          setLastError(error instanceof Error ? error.message : 'NEXRAD poll failed');
+          setLastPollAt(new Date().toISOString());
           nextDelayMs = RETRY_INTERVAL_MS;
         }
       } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
         activeAbortController = null;
         if (!cancelled) {
           timeoutId = setTimeout(poll, nextDelayMs);
@@ -424,6 +448,64 @@ export function NexradVolumeOverlay({
 
     return next;
   }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat, minDbz]);
+
+  const phaseCounts = useMemo(() => {
+    const counts = { rain: 0, mixed: 0, snow: 0 };
+    const voxels = payload?.voxels ?? [];
+    for (const voxel of voxels) {
+      const phaseCode = voxel[7];
+      if (phaseCode === PHASE_SNOW) {
+        counts.snow += 1;
+      } else if (phaseCode === PHASE_MIXED) {
+        counts.mixed += 1;
+      } else {
+        counts.rain += 1;
+      }
+    }
+    return counts;
+  }, [payload?.voxels]);
+
+  const debugState = useMemo<NexradDebugState>(
+    () => ({
+      enabled,
+      loading: isLoading,
+      stale: Boolean(payload?.stale),
+      error: lastError,
+      generatedAt: payload?.generatedAt ?? null,
+      scanTime: payload?.layerSummaries?.[0]?.scanTime ?? null,
+      lastPollAt,
+      layerCount: payload?.layerSummaries?.length ?? 0,
+      voxelCount: payload?.voxels?.length ?? 0,
+      renderedVoxelCount: renderVoxels.length,
+      phaseCounts
+    }),
+    [enabled, isLoading, payload, lastError, lastPollAt, renderVoxels.length, phaseCounts]
+  );
+
+  useEffect(() => {
+    if (!onDebugChange) return;
+    onDebugChange(debugState);
+  }, [onDebugChange, debugState]);
+
+  useEffect(
+    () => () => {
+      if (!onDebugChange) return;
+      onDebugChange({
+        enabled: false,
+        loading: false,
+        stale: false,
+        error: null,
+        generatedAt: null,
+        scanTime: null,
+        lastPollAt: null,
+        layerCount: 0,
+        voxelCount: 0,
+        renderedVoxelCount: 0,
+        phaseCounts: { rain: 0, mixed: 0, snow: 0 }
+      });
+    },
+    [onDebugChange]
+  );
 
   useEffect(() => {
     const meshes = [baseMeshRef.current, glowMeshRef.current];

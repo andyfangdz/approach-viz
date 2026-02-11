@@ -50,7 +50,7 @@
 - Each slice is GRIB2 (`template 5.41`) with PNG-compressed field data; the route gunzips, parses GRIB sections, and decodes Section 7 PNG payloads with `fast-png`.
 - Phase auxiliaries are fetched near the selected reflectivity timestamp: `PrecipFlag_00.00` (2-min cadence, short lookback) and `Model_0degC_Height_00.50` (hourly cadence, longer lookback).
 - Decoded cells are transformed server-side into request-origin local NM voxel tuples with per-level altitude bounds plus per-cell X/Y footprint from dataset grid spacing; both voxel centers and footprint dimensions use the same origin-local projection scales before dBZ/range filtering and response decimation.
-- Per-voxel precipitation phase codes are resolved server-side by combining MRMS precip-flag classes with freezing-level-relative voxel altitude (rain/mixed/snow) before response decimation.
+- Per-voxel precipitation phase codes are resolved server-side with `PrecipFlag` as the primary classifier (rain/mixed/snow), and freezing-level-relative classification is used only as fallback when precip-flag data is unavailable for that scan.
 - Altitude-slice fetch/decode is concurrency-limited (worker pool) rather than strictly serial, reducing first-load latency and timeout risk.
 - Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
 

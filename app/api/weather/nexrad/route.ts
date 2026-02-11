@@ -630,14 +630,18 @@ function phaseFromPrecipFlag(precipFlagValue: number | null): number | null {
   if (!Number.isFinite(precipFlagValue)) return null;
   const flagCode = Math.round(precipFlagValue as number);
 
+  // MRMS flag table: -3 no coverage, 0 no precipitation.
+  // For volumetric weather coloring, keep these as rain-default so freezing-level
+  // fallback does not paint warm-region echoes as widespread snow.
+  if (flagCode === -3 || flagCode === 0) return PHASE_RAIN;
   if (flagCode === 3) return PHASE_SNOW;
-  if (flagCode === 7) return PHASE_MIXED;
+  if (flagCode === 7) return PHASE_MIXED; // hail bucket -> mixed visual class
   if (flagCode === 1 || flagCode === 6 || flagCode === 10 || flagCode === 91 || flagCode === 96) {
     return PHASE_RAIN;
   }
 
-  // Unknown / no precip / no coverage -> let other signals decide.
-  return null;
+  // Unused/unknown bins currently default to rain to avoid false snow classification.
+  return PHASE_RAIN;
 }
 
 function phaseFromFreezingLevel(
@@ -667,29 +671,16 @@ function resolveVoxelPhase(
   const phaseFromFlag = precipFlagSampler
     ? phaseFromPrecipFlag(precipFlagSampler(latDeg, lonDeg360))
     : null;
+
+  if (phaseFromFlag !== null) {
+    return phaseFromFlag;
+  }
+
+  // Fallback path when precip-flag product is unavailable at runtime.
   const phaseFromFreezing = freezingLevelSampler
     ? phaseFromFreezingLevel(voxelMidFeet, freezingLevelSampler(latDeg, lonDeg360))
     : null;
-
-  if (phaseFromFlag === null && phaseFromFreezing === null) {
-    return PHASE_RAIN;
-  }
-  if (phaseFromFlag === null) {
-    return phaseFromFreezing as number;
-  }
-  if (phaseFromFreezing === null) {
-    return phaseFromFlag;
-  }
-  if (phaseFromFlag === phaseFromFreezing) {
-    return phaseFromFlag;
-  }
-  if (phaseFromFlag === PHASE_MIXED || phaseFromFreezing === PHASE_MIXED) {
-    return PHASE_MIXED;
-  }
-
-  // When the near-surface classification conflicts with 3D freezing level, prioritize
-  // the freezing-level-derived phase for volumetric depiction.
-  return phaseFromFreezing;
+  return phaseFromFreezing ?? PHASE_RAIN;
 }
 
 function limitVoxels(voxels: NexradVoxelTuple[], maxVoxels: number): NexradVoxelTuple[] {

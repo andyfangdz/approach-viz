@@ -13,6 +13,12 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 - Live traffic is enabled by default; MRMS volumetric overlay is disabled by default; `Hide Ground Traffic` is disabled by default; default traffic history window is 3 min.
 - All options-panel values are persisted to browser `localStorage` and restored on load.
 
+## Runtime Status and Debug UI
+
+- When MRMS overlay polling is active, a top-right in-scene status chip (`Loading MRMS...`) appears beneath the navbar/selector region.
+- A right-side debug FAB expands into a runtime diagnostics panel with current context plus MRMS/traffic telemetry (enabled/loading/stale/error, voxel/track counts, phase mix, poll timestamps, and backfill state).
+- MRMS and traffic debug panel state is fed from scene overlays via callback props, so telemetry reflects the currently rendered overlay state rather than cached UI assumptions.
+
 ## Header and Selector Layout
 
 - Airport/approach selectors use `react-select` searchable comboboxes.

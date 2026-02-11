@@ -57,8 +57,9 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 ### Rendering
 
 3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional MRMS volumetric precipitation weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
-MRMS volume intensity uses phase-aware reflectivity coloring (rain/mixed/snow): `PrecipFlag_00.00` and `Model_0degC_Height_00.50` are blended server-side into voxel phase codes, then rendered with phase-specific aviation palettes and clip-safe color gain (preserves hue, avoids distant whitening) in a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place).
+MRMS volume intensity uses phase-aware reflectivity coloring (rain/mixed/snow): server-side phase resolution prioritizes `PrecipFlag_00.00` and only falls back to `Model_0degC_Height_00.50` when precip-flag data is unavailable, then renders voxels with phase-specific aviation palettes and clip-safe color gain (preserves hue, avoids distant whitening) in a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place).
 MRMS client polling keeps the last successful voxel payload when transient API error payloads arrive, preventing abrupt volume disappearance during upstream hiccups.
+MRMS client polling also clears prior payload immediately when airport context changes, so stale voxels do not linger from the previous location while new volume data is loading.
 MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), using the same origin-local projection scales for both voxel placement and footprint sizing to keep cell spacing contiguous.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
@@ -68,7 +69,7 @@ MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independe
 
 ### UI, URL State, and Mobile
 
-URL-path-encoded airport/procedure selection, options panel (including traffic/weather overlays) with localStorage persistence, overlay-style selectors, mobile-first collapsed defaults, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
+URL-path-encoded airport/procedure selection, options panel (including traffic/weather overlays) with localStorage persistence, overlay-style selectors, a top-right MRMS loading chip, a collapsible runtime debug panel (MRMS/traffic telemetry), mobile-first collapsed defaults, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
 
 ### Validation
 

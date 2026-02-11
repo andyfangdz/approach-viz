@@ -71,7 +71,9 @@ export const SceneCanvas = memo(function SceneCanvas({
   surfaceErrorMessage,
   recenterNonce,
   missedApproachStartAltitudeFeet,
-  onSatelliteRuntimeError
+  onSatelliteRuntimeError,
+  onNexradDebugChange,
+  onTrafficDebugChange
 }: SceneCanvasProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const sceneAirports = useMemo<SceneAirport[]>(() => {
@@ -193,6 +195,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'
             }
+            onDebugChange={onTrafficDebugChange}
           />
         )}
 
@@ -207,6 +210,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'
             }
+            onDebugChange={onNexradDebugChange}
           />
         )}
 

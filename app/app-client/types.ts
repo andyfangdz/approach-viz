@@ -5,6 +5,38 @@ import type { SceneData } from '@/lib/types';
 
 export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
 
+export interface NexradDebugState {
+  enabled: boolean;
+  loading: boolean;
+  stale: boolean;
+  error: string | null;
+  generatedAt: string | null;
+  scanTime: string | null;
+  lastPollAt: string | null;
+  layerCount: number;
+  voxelCount: number;
+  renderedVoxelCount: number;
+  phaseCounts: {
+    rain: number;
+    mixed: number;
+    snow: number;
+  };
+}
+
+export interface TrafficDebugState {
+  enabled: boolean;
+  loading: boolean;
+  error: string | null;
+  lastPollAt: string | null;
+  historyBackfillPending: boolean;
+  trackCount: number;
+  renderedTrackCount: number;
+  historyPointCount: number;
+  radiusNm: number;
+  limit: number;
+  historyMinutes: number;
+}
+
 export interface HeaderControlsProps {
   selectorsCollapsed: boolean;
   onToggleSelectors: () => void;
@@ -44,6 +76,8 @@ export interface SceneCanvasProps {
   recenterNonce: number;
   missedApproachStartAltitudeFeet?: number;
   onSatelliteRuntimeError: (message: string, error?: Error) => void;
+  onNexradDebugChange?: (debug: NexradDebugState) => void;
+  onTrafficDebugChange?: (debug: TrafficDebugState) => void;
 }
 
 export interface InfoPanelProps {

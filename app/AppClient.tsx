@@ -15,6 +15,7 @@ import { HeaderControls } from '@/app/app-client/HeaderControls';
 import { HelpPanel } from '@/app/app-client/HelpPanel';
 import { InfoPanel } from '@/app/app-client/InfoPanel';
 import { OptionsPanel } from '@/app/app-client/OptionsPanel';
+import { DebugPanel } from '@/app/app-client/DebugPanel';
 import {
   SATELLITE_MAX_RETRIES,
   DEFAULT_TERRAIN_RADIUS_NM,
@@ -34,7 +35,7 @@ import {
   MAX_NEXRAD_OPACITY
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
-import type { SurfaceMode } from '@/app/app-client/types';
+import type { NexradDebugState, SurfaceMode, TrafficDebugState } from '@/app/app-client/types';
 import type { AirportOption, SceneData } from '@/lib/types';
 
 interface AppClientProps {
@@ -58,6 +59,36 @@ interface PersistedOptionsState {
 }
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
+const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
+  enabled: false,
+  loading: false,
+  stale: false,
+  error: null,
+  generatedAt: null,
+  scanTime: null,
+  lastPollAt: null,
+  layerCount: 0,
+  voxelCount: 0,
+  renderedVoxelCount: 0,
+  phaseCounts: {
+    rain: 0,
+    mixed: 0,
+    snow: 0
+  }
+};
+const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
+  enabled: false,
+  loading: false,
+  error: null,
+  lastPollAt: null,
+  historyBackfillPending: false,
+  trackCount: 0,
+  renderedTrackCount: 0,
+  historyPointCount: 0,
+  radiusNm: 80,
+  limit: 250,
+  historyMinutes: DEFAULT_TRAFFIC_HISTORY_MINUTES
+};
 
 function clampValue(value: number, min: number, max: number, fallback = min): number {
   if (!Number.isFinite(value)) return fallback;
@@ -97,6 +128,7 @@ export function AppClient({
   const [selectorsCollapsed, setSelectorsCollapsed] = useState(false);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [optionsCollapsed, setOptionsCollapsed] = useState(true);
+  const [debugCollapsed, setDebugCollapsed] = useState(true);
   const [airportOptions, setAirportOptions] = useState<AirportOption[]>(initialAirportOptions);
   const [airportOptionsLoading, setAirportOptionsLoading] = useState(
     initialAirportOptions.length === 0
@@ -129,6 +161,8 @@ export function AppClient({
   const [satelliteRetryCount, setSatelliteRetryCount] = useState(0);
   const [satelliteRetryNonce, setSatelliteRetryNonce] = useState(0);
   const [recenterNonce, setRecenterNonce] = useState(0);
+  const [nexradDebug, setNexradDebug] = useState<NexradDebugState>(EMPTY_NEXRAD_DEBUG_STATE);
+  const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
@@ -347,6 +381,7 @@ export function AppClient({
 
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const activeErrorMessage = errorMessage || surfaceErrorMessage;
+  const showMrmsLoadingIndicator = nexradVolumeEnabled && nexradDebug.loading;
   const missedApproachStartAltitudeFeet =
     sceneData.minimumsSummary?.da?.altitude ??
     sceneData.minimumsSummary?.mda?.altitude ??
@@ -455,7 +490,16 @@ export function AppClient({
             recenterNonce={recenterNonce}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             onSatelliteRuntimeError={handleSatelliteRuntimeError}
+            onNexradDebugChange={setNexradDebug}
+            onTrafficDebugChange={setTrafficDebug}
           />
+        )}
+
+        {showMrmsLoadingIndicator && (
+          <div className="mrms-loading-indicator" role="status" aria-live="polite">
+            <span className="mrms-loading-spinner" aria-hidden="true" />
+            <span>Loading MRMS...</span>
+          </div>
         )}
 
         <button
@@ -475,6 +519,16 @@ export function AppClient({
             <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.7" />
           </svg>
         </button>
+
+        <DebugPanel
+          debugCollapsed={debugCollapsed}
+          onToggleDebug={() => setDebugCollapsed((current) => !current)}
+          airportId={selectedAirport}
+          approachId={selectedApproach}
+          surfaceMode={surfaceMode}
+          nexradDebug={nexradDebug}
+          trafficDebug={trafficDebug}
+        />
 
         <InfoPanel
           legendCollapsed={legendCollapsed}
