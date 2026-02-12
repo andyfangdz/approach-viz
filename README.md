@@ -8,6 +8,7 @@
 - React + TypeScript
 - react-three-fiber
 - SQLite
+- Rust (`axum`) sidecar API for MRMS + ADS-B runtime feeds
 
 ## Quick Start
 
@@ -18,6 +19,10 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+`npm run dev` and `npm run start` will start the Rust sidecar automatically by default. Set `RUST_API_MANAGED=0` if you run the sidecar separately.
+MRMS sidecar fan-out tuning is available via `MRMS_LEVEL_FETCH_CONCURRENCY` (default `33`) and `MRMS_LEVEL_FETCH_RETRIES` (default `2`).
+MRMS proxy timeout is configurable with `RUST_API_MRMS_PROXY_TIMEOUT_MS` (default `90000` ms).
 
 ## For Pilots
 
@@ -44,6 +49,7 @@ Training note: this app is for education and familiarization, not for real-world
 npm run test:parser
 npm run format
 npm run format:check
+npm run rust-api:dev
 npm run build
 npm run start
 ```

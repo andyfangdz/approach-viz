@@ -2,30 +2,15 @@
 
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import path from 'node:path';
 import process from 'node:process';
 
-import nextEnv from '@next/env';
-
-const { loadEnvConfig } = nextEnv;
-
-const require = createRequire(import.meta.url);
-
-// Mirror Next.js env loading so DD_* vars in .env.local are available at tracer init time.
-loadEnvConfig(process.cwd(), true);
-
-const nextBin = require.resolve('next/dist/bin/next');
-const traceImportFlag = '--import dd-trace/initialize.mjs';
 const managedRustApiEnabled = process.env.RUST_API_MANAGED !== '0';
-const rustApiManifestPath = path.join(process.cwd(), 'rust-api', 'Cargo.toml');
-const existingNodeOptions = process.env.NODE_OPTIONS?.trim() ?? '';
-const nodeOptions = existingNodeOptions.includes('dd-trace/initialize.mjs')
-  ? existingNodeOptions
-  : [existingNodeOptions, traceImportFlag].filter(Boolean).join(' ');
+const require = createRequire(import.meta.url);
+const nextBin = require.resolve('next/dist/bin/next');
 
 let rustApiChild = null;
 if (managedRustApiEnabled) {
-  rustApiChild = spawn('cargo', ['run', '--manifest-path', rustApiManifestPath], {
+  rustApiChild = spawn('cargo', ['run', '--release', '--manifest-path', 'rust-api/Cargo.toml'], {
     stdio: 'inherit',
     env: {
       ...process.env
@@ -33,11 +18,10 @@ if (managedRustApiEnabled) {
   });
 }
 
-const nextChild = spawn(process.execPath, [nextBin, 'dev', ...process.argv.slice(2)], {
+const nextChild = spawn(process.execPath, [nextBin, 'start', ...process.argv.slice(2)], {
   stdio: 'inherit',
   env: {
-    ...process.env,
-    NODE_OPTIONS: nodeOptions
+    ...process.env
   }
 });
 
@@ -74,7 +58,7 @@ if (rustApiChild) {
 }
 
 nextChild.on('error', (error) => {
-  console.error(`Failed to start Next.js dev server: ${error.message}`);
+  console.error(`Failed to start Next.js server: ${error.message}`);
   if (rustApiChild && !rustApiChild.killed) {
     rustApiChild.kill('SIGTERM');
   }
@@ -89,6 +73,5 @@ nextChild.on('exit', (code, signal) => {
     process.kill(process.pid, signal);
     return;
   }
-
   process.exit(code ?? 0);
 });

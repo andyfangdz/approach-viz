@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + `fast-png` + `dd-trace`
+- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (`axum`) sidecar API + `dd-trace`
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -22,17 +22,20 @@
 - Run full automated tests (parser + geometry): `npm run test`
 - Run CIFP parser fixture tests: `npm run test:parser`
 - Run geometry unit tests (path/curve/runway math): `npm run test:geometry`
+- Run Rust API sidecar in dev mode: `npm run rust-api:dev`
+- Run Rust API sidecar in release mode: `npm run rust-api:start`
 - Format codebase with Prettier: `npm run format`
 - Verify Prettier formatting: `npm run format:check`
-- Dev server: `npm run dev` (loads `.env.local`, preloads Datadog tracer, then starts `next dev`)
+- Dev server: `npm run dev` (loads `.env.local`, preloads Datadog tracer, starts Rust sidecar unless `RUST_API_MANAGED=0`, then starts `next dev`)
 - Production build (also refreshes data): `npm run build`
-- Run production server: `npm run start`
+- Run production server: `npm run start` (starts Rust sidecar in release mode unless `RUST_API_MANAGED=0`, then starts `next start`)
 
 ## Directory Layout
 
 - `app/` — Next.js routes, server actions (`actions-lib/`), API proxies (`api/`), client UI (`app-client/`), and 3D scene components (`scene/`)
 - `lib/` — shared types, SQLite singleton, spatial index, and CIFP parser (`cifp/`)
-- `scripts/` — data download/build scripts plus dev launcher (`dev-with-ddtrace.mjs`)
+- `scripts/` — data download/build scripts plus runtime launchers (`dev-with-ddtrace.mjs`, `start-with-rust-api.mjs`)
+- `rust-api/` — Rust `axum` sidecar implementing MRMS weather + ADS-B traffic endpoints consumed by Next API proxies (`main.rs` router/bootstrap, `traffic.rs`, `weather.rs`)
 - `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
 - `data/` — build-time artifacts (SQLite DB, spatial index binaries)
 
@@ -46,10 +49,11 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 
 ### Architecture
 
-Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
+Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections, a react-three-fiber scene, and a local Rust sidecar for high-throughput runtime feed decoding.
 
-- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`) under `CONUS`, plus phase-assist fields (`PrecipFlag_00.00`, `Model_0degC_Height_00.50`), probes recent base timestamps (newest-first), uses cached per-level/day S3 key indexes to find complete candidates, fetches/decodes all configured reflectivity levels in full parallel per candidate, and emits request-origin voxel mosaics with per-voxel phase codes.
-- Runtime tracing note: local dev startup (`npm run dev`) runs through `scripts/dev-with-ddtrace.mjs`, which preloads env vars (including `DD_API_KEY`) and starts Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so Datadog tracing initializes before server modules.
+- Runtime feed note: `rust-api/src/main.rs` wires routes and shared client/state, `rust-api/src/traffic.rs` implements `/api/traffic/adsbx` (tar1090 decode/history), and `rust-api/src/weather.rs` implements `/api/weather/nexrad` (MRMS decode/voxelization); Next route handlers in `app/api/*` remain same-origin proxies so browser clients keep unchanged URLs.
+- Runtime proxy timeout note: Next MRMS proxy (`app/api/weather/nexrad/route.ts` via `app/api/_lib/rust-proxy.ts`) uses a longer timeout budget (default `90s`, configurable with `RUST_API_MRMS_PROXY_TIMEOUT_MS`) so full-volume MRMS scans do not abort at the prior 20s limit.
+- Runtime tracing note: local dev startup (`npm run dev`) runs through `scripts/dev-with-ddtrace.mjs`, which preloads env vars (including `DD_API_KEY`), starts the Rust sidecar unless disabled, and launches Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so Datadog tracing initializes before server modules.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI

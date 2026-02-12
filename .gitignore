@@ -5,6 +5,7 @@ node_modules/
 dist/
 .next/
 *.tsbuildinfo
+rust-api/target/
 
 # Vite cache
 .vite/

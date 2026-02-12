@@ -35,24 +35,26 @@
 
 ## Live ADS-B Traffic Access
 
-- Live ADS-B traffic is fetched through same-origin proxy `app/api/traffic/adsbx/route.ts`.
-- The proxy targets ADSB Exchange tar1090 `binCraft+zstd` endpoint (`/re-api/?binCraft&zstd&box=...`), applies tar1090-compatible validity-bit parsing, and normalizes aircraft records before client delivery.
-- The proxy supports `hideGround` query filtering (default on) so clients can include or exclude on-ground targets without changing source decoding.
-- When `historyMinutes` is requested, the proxy also fetches per-target recent traces from tar1090 trace files (`/data/traces/<suffix>/trace_recent_<hex>.json`) and returns per-aircraft history points for initial trail backfill.
+- Live ADS-B traffic is fetched through same-origin Next route `app/api/traffic/adsbx/route.ts`, which proxies requests to the Rust sidecar endpoint implemented in `rust-api/src/traffic.rs` (`/api/traffic/adsbx`).
+- The Rust handler targets ADSB Exchange tar1090 `binCraft+zstd` endpoint (`/re-api/?binCraft&zstd&box=...`), applies tar1090-compatible validity-bit parsing, and normalizes aircraft records before client delivery.
+- The Rust handler supports `hideGround` query filtering (default off) so clients can include or exclude on-ground targets without changing source decoding.
+- When `historyMinutes` is requested, the Rust handler also fetches per-target recent traces from tar1090 trace files (`/data/traces/<suffix>/trace_recent_<hex>.json`) and returns per-aircraft history points for initial trail backfill.
 - Proxy target host defaults to `https://globe.adsbexchange.com` and can be overridden with `ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts can be supplied via `ADSBX_TAR1090_FALLBACK_BASE_URLS`.
-- On upstream fetch failures, the proxy returns an empty `aircraft` array with an `error` field (HTTP 200) so client polling remains non-fatal.
+- Next-to-Rust proxy target defaults to `http://127.0.0.1:8787` and can be overridden with `RUST_API_BASE_URL` (or `RUST_API_PORT` when using the default host).
+- On upstream or sidecar failures, the Next route returns an empty `aircraft` array with an `error` field (HTTP 200) so client polling remains non-fatal.
 - Client traffic rendering is optional and independent from SQLite/server-action scene payload assembly.
 
 ## MRMS Weather Access
 
-- 3D precipitation weather is fetched through same-origin proxy `app/api/weather/nexrad/route.ts`.
-- The proxy targets NOAA MRMS AWS products under `CONUS` (`CONUS/MergedReflectivityQC_<height_km>`), probes several newest base-level `00.50` timestamps, verifies complete per-level key availability via cached S3 prefix indexes, and then fetches/decode-checks candidates newest-first (`00.50..19.00 km`).
-- Each slice is GRIB2 (`template 5.41`) with PNG-compressed field data; the route gunzips, parses GRIB sections, and decodes Section 7 PNG payloads with `fast-png`.
+- 3D precipitation weather is fetched through same-origin Next route `app/api/weather/nexrad/route.ts`, which proxies requests to Rust sidecar endpoint implemented in `rust-api/src/weather.rs` (`/api/weather/nexrad`).
+- The Next-to-Rust MRMS proxy timeout is intentionally longer than traffic (default `90s`, env override `RUST_API_MRMS_PROXY_TIMEOUT_MS`) to avoid premature aborts on large full-level scan assembly.
+- The Rust handler targets NOAA MRMS AWS products under `CONUS` (`CONUS/MergedReflectivityQC_<height_km>`), probes several newest base-level `00.50` timestamps, verifies complete per-level key availability via cached S3 prefix indexes, and then fetches/decode-checks candidates newest-first (`00.50..19.00 km`).
+- Each slice is GRIB2 (`template 5.41`) with PNG-compressed field data; the Rust handler gunzips, parses GRIB sections, and decodes Section 7 PNG payloads.
 - Phase auxiliaries are fetched near the selected reflectivity timestamp: `PrecipFlag_00.00` (2-min cadence, short lookback) and `Model_0degC_Height_00.50` (hourly cadence, longer lookback).
 - Decoded cells are transformed server-side into request-origin local NM voxel tuples with per-level altitude bounds plus per-cell X/Y footprint from dataset grid spacing; both voxel centers and footprint dimensions use the same origin-local projection scales before dBZ/range filtering and response decimation.
 - Per-voxel precipitation phase codes are resolved server-side with `PrecipFlag` as the primary classifier (rain/mixed/snow), and freezing-level-relative classification is used only as fallback when precip-flag data is unavailable for that scan.
-- Altitude-slice fetch/decode runs in full parallel for all configured levels once a complete timestamp is selected, minimizing end-to-end scan assembly latency.
-- Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
+- Altitude-slice fetch/decode defaults to full parallel fan-out for all configured levels once a complete timestamp is selected, minimizing end-to-end scan assembly latency; concurrency/retry behavior can be tuned with `MRMS_LEVEL_FETCH_CONCURRENCY` and `MRMS_LEVEL_FETCH_RETRIES`.
+- Responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
 
 ## CI and Instrumentation
 
