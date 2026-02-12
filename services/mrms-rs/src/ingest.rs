@@ -20,12 +20,12 @@ use crate::constants::{
     PHASE_RAIN, PHASE_SNOW, PRECIP_FLAG_STEP_SECONDS, STORE_MIN_DBZ_TENTHS,
 };
 use crate::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
-use crate::grib::parse_grib_gzipped;
+use crate::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
 use crate::http_client::fetch_bytes;
 use crate::storage::persist_snapshot;
 use crate::types::{
-    AppState, AuxFieldSampler, LevelBounds, PackedValues, ParsedField, PendingIngest, ScanSnapshot,
-    StoredVoxel,
+    AppState, AuxFieldSampler, LevelBounds, ParsedAuxField, ParsedReflectivityField, PendingIngest,
+    ScanSnapshot, StoredVoxel,
 };
 use crate::utils::{cycle_anchor_timestamp, parse_timestamp_utc, round_u16, to_lon360};
 
@@ -318,14 +318,16 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         futures.push(async move {
             let key = build_level_key(&level_tag, &date_part, &timestamp);
             let zipped = fetch_bytes(&http, &format!("{MRMS_BUCKET_URL}/{key}")).await?;
-            let parsed = tokio::task::spawn_blocking(move || parse_grib_gzipped(&zipped))
-                .await
-                .context("Join error while parsing level GRIB")??;
+            let parsed =
+                tokio::task::spawn_blocking(move || parse_reflectivity_grib_gzipped(&zipped))
+                    .await
+                    .context("Join error while parsing level GRIB")??;
             Ok::<_, anyhow::Error>((level_idx, level_tag, parsed))
         });
     }
 
-    let mut parsed_levels: Vec<Option<(String, ParsedField)>> = vec![None; LEVEL_TAGS.len()];
+    let mut parsed_levels: Vec<Option<(String, ParsedReflectivityField)>> =
+        vec![None; LEVEL_TAGS.len()];
     while let Some(result) = futures.next().await {
         let (level_idx, level_tag, parsed) = result?;
         parsed_levels[level_idx] = Some((level_tag, parsed));
@@ -427,14 +429,12 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         };
         let voxel_mid_feet = (bounds.bottom_feet as f64 + bounds.top_feet as f64) / 2.0;
 
-        let decode_lookup = build_decode_lookup(parsed);
         for row in 0..parsed.grid.ny as usize {
             let lat_deg = row_lats[row];
             let row_offset = row * parsed.grid.nx as usize;
 
             for col in 0..parsed.grid.nx as usize {
-                let packed = parsed.values.get_u32(row_offset + col) as usize;
-                let dbz_tenths = decode_lookup.get(packed).copied().unwrap_or(i16::MIN);
+                let dbz_tenths = parsed.dbz_tenths[row_offset + col];
                 if dbz_tenths < STORE_MIN_DBZ_TENTHS {
                     continue;
                 }
@@ -491,40 +491,10 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
     }))
 }
 
-fn build_decode_lookup(field: &ParsedField) -> Vec<i16> {
-    let max_packed = match &field.values {
-        PackedValues::U8(_) => 255,
-        PackedValues::U16(_) => 65_535,
-    };
-
-    let mut lookup = vec![i16::MIN; max_packed + 1];
-    let binary_scale = 2_f64.powi(field.packing.binary_scale_factor as i32);
-    let decimal_scale = 10_f64.powi(field.packing.decimal_scale_factor as i32);
-
-    for packed in 0..=max_packed {
-        let decoded =
-            (field.packing.reference_value + packed as f64 * binary_scale) / decimal_scale;
-        let dbz_tenths = (decoded * 10.0).round();
-        lookup[packed] = dbz_tenths.clamp(i16::MIN as f64, i16::MAX as f64) as i16;
-    }
-
-    lookup
-}
-
-fn build_aux_sampler(field: &ParsedField) -> Result<AuxFieldSampler> {
-    let mut values = Vec::with_capacity(field.values.len());
-    let binary_scale = 2_f64.powi(field.packing.binary_scale_factor as i32);
-    let decimal_scale = 10_f64.powi(field.packing.decimal_scale_factor as i32);
-
-    for idx in 0..field.values.len() {
-        let packed = field.values.get_u32(idx) as f64;
-        let decoded = (field.packing.reference_value + packed * binary_scale) / decimal_scale;
-        values.push(decoded as f32);
-    }
-
+fn build_aux_sampler(field: &ParsedAuxField) -> Result<AuxFieldSampler> {
     Ok(AuxFieldSampler {
         grid: field.grid.clone(),
-        values,
+        values: field.values.clone(),
     })
 }
 
@@ -633,14 +603,14 @@ async fn fetch_aux_field_at_timestamp(
     http: &Client,
     product: &str,
     timestamp: &str,
-) -> Result<ParsedField> {
+) -> Result<ParsedAuxField> {
     let target = parse_timestamp_utc(timestamp)
         .ok_or_else(|| anyhow!("Invalid target timestamp: {timestamp}"))?;
     let date_part = target.format("%Y%m%d").to_string();
     let key = build_aux_key(product, &date_part, timestamp);
     let url = format!("{MRMS_BUCKET_URL}/{key}");
     let zipped = fetch_bytes(http, &url).await?;
-    let parsed = tokio::task::spawn_blocking(move || parse_grib_gzipped(&zipped))
+    let parsed = tokio::task::spawn_blocking(move || parse_aux_grib_gzipped(&zipped))
         .await
         .context("Join error while parsing aux GRIB")??;
     Ok(parsed)

@@ -66,40 +66,15 @@ pub struct PendingIngest {
 }
 
 #[derive(Clone, Debug)]
-pub struct ParsedField {
+pub struct ParsedReflectivityField {
     pub grid: GridDef,
-    pub packing: ParsedPacking,
-    pub values: PackedValues,
+    pub dbz_tenths: Vec<i16>,
 }
 
 #[derive(Clone, Debug)]
-pub struct ParsedPacking {
-    pub reference_value: f64,
-    pub binary_scale_factor: i16,
-    pub decimal_scale_factor: i16,
-    pub data_point_count: usize,
-}
-
-#[derive(Clone, Debug)]
-pub enum PackedValues {
-    U8(Vec<u8>),
-    U16(Vec<u16>),
-}
-
-impl PackedValues {
-    pub fn len(&self) -> usize {
-        match self {
-            Self::U8(values) => values.len(),
-            Self::U16(values) => values.len(),
-        }
-    }
-
-    pub fn get_u32(&self, index: usize) -> u32 {
-        match self {
-            Self::U8(values) => values[index] as u32,
-            Self::U16(values) => values[index] as u32,
-        }
-    }
+pub struct ParsedAuxField {
+    pub grid: GridDef,
+    pub values: Vec<f32>,
 }
 
 #[derive(Clone, Debug)]

@@ -6,13 +6,14 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
 
 - The old path did expensive runtime work per request: S3 key discovery, multi-level object fetch, GRIB parse, PNG decode, and voxel assembly.
 - The Rust service ingests scans once (event-driven), stores compact pre-indexed snapshots, and serves query-time binary subsets.
+- The Rust service decodes GRIB2 via the `grib` crate (including PNG-packed payload templates) instead of custom GRIB section parsing.
 - Query-time latency is reduced to in-memory filtering + binary serialization.
 
 ## Runtime Flow
 
 1. NOAA publishes `ObjectCreated` events to SNS topic `arn:aws:sns:us-east-1:123901341784:NewMRMSObject`.
 2. SQS queue receives those messages (`RawMessageDelivery=true`).
-3. Rust service polls SQS, extracts MRMS timestamps, ingests complete scans, and stores compressed snapshots.
+3. Rust service polls SQS, extracts MRMS timestamps, decodes GRIB2 fields through `grib`, and stores compressed snapshots.
 4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the service `v1/volume` endpoint.
 5. Client decodes compact binary payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 

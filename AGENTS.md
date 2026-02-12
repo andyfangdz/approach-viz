@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio MRMS service) + AWS SNS/SQS + `dd-trace`
+- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio MRMS service, `grib` crate decoding) + AWS SNS/SQS + `dd-trace`
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -52,7 +52,7 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
-- Runtime weather note: MRMS ingest/query moved to `services/mrms-rs/` (Rust Axum service). It consumes SNS->SQS new-object events, ingests/decodes complete scans once, stores zstd snapshots with 5 GB retention, and serves query-filtered binary voxel payloads (`application/vnd.approach-viz.mrms.v1`) through the OCI host. `app/api/weather/nexrad/route.ts` is now a thin proxy to that upstream service. Aux phase inputs are cycle-anchored to the reflectivity timestamp family (same 2-minute precip cycle + same hourly freezing-level cycle) to avoid mixed-cycle voxel/aux rendering.
+- Runtime weather note: MRMS ingest/query moved to `services/mrms-rs/` (Rust Axum service). It consumes SNS->SQS new-object events, ingests/decodes complete scans once, uses the Rust `grib` crate for GRIB2 template decoding (including PNG-packed fields), stores zstd snapshots with 5 GB retention, and serves query-filtered binary voxel payloads (`application/vnd.approach-viz.mrms.v1`) through the OCI host. `app/api/weather/nexrad/route.ts` is now a thin proxy to that upstream service. Aux phase inputs are cycle-anchored to the reflectivity timestamp family (same 2-minute precip cycle + same hourly freezing-level cycle) to avoid mixed-cycle voxel/aux rendering.
 - Runtime tracing note: local dev startup (`npm run dev`) runs through `scripts/dev-with-ddtrace.mjs`, which preloads env vars (including `DD_API_KEY`) and starts Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so Datadog tracing initializes before server modules.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
