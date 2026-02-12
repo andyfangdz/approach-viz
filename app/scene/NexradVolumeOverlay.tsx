@@ -346,6 +346,33 @@ function dbzToHex(dbz: number, phaseCode: number): number {
   return applyVisibilityGain(dbzToBandHex(dbz, bands));
 }
 
+/** Map dBZ intensity to per-instance alpha so low-intensity echoes are
+ *  nearly transparent while high-intensity cores remain prominent. */
+function dbzToAlpha(dbz: number): number {
+  const t = Math.max(0, Math.min(1, (dbz - 5) / 60));
+  return 0.1 + 0.9 * Math.pow(t, 1.5);
+}
+
+/** Inject an `instanceAlpha` attribute into a MeshBasicMaterial so each
+ *  voxel instance can have its own opacity multiplier. */
+function patchMaterialForInstanceAlpha(material: THREE.MeshBasicMaterial): void {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      'void main() {',
+      'attribute float instanceAlpha;\nvarying float vInstanceAlpha;\nvoid main() {\n  vInstanceAlpha = instanceAlpha;'
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'void main() {',
+      'varying float vInstanceAlpha;\nvoid main() {'
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <premultiplied_alpha_fragment>',
+      'gl_FragColor.a *= vInstanceAlpha;\n#include <premultiplied_alpha_fragment>'
+    );
+  };
+  material.customProgramCacheKey = () => 'instanceAlpha';
+}
+
 function sampleVoxels(voxels: RenderVoxel[], maxCount: number): RenderVoxel[] {
   if (voxels.length <= maxCount) return voxels;
 
@@ -404,7 +431,7 @@ export function NexradVolumeOverlay({
   refLon,
   verticalScale,
   minDbz,
-  opacity = 0.72,
+  opacity = 0.35,
   enabled = false,
   maxRangeNm = DEFAULT_MAX_RANGE_NM,
   applyEarthCurvatureCompensation = false,
@@ -418,6 +445,11 @@ export function NexradVolumeOverlay({
   const glowMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const meshDummy = useMemo(() => new THREE.Object3D(), []);
   const colorScratch = useMemo(() => new THREE.Color(), []);
+  const instanceAlphaArray = useMemo(() => {
+    const array = new Float32Array(MAX_VOXEL_INSTANCES);
+    array.fill(1);
+    return array;
+  }, []);
 
   const geometry = useMemo(() => {
     const nextGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -425,46 +457,50 @@ export function NexradVolumeOverlay({
     const colors = new Float32Array(positionAttribute.count * 3);
     colors.fill(1);
     nextGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const alphaAttribute = new THREE.InstancedBufferAttribute(instanceAlphaArray, 1);
+    alphaAttribute.setUsage(THREE.DynamicDrawUsage);
+    nextGeometry.setAttribute('instanceAlpha', alphaAttribute);
     return nextGeometry;
+  }, [instanceAlphaArray]);
+  const baseMaterial = useMemo(() => {
+    const material = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+      depthTest: true,
+      color: 0xffffff,
+      blending: THREE.NormalBlending,
+      side: THREE.FrontSide,
+      vertexColors: true,
+      toneMapped: false,
+      fog: false
+    });
+    patchMaterialForInstanceAlpha(material);
+    return material;
   }, []);
-  const baseMaterial = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        transparent: true,
-        opacity: 0.72,
-        depthWrite: true,
-        depthTest: true,
-        color: 0xffffff,
-        blending: THREE.NormalBlending,
-        side: THREE.FrontSide,
-        vertexColors: true,
-        toneMapped: false,
-        fog: false
-      }),
-    []
-  );
-  const glowMaterial = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        transparent: true,
-        opacity: 0.2,
-        depthWrite: false,
-        depthTest: true,
-        color: 0xffffff,
-        blending: THREE.AdditiveBlending,
-        side: THREE.FrontSide,
-        vertexColors: true,
-        toneMapped: false,
-        fog: false
-      }),
-    []
-  );
+  const glowMaterial = useMemo(() => {
+    const material = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.2,
+      depthWrite: false,
+      depthTest: true,
+      color: 0xffffff,
+      blending: THREE.AdditiveBlending,
+      side: THREE.FrontSide,
+      vertexColors: true,
+      toneMapped: false,
+      fog: false
+    });
+    patchMaterialForInstanceAlpha(material);
+    return material;
+  }, []);
 
   useEffect(() => {
     const clampedOpacity = Math.min(1, Math.max(0, opacity));
-    // Keep a visible floor while allowing a true dense top-end at 100%.
-    baseMaterial.opacity = THREE.MathUtils.lerp(0.34, 1, clampedOpacity);
-    glowMaterial.opacity = THREE.MathUtils.lerp(0.06, 0.38, clampedOpacity);
+    // Per-instance alpha already encodes intensity, so the material opacity
+    // acts as a master volume knob with a low floor and a dense ceiling.
+    baseMaterial.opacity = THREE.MathUtils.lerp(0.18, 0.92, clampedOpacity);
+    glowMaterial.opacity = THREE.MathUtils.lerp(0.02, 0.25, clampedOpacity);
   }, [baseMaterial, glowMaterial, opacity]);
 
   useEffect(
@@ -696,9 +732,18 @@ export function NexradVolumeOverlay({
   }, []);
 
   useEffect(() => {
+    // Compute per-instance alpha from dBZ intensity (shared by both passes).
+    for (let index = 0; index < renderVoxels.length; index += 1) {
+      instanceAlphaArray[index] = dbzToAlpha(renderVoxels[index].dbz);
+    }
+    const alphaAttribute = geometry.getAttribute('instanceAlpha');
+    if (alphaAttribute) {
+      (alphaAttribute as THREE.InstancedBufferAttribute).needsUpdate = true;
+    }
+
     applyVoxelInstances(baseMeshRef.current, renderVoxels, meshDummy, colorScratch);
     applyVoxelInstances(glowMeshRef.current, renderVoxels, meshDummy, colorScratch);
-  }, [renderVoxels, meshDummy, colorScratch]);
+  }, [renderVoxels, meshDummy, colorScratch, instanceAlphaArray, geometry]);
 
   if (!enabled || renderVoxels.length === 0) {
     return null;
