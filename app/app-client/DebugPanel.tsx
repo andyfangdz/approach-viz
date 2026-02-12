@@ -21,6 +21,11 @@ function boolLabel(value: boolean): string {
   return value ? 'yes' : 'no';
 }
 
+function formatAgeSeconds(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'n/a';
+  return `${Math.round(value)}s`;
+}
+
 export function DebugPanel({
   debugCollapsed,
   onToggleDebug,
@@ -123,6 +128,31 @@ export function DebugPanel({
           </span>
         </div>
         <div className="debug-row">
+          <span>Phase Mode</span>
+          <span>{nexradDebug.phaseMode || 'n/a'}</span>
+        </div>
+        <div className="debug-row">
+          <span>Aux Age Z/R</span>
+          <span>
+            {formatAgeSeconds(nexradDebug.zdrAgeSeconds)} /{' '}
+            {formatAgeSeconds(nexradDebug.rhohvAgeSeconds)}
+          </span>
+        </div>
+        <div className="debug-row">
+          <span>Aux Ts Z/R</span>
+          <span>
+            {formatTimestamp(nexradDebug.zdrTimestamp)} /{' '}
+            {formatTimestamp(nexradDebug.rhohvTimestamp)}
+          </span>
+        </div>
+        <div className="debug-row">
+          <span>Legacy Ts P/F</span>
+          <span>
+            {formatTimestamp(nexradDebug.precipFlagTimestamp)} /{' '}
+            {formatTimestamp(nexradDebug.freezingLevelTimestamp)}
+          </span>
+        </div>
+        <div className="debug-row">
           <span>Scan</span>
           <span>{formatTimestamp(nexradDebug.scanTime)}</span>
         </div>
@@ -130,6 +160,7 @@ export function DebugPanel({
           <span>Poll</span>
           <span>{formatTimestamp(nexradDebug.lastPollAt)}</span>
         </div>
+        {nexradDebug.phaseDetail && <div className="debug-row">{nexradDebug.phaseDetail}</div>}
         {nexradDebug.error && <div className="debug-error">MRMS: {nexradDebug.error}</div>}
       </div>
 

@@ -16,7 +16,7 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 ## Runtime Status and Debug UI
 
 - When MRMS overlay polling is active, a top-right in-scene status chip (`Loading MRMS...`) appears beneath the navbar/selector region.
-- A right-side debug FAB expands into a runtime diagnostics panel with current context plus MRMS/traffic telemetry (enabled/loading/stale/error, voxel/track counts, phase mix, poll timestamps, and backfill state).
+- A right-side debug FAB expands into a runtime diagnostics panel with current context plus MRMS/traffic telemetry (enabled/loading/stale/error, voxel/track counts, phase mix, MRMS phase-source mode, aux age/timestamp telemetry, poll timestamps, and backfill state).
 - MRMS and traffic debug panel state is fed from scene overlays via callback props, so telemetry reflects the currently rendered overlay state rather than cached UI assumptions.
 
 ## Header and Selector Layout

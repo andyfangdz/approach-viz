@@ -39,12 +39,12 @@ Training note: this app is for education and familiarization, not for real-world
 
 ### Surface Modes
 
-| Mode | Description |
-|------|-------------|
+| Mode                  | Description                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------- |
 | **Terrain** (default) | Wireframe terrain grid from Terrarium elevation tiles (adjustable 20–80 NM radius) |
-| **FAA Plate** | Geolocated FAA approach plate rendered at airport elevation |
-| **3D Plate** | FAA plate texture projected onto Google Photorealistic 3D Tiles terrain |
-| **Satellite** | Google Earth Photorealistic 3D Tiles with EGM96 geoid correction |
+| **FAA Plate**         | Geolocated FAA approach plate rendered at airport elevation                        |
+| **3D Plate**          | FAA plate texture projected onto Google Photorealistic 3D Tiles terrain            |
+| **Satellite**         | Google Earth Photorealistic 3D Tiles with EGM96 geoid correction                   |
 
 Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 
@@ -59,7 +59,7 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 
 - Enabled by default — renders NOAA MRMS multi-radar merged reflectivity as stacked 3D voxels across 33 altitude slices
 - Phase-aware coloring (rain / mixed / snow) using per-level MRMS `MergedZdr` + `MergedRhoHV` dual-pol fields
-- Scan publish gating requires complete same-timestamp dual-pol coverage (no partial-aux fallback scans)
+- Dual-pol phase uses cycle-matched inputs when available, falls back to latest available aux + legacy PrecipFlag/freezing-level logic when aux lags or is sparse
 - User-adjustable reflectivity threshold (5–60 dBZ) and opacity (20–100%)
 - Priority-aware voxel decimation (100k instance cap; high-intensity echoes preserved first)
 - Resilient polling: retains last good payload on transient errors, clears on airport change
@@ -133,16 +133,16 @@ MRMS volumetric weather uses an external Rust ingest service (`services/mrms-rs`
 
 ## Data Sources
 
-| Source | Type | Ingestion |
-|--------|------|-----------|
-| FAA CIFP | Approach geometry | Build-time → SQLite |
-| FAA Airspace GeoJSON | Class B/C/D volumes | Build-time → SQLite |
-| FAA Approach Minimums | MDA/DA, VDA, TCH | Build-time → SQLite |
-| FAA Approach Plates | PDF charts | Runtime proxy |
-| Terrarium Tiles | Terrain elevation | Runtime client fetch |
-| Google 3D Tiles | Satellite / 3D Plate surface | Runtime client fetch |
-| ADSB Exchange tar1090 | Live traffic | Runtime proxy (5s poll) |
-| NOAA MRMS | Volumetric weather | Rust service → binary API (120s poll) |
+| Source                | Type                         | Ingestion                             |
+| --------------------- | ---------------------------- | ------------------------------------- |
+| FAA CIFP              | Approach geometry            | Build-time → SQLite                   |
+| FAA Airspace GeoJSON  | Class B/C/D volumes          | Build-time → SQLite                   |
+| FAA Approach Minimums | MDA/DA, VDA, TCH             | Build-time → SQLite                   |
+| FAA Approach Plates   | PDF charts                   | Runtime proxy                         |
+| Terrarium Tiles       | Terrain elevation            | Runtime client fetch                  |
+| Google 3D Tiles       | Satellite / 3D Plate surface | Runtime client fetch                  |
+| ADSB Exchange tar1090 | Live traffic                 | Runtime proxy (5s poll)               |
+| NOAA MRMS             | Volumetric weather           | Rust service → binary API (120s poll) |
 
 See [`docs/data-sources.md`](docs/data-sources.md) for details.
 

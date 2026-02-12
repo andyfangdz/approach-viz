@@ -57,6 +57,8 @@ pub struct ScanSnapshot {
     pub level_bounds: Vec<LevelBounds>,
     pub tile_offsets: Vec<u32>,
     pub voxels: Vec<StoredVoxel>,
+    #[serde(default)]
+    pub phase_debug: PhaseDebugMetadata,
 }
 
 #[derive(Clone, Debug)]
@@ -75,4 +77,16 @@ pub struct ParsedReflectivityField {
 pub struct ParsedAuxField {
     pub grid: GridDef,
     pub values: Vec<f32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PhaseDebugMetadata {
+    pub mode: String,
+    pub detail: String,
+    pub zdr_timestamp: Option<String>,
+    pub rhohv_timestamp: Option<String>,
+    pub precip_flag_timestamp: Option<String>,
+    pub freezing_level_timestamp: Option<String>,
+    pub zdr_age_seconds: Option<i64>,
+    pub rhohv_age_seconds: Option<i64>,
 }

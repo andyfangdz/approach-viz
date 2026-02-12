@@ -13,14 +13,15 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
 
 1. NOAA publishes `ObjectCreated` events to SNS topic `arn:aws:sns:us-east-1:123901341784:NewMRMSObject`.
 2. SQS queue receives those messages (`RawMessageDelivery=true`).
-3. Rust service polls SQS, extracts MRMS timestamps, decodes GRIB2 fields through `grib`, and stores compressed snapshots.
+3. Rust service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, decodes GRIB2 fields through `grib`, and stores compressed snapshots.
 4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the service `v1/volume` endpoint.
 5. Client decodes compact binary payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 
 ## Phase Methodology
 
-- Phase detection uses level-matched dual-pol products (`MergedZdr`, `MergedRhoHV`) from the same timestamp as reflectivity.
-- Detailed thresholds, completeness gates, and fallback behavior live in [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md).
+- Phase detection prefers level-matched dual-pol products (`MergedZdr`, `MergedRhoHV`) at the reflectivity timestamp, then falls back to latest available aux + legacy precipitation/freezing signals when dual-pol lags.
+- Detailed thresholds, stale-aux gates, and fallback behavior live in [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md).
+- Startup bootstrap enqueues the latest 120 base-level timestamps so delayed aux availability can still produce the newest complete cycle after service restarts.
 
 ## Data Retention
 

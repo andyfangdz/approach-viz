@@ -16,6 +16,14 @@ export interface NexradDebugState {
   layerCount: number;
   voxelCount: number;
   renderedVoxelCount: number;
+  phaseMode: string | null;
+  phaseDetail: string | null;
+  zdrAgeSeconds: number | null;
+  rhohvAgeSeconds: number | null;
+  zdrTimestamp: string | null;
+  rhohvTimestamp: string | null;
+  precipFlagTimestamp: string | null;
+  freezingLevelTimestamp: string | null;
   phaseCounts: {
     rain: number;
     mixed: number;

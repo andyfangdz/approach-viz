@@ -93,6 +93,14 @@ interface NexradVolumePayload {
   radar: NexradRadarPayload | null;
   layerSummaries: NexradLayerSummary[];
   voxels: NexradVoxelTuple[];
+  phaseMode?: string | null;
+  phaseDetail?: string | null;
+  zdrAgeSeconds?: number | null;
+  rhohvAgeSeconds?: number | null;
+  zdrTimestamp?: string | null;
+  rhohvTimestamp?: string | null;
+  precipFlagTimestamp?: string | null;
+  freezingLevelTimestamp?: string | null;
   stale?: boolean;
   error?: string;
 }
@@ -292,6 +300,30 @@ function decodePayload(buffer: ArrayBuffer): NexradVolumePayload {
     throw new Error('Unexpected MRMS JSON payload.');
   }
   return parsed;
+}
+
+function parseNumberHeader(headers: Headers, name: string): number | null {
+  const value = headers.get(name);
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function applyPhaseDebugHeaders(
+  payload: NexradVolumePayload,
+  headers: Headers
+): NexradVolumePayload {
+  return {
+    ...payload,
+    phaseMode: headers.get('x-av-phase-mode'),
+    phaseDetail: headers.get('x-av-phase-detail'),
+    zdrAgeSeconds: parseNumberHeader(headers, 'x-av-zdr-age-seconds'),
+    rhohvAgeSeconds: parseNumberHeader(headers, 'x-av-rhohv-age-seconds'),
+    zdrTimestamp: headers.get('x-av-zdr-timestamp'),
+    rhohvTimestamp: headers.get('x-av-rhohv-timestamp'),
+    precipFlagTimestamp: headers.get('x-av-precip-timestamp'),
+    freezingLevelTimestamp: headers.get('x-av-freezing-timestamp')
+  };
 }
 
 function dbzToBandHex(dbz: number, bands: DbzColorBand[]): number {
@@ -563,7 +595,10 @@ export function NexradVolumeOverlay({
           throw new Error(`NEXRAD request failed (${response.status})`);
         }
 
-        const nextPayload = decodePayload(await response.arrayBuffer());
+        const nextPayload = applyPhaseDebugHeaders(
+          decodePayload(await response.arrayBuffer()),
+          response.headers
+        );
         if (!cancelled) {
           setLastError(nextPayload.error ?? null);
           setLastPollAt(new Date().toISOString());
@@ -693,6 +728,14 @@ export function NexradVolumeOverlay({
       layerCount: payload?.layerSummaries?.length ?? 0,
       voxelCount: payload?.voxels?.length ?? 0,
       renderedVoxelCount: renderVoxels.length,
+      phaseMode: payload?.phaseMode ?? null,
+      phaseDetail: payload?.phaseDetail ?? null,
+      zdrAgeSeconds: payload?.zdrAgeSeconds ?? null,
+      rhohvAgeSeconds: payload?.rhohvAgeSeconds ?? null,
+      zdrTimestamp: payload?.zdrTimestamp ?? null,
+      rhohvTimestamp: payload?.rhohvTimestamp ?? null,
+      precipFlagTimestamp: payload?.precipFlagTimestamp ?? null,
+      freezingLevelTimestamp: payload?.freezingLevelTimestamp ?? null,
       phaseCounts
     }),
     [enabled, isLoading, payload, lastError, lastPollAt, renderVoxels.length, phaseCounts]
@@ -717,6 +760,14 @@ export function NexradVolumeOverlay({
         layerCount: 0,
         voxelCount: 0,
         renderedVoxelCount: 0,
+        phaseMode: null,
+        phaseDetail: null,
+        zdrAgeSeconds: null,
+        rhohvAgeSeconds: null,
+        zdrTimestamp: null,
+        rhohvTimestamp: null,
+        precipFlagTimestamp: null,
+        freezingLevelTimestamp: null,
         phaseCounts: { rain: 0, mixed: 0, snow: 0 }
       });
     },

@@ -48,7 +48,8 @@
 - 3D precipitation weather ingestion runs in an external Rust service (`services/mrms-rs`) instead of the Next.js request path.
 - The Rust service consumes NOAA SNS new-object notifications through SQS (`NewMRMSObject` -> queue subscription), then ingests MRMS timestamps asynchronously.
 - Ingestion fetches/decode-checks all configured reflectivity levels (`00.50..19.00 km`) plus level-matched dual-pol auxiliaries (`MergedZdr_<level>`, `MergedRhoHV_<level>`), decodes GRIB2 templates through the Rust `grib` crate (including PNG-packed fields), resolves per-voxel phase server-side, and persists compact zstd snapshot files.
-- Dual-pol auxiliaries are fetched at the same timestamp and altitude slice as reflectivity (no lookback probing), and scans are rejected if required aux products are missing or grid-incompatible, preventing mixed-cycle or partial-aux phase rendering.
+- Dual-pol auxiliaries are attempted at the same timestamp/altitude slice as reflectivity first; if aux coverage lags (or is sparse/incompatible), ingest uses the latest available dual-pol cycle and enables legacy phase fallback driven by `PrecipFlag_00.00` + `Model_0degC_Height_00.50`.
+- Pending ingest retries are scheduled by earliest-due timestamp (not newest-first) so delayed aux cycles are not starved by newer precip arrivals; startup bootstrap now enqueues a deeper recent-key window to recover the newest complete cycle after restarts.
 - Query endpoint (`/v1/volume`) loads latest snapshot in memory and performs fast request-origin filtering (`lat/lon/minDbz/maxRangeNm`) with tile-indexed voxel subsets before serializing a compact binary response.
 - Next.js route `app/api/weather/nexrad/route.ts` is now a thin proxy to the Rust endpoint (`MRMS_BINARY_UPSTREAM_BASE_URL`, defaulting to the OCI Tailscale Funnel URL).
 - Client overlay decodes binary wire payloads directly, with JSON fallback only for error payloads.

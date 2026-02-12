@@ -108,6 +108,20 @@ export async function GET(request: NextRequest) {
     if (scanTime) headers.set('X-AV-SCAN-TIME', scanTime);
     const generatedAt = upstreamResponse.headers.get('x-av-generated-at');
     if (generatedAt) headers.set('X-AV-GENERATED-AT', generatedAt);
+    const passthroughHeaders = [
+      'x-av-phase-mode',
+      'x-av-phase-detail',
+      'x-av-zdr-age-seconds',
+      'x-av-rhohv-age-seconds',
+      'x-av-zdr-timestamp',
+      'x-av-rhohv-timestamp',
+      'x-av-precip-timestamp',
+      'x-av-freezing-timestamp'
+    ];
+    for (const headerName of passthroughHeaders) {
+      const value = upstreamResponse.headers.get(headerName);
+      if (value) headers.set(headerName.toUpperCase(), value);
+    }
 
     return new NextResponse(payload, {
       status: 200,

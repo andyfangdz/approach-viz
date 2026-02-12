@@ -40,6 +40,22 @@ pub(crate) struct MetaResponse {
     tile_count: usize,
     #[serde(rename = "layerCount")]
     layer_count: usize,
+    #[serde(rename = "phaseMode")]
+    phase_mode: Option<String>,
+    #[serde(rename = "phaseDetail")]
+    phase_detail: Option<String>,
+    #[serde(rename = "zdrTimestamp")]
+    zdr_timestamp: Option<String>,
+    #[serde(rename = "rhohvTimestamp")]
+    rhohv_timestamp: Option<String>,
+    #[serde(rename = "precipFlagTimestamp")]
+    precip_flag_timestamp: Option<String>,
+    #[serde(rename = "freezingLevelTimestamp")]
+    freezing_level_timestamp: Option<String>,
+    #[serde(rename = "zdrAgeSeconds")]
+    zdr_age_seconds: Option<i64>,
+    #[serde(rename = "rhohvAgeSeconds")]
+    rhohv_age_seconds: Option<i64>,
     #[serde(rename = "storageDir")]
     storage_dir: String,
     #[serde(rename = "retentionBytes")]
@@ -54,20 +70,45 @@ pub async fn healthz() -> &'static str {
 
 pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
     let latest = state.latest.read().await;
-    let (ready, generated_at, scan_time, timestamp, voxel_count, tile_count, layer_count) =
-        if let Some(scan) = latest.as_ref() {
-            (
-                true,
-                iso_from_ms(scan.generated_at_ms),
-                iso_from_ms(scan.scan_time_ms),
-                Some(scan.timestamp.clone()),
-                scan.voxels.len(),
-                scan.tile_offsets.len().saturating_sub(1),
-                scan.level_bounds.len(),
-            )
-        } else {
-            (false, None, None, None, 0, 0, 0)
-        };
+    let (
+        ready,
+        generated_at,
+        scan_time,
+        timestamp,
+        voxel_count,
+        tile_count,
+        layer_count,
+        phase_mode,
+        phase_detail,
+        zdr_timestamp,
+        rhohv_timestamp,
+        precip_flag_timestamp,
+        freezing_level_timestamp,
+        zdr_age_seconds,
+        rhohv_age_seconds,
+    ) = if let Some(scan) = latest.as_ref() {
+        (
+            true,
+            iso_from_ms(scan.generated_at_ms),
+            iso_from_ms(scan.scan_time_ms),
+            Some(scan.timestamp.clone()),
+            scan.voxels.len(),
+            scan.tile_offsets.len().saturating_sub(1),
+            scan.level_bounds.len(),
+            Some(scan.phase_debug.mode.clone()),
+            Some(scan.phase_debug.detail.clone()),
+            scan.phase_debug.zdr_timestamp.clone(),
+            scan.phase_debug.rhohv_timestamp.clone(),
+            scan.phase_debug.precip_flag_timestamp.clone(),
+            scan.phase_debug.freezing_level_timestamp.clone(),
+            scan.phase_debug.zdr_age_seconds,
+            scan.phase_debug.rhohv_age_seconds,
+        )
+    } else {
+        (
+            false, None, None, None, 0, 0, 0, None, None, None, None, None, None, None, None,
+        )
+    };
 
     Json(MetaResponse {
         ready,
@@ -77,6 +118,14 @@ pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
         voxel_count,
         tile_count,
         layer_count,
+        phase_mode,
+        phase_detail,
+        zdr_timestamp,
+        rhohv_timestamp,
+        precip_flag_timestamp,
+        freezing_level_timestamp,
+        zdr_age_seconds,
+        rhohv_age_seconds,
         storage_dir: state.cfg.storage_dir.display().to_string(),
         retention_bytes: state.cfg.retention_bytes,
         sqs_enabled: state.cfg.sqs_queue_url.is_some(),
@@ -132,6 +181,46 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
             if let Some(generated_at) = iso_from_ms(scan.generated_at_ms) {
                 if let Ok(value) = HeaderValue::from_str(&generated_at) {
                     headers.insert("X-AV-GENERATED-AT", value);
+                }
+            }
+            if !scan.phase_debug.mode.is_empty() {
+                if let Ok(value) = HeaderValue::from_str(&scan.phase_debug.mode) {
+                    headers.insert("X-AV-PHASE-MODE", value);
+                }
+            }
+            if !scan.phase_debug.detail.is_empty() {
+                if let Ok(value) = HeaderValue::from_str(&scan.phase_debug.detail) {
+                    headers.insert("X-AV-PHASE-DETAIL", value);
+                }
+            }
+            if let Some(value) = scan.phase_debug.zdr_age_seconds {
+                if let Ok(header) = HeaderValue::from_str(&value.to_string()) {
+                    headers.insert("X-AV-ZDR-AGE-SECONDS", header);
+                }
+            }
+            if let Some(value) = scan.phase_debug.rhohv_age_seconds {
+                if let Ok(header) = HeaderValue::from_str(&value.to_string()) {
+                    headers.insert("X-AV-RHOHV-AGE-SECONDS", header);
+                }
+            }
+            if let Some(value) = scan.phase_debug.zdr_timestamp.as_ref() {
+                if let Ok(header) = HeaderValue::from_str(value) {
+                    headers.insert("X-AV-ZDR-TIMESTAMP", header);
+                }
+            }
+            if let Some(value) = scan.phase_debug.rhohv_timestamp.as_ref() {
+                if let Ok(header) = HeaderValue::from_str(value) {
+                    headers.insert("X-AV-RHOHV-TIMESTAMP", header);
+                }
+            }
+            if let Some(value) = scan.phase_debug.precip_flag_timestamp.as_ref() {
+                if let Ok(header) = HeaderValue::from_str(value) {
+                    headers.insert("X-AV-PRECIP-TIMESTAMP", header);
+                }
+            }
+            if let Some(value) = scan.phase_debug.freezing_level_timestamp.as_ref() {
+                if let Ok(header) = HeaderValue::from_str(value) {
+                    headers.insert("X-AV-FREEZING-TIMESTAMP", header);
                 }
             }
             (headers, body).into_response()
