@@ -20,7 +20,7 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
 ## Phase Methodology
 
 - Phase detection uses level-matched dual-pol products (`MergedZdr`, `MergedRhoHV`) from the same timestamp as reflectivity.
-- Detailed thresholds, validation gates, and fallback behavior live in [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md).
+- Detailed thresholds, completeness gates, and fallback behavior live in [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md).
 
 ## Data Retention
 

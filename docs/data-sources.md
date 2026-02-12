@@ -42,7 +42,7 @@ External data feeds and their ingestion paths.
 - Source: NOAA MRMS AWS open data bucket `s3://noaa-mrms-pds` (`CONUS/MergedReflectivityQC_<height_km>` products).
 - Ingestion is event-driven in a Rust service (`services/mrms-rs`) running on OCI: SNS topic `NewMRMSObject` publishes to SQS, and the service ingests complete scans once per timestamp instead of per-client poll.
 - The service fetches/decode-checks all reflectivity levels (`00.50..19.00 km`) plus level-matched dual-pol products (`MergedZdr_<level>`, `MergedRhoHV_<level>`), decodes GRIB2 through the Rust `grib` crate (including PNG-packed payloads), computes phase-coded voxels, and stores compact zstd-compressed snapshots.
-- Dual-pol fields are fetched for the same timestamp and altitude slice as reflectivity so rendered voxels and aux-driven phase classification remain co-timed and co-leveled.
+- Dual-pol fields are fetched for the same timestamp and altitude slice as reflectivity; scans are only published when required aux products for that timestamp are available and grid-compatible, so phase classification remains co-timed and co-leveled.
 - Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v1`) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`).
 - The Next.js route `app/api/weather/nexrad/route.ts` now proxies to the Rust service endpoint, and the client decodes binary payloads directly.
 - Snapshot storage is bounded to `5 GB` (oldest scans pruned first) to fit the OCI host disk budget.

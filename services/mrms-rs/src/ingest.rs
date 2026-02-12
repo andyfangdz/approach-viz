@@ -335,14 +335,9 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                 &timestamp,
             )
             .await
-            .map_err(|error| {
-                warn!(
-                    "ZDR aux unavailable for level {} at {}: {error:#}",
-                    level_tag, timestamp
-                );
-                error
-            })
-            .ok();
+            .with_context(|| {
+                format!("Required ZDR aux unavailable for level {level_tag} at {timestamp}")
+            })?;
 
             let rhohv = fetch_level_aux_field_at_timestamp(
                 &http,
@@ -352,14 +347,9 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                 &timestamp,
             )
             .await
-            .map_err(|error| {
-                warn!(
-                    "RhoHV aux unavailable for level {} at {}: {error:#}",
-                    level_tag, timestamp
-                );
-                error
-            })
-            .ok();
+            .with_context(|| {
+                format!("Required RhoHV aux unavailable for level {level_tag} at {timestamp}")
+            })?;
 
             Ok::<_, anyhow::Error>((level_idx, level_tag, reflectivity, zdr, rhohv))
         });
@@ -369,8 +359,8 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         Option<(
             String,
             ParsedReflectivityField,
-            Option<ParsedAuxField>,
-            Option<ParsedAuxField>,
+            ParsedAuxField,
+            ParsedAuxField,
         )>,
     > = vec![None; LEVEL_TAGS.len()];
     while let Some(result) = futures.next().await {
@@ -417,28 +407,29 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
             continue;
         }
 
-        let zdr_values = zdr_aux.as_ref().and_then(|field| {
-            if is_same_grid(&field.grid, &parsed.grid) {
-                Some(field.values.as_slice())
-            } else {
-                warn!(
-                    "Ignoring ZDR aux for level {} at {} due to grid mismatch",
-                    level_tag, timestamp
-                );
-                None
-            }
-        });
-        let rhohv_values = rhohv_aux.as_ref().and_then(|field| {
-            if is_same_grid(&field.grid, &parsed.grid) {
-                Some(field.values.as_slice())
-            } else {
-                warn!(
-                    "Ignoring RhoHV aux for level {} at {} due to grid mismatch",
-                    level_tag, timestamp
-                );
-                None
-            }
-        });
+        if !is_same_grid(&zdr_aux.grid, &parsed.grid) {
+            bail!("Required ZDR grid mismatch for level {level_tag} at {timestamp}");
+        }
+        if !is_same_grid(&rhohv_aux.grid, &parsed.grid) {
+            bail!("Required RhoHV grid mismatch for level {level_tag} at {timestamp}");
+        }
+        if zdr_aux.values.len() != parsed.dbz_tenths.len() {
+            bail!(
+                "Required ZDR point-count mismatch for level {level_tag} at {timestamp}: expected {}, got {}",
+                parsed.dbz_tenths.len(),
+                zdr_aux.values.len()
+            );
+        }
+        if rhohv_aux.values.len() != parsed.dbz_tenths.len() {
+            bail!(
+                "Required RhoHV point-count mismatch for level {level_tag} at {timestamp}: expected {}, got {}",
+                parsed.dbz_tenths.len(),
+                rhohv_aux.values.len()
+            );
+        }
+
+        let zdr_values = zdr_aux.values.as_slice();
+        let rhohv_values = rhohv_aux.values.as_slice();
 
         for row in 0..parsed.grid.ny as usize {
             let row_offset = row * parsed.grid.nx as usize;
@@ -450,10 +441,8 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                     continue;
                 }
 
-                let phase = resolve_phase(
-                    zdr_values.and_then(|values| values.get(value_idx).copied()),
-                    rhohv_values.and_then(|values| values.get(value_idx).copied()),
-                );
+                let phase =
+                    resolve_phase(Some(zdr_values[value_idx]), Some(rhohv_values[value_idx]));
 
                 let row_u16 = row as u16;
                 let col_u16 = col as u16;

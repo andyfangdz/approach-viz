@@ -18,6 +18,12 @@ This document defines how the Rust MRMS service resolves voxel phase (`rain`, `m
   - altitude level tag (`00.50..19.00`)
 - No lookback probing is allowed for phase auxiliaries, so phase and precip intensity stay on the same cycle family.
 
+## Completeness Gate
+
+- A scan is ingestible only when required dual-pol fields are available for every configured altitude level at the exact scan timestamp.
+- If any `MergedZdr_<level>` or `MergedRhoHV_<level>` file is missing, has incompatible grid metadata, or has mismatched point count, the entire scan ingest is rejected.
+- This prevents phase coloring from silently degrading to partial or stale aux coverage.
+
 ## Per-Voxel Classification
 
 The server computes phase from the sampled dual-pol values for each reflectivity voxel.
@@ -31,18 +37,17 @@ The server computes phase from the sampled dual-pol values for each reflectivity
    - If `ZDR >= 0.3 dB`, classify as `rain`
    - If `ZDR <= 0.1 dB`, classify as `snow`
    - Else classify as `mixed`
-4. Missing/invalid aux fallback:
-   - Classify as `rain`
+4. Invalid per-cell aux fallback:
+   - If a sampled value is non-finite/out-of-range after dataset-level validation, classify as `rain`
 
 ## Why This Shape
 
 - Low RhoHV is a robust indicator of hydrometeor heterogeneity, so it is prioritized for mixed-phase detection.
 - ZDR is then used to separate mostly liquid vs mostly frozen signatures when correlation is high.
-- The fallback to rain keeps rendering stable when dual-pol slices are temporarily unavailable.
+- Dataset-level unavailability does not pass ingestion (scan rejected); per-cell fallback to rain only applies when the aux dataset exists but a specific sample is invalid.
 
 ## Operational Notes
 
-- Grid mismatch protection: if ZDR/RhoHV grid metadata does not match reflectivity for a level, that aux field is ignored for that level (warning logged).
+- Grid mismatch protection: if ZDR/RhoHV grid metadata does not match reflectivity for any level, ingest for that scan is rejected and retried.
 - Phase affects color palette only; reflectivity intensity/opacity behavior is still driven by dBZ.
 - Thresholds are defined in `services/mrms-rs/src/constants.rs` and can be tuned with side-by-side visual validation.
-
