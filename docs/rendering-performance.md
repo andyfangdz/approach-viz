@@ -11,7 +11,7 @@
 - Live ADS-B callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled to avoid persistent label clutter.
 - Live ADS-B marker meshes reuse shared sphere geometry/material instances rather than allocating one geometry/material pair per aircraft marker.
 - Live ADS-B aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead while still updating positions every poll.
-- MRMS volumetric weather is polled at a slower cadence (`~120s`) through a same-origin proxy, with server-side range/threshold filtering plus max-voxel decimation to bound payload size; client requests cap at `150,000` voxels per poll (server default `100,000`, upper clamp `200,000`).
+- MRMS volumetric weather is polled at a slower cadence (`~120s`) through a same-origin proxy, with server-side range/threshold filtering; voxel decimation is performed client-side (priority-aware: high-intensity voxels ≥ 45 dBZ are kept first, lower-intensity voxels are uniformly sampled to fill the remaining budget) capped at `100,000` rendered instances.
 - MRMS complete-scan candidate selection uses cached per-level/day S3 key indexes, avoiding repeated per-voxel-slice object-existence probes on every request.
 - MRMS proxy ingestion crops each decoded reflectivity level to the request AOI and stacks the full configured altitude-slice set from the newest timestamp where all slice fetches/decode succeed before response decimation.
 - MRMS overlay polling keeps rendering the last successful payload when the API returns a transient error payload, avoiding abrupt disappear/reappear flicker.

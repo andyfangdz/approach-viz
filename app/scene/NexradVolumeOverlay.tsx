@@ -7,7 +7,7 @@ const FEET_PER_NM = 6076.12;
 const ALTITUDE_SCALE = 1 / FEET_PER_NM;
 const POLL_INTERVAL_MS = 120_000;
 const RETRY_INTERVAL_MS = 10_000;
-const MAX_SERVER_VOXELS = 150_000;
+const MAX_VOXEL_INSTANCES = 100_000;
 const DEFAULT_MAX_RANGE_NM = 120;
 const MIN_VOXEL_HEIGHT_NM = 0.04;
 
@@ -192,6 +192,33 @@ function dbzToHex(dbz: number, phaseCode: number): number {
   return applyVisibilityGain(dbzToBandHex(dbz, bands));
 }
 
+function sampleVoxels(voxels: RenderVoxel[], maxCount: number): RenderVoxel[] {
+  if (voxels.length <= maxCount) return voxels;
+
+  const high: RenderVoxel[] = [];
+  const low: RenderVoxel[] = [];
+  for (const v of voxels) {
+    if (v.dbz >= 45) high.push(v);
+    else low.push(v);
+  }
+
+  const decimate = (items: RenderVoxel[], target: number): RenderVoxel[] => {
+    if (target <= 0 || items.length === 0) return [];
+    if (items.length <= target) return items;
+    const result: RenderVoxel[] = [];
+    const step = items.length / target;
+    let cursor = 0;
+    for (let i = 0; i < target; i += 1) {
+      result.push(items[Math.floor(cursor)]);
+      cursor += step;
+    }
+    return result;
+  };
+
+  if (high.length >= maxCount) return decimate(high, maxCount);
+  return [...high, ...decimate(low, maxCount - high.length)];
+}
+
 function applyVoxelInstances(
   mesh: THREE.InstancedMesh | null,
   voxels: RenderVoxel[],
@@ -199,7 +226,7 @@ function applyVoxelInstances(
   colorScratch: THREE.Color
 ) {
   if (!mesh) return;
-  const count = Math.min(voxels.length, MAX_SERVER_VOXELS);
+  const count = voxels.length;
   for (let index = 0; index < count; index += 1) {
     const voxel = voxels[index];
     meshDummy.position.set(voxel.x, voxel.yBase, voxel.z);
@@ -335,7 +362,6 @@ export function NexradVolumeOverlay({
       params.set('lon', refLon.toFixed(6));
       params.set('minDbz', String(minDbz));
       params.set('maxRangeNm', String(maxRangeNm));
-      params.set('maxVoxels', String(MAX_SERVER_VOXELS));
       let nextDelayMs = POLL_INTERVAL_MS;
 
       try {
@@ -446,7 +472,7 @@ export function NexradVolumeOverlay({
       });
     }
 
-    return next;
+    return sampleVoxels(next, MAX_VOXEL_INSTANCES);
   }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat, minDbz]);
 
   const phaseCounts = useMemo(() => {
@@ -528,13 +554,13 @@ export function NexradVolumeOverlay({
     <group scale={[1, verticalScale, 1]}>
       <instancedMesh
         ref={baseMeshRef}
-        args={[geometry, baseMaterial, MAX_SERVER_VOXELS]}
+        args={[geometry, baseMaterial, MAX_VOXEL_INSTANCES]}
         frustumCulled={false}
         renderOrder={80}
       />
       <instancedMesh
         ref={glowMeshRef}
-        args={[geometry, glowMaterial, MAX_SERVER_VOXELS]}
+        args={[geometry, glowMaterial, MAX_VOXEL_INSTANCES]}
         frustumCulled={false}
         renderOrder={81}
       />
