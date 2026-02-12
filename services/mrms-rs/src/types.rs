@@ -76,34 +76,3 @@ pub struct ParsedAuxField {
     pub grid: GridDef,
     pub values: Vec<f32>,
 }
-
-#[derive(Clone, Debug)]
-pub struct AuxFieldSampler {
-    pub grid: GridDef,
-    pub values: Vec<f32>,
-}
-
-impl AuxFieldSampler {
-    pub fn sample(&self, lat_deg: f64, lon_deg360: f64) -> Option<f32> {
-        if self.grid.lat_step_deg.abs() < f64::EPSILON
-            || self.grid.lon_step_deg.abs() < f64::EPSILON
-        {
-            return None;
-        }
-
-        let row = ((lat_deg - self.grid.la1_deg) / self.grid.lat_step_deg).round() as i64;
-        let col = ((lon_deg360 - self.grid.lo1_deg360) / self.grid.lon_step_deg).round() as i64;
-        if row < 0 || col < 0 {
-            return None;
-        }
-
-        let row_u = row as u32;
-        let col_u = col as u32;
-        if row_u >= self.grid.ny || col_u >= self.grid.nx {
-            return None;
-        }
-
-        let index = row_u as usize * self.grid.nx as usize + col_u as usize;
-        self.values.get(index).copied()
-    }
-}

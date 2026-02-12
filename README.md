@@ -58,7 +58,7 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 ### MRMS 3D Volumetric Weather
 
 - Enabled by default — renders NOAA MRMS multi-radar merged reflectivity as stacked 3D voxels across 33 altitude slices
-- Phase-aware coloring (rain / mixed / snow) using MRMS PrecipFlag with freezing-level fallback
+- Phase-aware coloring (rain / mixed / snow) using per-level MRMS `MergedZdr` + `MergedRhoHV` dual-pol fields
 - User-adjustable reflectivity threshold (5–60 dBZ) and opacity (20–100%)
 - Priority-aware voxel decimation (100k instance cap; high-intensity echoes preserved first)
 - Resilient polling: retains last good payload on transient errors, clears on airport change
@@ -151,6 +151,7 @@ See [`docs/data-sources.md`](docs/data-sources.md) for details.
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment
 - [`docs/architecture-client-and-scene.md`](docs/architecture-client-and-scene.md) — client state, UI sections, scene composition
 - [`docs/mrms-rust-pipeline.md`](docs/mrms-rust-pipeline.md) — Rust ingest/query design, wire format, deployment
+- [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md) — MRMS dual-pol phase classification rules and cycle-alignment policy
 - [`docs/data-sources.md`](docs/data-sources.md) — all external data feeds and ingestion paths
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, curvature compensation
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, Satellite modes

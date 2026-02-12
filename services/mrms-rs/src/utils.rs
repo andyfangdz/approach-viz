@@ -1,7 +1,6 @@
 use std::cmp::{max, min};
 use std::f64::consts::PI;
 
-use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 
 use crate::constants::{DEG_TO_RAD, METERS_TO_NM, WGS84_E2, WGS84_SEMI_MAJOR_METERS};
@@ -79,17 +78,4 @@ pub fn parse_timestamp_utc(timestamp: &str) -> Option<DateTime<Utc>> {
 
 pub fn iso_from_ms(timestamp_ms: i64) -> Option<String> {
     DateTime::<Utc>::from_timestamp_millis(timestamp_ms).map(|ts| ts.to_rfc3339())
-}
-
-pub fn floor_timestamp(timestamp: DateTime<Utc>, step_seconds: i64) -> DateTime<Utc> {
-    let step_ms = max(step_seconds, 1) * 1000;
-    let floored_ms = (timestamp.timestamp_millis() / step_ms) * step_ms;
-    DateTime::<Utc>::from_timestamp_millis(floored_ms).unwrap_or(timestamp)
-}
-
-pub fn cycle_anchor_timestamp(target_timestamp: &str, step_seconds: i64) -> Result<String> {
-    let target = parse_timestamp_utc(target_timestamp)
-        .ok_or_else(|| anyhow!("Invalid target timestamp: {target_timestamp}"))?;
-    let floored = floor_timestamp(target, step_seconds);
-    Ok(floored.format("%Y%m%d-%H%M%S").to_string())
 }

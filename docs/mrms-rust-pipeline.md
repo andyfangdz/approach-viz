@@ -17,12 +17,10 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
 4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the service `v1/volume` endpoint.
 5. Client decodes compact binary payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 
-## Cycle Consistency
+## Phase Methodology
 
-- Reflectivity voxels are ingested per MRMS timestamp (`YYYYMMDD-HHMMSS`).
-- `PrecipFlag_00.00` is fetched only at the same 2-minute cycle anchor as that reflectivity timestamp.
-- `Model_0degC_Height_00.50` is fetched only at the same hourly cycle anchor as that reflectivity timestamp.
-- The service does not perform aux lookback probing, preventing mixed-cycle voxel/aux phase rendering.
+- Phase detection uses level-matched dual-pol products (`MergedZdr`, `MergedRhoHV`) from the same timestamp as reflectivity.
+- Detailed thresholds, validation gates, and fallback behavior live in [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md).
 
 ## Data Retention
 

@@ -2,8 +2,8 @@ pub const MRMS_BUCKET_URL: &str = "https://noaa-mrms-pds.s3.amazonaws.com";
 pub const MRMS_CONUS_PREFIX: &str = "CONUS";
 pub const MRMS_PRODUCT_PREFIX: &str = "MergedReflectivityQC";
 pub const MRMS_BASE_LEVEL_TAG: &str = "00.50";
-pub const MRMS_PRECIP_FLAG_PRODUCT: &str = "PrecipFlag_00.00";
-pub const MRMS_MODEL_FREEZING_HEIGHT_PRODUCT: &str = "Model_0degC_Height_00.50";
+pub const MRMS_ZDR_PRODUCT_PREFIX: &str = "MergedZdr";
+pub const MRMS_RHOHV_PRODUCT_PREFIX: &str = "MergedRhoHV";
 pub const LEVEL_TAGS: [&str; 33] = [
     "00.50", "00.75", "01.00", "01.25", "01.50", "01.75", "02.00", "02.25", "02.50", "02.75",
     "03.00", "03.50", "04.00", "04.50", "05.00", "05.50", "06.00", "06.50", "07.00", "07.50",
@@ -12,7 +12,6 @@ pub const LEVEL_TAGS: [&str; 33] = [
 ];
 
 pub const FEET_PER_KM: f64 = 3280.84;
-pub const FEET_PER_METER: f64 = 3.28084;
 pub const METERS_TO_NM: f64 = 1.0 / 1852.0;
 pub const DEG_TO_RAD: f64 = std::f64::consts::PI / 180.0;
 pub const WGS84_SEMI_MAJOR_METERS: f64 = 6_378_137.0;
@@ -22,7 +21,13 @@ pub const WGS84_E2: f64 = WGS84_FLATTENING * (2.0 - WGS84_FLATTENING);
 pub const PHASE_RAIN: u8 = 0;
 pub const PHASE_MIXED: u8 = 1;
 pub const PHASE_SNOW: u8 = 2;
-pub const FREEZING_LEVEL_TRANSITION_FEET: f64 = 1500.0;
+pub const PHASE_ZDR_MIN_VALID_DB: f32 = -8.0;
+pub const PHASE_ZDR_MAX_VALID_DB: f32 = 8.0;
+pub const PHASE_RHOHV_MIN_VALID: f32 = 0.0;
+pub const PHASE_RHOHV_MAX_VALID: f32 = 1.05;
+pub const PHASE_RHOHV_MIXED_MAX: f32 = 0.97;
+pub const PHASE_ZDR_RAIN_MIN_DB: f32 = 0.3;
+pub const PHASE_ZDR_SNOW_MAX_DB: f32 = 0.1;
 
 pub const DEFAULT_MIN_DBZ: f64 = 5.0;
 pub const DEFAULT_MAX_RANGE_NM: f64 = 120.0;
@@ -39,8 +44,6 @@ pub const DEFAULT_SQS_POLL_DELAY_SECONDS: u64 = 3;
 pub const DEFAULT_PENDING_RETRY_SECONDS: u64 = 30;
 pub const MAX_PENDING_ATTEMPTS: u32 = 20;
 pub const STORE_MIN_DBZ_TENTHS: i16 = 50;
-pub const PRECIP_FLAG_STEP_SECONDS: i64 = 120;
-pub const MODEL_STEP_SECONDS: i64 = 3600;
 pub const MAX_BASE_KEYS_LOOKUP: usize = 8;
 pub const MAX_BASE_DAY_LOOKBACK: i64 = 1;
 

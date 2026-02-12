@@ -14,20 +14,21 @@ use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 use crate::constants::{
-    FEET_PER_KM, FEET_PER_METER, FREEZING_LEVEL_TRANSITION_FEET, LEVEL_TAGS, MAX_BASE_KEYS_LOOKUP,
-    MAX_PENDING_ATTEMPTS, MODEL_STEP_SECONDS, MRMS_BUCKET_URL, MRMS_CONUS_PREFIX,
-    MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_PRODUCT_PREFIX, PHASE_MIXED,
-    PHASE_RAIN, PHASE_SNOW, PRECIP_FLAG_STEP_SECONDS, STORE_MIN_DBZ_TENTHS,
+    FEET_PER_KM, LEVEL_TAGS, MAX_BASE_KEYS_LOOKUP, MAX_PENDING_ATTEMPTS, MRMS_BUCKET_URL,
+    MRMS_CONUS_PREFIX, MRMS_PRODUCT_PREFIX, MRMS_RHOHV_PRODUCT_PREFIX, MRMS_ZDR_PRODUCT_PREFIX,
+    PHASE_MIXED, PHASE_RAIN, PHASE_RHOHV_MAX_VALID, PHASE_RHOHV_MIN_VALID, PHASE_RHOHV_MIXED_MAX,
+    PHASE_SNOW, PHASE_ZDR_MAX_VALID_DB, PHASE_ZDR_MIN_VALID_DB, PHASE_ZDR_RAIN_MIN_DB,
+    PHASE_ZDR_SNOW_MAX_DB, STORE_MIN_DBZ_TENTHS,
 };
 use crate::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
 use crate::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
 use crate::http_client::fetch_bytes;
 use crate::storage::persist_snapshot;
 use crate::types::{
-    AppState, AuxFieldSampler, LevelBounds, ParsedAuxField, ParsedReflectivityField, PendingIngest,
+    AppState, GridDef, LevelBounds, ParsedAuxField, ParsedReflectivityField, PendingIngest,
     ScanSnapshot, StoredVoxel,
 };
-use crate::utils::{cycle_anchor_timestamp, parse_timestamp_utc, round_u16, to_lon360};
+use crate::utils::{parse_timestamp_utc, round_u16};
 
 pub async fn spawn_background_workers(state: AppState) -> Result<()> {
     let worker_state = state.clone();
@@ -316,91 +317,86 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         let timestamp = timestamp.to_string();
         let date_part = date_part.to_string();
         futures.push(async move {
-            let key = build_level_key(&level_tag, &date_part, &timestamp);
-            let zipped = fetch_bytes(&http, &format!("{MRMS_BUCKET_URL}/{key}")).await?;
-            let parsed =
-                tokio::task::spawn_blocking(move || parse_reflectivity_grib_gzipped(&zipped))
-                    .await
-                    .context("Join error while parsing level GRIB")??;
-            Ok::<_, anyhow::Error>((level_idx, level_tag, parsed))
+            let reflectivity_key =
+                build_level_key(MRMS_PRODUCT_PREFIX, &level_tag, &date_part, &timestamp);
+            let reflectivity_zipped =
+                fetch_bytes(&http, &format!("{MRMS_BUCKET_URL}/{reflectivity_key}")).await?;
+            let reflectivity = tokio::task::spawn_blocking(move || {
+                parse_reflectivity_grib_gzipped(&reflectivity_zipped)
+            })
+            .await
+            .context("Join error while parsing level GRIB")??;
+
+            let zdr = fetch_level_aux_field_at_timestamp(
+                &http,
+                MRMS_ZDR_PRODUCT_PREFIX,
+                &level_tag,
+                &date_part,
+                &timestamp,
+            )
+            .await
+            .map_err(|error| {
+                warn!(
+                    "ZDR aux unavailable for level {} at {}: {error:#}",
+                    level_tag, timestamp
+                );
+                error
+            })
+            .ok();
+
+            let rhohv = fetch_level_aux_field_at_timestamp(
+                &http,
+                MRMS_RHOHV_PRODUCT_PREFIX,
+                &level_tag,
+                &date_part,
+                &timestamp,
+            )
+            .await
+            .map_err(|error| {
+                warn!(
+                    "RhoHV aux unavailable for level {} at {}: {error:#}",
+                    level_tag, timestamp
+                );
+                error
+            })
+            .ok();
+
+            Ok::<_, anyhow::Error>((level_idx, level_tag, reflectivity, zdr, rhohv))
         });
     }
 
-    let mut parsed_levels: Vec<Option<(String, ParsedReflectivityField)>> =
-        vec![None; LEVEL_TAGS.len()];
+    let mut parsed_levels: Vec<
+        Option<(
+            String,
+            ParsedReflectivityField,
+            Option<ParsedAuxField>,
+            Option<ParsedAuxField>,
+        )>,
+    > = vec![None; LEVEL_TAGS.len()];
     while let Some(result) = futures.next().await {
-        let (level_idx, level_tag, parsed) = result?;
-        parsed_levels[level_idx] = Some((level_tag, parsed));
+        let (level_idx, level_tag, reflectivity, zdr, rhohv) = result?;
+        parsed_levels[level_idx] = Some((level_tag, reflectivity, zdr, rhohv));
     }
 
     let mut levels = Vec::with_capacity(parsed_levels.len());
     for (idx, item) in parsed_levels.into_iter().enumerate() {
-        let (level_tag, parsed) =
+        let (level_tag, reflectivity, zdr, rhohv) =
             item.ok_or_else(|| anyhow!("Missing parsed level {}", LEVEL_TAGS[idx]))?;
-        levels.push((idx as u8, level_tag, parsed));
+        levels.push((idx as u8, level_tag, reflectivity, zdr, rhohv));
     }
 
-    levels.sort_by_key(|(idx, _, _)| *idx);
+    levels.sort_by_key(|(idx, _, _, _, _)| *idx);
 
     let base_grid = levels
         .first()
-        .map(|(_, _, parsed)| parsed.grid.clone())
+        .map(|(_, _, parsed, _, _)| parsed.grid.clone())
         .ok_or_else(|| anyhow!("No parsed MRMS levels"))?;
 
-    for (_, tag, parsed) in levels.iter().skip(1) {
-        if parsed.grid.nx != base_grid.nx
-            || parsed.grid.ny != base_grid.ny
-            || (parsed.grid.la1_deg - base_grid.la1_deg).abs() > 1e-6
-            || (parsed.grid.lo1_deg360 - base_grid.lo1_deg360).abs() > 1e-6
-            || (parsed.grid.di_deg - base_grid.di_deg).abs() > 1e-6
-            || (parsed.grid.dj_deg - base_grid.dj_deg).abs() > 1e-6
-        {
+    for (_, tag, parsed, _, _) in levels.iter().skip(1) {
+        if !is_same_grid(&parsed.grid, &base_grid) {
             bail!("MRMS grid mismatch for level {tag}");
         }
     }
-
-    let precip_cycle_timestamp = cycle_anchor_timestamp(timestamp, PRECIP_FLAG_STEP_SECONDS)?;
-    let precip_aux = fetch_aux_field_at_timestamp(
-        &state.http,
-        MRMS_PRECIP_FLAG_PRODUCT,
-        &precip_cycle_timestamp,
-    )
-    .await
-    .map_err(|error| {
-        warn!(
-            "PrecipFlag aux unavailable for reflectivity {} (cycle {}): {error:#}",
-            timestamp, precip_cycle_timestamp
-        );
-        error
-    })
-    .ok();
-
-    let model_cycle_timestamp = cycle_anchor_timestamp(timestamp, MODEL_STEP_SECONDS)?;
-    let freezing_aux = fetch_aux_field_at_timestamp(
-        &state.http,
-        MRMS_MODEL_FREEZING_HEIGHT_PRODUCT,
-        &model_cycle_timestamp,
-    )
-    .await
-    .map_err(|error| {
-        warn!(
-            "Freezing-level aux unavailable for reflectivity {} (cycle {}): {error:#}",
-            timestamp, model_cycle_timestamp
-        );
-        error
-    })
-    .ok();
-
-    let precip_sampler = precip_aux
-        .as_ref()
-        .map(build_aux_sampler)
-        .transpose()
-        .context("Failed to build precip sampler")?;
-    let freezing_sampler = freezing_aux
-        .as_ref()
-        .map(build_aux_sampler)
-        .transpose()
-        .context("Failed to build freezing sampler")?;
 
     let level_km: Vec<f64> = LEVEL_TAGS
         .iter()
@@ -415,37 +411,48 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
 
     let mut buckets: Vec<Vec<StoredVoxel>> = (0..tile_count).map(|_| Vec::new()).collect();
 
-    let row_lats: Vec<f64> = (0..base_grid.ny)
-        .map(|row| base_grid.la1_deg + row as f64 * base_grid.lat_step_deg)
-        .collect();
-    let col_lons360: Vec<f64> = (0..base_grid.nx)
-        .map(|col| to_lon360(base_grid.lo1_deg360 + col as f64 * base_grid.lon_step_deg))
-        .collect();
-
-    for (level_idx, _tag, parsed) in &levels {
+    for (level_idx, level_tag, parsed, zdr_aux, rhohv_aux) in &levels {
         let level_index = *level_idx as usize;
-        let Some(bounds) = level_bounds.get(level_index) else {
+        if level_bounds.get(level_index).is_none() {
             continue;
-        };
-        let voxel_mid_feet = (bounds.bottom_feet as f64 + bounds.top_feet as f64) / 2.0;
+        }
+
+        let zdr_values = zdr_aux.as_ref().and_then(|field| {
+            if is_same_grid(&field.grid, &parsed.grid) {
+                Some(field.values.as_slice())
+            } else {
+                warn!(
+                    "Ignoring ZDR aux for level {} at {} due to grid mismatch",
+                    level_tag, timestamp
+                );
+                None
+            }
+        });
+        let rhohv_values = rhohv_aux.as_ref().and_then(|field| {
+            if is_same_grid(&field.grid, &parsed.grid) {
+                Some(field.values.as_slice())
+            } else {
+                warn!(
+                    "Ignoring RhoHV aux for level {} at {} due to grid mismatch",
+                    level_tag, timestamp
+                );
+                None
+            }
+        });
 
         for row in 0..parsed.grid.ny as usize {
-            let lat_deg = row_lats[row];
             let row_offset = row * parsed.grid.nx as usize;
 
             for col in 0..parsed.grid.nx as usize {
-                let dbz_tenths = parsed.dbz_tenths[row_offset + col];
+                let value_idx = row_offset + col;
+                let dbz_tenths = parsed.dbz_tenths[value_idx];
                 if dbz_tenths < STORE_MIN_DBZ_TENTHS {
                     continue;
                 }
 
-                let lon_deg360 = col_lons360[col];
                 let phase = resolve_phase(
-                    lat_deg,
-                    lon_deg360,
-                    voxel_mid_feet,
-                    precip_sampler.as_ref(),
-                    freezing_sampler.as_ref(),
+                    zdr_values.and_then(|values| values.get(value_idx).copied()),
+                    rhohv_values.and_then(|values| values.get(value_idx).copied()),
                 );
 
                 let row_u16 = row as u16;
@@ -491,67 +498,50 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
     }))
 }
 
-fn build_aux_sampler(field: &ParsedAuxField) -> Result<AuxFieldSampler> {
-    Ok(AuxFieldSampler {
-        grid: field.grid.clone(),
-        values: field.values.clone(),
-    })
+fn is_same_grid(left: &GridDef, right: &GridDef) -> bool {
+    left.nx == right.nx
+        && left.ny == right.ny
+        && (left.la1_deg - right.la1_deg).abs() <= 1e-6
+        && (left.lo1_deg360 - right.lo1_deg360).abs() <= 1e-6
+        && (left.di_deg - right.di_deg).abs() <= 1e-6
+        && (left.dj_deg - right.dj_deg).abs() <= 1e-6
 }
 
-fn resolve_phase(
-    lat_deg: f64,
-    lon_deg360: f64,
-    voxel_mid_feet: f64,
-    precip_sampler: Option<&AuxFieldSampler>,
-    freezing_sampler: Option<&AuxFieldSampler>,
-) -> u8 {
-    let phase_from_flag = precip_sampler
-        .and_then(|sampler| sampler.sample(lat_deg, lon_deg360))
-        .and_then(phase_from_precip_flag);
+fn resolve_phase(zdr_value: Option<f32>, rhohv_value: Option<f32>) -> u8 {
+    let zdr = zdr_value.and_then(sanitize_zdr);
+    let rhohv = rhohv_value.and_then(sanitize_rhohv);
 
-    if let Some(phase) = phase_from_flag {
-        return phase;
+    if let Some(rhohv) = rhohv {
+        if rhohv < PHASE_RHOHV_MIXED_MAX {
+            return PHASE_MIXED;
+        }
     }
 
-    let phase_from_freezing = freezing_sampler
-        .and_then(|sampler| sampler.sample(lat_deg, lon_deg360))
-        .and_then(|meters| phase_from_freezing_level(voxel_mid_feet, meters as f64));
+    if let Some(zdr) = zdr {
+        if zdr >= PHASE_ZDR_RAIN_MIN_DB {
+            return PHASE_RAIN;
+        }
+        if zdr <= PHASE_ZDR_SNOW_MAX_DB {
+            return PHASE_SNOW;
+        }
+        return PHASE_MIXED;
+    }
 
-    phase_from_freezing.unwrap_or(PHASE_RAIN)
+    PHASE_RAIN
 }
 
-fn phase_from_precip_flag(value: f32) -> Option<u8> {
-    if !value.is_finite() {
+fn sanitize_zdr(value: f32) -> Option<f32> {
+    if !value.is_finite() || !(PHASE_ZDR_MIN_VALID_DB..=PHASE_ZDR_MAX_VALID_DB).contains(&value) {
         return None;
     }
-    let code = value.round() as i32;
-    let phase = match code {
-        -3 | 0 => PHASE_RAIN,
-        3 => PHASE_SNOW,
-        7 => PHASE_MIXED,
-        1 | 6 | 10 | 91 | 96 => PHASE_RAIN,
-        _ => PHASE_RAIN,
-    };
-    Some(phase)
+    Some(value)
 }
 
-fn phase_from_freezing_level(voxel_mid_feet: f64, freezing_level_meters_msl: f64) -> Option<u8> {
-    if !voxel_mid_feet.is_finite() || !freezing_level_meters_msl.is_finite() {
+fn sanitize_rhohv(value: f32) -> Option<f32> {
+    if !value.is_finite() || !(PHASE_RHOHV_MIN_VALID..=PHASE_RHOHV_MAX_VALID).contains(&value) {
         return None;
     }
-
-    let freezing_level_feet = freezing_level_meters_msl * FEET_PER_METER;
-    if !freezing_level_feet.is_finite() || freezing_level_feet <= 0.0 {
-        return None;
-    }
-
-    if voxel_mid_feet >= freezing_level_feet + FREEZING_LEVEL_TRANSITION_FEET {
-        Some(PHASE_SNOW)
-    } else if voxel_mid_feet <= freezing_level_feet - FREEZING_LEVEL_TRANSITION_FEET {
-        Some(PHASE_RAIN)
-    } else {
-        Some(PHASE_MIXED)
-    }
+    Some(value)
 }
 
 fn compute_level_bounds(level_km: &[f64]) -> Vec<LevelBounds> {
@@ -589,29 +579,71 @@ fn compute_level_bounds(level_km: &[f64]) -> Vec<LevelBounds> {
     bounds
 }
 
-fn build_level_key(level_tag: &str, date_part: &str, timestamp: &str) -> String {
+fn build_level_key(
+    product_prefix: &str,
+    level_tag: &str,
+    date_part: &str,
+    timestamp: &str,
+) -> String {
     format!(
-        "{MRMS_CONUS_PREFIX}/{MRMS_PRODUCT_PREFIX}_{level_tag}/{date_part}/MRMS_{MRMS_PRODUCT_PREFIX}_{level_tag}_{timestamp}.grib2.gz"
+        "{MRMS_CONUS_PREFIX}/{product_prefix}_{level_tag}/{date_part}/MRMS_{product_prefix}_{level_tag}_{timestamp}.grib2.gz"
     )
 }
 
-fn build_aux_key(product: &str, date_part: &str, timestamp: &str) -> String {
-    format!("{MRMS_CONUS_PREFIX}/{product}/{date_part}/MRMS_{product}_{timestamp}.grib2.gz")
-}
-
-async fn fetch_aux_field_at_timestamp(
+async fn fetch_level_aux_field_at_timestamp(
     http: &Client,
-    product: &str,
+    product_prefix: &str,
+    level_tag: &str,
+    date_part: &str,
     timestamp: &str,
 ) -> Result<ParsedAuxField> {
-    let target = parse_timestamp_utc(timestamp)
-        .ok_or_else(|| anyhow!("Invalid target timestamp: {timestamp}"))?;
-    let date_part = target.format("%Y%m%d").to_string();
-    let key = build_aux_key(product, &date_part, timestamp);
+    let key = build_level_key(product_prefix, level_tag, date_part, timestamp);
     let url = format!("{MRMS_BUCKET_URL}/{key}");
     let zipped = fetch_bytes(http, &url).await?;
     let parsed = tokio::task::spawn_blocking(move || parse_aux_grib_gzipped(&zipped))
         .await
         .context("Join error while parsing aux GRIB")??;
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_phase_marks_low_rhohv_as_mixed() {
+        assert_eq!(resolve_phase(Some(0.8), Some(0.94)), PHASE_MIXED);
+    }
+
+    #[test]
+    fn resolve_phase_marks_high_zdr_as_rain() {
+        assert_eq!(resolve_phase(Some(0.7), Some(0.99)), PHASE_RAIN);
+    }
+
+    #[test]
+    fn resolve_phase_marks_neutral_zdr_as_snow_when_rhohv_is_high() {
+        assert_eq!(resolve_phase(Some(0.0), Some(0.99)), PHASE_SNOW);
+    }
+
+    #[test]
+    fn resolve_phase_falls_back_to_rain_for_missing_or_invalid_dual_pol() {
+        assert_eq!(resolve_phase(None, None), PHASE_RAIN);
+        assert_eq!(resolve_phase(Some(99.0), Some(-1.0)), PHASE_RAIN);
+    }
+
+    #[test]
+    fn dual_pol_keys_share_same_timestamp_and_level_as_reflectivity() {
+        let date = "20260212";
+        let timestamp = "20260212-123456";
+        let level = "03.00";
+        let suffix = format!("_{level}_{timestamp}.grib2.gz");
+
+        let reflectivity = build_level_key(MRMS_PRODUCT_PREFIX, level, date, timestamp);
+        let zdr = build_level_key(MRMS_ZDR_PRODUCT_PREFIX, level, date, timestamp);
+        let rhohv = build_level_key(MRMS_RHOHV_PRODUCT_PREFIX, level, date, timestamp);
+
+        assert!(reflectivity.ends_with(&suffix));
+        assert!(zdr.ends_with(&suffix));
+        assert!(rhohv.ends_with(&suffix));
+    }
 }

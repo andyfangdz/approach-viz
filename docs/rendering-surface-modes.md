@@ -12,7 +12,7 @@
 - MRMS 3D volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
 - MRMS overlay volume is assembled from multi-radar merged reflectivity slices (`00.50..19.00 km`) and rendered as a stacked 3D precipitation field.
 - In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
-- MRMS voxel coloring is phase-aware (rain/mixed/snow): server-side phase codes prioritize MRMS `PrecipFlag` classes and fall back to freezing-level-relative classification only when precip-flag data is unavailable for the scan, then the client applies phase-specific aviation reflectivity palettes.
+- MRMS voxel coloring is phase-aware (rain/mixed/snow): server-side phase codes are derived from level-matched MRMS dual-pol fields (`MergedZdr`, `MergedRhoHV`) fetched at the same timestamp as each reflectivity slice (low RhoHV -> mixed, otherwise ZDR separates rain vs snow), then the client applies phase-specific aviation reflectivity palettes.
 - MRMS color gain is applied with channel-safe scaling (hue-preserving boost without RGB clipping) so distant/high-altitude bins stay cyan/blue instead of bleaching toward white.
 - MRMS voxels render in two passes: a primary alpha pass (`transparent=true`, `NormalBlending`, `FrontSide`, `depthWrite=true`) for stable density control plus a lighter additive glow pass (`AdditiveBlending`, `FrontSide`) for radar-style bloom.
 - MRMS voxels render without scene fog contribution so echoes keep their intended color/intensity.
