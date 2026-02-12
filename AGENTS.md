@@ -62,7 +62,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 
 ### Rendering
 
-3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional MRMS volumetric precipitation weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
+3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and MRMS volumetric precipitation weather (enabled by default) are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
 MRMS volume intensity uses phase-aware reflectivity coloring (rain/mixed/snow): server-side phase resolution prioritizes `PrecipFlag_00.00` and only falls back to `Model_0degC_Height_00.50` when precip-flag data is unavailable, then renders voxels with phase-specific aviation palettes and clip-safe color gain (preserves hue, avoids distant whitening) in a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place).
 MRMS client transport now decodes compact binary payloads (`application/vnd.approach-viz.mrms.v1`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays.
 MRMS client polling keeps the last successful voxel payload when transient API error payloads arrive, preventing abrupt volume disappearance during upstream hiccups.
