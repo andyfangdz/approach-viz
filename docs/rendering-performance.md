@@ -11,9 +11,9 @@
 - Live ADS-B callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled to avoid persistent label clutter.
 - Live ADS-B marker meshes reuse shared sphere geometry/material instances rather than allocating one geometry/material pair per aircraft marker.
 - Live ADS-B aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead while still updating positions every poll.
-- MRMS volumetric weather is polled at a slower cadence (`~120s`) through a same-origin proxy, with server-side range/threshold filtering; voxel decimation is performed client-side (priority-aware: high-intensity voxels ≥ 45 dBZ are kept first, lower-intensity voxels are uniformly sampled to fill the remaining budget) capped at `100,000` rendered instances.
-- MRMS complete-scan candidate selection uses cached per-level/day S3 key indexes, avoiding repeated per-voxel-slice object-existence probes on every request.
-- MRMS proxy ingestion crops each decoded reflectivity level to the request AOI and stacks the full configured altitude-slice set from the newest timestamp where all slice fetches/decode succeed before response decimation.
+- MRMS volumetric weather is polled at a slower cadence (`~120s`) from a pre-ingested Rust weather service; the Next.js route only proxies upstream payloads (or the client can fetch upstream directly when configured), removing per-poll GRIB decode/listing work from the request path.
+- MRMS query responses use a compact binary wire format (`application/vnd.approach-viz.mrms.v1`) instead of large JSON voxel arrays, reducing transfer size and decode overhead for dense scans.
+- MRMS server-side query filtering is performed against in-memory tile-indexed snapshots with precomputed phase/layer metadata, keeping per-request work bounded to AOI selection and tuple serialization.
 - MRMS overlay polling keeps rendering the last successful payload when the API returns a transient error payload, avoiding abrupt disappear/reappear flicker.
 - MRMS overlay clears prior payload immediately when airport context changes (ref lat/lon or threshold inputs), preventing stale weather columns from lingering at the previous location while the next poll is in flight.
 - MRMS voxels render through one `InstancedMesh` (shared box geometry/material) with per-instance transforms/colors, keeping draw calls bounded even during dense precipitation events.

@@ -1,0 +1,6 @@
+# Rust build artifacts and experimental local dirs
+rust-api/
+services/**/target/
+
+# Local generated data not needed in deploy payload
+*.log

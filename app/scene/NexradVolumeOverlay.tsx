@@ -10,6 +10,44 @@ const RETRY_INTERVAL_MS = 10_000;
 const MAX_VOXEL_INSTANCES = 100_000;
 const DEFAULT_MAX_RANGE_NM = 120;
 const MIN_VOXEL_HEIGHT_NM = 0.04;
+const MRMS_BINARY_MAGIC = 'AVMR';
+const MRMS_BINARY_RECORD_BYTES = 12;
+const MRMS_BINARY_BASE_URL = process.env.NEXT_PUBLIC_MRMS_BINARY_BASE_URL?.trim() ?? '';
+const MRMS_LEVEL_TAGS = [
+  '00.50',
+  '00.75',
+  '01.00',
+  '01.25',
+  '01.50',
+  '01.75',
+  '02.00',
+  '02.25',
+  '02.50',
+  '02.75',
+  '03.00',
+  '03.50',
+  '04.00',
+  '04.50',
+  '05.00',
+  '05.50',
+  '06.00',
+  '06.50',
+  '07.00',
+  '07.50',
+  '08.00',
+  '08.50',
+  '09.00',
+  '10.00',
+  '11.00',
+  '12.00',
+  '13.00',
+  '14.00',
+  '15.00',
+  '16.00',
+  '17.00',
+  '18.00',
+  '19.00'
+] as const;
 
 interface NexradVolumeOverlayProps {
   refLat: number;
@@ -139,6 +177,122 @@ const SNOW_DBZ_COLOR_BANDS: DbzColorBand[] = [
   { minDbz: 10, hex: 0x69dcff },
   { minDbz: 5, hex: 0x7de8ff }
 ];
+
+function buildNexradRequestUrl(params: URLSearchParams): string {
+  if (!MRMS_BINARY_BASE_URL) {
+    return `/api/weather/nexrad?${params.toString()}`;
+  }
+  const baseUrl = MRMS_BINARY_BASE_URL.replace(/\/$/, '');
+  return `${baseUrl}/v1/volume?${params.toString()}`;
+}
+
+function readInt64LittleEndian(view: DataView, offset: number): number {
+  return Number(view.getBigInt64(offset, true));
+}
+
+function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
+  const view = new DataView(bytes);
+  if (view.byteLength < 64) {
+    throw new Error('MRMS payload is too small.');
+  }
+
+  const magic = String.fromCharCode(
+    view.getUint8(0),
+    view.getUint8(1),
+    view.getUint8(2),
+    view.getUint8(3)
+  );
+  if (magic !== MRMS_BINARY_MAGIC) {
+    throw new Error('MRMS payload magic mismatch.');
+  }
+
+  const version = view.getUint16(4, true);
+  if (version !== 1) {
+    throw new Error(`Unsupported MRMS payload version (${version}).`);
+  }
+
+  const headerBytes = view.getUint16(6, true);
+  const voxelCount = view.getUint32(12, true);
+  const layerCount = view.getUint16(16, true);
+  const generatedAtMs = readInt64LittleEndian(view, 20);
+  const scanTimeMs = readInt64LittleEndian(view, 28);
+  const footprintXNm = view.getUint16(36, true) / 1000;
+  const footprintYNm = view.getUint16(38, true) / 1000;
+
+  const layerCountsOffset = headerBytes;
+  const recordsOffset = layerCountsOffset + layerCount * 4;
+  const expectedBytes = recordsOffset + voxelCount * MRMS_BINARY_RECORD_BYTES;
+  if (view.byteLength < expectedBytes) {
+    throw new Error('MRMS payload ended before all voxel records were available.');
+  }
+
+  const layerCounts: number[] = [];
+  for (let index = 0; index < layerCount; index += 1) {
+    layerCounts.push(view.getUint32(layerCountsOffset + index * 4, true));
+  }
+
+  const voxels: NexradVoxelTuple[] = [];
+  for (let index = 0; index < voxelCount; index += 1) {
+    const offset = recordsOffset + index * MRMS_BINARY_RECORD_BYTES;
+    const xNm = view.getInt16(offset, true) / 100;
+    const zNm = view.getInt16(offset + 2, true) / 100;
+    const bottomFeet = view.getUint16(offset + 4, true);
+    const topFeet = view.getUint16(offset + 6, true);
+    const dbz = view.getInt16(offset + 8, true) / 10;
+    const phaseCode = view.getUint8(offset + 10);
+    voxels.push([xNm, zNm, bottomFeet, topFeet, dbz, footprintXNm, footprintYNm, phaseCode]);
+  }
+
+  const generatedAt =
+    Number.isFinite(generatedAtMs) && generatedAtMs > 0
+      ? new Date(generatedAtMs).toISOString()
+      : new Date().toISOString();
+  const scanTime =
+    Number.isFinite(scanTimeMs) && scanTimeMs > 0
+      ? new Date(scanTimeMs).toISOString()
+      : generatedAt;
+
+  const layerSummaries: NexradLayerSummary[] = layerCounts.map((voxelCountForLayer, index) => {
+    const levelTag = MRMS_LEVEL_TAGS[index] ?? `${index}`;
+    const elevation = Number(levelTag);
+    return {
+      product: `MergedReflectivityQC_${levelTag}`,
+      elevationAngleDeg: Number.isFinite(elevation) ? elevation : index,
+      sourceKey: `mrms-binary://${scanTime}/${levelTag}`,
+      scanTime,
+      voxelCount: voxelCountForLayer
+    };
+  });
+
+  return {
+    generatedAt,
+    radar: null,
+    layerSummaries,
+    voxels
+  };
+}
+
+function decodePayload(buffer: ArrayBuffer): NexradVolumePayload {
+  if (buffer.byteLength >= 4) {
+    const probe = new DataView(buffer);
+    const magic = String.fromCharCode(
+      probe.getUint8(0),
+      probe.getUint8(1),
+      probe.getUint8(2),
+      probe.getUint8(3)
+    );
+    if (magic === MRMS_BINARY_MAGIC) {
+      return decodeBinaryPayload(buffer);
+    }
+  }
+
+  const text = new TextDecoder().decode(buffer);
+  const parsed = JSON.parse(text) as NexradVolumePayload;
+  if (!parsed || !Array.isArray(parsed.voxels)) {
+    throw new Error('Unexpected MRMS JSON payload.');
+  }
+  return parsed;
+}
 
 function dbzToBandHex(dbz: number, bands: DbzColorBand[]): number {
   if (!Number.isFinite(dbz)) return bands[bands.length - 1].hex;
@@ -365,7 +519,7 @@ export function NexradVolumeOverlay({
       let nextDelayMs = POLL_INTERVAL_MS;
 
       try {
-        const response = await fetch(`/api/weather/nexrad?${params.toString()}`, {
+        const response = await fetch(buildNexradRequestUrl(params), {
           cache: 'no-store',
           signal: activeAbortController.signal
         });
@@ -373,7 +527,7 @@ export function NexradVolumeOverlay({
           throw new Error(`NEXRAD request failed (${response.status})`);
         }
 
-        const nextPayload = (await response.json()) as NexradVolumePayload;
+        const nextPayload = decodePayload(await response.arrayBuffer());
         if (!cancelled) {
           setLastError(nextPayload.error ?? null);
           setLastPollAt(new Date().toISOString());

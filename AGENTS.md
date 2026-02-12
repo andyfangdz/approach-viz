@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + `fast-png` + `dd-trace`
+- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio MRMS service) + AWS SNS/SQS + `dd-trace`
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -24,15 +24,19 @@
 - Run geometry unit tests (path/curve/runway math): `npm run test:geometry`
 - Format codebase with Prettier: `npm run format`
 - Verify Prettier formatting: `npm run format:check`
+- Check Rust MRMS service compile: `cargo check --manifest-path services/mrms-rs/Cargo.toml`
 - Dev server: `npm run dev` (loads `.env.local`, preloads Datadog tracer, then starts `next dev`)
 - Production build (also refreshes data): `npm run build`
 - Run production server: `npm run start`
+- Create MRMS SNS/SQS subscription wiring: `python3 scripts/mrms/setup_sns_sqs.py`
+- Deploy MRMS Rust service to OCI host: `MRMS_SQS_QUEUE_URL=... scripts/mrms/deploy_oci.sh ubuntu@100.86.128.122`
 
 ## Directory Layout
 
 - `app/` — Next.js routes, server actions (`actions-lib/`), API proxies (`api/`), client UI (`app-client/`), and 3D scene components (`scene/`)
 - `lib/` — shared types, SQLite singleton, spatial index, and CIFP parser (`cifp/`)
-- `scripts/` — data download/build scripts plus dev launcher (`dev-with-ddtrace.mjs`)
+- `services/mrms-rs/` — Rust MRMS ingest/query service (SQS consumer + binary weather API), with source split by concern under `src/` (`api.rs`, `ingest.rs`, `grib.rs`, `storage.rs`, `discovery.rs`, `config.rs`, `types.rs`, `utils.rs`, `constants.rs`)
+- `scripts/` — data download/build scripts, MRMS provisioning/deploy helpers (`scripts/mrms/*`), and dev launcher (`dev-with-ddtrace.mjs`)
 - `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
 - `data/` — build-time artifacts (SQLite DB, spatial index binaries)
 
@@ -42,23 +46,25 @@ Each area below has a one-sentence summary; full details live in the linked `doc
 
 ### Data Sources
 
-CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and runtime MRMS 3D reflectivity weather are ingested/proxied from FAA and third-party feeds into SQLite (build-time) and same-origin API routes (runtime). → [`docs/data-sources.md`](docs/data-sources.md)
+CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and runtime MRMS 3D reflectivity weather are ingested/proxied from FAA and third-party feeds into SQLite (build-time), Next.js API routes (runtime), and an external Rust MRMS ingestion service (runtime weather). → [`docs/data-sources.md`](docs/data-sources.md)
 
 ### Architecture
 
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
-- Runtime weather note: `app/api/weather/nexrad/route.ts` ingests MRMS `MergedReflectivityQC` altitude slices from AWS (`noaa-mrms-pds`) under `CONUS`, plus phase-assist fields (`PrecipFlag_00.00`, `Model_0degC_Height_00.50`), probes recent base timestamps (newest-first), uses cached per-level/day S3 key indexes to find complete candidates, fetches/decodes all configured reflectivity levels in full parallel per candidate, and emits request-origin voxel mosaics with per-voxel phase codes.
+- Runtime weather note: MRMS ingest/query moved to `services/mrms-rs/` (Rust Axum service). It consumes SNS->SQS new-object events, ingests/decodes complete scans once, stores zstd snapshots with 5 GB retention, and serves query-filtered binary voxel payloads (`application/vnd.approach-viz.mrms.v1`) through the OCI host. `app/api/weather/nexrad/route.ts` is now a thin proxy to that upstream service. Aux phase inputs are cycle-anchored to the reflectivity timestamp family (same 2-minute precip cycle + same hourly freezing-level cycle) to avoid mixed-cycle voxel/aux rendering.
 - Runtime tracing note: local dev startup (`npm run dev`) runs through `scripts/dev-with-ddtrace.mjs`, which preloads env vars (including `DD_API_KEY`) and starts Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so Datadog tracing initializes before server modules.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI
 - [`docs/architecture-client-and-scene.md`](docs/architecture-client-and-scene.md) — client state orchestration, UI section boundaries, scene composition
+- [`docs/mrms-rust-pipeline.md`](docs/mrms-rust-pipeline.md) — Rust ingest/query design, wire format, deployment, and operations
 
 ### Rendering
 
 3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and optional MRMS volumetric precipitation weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
 MRMS volume intensity uses phase-aware reflectivity coloring (rain/mixed/snow): server-side phase resolution prioritizes `PrecipFlag_00.00` and only falls back to `Model_0degC_Height_00.50` when precip-flag data is unavailable, then renders voxels with phase-specific aviation palettes and clip-safe color gain (preserves hue, avoids distant whitening) in a dual-pass volume (`NormalBlending` front-face base with `depthWrite=true` + additive glow) plus configurable opacity (opacity updates apply in place).
+MRMS client transport now decodes compact binary payloads (`application/vnd.approach-viz.mrms.v1`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays.
 MRMS client polling keeps the last successful voxel payload when transient API error payloads arrive, preventing abrupt volume disappearance during upstream hiccups.
 MRMS client polling also clears prior payload immediately when airport context changes, so stale voxels do not linger from the previous location while new volume data is loading.
 MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), using the same origin-local projection scales for both voxel placement and footprint sizing to keep cell spacing contiguous.

@@ -5,6 +5,7 @@ node_modules/
 dist/
 .next/
 *.tsbuildinfo
+services/*/target/
 
 # Vite cache
 .vite/

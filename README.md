@@ -54,3 +54,14 @@ npm run start
 npm run download-data
 npm run build-db
 ```
+
+## MRMS Weather Pipeline
+
+MRMS volumetric weather now uses an external Rust ingestion service (`services/mrms-rs`) that pre-ingests NOAA MRMS scans and serves compact binary voxel payloads.
+
+- Next.js proxy route: `app/api/weather/nexrad/route.ts`
+- Rust service docs: `docs/mrms-rust-pipeline.md`
+- Optional direct client fetch override:
+  - `NEXT_PUBLIC_MRMS_BINARY_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:8443/mrms-v1`
+- Proxy upstream override:
+  - `MRMS_BINARY_UPSTREAM_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:8443/mrms-v1`

@@ -40,11 +40,12 @@ External data feeds and their ingestion paths.
 ## MRMS 3D Volumetric Weather
 
 - Source: NOAA MRMS AWS open data bucket `s3://noaa-mrms-pds` (`CONUS/MergedReflectivityQC_<height_km>` products).
-- Fetched through same-origin proxy `app/api/weather/nexrad/route.ts` so browser clients avoid direct CORS/multi-origin fetch complexity.
-- Runtime parser scans recent MRMS timestamps, uses cached per-level S3 prefix indexes to shortlist timestamps with complete slice keys, then performs full parallel slice fetch/decode (`00.50..19.00 km`) newest-first; GRIB2 template `5.41` payloads are decoded via `fast-png`.
-- Phase-assist products are fetched from the same bucket: `CONUS/PrecipFlag_00.00` and `CONUS/Model_0degC_Height_00.50` (nearest available timestamps at their native cadences).
-- Proxy converts decoded MRMS cells to request-origin local NM 3D voxels with per-level altitude bounds, dataset-derived X/Y footprint, and per-voxel phase code (rain/mixed/snow), with `PrecipFlag` precedence and freezing-level fallback only when precip-flag data is unavailable, then applies dBZ threshold, AOI range culling, and voxel-count decimation.
-- Route applies short in-memory cache and stale-cache fallback on upstream errors so overlay polling remains resilient.
+- Ingestion is event-driven in a Rust service (`services/mrms-rs`) running on OCI: SNS topic `NewMRMSObject` publishes to SQS, and the service ingests complete scans once per timestamp instead of per-client poll.
+- The service fetches/decode-checks all reflectivity levels (`00.50..19.00 km`) plus phase-assist products (`PrecipFlag_00.00`, `Model_0degC_Height_00.50`), computes phase-coded voxels, and stores compact zstd-compressed snapshots.
+- Aux fields are cycle-anchored to the reflectivity scan time (precip flag on the same 2-minute cycle, freezing level on the same hourly cycle) so rendered voxels and aux-driven phase classification come from the same update cycle family.
+- Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v1`) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`).
+- The Next.js route `app/api/weather/nexrad/route.ts` now proxies to the Rust service endpoint, and the client decodes binary payloads directly.
+- Snapshot storage is bounded to `5 GB` (oldest scans pruned first) to fit the OCI host disk budget.
 
 ## Airport Coverage
 

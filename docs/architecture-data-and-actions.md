@@ -45,14 +45,14 @@
 
 ## MRMS Weather Access
 
-- 3D precipitation weather is fetched through same-origin proxy `app/api/weather/nexrad/route.ts`.
-- The proxy targets NOAA MRMS AWS products under `CONUS` (`CONUS/MergedReflectivityQC_<height_km>`), probes several newest base-level `00.50` timestamps, verifies complete per-level key availability via cached S3 prefix indexes, and then fetches/decode-checks candidates newest-first (`00.50..19.00 km`).
-- Each slice is GRIB2 (`template 5.41`) with PNG-compressed field data; the route gunzips, parses GRIB sections, and decodes Section 7 PNG payloads with `fast-png`.
-- Phase auxiliaries are fetched near the selected reflectivity timestamp: `PrecipFlag_00.00` (2-min cadence, short lookback) and `Model_0degC_Height_00.50` (hourly cadence, longer lookback).
-- Decoded cells are transformed server-side into request-origin local NM voxel tuples with per-level altitude bounds plus per-cell X/Y footprint from dataset grid spacing; both voxel centers and footprint dimensions use the same origin-local projection scales before dBZ/range filtering and response decimation.
-- Per-voxel precipitation phase codes are resolved server-side with `PrecipFlag` as the primary classifier (rain/mixed/snow), and freezing-level-relative classification is used only as fallback when precip-flag data is unavailable for that scan.
-- Altitude-slice fetch/decode runs in full parallel for all configured levels once a complete timestamp is selected, minimizing end-to-end scan assembly latency.
-- Proxy responses include short in-memory caching and stale-cache fallback behavior so transient upstream failures do not hard-fail client overlay polling.
+- 3D precipitation weather ingestion runs in an external Rust service (`services/mrms-rs`) instead of the Next.js request path.
+- The Rust service consumes NOAA SNS new-object notifications through SQS (`NewMRMSObject` -> queue subscription), then ingests MRMS timestamps asynchronously.
+- Ingestion fetches/decode-checks all configured reflectivity levels (`00.50..19.00 km`) plus phase auxiliaries (`PrecipFlag_00.00`, `Model_0degC_Height_00.50`), resolves per-voxel phase server-side, and persists compact zstd snapshot files.
+- Aux fetches are anchored to the reflectivity timestamp cycle (2-minute precip cycle, hourly freezing-level cycle) rather than lookback scanning, which avoids mixing voxel intensity and aux phase sources from different cycles.
+- Query endpoint (`/v1/volume`) loads latest snapshot in memory and performs fast request-origin filtering (`lat/lon/minDbz/maxRangeNm`) with tile-indexed voxel subsets before serializing a compact binary response.
+- Next.js route `app/api/weather/nexrad/route.ts` is now a thin proxy to the Rust endpoint (`MRMS_BINARY_UPSTREAM_BASE_URL`, defaulting to the OCI Tailscale Funnel URL).
+- Client overlay decodes binary wire payloads directly, with JSON fallback only for error payloads.
+- Snapshot retention is byte-capped (`MRMS_RETENTION_BYTES=5 GB`) with oldest-first pruning.
 
 ## CI and Instrumentation
 
