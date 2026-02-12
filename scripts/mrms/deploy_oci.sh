@@ -66,7 +66,8 @@ WantedBy=multi-user.target
 UNIT
 sudo mv /tmp/approach-viz-mrms.service /etc/systemd/system/approach-viz-mrms.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now approach-viz-mrms.service
+sudo systemctl enable approach-viz-mrms.service
+sudo systemctl restart approach-viz-mrms.service
 tailscale funnel --bg --https 8443 --set-path /mrms-v1 http://127.0.0.1:9191 >/dev/null
 sudo systemctl --no-pager --full status approach-viz-mrms.service | sed -n '1,40p'
 curl -fsS http://127.0.0.1:9191/v1/meta
