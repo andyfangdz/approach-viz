@@ -44,7 +44,7 @@ This document defines the current server-side voxel phase resolver (`rain`, `mix
    - stale/sparse aux mode strongly down-weights dual-pol contribution
    - `RadarQualityIndex` scales correction weight when available
 4. Apply mixed-suppression guardrails:
-   - mixed must win by margin and be near a melting-transition signal; otherwise classify rain/snow
+   - mixed is suppressed only when it has weak score separation; transition signals, dual-pol mixed support, or strong competing rain/snow evidence preserve mixed transition bands
 5. Apply snow guardrail:
    - when `PrecipFlag` indicates snow and thermo context supports frozen precipitation, final phase is forced to snow over contradictory weak dual-pol rain/mixed signals.
 
