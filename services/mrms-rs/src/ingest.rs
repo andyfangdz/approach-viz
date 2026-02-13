@@ -430,6 +430,7 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
     let mut dual_missing_voxel_count: u64 = 0;
     let mut legacy_override_mixed_count: u64 = 0;
     let mut legacy_only_resolve_count: u64 = 0;
+    let mut legacy_snow_bias_override_count: u64 = 0;
 
     for (level_idx, level_tag, parsed) in &levels {
         let level_index = *level_idx as usize;
@@ -476,15 +477,23 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                     precip_field,
                     freezing_field,
                 );
+                let legacy_phase_value = legacy_phase.map(|sample| sample.phase);
                 if dual_phase.is_none() {
                     dual_missing_voxel_count += 1;
                 }
                 if dual_phase == Some(PHASE_MIXED)
-                    && legacy_phase.is_some_and(|phase| phase != PHASE_MIXED)
+                    && legacy_phase_value.is_some_and(|phase| phase != PHASE_MIXED)
                 {
                     legacy_override_mixed_count += 1;
                 }
-                if dual_phase.is_none() && legacy_phase.is_some() {
+                if dual_phase == Some(PHASE_RAIN)
+                    && legacy_phase.is_some_and(|sample| {
+                        sample.source == LegacyPhaseSource::PrecipFlag && sample.phase == PHASE_SNOW
+                    })
+                {
+                    legacy_snow_bias_override_count += 1;
+                }
+                if dual_phase.is_none() && legacy_phase_value.is_some() {
                     legacy_only_resolve_count += 1;
                 }
                 let phase = resolve_phase_with_legacy(dual_phase, legacy_phase);
@@ -518,8 +527,9 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         .map(|datetime| datetime.timestamp_millis())
         .unwrap_or_else(|| Utc::now().timestamp_millis());
 
-    let used_legacy_for_correction =
-        legacy_override_mixed_count > 0 || legacy_only_resolve_count > 0;
+    let used_legacy_for_correction = legacy_override_mixed_count > 0
+        || legacy_only_resolve_count > 0
+        || legacy_snow_bias_override_count > 0;
     let mode = if use_legacy_fallback {
         if legacy_available {
             "dual-pol-last-available+legacy-fallback"
@@ -532,7 +542,7 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         "dual-pol-cycle-matched"
     };
     let detail = format!(
-        "zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},legacy_precip={},legacy_freezing={},dual_missing_voxels={},legacy_mixed_overrides={},legacy_only_resolves={}",
+        "zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},legacy_precip={},legacy_freezing={},dual_missing_voxels={},legacy_mixed_overrides={},legacy_only_resolves={},legacy_snow_bias_overrides={}",
         zdr_bundle.available_level_count(),
         LEVEL_TAGS.len(),
         rhohv_bundle.available_level_count(),
@@ -544,6 +554,7 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         dual_missing_voxel_count,
         legacy_override_mixed_count,
         legacy_only_resolve_count,
+        legacy_snow_bias_override_count,
     );
 
     Ok(Arc::new(ScanSnapshot {
@@ -580,6 +591,18 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
 struct LegacyAuxBundle {
     precip_flag: Option<(String, ParsedAuxField)>,
     freezing_level: Option<(String, ParsedAuxField)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegacyPhaseSource {
+    PrecipFlag,
+    FreezingLevel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LegacyPhaseSample {
+    phase: u8,
+    source: LegacyPhaseSource,
 }
 
 struct DualPolBundle {
@@ -1054,7 +1077,17 @@ fn timestamp_age_seconds(newer_timestamp: &str, older_timestamp: &str) -> Option
     Some((newer - older).num_seconds().max(0))
 }
 
-fn resolve_phase_with_legacy(dual_phase: Option<u8>, legacy_phase: Option<u8>) -> u8 {
+fn resolve_phase_with_legacy(
+    dual_phase: Option<u8>,
+    legacy_phase: Option<LegacyPhaseSample>,
+) -> u8 {
+    if legacy_phase.is_some_and(|sample| {
+        sample.source == LegacyPhaseSource::PrecipFlag && sample.phase == PHASE_SNOW
+    }) {
+        return PHASE_SNOW;
+    }
+
+    let legacy_phase = legacy_phase.map(|sample| sample.phase);
     match dual_phase {
         Some(PHASE_MIXED) => match legacy_phase {
             Some(PHASE_RAIN) => PHASE_RAIN,
@@ -1072,19 +1105,25 @@ fn resolve_legacy_phase(
     voxel_mid_feet: f64,
     precip_field: Option<&ParsedAuxField>,
     freezing_field: Option<&ParsedAuxField>,
-) -> Option<u8> {
+) -> Option<LegacyPhaseSample> {
     if let Some(phase) = precip_field
         .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
         .and_then(phase_from_precip_flag)
     {
-        return Some(phase);
+        return Some(LegacyPhaseSample {
+            phase,
+            source: LegacyPhaseSource::PrecipFlag,
+        });
     }
 
     if let Some(phase) = freezing_field
         .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
         .and_then(|meters| phase_from_freezing_level(voxel_mid_feet, meters as f64))
     {
-        return Some(phase);
+        return Some(LegacyPhaseSample {
+            phase,
+            source: LegacyPhaseSource::FreezingLevel,
+        });
     }
 
     None
@@ -1196,7 +1235,27 @@ mod tests {
     #[test]
     fn resolve_phase_with_legacy_prefers_snow_over_dual_mixed() {
         assert_eq!(
-            resolve_phase_with_legacy(Some(PHASE_MIXED), Some(PHASE_SNOW)),
+            resolve_phase_with_legacy(
+                Some(PHASE_MIXED),
+                Some(LegacyPhaseSample {
+                    phase: PHASE_SNOW,
+                    source: LegacyPhaseSource::PrecipFlag,
+                }),
+            ),
+            PHASE_SNOW
+        );
+    }
+
+    #[test]
+    fn resolve_phase_with_legacy_biases_precip_flag_snow_over_dual_rain() {
+        assert_eq!(
+            resolve_phase_with_legacy(
+                Some(PHASE_RAIN),
+                Some(LegacyPhaseSample {
+                    phase: PHASE_SNOW,
+                    source: LegacyPhaseSource::PrecipFlag,
+                }),
+            ),
             PHASE_SNOW
         );
     }
@@ -1204,7 +1263,13 @@ mod tests {
     #[test]
     fn resolve_phase_with_legacy_falls_back_to_legacy_when_dual_missing() {
         assert_eq!(
-            resolve_phase_with_legacy(None, Some(PHASE_SNOW)),
+            resolve_phase_with_legacy(
+                None,
+                Some(LegacyPhaseSample {
+                    phase: PHASE_SNOW,
+                    source: LegacyPhaseSource::PrecipFlag,
+                }),
+            ),
             PHASE_SNOW
         );
         assert_eq!(resolve_phase_with_legacy(None, None), PHASE_RAIN);

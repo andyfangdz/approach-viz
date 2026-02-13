@@ -42,7 +42,8 @@ This document defines how the Rust MRMS service resolves voxel phase (`rain`, `m
    - Use `PrecipFlag_00.00` mapping first.
    - If precip flag is unavailable, compare voxel altitude vs `Model_0degC_Height_00.50` (+/-1500 ft transition band) for rain/mixed/snow.
 3. Final phase resolution:
-   - If dual-pol resolves `mixed` and legacy resolves `rain` or `snow`, use legacy phase (mixed correction).
+   - If `PrecipFlag_00.00` resolves `snow`, force `snow` (snow-bias correction over dual-pol rain/mixed ambiguity).
+   - Else if dual-pol resolves `mixed` and legacy resolves `rain` or `snow`, use legacy phase (mixed correction).
    - If dual-pol is unavailable/invalid, use legacy phase when available.
    - If neither dual-pol nor legacy resolves phase, default to `rain`.
 
@@ -54,6 +55,6 @@ The service emits phase-source metadata so the client debug panel can show:
 - dual-pol ages (`zdrAgeSeconds`, `rhohvAgeSeconds`)
 - dual-pol timestamps (`zdrTimestamp`, `rhohvTimestamp`)
 - legacy timestamps (`precipFlagTimestamp`, `freezingLevelTimestamp`)
-- detailed coverage summary (`phaseDetail`) including dual-pol coverage and correction counters (`dual_missing_voxels`, `legacy_mixed_overrides`, `legacy_only_resolves`)
+- detailed coverage summary (`phaseDetail`) including dual-pol coverage and correction counters (`dual_missing_voxels`, `legacy_mixed_overrides`, `legacy_only_resolves`, `legacy_snow_bias_overrides`)
 
 These fields are exposed via `/v1/meta` and mirrored as response headers on `/v1/volume`.
