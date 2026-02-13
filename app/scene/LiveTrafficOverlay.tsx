@@ -592,7 +592,7 @@ export function LiveTrafficOverlay({
                 distanceFactor={14}
                 transform={false}
                 sprite
-                zIndexRange={[40, 0]}
+                zIndexRange={[9, 0]}
               >
                 <span className="traffic-callsign-label">{track.callsignLabel}</span>
               </Html>

@@ -24,7 +24,7 @@ export function WaypointMarker({
       <Html
         position={[0, 0.4, 0]}
         center
-        zIndexRange={[40, 0]}
+        zIndexRange={[9, 0]}
         style={{
           color: '#ffffff',
           fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
