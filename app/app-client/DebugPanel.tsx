@@ -27,6 +27,15 @@ function formatAgeSeconds(value: number | null): string {
   return `${Math.round(value)}s`;
 }
 
+function formatScanAge(scanTime: string | null): string {
+  if (!scanTime) return '';
+  const ms = Date.now() - new Date(scanTime).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  return `${Math.floor(s / 60)}m${s % 60}s ago`;
+}
+
 export function DebugPanel({
   debugCollapsed,
   onToggleDebug,
@@ -107,6 +116,7 @@ export function DebugPanel({
           <span className="debug-title">MRMS</span>
           <span className="debug-summary">
             {boolLabel(nexradDebug.enabled)} &middot; {nexradDebug.renderedVoxelCount} vox
+            {nexradDebug.scanTime ? ` · ${formatScanAge(nexradDebug.scanTime)}` : ''}
           </span>
           <svg
             className={`debug-chevron${mrmsExpanded ? ' debug-chevron-open' : ''}`}
