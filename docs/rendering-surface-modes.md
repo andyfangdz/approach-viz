@@ -11,10 +11,12 @@
 
 - MRMS 3D volumetric weather is an overlay (not a surface mode) and can be enabled alongside any surface mode.
 - MRMS overlay volume is assembled from multi-radar merged reflectivity slices (`00.50..19.00 km`) and rendered as a stacked 3D precipitation field.
+- MRMS v2 transport merges contiguous same-phase / similar-dBZ cells into larger brick records server-side, reducing client instance count while preserving full coverage in rendered volume.
 - In terrain/plate modes the weather voxels render directly in the local NM frame; in satellite/3D plate modes voxel altitude applies curvature compensation so weather remains co-registered with curved tiled terrain.
 - MRMS voxel coloring is phase-aware (rain/mixed/snow): server-side phase codes use a thermodynamic-first resolver (precip flag, freezing level, wet-bulb/surface temperature, bright-band heights, optional RQI) and then apply level-matched MRMS dual-pol (`MergedZdr`, `MergedRhoHV`) as weighted correction; when rain/snow evidence strongly competes the resolver promotes a bounded mixed transition band, then applies a local boundary blend (transition candidates with opposite rain/snow neighbors become mixed) before final mixed suppression, while stale/sparse dual-pol (>5 minutes) is down-weighted with explicit fallback telemetry.
 - MRMS color gain is applied with channel-safe scaling (hue-preserving boost without RGB clipping) so distant/high-altitude bins stay cyan/blue instead of bleaching toward white.
 - MRMS voxels render in two passes: a primary alpha pass (`transparent=true`, `NormalBlending`, `FrontSide`, `depthWrite=true`) for stable density control plus a lighter additive glow pass (`AdditiveBlending`, `FrontSide`) for radar-style bloom.
+- MRMS voxel shader applies soft edge falloff and vertical glow shaping so merged bricks blend into luminous bands instead of appearing as hard-edged blocks.
 - MRMS voxels render without scene fog contribution so echoes keep their intended color/intensity.
 - MRMS overlay opacity is user-configurable in the options panel so voxel intensity can be tuned per-surface and time-of-day visibility needs.
 - MRMS opacity slider updates mutate both voxel-pass opacities in place (no voxel remount/rebuild), so adjusting transparency does not drop the rendered volume.

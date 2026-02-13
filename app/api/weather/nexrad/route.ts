@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic';
 const REQUEST_TIMEOUT_MS = 8000;
 const DEFAULT_MIN_DBZ = 5;
 const DEFAULT_MAX_RANGE_NM = 120;
+const DEFAULT_WIRE_VERSION = 2;
 const DEFAULT_UPSTREAM_BASE_URL =
   process.env.MRMS_BINARY_UPSTREAM_BASE_URL ||
   'https://oci-useast-arm-4.pigeon-justice.ts.net:8443/mrms-v1';
@@ -37,13 +38,20 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   }
 }
 
-function upstreamVolumeUrl(lat: number, lon: number, minDbz: number, maxRangeNm: number): string {
+function upstreamVolumeUrl(
+  lat: number,
+  lon: number,
+  minDbz: number,
+  maxRangeNm: number,
+  wireVersion: number
+): string {
   const baseUrl = DEFAULT_UPSTREAM_BASE_URL.replace(/\/$/, '');
   const url = new URL(`${baseUrl}/v1/volume`);
   url.searchParams.set('lat', lat.toFixed(6));
   url.searchParams.set('lon', lon.toFixed(6));
   url.searchParams.set('minDbz', String(minDbz));
   url.searchParams.set('maxRangeNm', String(maxRangeNm));
+  url.searchParams.set('wireVersion', String(wireVersion));
   return url.toString();
 }
 
@@ -73,8 +81,15 @@ export async function GET(request: NextRequest) {
     30,
     220
   );
+  const wireVersion = Math.round(
+    clamp(
+      toFiniteNumber(request.nextUrl.searchParams.get('wireVersion')) ?? DEFAULT_WIRE_VERSION,
+      1,
+      2
+    )
+  );
 
-  const upstreamUrl = upstreamVolumeUrl(lat, lon, minDbz, maxRangeNm);
+  const upstreamUrl = upstreamVolumeUrl(lat, lon, minDbz, maxRangeNm, wireVersion);
 
   try {
     const upstreamResponse = await fetchWithTimeout(upstreamUrl);
@@ -101,7 +116,7 @@ export async function GET(request: NextRequest) {
     headers.set('Cache-Control', 'no-store');
     headers.set(
       'Content-Type',
-      upstreamResponse.headers.get('content-type') ?? 'application/vnd.approach-viz.mrms.v1'
+      upstreamResponse.headers.get('content-type') ?? 'application/vnd.approach-viz.mrms.v2'
     );
 
     const scanTime = upstreamResponse.headers.get('x-av-scan-time');

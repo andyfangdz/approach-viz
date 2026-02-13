@@ -61,7 +61,9 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 - Phase-aware coloring (rain / mixed / snow) using per-level MRMS `MergedZdr` + `MergedRhoHV` dual-pol fields
 - Dual-pol phase uses cycle-matched inputs when available, applies legacy correction when dual-pol resolves mixed, applies a snow-bias override when `PrecipFlag` reports snow, and falls back to latest available aux + legacy PrecipFlag/freezing-level logic when aux lags or is sparse
 - User-adjustable reflectivity threshold (5–60 dBZ) and opacity (20–100%)
-- Priority-aware voxel decimation (100k instance cap; high-intensity echoes preserved first)
+- Server emits merged-brick binary payloads (v2) that combine contiguous same-phase/similar-dBZ cells into larger prisms to cut draw count without dropping weather coverage
+- Client renders all records returned by the server (no client-side voxel decimation) with dynamic instancing capacity
+- Soft-edge dual-pass shading keeps the merged volume visually smooth and aurora-like instead of blocky
 - Resilient polling: retains last good payload on transient errors, clears on airport change
 - Powered by a Rust ingest service (`services/mrms-rs`) with compact binary wire format
 
@@ -122,7 +124,7 @@ cargo check --manifest-path services/mrms-rs/Cargo.toml
 
 ## MRMS Weather Pipeline
 
-MRMS volumetric weather uses an external Rust ingest service (`services/mrms-rs`) that consumes NOAA MRMS scan events via SNS/SQS, decodes GRIB2 data (including PNG-packed fields), stores zstd-compressed snapshots (5 GB retention cap), and serves compact binary voxel payloads (`application/vnd.approach-viz.mrms.v1`).
+MRMS volumetric weather uses an external Rust ingest service (`services/mrms-rs`) that consumes NOAA MRMS scan events via SNS/SQS, decodes GRIB2 data (including PNG-packed fields), stores zstd-compressed snapshots (5 GB retention cap), and serves compact binary voxel payloads (default `application/vnd.approach-viz.mrms.v2`, with v1 fallback support).
 
 - Next.js proxy route: `app/api/weather/nexrad/route.ts`
 - Rust service docs: [`docs/mrms-rust-pipeline.md`](docs/mrms-rust-pipeline.md)

@@ -29,23 +29,31 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
 - Retention cap: `MRMS_RETENTION_BYTES=5368709120` (5 GB)
 - Oldest snapshot files are pruned automatically after each successful ingest.
 
-## Wire Format (`application/vnd.approach-viz.mrms.v1`)
+## Wire Format (`application/vnd.approach-viz.mrms.v2`, v1-compatible)
 
 - Header magic: `AVMR`
-- Version: `1`
+- Version: `2` by default (`wireVersion=1` remains available for compatibility)
 - Header includes:
-  - voxel count
+  - source voxel count (pre-merge, v2)
+  - encoded record count
   - layer count + per-layer voxel counts
+  - per-record byte size
   - scan timestamp + generated timestamp
   - global X/Y voxel footprint
-- Record size: `12` bytes per voxel
+- v2 record size: `20` bytes per merged brick
   - `xCentiNm:i16`
   - `zCentiNm:i16`
   - `bottomFeet:u16`
   - `topFeet:u16`
-  - `dbzTenths:i16`
+  - `dbzTenths:i16` (5 dBZ quantized for merge grouping)
   - `phase:u8`
-  - `levelIdx:u8`
+  - `levelStart:u8`
+  - `spanX:u16` (grid-cell width multiplier)
+  - `spanY:u16` (grid-cell depth multiplier)
+  - `spanZ:u16` (merged vertical levels)
+  - `reserved:u16`
+- v1 record size remains `12` bytes per voxel (`x/z/bottom/top/dbz/phase/levelIdx`).
+- v2 merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
 
 ## Deployment
 
@@ -78,7 +86,7 @@ This script:
 
 - `GET /healthz` -> `ok`
 - `GET /v1/meta` -> readiness + scan stats
-- `GET /v1/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload
+- `GET /v1/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>&wireVersion=<1|2>` -> binary voxel payload (`2` default)
 
 ## Next.js Configuration
 
