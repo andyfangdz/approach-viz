@@ -59,7 +59,7 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 
 - Enabled by default — renders NOAA MRMS multi-radar merged reflectivity as stacked 3D voxels across 33 altitude slices
 - Phase-aware coloring (rain / mixed / snow) using per-level MRMS `MergedZdr` + `MergedRhoHV` dual-pol fields
-- Dual-pol phase uses cycle-matched inputs when available, falls back to latest available aux + legacy PrecipFlag/freezing-level logic when aux lags or is sparse
+- Dual-pol phase uses cycle-matched inputs when available, applies legacy correction when dual-pol resolves mixed but legacy resolves rain/snow, and falls back to latest available aux + legacy PrecipFlag/freezing-level logic when aux lags or is sparse
 - User-adjustable reflectivity threshold (5–60 dBZ) and opacity (20–100%)
 - Priority-aware voxel decimation (100k instance cap; high-intensity echoes preserved first)
 - Resilient polling: retains last good payload on transient errors, clears on airport change

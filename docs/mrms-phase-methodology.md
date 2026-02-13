@@ -1,11 +1,12 @@
 # MRMS Phase Methodology
 
-This document defines how the Rust MRMS service resolves voxel phase (`rain`, `mixed`, `snow`) using dual-pol plus legacy fallback signals.
+This document defines how the Rust MRMS service resolves voxel phase (`rain`, `mixed`, `snow`) using dual-pol as the primary signal with legacy correction/fallback signals.
 
 ## Goal
 
 - Keep reflectivity rendering phase-aware even when dual-pol products lag reflectivity publication.
 - Prefer dual-pol when timely, but avoid freezing the pipeline waiting for perfect cycle alignment.
+- Reduce false `mixed` output when dual-pol ambiguity conflicts with legacy precipitation/freezing signals.
 
 ## Inputs
 
@@ -24,8 +25,9 @@ This document defines how the Rust MRMS service resolves voxel phase (`rain`, `m
 2. Sparse/lagging dual-pol fallback:
    - If exact dual-pol is missing, use the latest available dual-pol timestamp at or before reflectivity time.
    - If selected dual-pol age exceeds `300s` (5 minutes), mark the scan as stale-aux mode.
-3. Legacy fallback activation:
-   - When dual-pol is stale, missing, or level-incompatible, enable legacy fallback using latest available `PrecipFlag_00.00` and `Model_0degC_Height_00.50` at or before reflectivity time.
+3. Legacy aux lookup:
+   - Fetch latest available `PrecipFlag_00.00` and `Model_0degC_Height_00.50` at or before reflectivity time.
+   - Legacy aux is always available for correction when present; stale/sparse dual-pol additionally enables explicit fallback mode.
 
 ## Per-Voxel Classification
 
@@ -36,20 +38,22 @@ This document defines how the Rust MRMS service resolves voxel phase (`rain`, `m
    - Else if `ZDR >= 0.3` => `rain`
    - Else if `ZDR <= 0.1` => `snow`
    - Else => `mixed`
-2. If dual-pol is unavailable/invalid for that voxel:
+2. Resolve legacy phase for the same voxel:
    - Use `PrecipFlag_00.00` mapping first.
    - If precip flag is unavailable, compare voxel altitude vs `Model_0degC_Height_00.50` (+/-1500 ft transition band) for rain/mixed/snow.
-3. Final fallback:
-   - `rain`
+3. Final phase resolution:
+   - If dual-pol resolves `mixed` and legacy resolves `rain` or `snow`, use legacy phase (mixed correction).
+   - If dual-pol is unavailable/invalid, use legacy phase when available.
+   - If neither dual-pol nor legacy resolves phase, default to `rain`.
 
 ## Debug Telemetry
 
 The service emits phase-source metadata so the client debug panel can show:
 
-- phase mode (`dual-pol-cycle-matched`, `dual-pol-last-available`, `dual-pol-last-available+legacy-fallback`)
+- phase mode (`dual-pol-cycle-matched`, `dual-pol-cycle-matched+legacy-correction`, `dual-pol-last-available`, `dual-pol-last-available+legacy-fallback`)
 - dual-pol ages (`zdrAgeSeconds`, `rhohvAgeSeconds`)
 - dual-pol timestamps (`zdrTimestamp`, `rhohvTimestamp`)
 - legacy timestamps (`precipFlagTimestamp`, `freezingLevelTimestamp`)
-- detailed coverage summary (`phaseDetail`)
+- detailed coverage summary (`phaseDetail`) including dual-pol coverage and correction counters (`dual_missing_voxels`, `legacy_mixed_overrides`, `legacy_only_resolves`)
 
 These fields are exposed via `/v1/meta` and mirrored as response headers on `/v1/volume`.

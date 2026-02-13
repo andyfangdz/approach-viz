@@ -19,7 +19,7 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
 
 ## Phase Methodology
 
-- Phase detection prefers level-matched dual-pol products (`MergedZdr`, `MergedRhoHV`) at the reflectivity timestamp, then falls back to latest available aux + legacy precipitation/freezing signals when dual-pol lags.
+- Phase detection prefers level-matched dual-pol products (`MergedZdr`, `MergedRhoHV`) at the reflectivity timestamp, applies legacy correction when dual-pol resolves `mixed` but legacy resolves rain/snow, and falls back to latest available aux + legacy precipitation/freezing signals when dual-pol lags.
 - Detailed thresholds, stale-aux gates, and fallback behavior live in [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md).
 - Startup bootstrap enqueues the latest 120 base-level timestamps so delayed aux availability can still produce the newest complete cycle after service restarts.
 
