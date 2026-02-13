@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -466,6 +466,7 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
     let mut dual_suppressed_voxel_count: u64 = 0;
     let mut stale_dual_adjusted_voxel_count: u64 = 0;
     let mut mixed_suppressed_voxel_count: u64 = 0;
+    let mut mixed_edge_promoted_voxel_count: u64 = 0;
     let mut precip_snow_forced_voxel_count: u64 = 0;
 
     for (level_idx, level_tag, parsed) in &levels {
@@ -474,6 +475,7 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
             continue;
         };
         let voxel_mid_feet = (bounds.bottom_feet as f64 + bounds.top_feet as f64) / 2.0;
+        let mut level_voxels: Vec<LevelPhaseVoxel> = Vec::new();
 
         let zdr_values = validate_level_aux_values(
             zdr_bundle.fields_by_level[level_index].as_ref(),
@@ -545,22 +547,42 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                 if resolution.forced_precip_snow {
                     precip_snow_forced_voxel_count += 1;
                 }
-                let phase = resolution.phase;
+                let thermo_competing = thermo_evidence.scores.rain
+                    >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
+                    && thermo_evidence.scores.snow >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
+                    && (thermo_evidence.scores.rain - thermo_evidence.scores.snow).abs()
+                        <= MIXED_COMPETING_RAIN_SNOW_DELTA_MAX + 0.45;
+                let dual_mixed_candidate = dual_evidence
+                    .is_some_and(|sample| sample.phase == PHASE_MIXED && sample.confidence >= 0.35);
+                let transition_candidate = !resolution.forced_precip_snow
+                    && (thermo_evidence.near_transition
+                        || thermo_competing
+                        || dual_mixed_candidate);
 
-                let row_u16 = row as u16;
-                let col_u16 = col as u16;
-                let tile_row = row_u16 as usize / tile_size as usize;
-                let tile_col = col_u16 as usize / tile_size as usize;
-                let tile_idx = tile_row * tile_cols as usize + tile_col;
-
-                buckets[tile_idx].push(StoredVoxel {
-                    row: row_u16,
-                    col: col_u16,
-                    level_idx: *level_idx,
-                    phase,
+                level_voxels.push(LevelPhaseVoxel {
+                    row: row as u16,
+                    col: col as u16,
                     dbz_tenths,
+                    phase: resolution.phase,
+                    transition_candidate,
                 });
             }
+        }
+
+        mixed_edge_promoted_voxel_count +=
+            promote_mixed_transition_edges(&mut level_voxels, parsed.grid.nx, parsed.grid.ny);
+
+        for voxel in level_voxels {
+            let tile_row = voxel.row as usize / tile_size as usize;
+            let tile_col = voxel.col as usize / tile_size as usize;
+            let tile_idx = tile_row * tile_cols as usize + tile_col;
+            buckets[tile_idx].push(StoredVoxel {
+                row: voxel.row,
+                col: voxel.col,
+                level_idx: *level_idx,
+                phase: voxel.phase,
+                dbz_tenths: voxel.dbz_tenths,
+            });
         }
     }
 
@@ -588,7 +610,7 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         "thermo-primary"
     };
     let detail = format!(
-        "aux_fallback={},aux_any={},zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},aux_precip={},aux_freezing={},aux_wetbulb={},aux_surface_temp={},aux_brightband_pair={},aux_rqi={},thermo_signal_voxels={},thermo_no_signal_voxels={},dual_missing_voxels={},dual_adjusted_voxels={},dual_suppressed_voxels={},stale_dual_adjusted_voxels={},mixed_suppressed_voxels={},precip_snow_forced_voxels={}",
+        "aux_fallback={},aux_any={},zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},aux_precip={},aux_freezing={},aux_wetbulb={},aux_surface_temp={},aux_brightband_pair={},aux_rqi={},thermo_signal_voxels={},thermo_no_signal_voxels={},dual_missing_voxels={},dual_adjusted_voxels={},dual_suppressed_voxels={},stale_dual_adjusted_voxels={},mixed_suppressed_voxels={},mixed_edge_promoted_voxels={},precip_snow_forced_voxels={}",
         bool_label(use_aux_fallback),
         bool_label(aux_context_available),
         zdr_bundle.available_level_count(),
@@ -610,6 +632,7 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         dual_suppressed_voxel_count,
         stale_dual_adjusted_voxel_count,
         mixed_suppressed_voxel_count,
+        mixed_edge_promoted_voxel_count,
         precip_snow_forced_voxel_count,
     );
 
@@ -699,6 +722,15 @@ struct PhaseResolution {
     suppressed_dual: bool,
     suppressed_mixed: bool,
     forced_precip_snow: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LevelPhaseVoxel {
+    row: u16,
+    col: u16,
+    dbz_tenths: i16,
+    phase: u8,
+    transition_candidate: bool,
 }
 
 struct DualPolBundle {
@@ -1309,6 +1341,77 @@ fn resolve_phase_from_evidence(
     }
 }
 
+fn promote_mixed_transition_edges(
+    records: &mut [LevelPhaseVoxel],
+    grid_nx: u32,
+    grid_ny: u32,
+) -> u64 {
+    if records.is_empty() || grid_nx == 0 || grid_ny == 0 {
+        return 0;
+    }
+
+    let mut position_to_index: HashMap<u32, usize> = HashMap::with_capacity(records.len());
+    for (idx, record) in records.iter().enumerate() {
+        let key = record.row as u32 * grid_nx + record.col as u32;
+        position_to_index.insert(key, idx);
+    }
+
+    let mut promote_indices = Vec::new();
+    for (idx, record) in records.iter().enumerate() {
+        if !record.transition_candidate
+            || (record.phase != PHASE_RAIN && record.phase != PHASE_SNOW)
+        {
+            continue;
+        }
+        let opposite_phase = if record.phase == PHASE_RAIN {
+            PHASE_SNOW
+        } else {
+            PHASE_RAIN
+        };
+
+        let row = record.row as i32;
+        let col = record.col as i32;
+        let mut has_opposite_neighbor = false;
+        for row_delta in -1..=1 {
+            for col_delta in -1..=1 {
+                if row_delta == 0 && col_delta == 0 {
+                    continue;
+                }
+                let neighbor_row = row + row_delta;
+                let neighbor_col = col + col_delta;
+                if neighbor_row < 0
+                    || neighbor_col < 0
+                    || neighbor_row >= grid_ny as i32
+                    || neighbor_col >= grid_nx as i32
+                {
+                    continue;
+                }
+
+                let key = neighbor_row as u32 * grid_nx + neighbor_col as u32;
+                if let Some(neighbor_idx) = position_to_index.get(&key) {
+                    if records[*neighbor_idx].phase == opposite_phase {
+                        has_opposite_neighbor = true;
+                        break;
+                    }
+                }
+            }
+            if has_opposite_neighbor {
+                break;
+            }
+        }
+
+        if has_opposite_neighbor {
+            promote_indices.push(idx);
+        }
+    }
+
+    for idx in promote_indices.iter().copied() {
+        records[idx].phase = PHASE_MIXED;
+    }
+
+    promote_indices.len() as u64
+}
+
 fn rank_phase_scores(scores: PhaseScores) -> [(u8, f32); 3] {
     let mut ranked = [
         (PHASE_RAIN, scores.rain),
@@ -1780,6 +1883,62 @@ mod tests {
         };
         let resolution = resolve_phase_from_evidence(thermo, None, false);
         assert_eq!(resolution.phase, PHASE_RAIN);
+    }
+
+    #[test]
+    fn promote_mixed_transition_edges_marks_adjacent_rain_and_snow() {
+        let mut records = vec![
+            LevelPhaseVoxel {
+                row: 10,
+                col: 10,
+                dbz_tenths: 180,
+                phase: PHASE_RAIN,
+                transition_candidate: true,
+            },
+            LevelPhaseVoxel {
+                row: 10,
+                col: 11,
+                dbz_tenths: 170,
+                phase: PHASE_SNOW,
+                transition_candidate: true,
+            },
+            LevelPhaseVoxel {
+                row: 20,
+                col: 20,
+                dbz_tenths: 160,
+                phase: PHASE_SNOW,
+                transition_candidate: true,
+            },
+        ];
+        let promoted = promote_mixed_transition_edges(&mut records, 200, 200);
+        assert_eq!(promoted, 2);
+        assert_eq!(records[0].phase, PHASE_MIXED);
+        assert_eq!(records[1].phase, PHASE_MIXED);
+        assert_eq!(records[2].phase, PHASE_SNOW);
+    }
+
+    #[test]
+    fn promote_mixed_transition_edges_skips_non_candidates() {
+        let mut records = vec![
+            LevelPhaseVoxel {
+                row: 15,
+                col: 15,
+                dbz_tenths: 150,
+                phase: PHASE_RAIN,
+                transition_candidate: false,
+            },
+            LevelPhaseVoxel {
+                row: 15,
+                col: 16,
+                dbz_tenths: 150,
+                phase: PHASE_SNOW,
+                transition_candidate: false,
+            },
+        ];
+        let promoted = promote_mixed_transition_edges(&mut records, 200, 200);
+        assert_eq!(promoted, 0);
+        assert_eq!(records[0].phase, PHASE_RAIN);
+        assert_eq!(records[1].phase, PHASE_SNOW);
     }
 
     #[test]

@@ -46,7 +46,9 @@ This document defines the current server-side voxel phase resolver (`rain`, `mix
 4. Apply mixed-suppression guardrails:
    - when rain/snow scores are both strong and close, resolver adds a bounded mixed-transition promotion so boundaries render as a transition band instead of a hard rain/snow seam
    - mixed is still suppressed when it has weak score separation outside transition-like contexts
-5. Apply snow guardrail:
+5. Apply local boundary blending:
+   - for voxels marked as transition candidates, if immediate neighbors contain the opposite rain/snow phase, voxel phase is promoted to mixed to prevent hard rain/snow seams in contiguous precip bands
+6. Apply snow guardrail:
    - when `PrecipFlag` indicates snow and thermo context supports frozen precipitation, final phase is forced to snow over contradictory weak dual-pol rain/mixed signals.
 
 ## PrecipFlag Mapping
@@ -70,4 +72,4 @@ This document defines the current server-side voxel phase resolver (`rain`, `mix
 - `phaseDetail` counters including:
   - aux availability flags (`aux_wetbulb`, `aux_surface_temp`, `aux_brightband_pair`, `aux_rqi`)
   - fallback state (`aux_fallback`, `aux_any`)
-  - voxel accounting (`thermo_signal_voxels`, `dual_adjusted_voxels`, `dual_suppressed_voxels`, `mixed_suppressed_voxels`, `precip_snow_forced_voxels`)
+  - voxel accounting (`thermo_signal_voxels`, `dual_adjusted_voxels`, `dual_suppressed_voxels`, `mixed_suppressed_voxels`, `mixed_edge_promoted_voxels`, `precip_snow_forced_voxels`)
