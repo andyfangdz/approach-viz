@@ -63,10 +63,10 @@ This document defines the current server-side voxel phase resolver (`rain`, `mix
   - `thermo-primary`
   - `thermo-primary+dual-correction`
   - `thermo-primary+stale-dual-correction`
-  - `thermo-primary+legacy-fallback`
+  - `thermo-primary+aux-fallback`
 - dual-pol ages/timestamps (`zdr*`, `rhohv*`)
-- legacy precip/freezing timestamps (`precipFlagTimestamp`, `freezingLevelTimestamp`)
+- aux precip/freezing timestamps (`precipFlagTimestamp`, `freezingLevelTimestamp`)
 - `phaseDetail` counters including:
-  - aux availability flags (`legacy_wetbulb`, `legacy_surface_temp`, `legacy_brightband_pair`, `legacy_rqi`)
-  - fallback state (`aux_fallback`, `legacy_any`)
+  - aux availability flags (`aux_wetbulb`, `aux_surface_temp`, `aux_brightband_pair`, `aux_rqi`)
+  - fallback state (`aux_fallback`, `aux_any`)
   - voxel accounting (`thermo_signal_voxels`, `dual_adjusted_voxels`, `dual_suppressed_voxels`, `mixed_suppressed_voxels`, `precip_snow_forced_voxels`)

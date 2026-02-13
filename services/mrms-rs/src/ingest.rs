@@ -397,9 +397,9 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
             .is_some_and(|age| age > DUAL_POL_STALE_THRESHOLD_SECONDS);
     let dual_pol_incomplete = zdr_bundle.available_level_count() < LEVEL_TAGS.len()
         || rhohv_bundle.available_level_count() < LEVEL_TAGS.len();
-    let use_legacy_fallback = dual_pol_stale || dual_pol_incomplete;
+    let use_aux_fallback = dual_pol_stale || dual_pol_incomplete;
 
-    let legacy_bundle = fetch_legacy_aux_bundle(&state.http, timestamp).await;
+    let thermo_aux_bundle = fetch_thermo_aux_bundle(&state.http, timestamp).await;
 
     let level_km: Vec<f64> = LEVEL_TAGS
         .iter()
@@ -421,35 +421,35 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         .map(|col| to_lon360(base_grid.lo1_deg360 + col as f64 * base_grid.lon_step_deg))
         .collect();
 
-    let precip_field = legacy_bundle
+    let precip_field = thermo_aux_bundle
         .precip_flag
         .as_ref()
         .map(|(_timestamp, field)| field);
-    let freezing_field = legacy_bundle
+    let freezing_field = thermo_aux_bundle
         .freezing_level
         .as_ref()
         .map(|(_timestamp, field)| field);
-    let wet_bulb_field = legacy_bundle
+    let wet_bulb_field = thermo_aux_bundle
         .wet_bulb_temp
         .as_ref()
         .map(|(_timestamp, field)| field);
-    let surface_temp_field = legacy_bundle
+    let surface_temp_field = thermo_aux_bundle
         .surface_temp
         .as_ref()
         .map(|(_timestamp, field)| field);
-    let bright_band_top_field = legacy_bundle
+    let bright_band_top_field = thermo_aux_bundle
         .bright_band_top
         .as_ref()
         .map(|(_timestamp, field)| field);
-    let bright_band_bottom_field = legacy_bundle
+    let bright_band_bottom_field = thermo_aux_bundle
         .bright_band_bottom
         .as_ref()
         .map(|(_timestamp, field)| field);
-    let rqi_field = legacy_bundle
+    let rqi_field = thermo_aux_bundle
         .radar_quality_index
         .as_ref()
         .map(|(_timestamp, field)| field);
-    let legacy_available = precip_field.is_some()
+    let aux_context_available = precip_field.is_some()
         || freezing_field.is_some()
         || wet_bulb_field.is_some()
         || surface_temp_field.is_some()
@@ -525,14 +525,11 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                     thermo_no_signal_voxel_count += 1;
                 }
 
-                let resolution = resolve_phase_from_evidence(
-                    thermo_evidence,
-                    dual_evidence,
-                    use_legacy_fallback,
-                );
+                let resolution =
+                    resolve_phase_from_evidence(thermo_evidence, dual_evidence, use_aux_fallback);
                 if resolution.used_dual {
                     dual_adjusted_voxel_count += 1;
-                    if use_legacy_fallback {
+                    if use_aux_fallback {
                         stale_dual_adjusted_voxel_count += 1;
                     }
                 }
@@ -576,11 +573,11 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         .map(|datetime| datetime.timestamp_millis())
         .unwrap_or_else(|| Utc::now().timestamp_millis());
 
-    let mode = if use_legacy_fallback {
+    let mode = if use_aux_fallback {
         if dual_adjusted_voxel_count > 0 {
             "thermo-primary+stale-dual-correction"
         } else {
-            "thermo-primary+legacy-fallback"
+            "thermo-primary+aux-fallback"
         }
     } else if dual_adjusted_voxel_count > 0 {
         "thermo-primary+dual-correction"
@@ -588,9 +585,9 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         "thermo-primary"
     };
     let detail = format!(
-        "aux_fallback={},legacy_any={},zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},legacy_precip={},legacy_freezing={},legacy_wetbulb={},legacy_surface_temp={},legacy_brightband_pair={},legacy_rqi={},thermo_signal_voxels={},thermo_no_signal_voxels={},dual_missing_voxels={},dual_adjusted_voxels={},dual_suppressed_voxels={},stale_dual_adjusted_voxels={},mixed_suppressed_voxels={},precip_snow_forced_voxels={}",
-        bool_label(use_legacy_fallback),
-        bool_label(legacy_available),
+        "aux_fallback={},aux_any={},zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},aux_precip={},aux_freezing={},aux_wetbulb={},aux_surface_temp={},aux_brightband_pair={},aux_rqi={},thermo_signal_voxels={},thermo_no_signal_voxels={},dual_missing_voxels={},dual_adjusted_voxels={},dual_suppressed_voxels={},stale_dual_adjusted_voxels={},mixed_suppressed_voxels={},precip_snow_forced_voxels={}",
+        bool_label(use_aux_fallback),
+        bool_label(aux_context_available),
         zdr_bundle.available_level_count(),
         LEVEL_TAGS.len(),
         rhohv_bundle.available_level_count(),
@@ -629,11 +626,11 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
             detail,
             zdr_timestamp: zdr_bundle.selected_timestamp,
             rhohv_timestamp: rhohv_bundle.selected_timestamp,
-            precip_flag_timestamp: legacy_bundle
+            precip_flag_timestamp: thermo_aux_bundle
                 .precip_flag
                 .as_ref()
                 .map(|(ts, _field)| ts.clone()),
-            freezing_level_timestamp: legacy_bundle
+            freezing_level_timestamp: thermo_aux_bundle
                 .freezing_level
                 .as_ref()
                 .map(|(ts, _field)| ts.clone()),
@@ -644,7 +641,7 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
 }
 
 #[derive(Default)]
-struct LegacyAuxBundle {
+struct ThermoAuxBundle {
     precip_flag: Option<(String, ParsedAuxField)>,
     freezing_level: Option<(String, ParsedAuxField)>,
     wet_bulb_temp: Option<(String, ParsedAuxField)>,
@@ -860,7 +857,7 @@ async fn fetch_dual_pol_bundle(
     }
 }
 
-async fn fetch_legacy_aux_bundle(http: &Client, target_timestamp: &str) -> LegacyAuxBundle {
+async fn fetch_thermo_aux_bundle(http: &Client, target_timestamp: &str) -> ThermoAuxBundle {
     let precip_flag =
         fetch_latest_aux_field_at_or_before(http, MRMS_PRECIP_FLAG_PRODUCT, target_timestamp).await;
     let freezing_level = fetch_latest_aux_field_at_or_before(
@@ -893,7 +890,7 @@ async fn fetch_legacy_aux_bundle(http: &Client, target_timestamp: &str) -> Legac
     let radar_quality_index =
         fetch_latest_aux_field_at_or_before(http, MRMS_RQI_PRODUCT, target_timestamp).await;
 
-    LegacyAuxBundle {
+    ThermoAuxBundle {
         precip_flag,
         freezing_level,
         wet_bulb_temp,
@@ -915,7 +912,7 @@ async fn fetch_latest_aux_field_at_or_before(
         Ok(field) => Some((timestamp, field)),
         Err(error) => {
             warn!(
-                "Legacy aux fetch failed for {product} at {timestamp}: {error:#}; continuing without legacy field"
+                "Aux context fetch failed for {product} at {timestamp}: {error:#}; continuing without aux field"
             );
             None
         }
@@ -932,13 +929,13 @@ fn validate_level_aux_values<'a>(
     let field = field?;
     if !is_same_grid(&field.grid, &reflectivity.grid) {
         warn!(
-            "{product_label} aux grid mismatch for level {level_tag} at {timestamp}; using legacy fallback for affected voxels"
+            "{product_label} aux grid mismatch for level {level_tag} at {timestamp}; using aux fallback for affected voxels"
         );
         return None;
     }
     if field.values.len() != reflectivity.dbz_tenths.len() {
         warn!(
-            "{product_label} aux point-count mismatch for level {level_tag} at {timestamp}: expected {}, got {}; using legacy fallback for affected voxels",
+            "{product_label} aux point-count mismatch for level {level_tag} at {timestamp}: expected {}, got {}; using aux fallback for affected voxels",
             reflectivity.dbz_tenths.len(),
             field.values.len()
         );
@@ -1213,7 +1210,7 @@ fn resolve_thermo_phase(
 fn resolve_phase_from_evidence(
     thermo: ThermoPhaseEvidence,
     dual: Option<DualPolEvidence>,
-    use_legacy_fallback: bool,
+    use_aux_fallback: bool,
 ) -> PhaseResolution {
     let mut scores = thermo.scores;
     let mut used_dual = false;
@@ -1221,7 +1218,7 @@ fn resolve_phase_from_evidence(
     let mut suppressed_mixed = false;
 
     if let Some(dual) = dual {
-        let stale_weight = if use_legacy_fallback { 0.22 } else { 0.58 };
+        let stale_weight = if use_aux_fallback { 0.22 } else { 0.58 };
         let rqi_weight = thermo
             .rqi
             .map(|value| (0.35 + 0.65 * value).clamp(0.25, 1.0))
@@ -1386,7 +1383,7 @@ async fn fetch_aux_field_at_timestamp(
     let zipped = fetch_bytes(http, &url).await?;
     let parsed = tokio::task::spawn_blocking(move || parse_aux_grib_gzipped(&zipped))
         .await
-        .context("Join error while parsing legacy aux GRIB")??;
+        .context("Join error while parsing aux context GRIB")??;
     Ok(parsed)
 }
 
