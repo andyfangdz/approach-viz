@@ -10,9 +10,9 @@ use tracing::warn;
 
 use crate::constants::{
     DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, MAX_ALLOWED_DBZ, MAX_ALLOWED_RANGE_NM, MIN_ALLOWED_DBZ,
-    MIN_ALLOWED_RANGE_NM, WIRE_HEADER_BYTES, WIRE_MAGIC, WIRE_V1_RECORD_BYTES, WIRE_V1_VERSION,
-    WIRE_V2_DBZ_QUANT_STEP_TENTHS, WIRE_V2_MAX_SPAN_HIGH_DBZ, WIRE_V2_MAX_SPAN_LOW_DBZ,
-    WIRE_V2_MAX_VERTICAL_SPAN, WIRE_V2_RECORD_BYTES, WIRE_V2_VERSION,
+    MIN_ALLOWED_RANGE_NM, WIRE_HEADER_BYTES, WIRE_MAGIC, WIRE_V2_DBZ_QUANT_STEP_TENTHS,
+    WIRE_V2_MAX_SPAN_HIGH_DBZ, WIRE_V2_MAX_SPAN_LOW_DBZ, WIRE_V2_MAX_VERTICAL_SPAN,
+    WIRE_V2_RECORD_BYTES, WIRE_V2_VERSION,
 };
 use crate::types::{AppState, ScanSnapshot};
 use crate::utils::{
@@ -28,8 +28,6 @@ pub(crate) struct VolumeQuery {
     min_dbz: Option<f64>,
     #[serde(default, rename = "maxRangeNm")]
     max_range_nm: Option<f64>,
-    #[serde(default, rename = "wireVersion")]
-    wire_version: Option<u16>,
 }
 
 #[derive(Debug, Serialize)]
@@ -171,28 +169,12 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
             .into_response();
     };
 
-    let wire_version = match query.wire_version.unwrap_or(WIRE_V2_VERSION) {
-        WIRE_V1_VERSION => WIRE_V1_VERSION,
-        _ => WIRE_V2_VERSION,
-    };
-
-    match build_volume_wire(
-        scan,
-        query.lat,
-        query.lon,
-        min_dbz,
-        max_range_nm,
-        wire_version,
-    ) {
+    match build_volume_wire(scan, query.lat, query.lon, min_dbz, max_range_nm) {
         Ok(body) => {
             let mut headers = HeaderMap::new();
             headers.insert(
                 "Content-Type",
-                HeaderValue::from_static(if wire_version == WIRE_V2_VERSION {
-                    "application/vnd.approach-viz.mrms.v2"
-                } else {
-                    "application/vnd.approach-viz.mrms.v1"
-                }),
+                HeaderValue::from_static("application/vnd.approach-viz.mrms.v2"),
             );
             headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
             if let Some(scan_time) = iso_from_ms(scan.scan_time_ms) {
@@ -266,13 +248,8 @@ fn build_volume_wire(
     origin_lon: f64,
     min_dbz: f64,
     max_range_nm: f64,
-    wire_version: u16,
 ) -> Result<Vec<u8>> {
     let window = build_query_window(scan, origin_lat, origin_lon, min_dbz, max_range_nm);
-    if wire_version == WIRE_V1_VERSION {
-        return Ok(build_volume_wire_v1(scan, &window));
-    }
-
     Ok(build_volume_wire_v2(scan, &window))
 }
 
@@ -488,73 +465,6 @@ fn project_grid_position_nm(
     let x_nm = delta_lon_deg * window.east_nm_per_lon_deg_safe;
     let z_nm = -(lat_deg - window.origin_lat) * window.north_nm_per_lat_deg_safe;
     (x_nm, z_nm)
-}
-
-fn build_volume_wire_v1(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
-    let mut body = build_wire_header(
-        scan,
-        window,
-        WIRE_V1_VERSION,
-        WIRE_V1_RECORD_BYTES as u16,
-        0_u16,
-    );
-
-    let layer_counts_offset = WIRE_HEADER_BYTES;
-    let mut layer_counts = vec![0_u32; scan.level_bounds.len()];
-    let mut voxel_count: u32 = 0;
-
-    for tile_row in window.tile_row_start..=window.tile_row_end {
-        for tile_col in window.tile_col_start..=window.tile_col_end {
-            let tile_idx = (tile_row * scan.tile_cols as u32 + tile_col) as usize;
-            if tile_idx + 1 >= scan.tile_offsets.len() {
-                continue;
-            }
-            let start = scan.tile_offsets[tile_idx] as usize;
-            let end = scan.tile_offsets[tile_idx + 1] as usize;
-            for record in &scan.voxels[start..end] {
-                let row = record.row as u32;
-                let col = record.col as u32;
-                if row < window.row_start || row > window.row_end {
-                    continue;
-                }
-                if !window.lon_wrapped && (col < window.col_start || col > window.col_end) {
-                    continue;
-                }
-                if record.dbz_tenths < window.min_dbz_tenths {
-                    continue;
-                }
-
-                let (x_nm, z_nm) = project_grid_position_nm(scan, window, row as f64, col as f64);
-                if x_nm * x_nm + z_nm * z_nm > window.max_range_squared_nm {
-                    continue;
-                }
-
-                let level_idx = record.level_idx as usize;
-                let Some(level_bounds) = scan.level_bounds.get(level_idx) else {
-                    continue;
-                };
-
-                body.extend_from_slice(&round_i16(x_nm * 100.0).to_le_bytes());
-                body.extend_from_slice(&round_i16(z_nm * 100.0).to_le_bytes());
-                body.extend_from_slice(&level_bounds.bottom_feet.to_le_bytes());
-                body.extend_from_slice(&level_bounds.top_feet.to_le_bytes());
-                body.extend_from_slice(&record.dbz_tenths.to_le_bytes());
-                body.push(record.phase);
-                body.push(record.level_idx);
-
-                layer_counts[level_idx] = layer_counts[level_idx].saturating_add(1);
-                voxel_count = voxel_count.saturating_add(1);
-            }
-        }
-    }
-
-    body[12..16].copy_from_slice(&voxel_count.to_le_bytes());
-    for (idx, count) in layer_counts.iter().enumerate() {
-        let offset = layer_counts_offset + idx * 4;
-        body[offset..offset + 4].copy_from_slice(&count.to_le_bytes());
-    }
-
-    body
 }
 
 fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {

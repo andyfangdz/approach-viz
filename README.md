@@ -124,7 +124,7 @@ cargo check --manifest-path services/mrms-rs/Cargo.toml
 
 ## MRMS Weather Pipeline
 
-MRMS volumetric weather uses an external Rust ingest service (`services/mrms-rs`) that consumes NOAA MRMS scan events via SNS/SQS, decodes GRIB2 data (including PNG-packed fields), stores zstd-compressed snapshots (5 GB retention cap), and serves compact binary voxel payloads (default `application/vnd.approach-viz.mrms.v2`, with v1 fallback support).
+MRMS volumetric weather uses an external Rust ingest service (`services/mrms-rs`) that consumes NOAA MRMS scan events via SNS/SQS, decodes GRIB2 data (including PNG-packed fields), stores zstd-compressed snapshots (5 GB retention cap), and serves compact binary voxel payloads (`application/vnd.approach-viz.mrms.v2`).
 
 - Next.js proxy route: `app/api/weather/nexrad/route.ts`
 - Rust service docs: [`docs/mrms-rust-pipeline.md`](docs/mrms-rust-pipeline.md)

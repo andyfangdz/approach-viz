@@ -29,10 +29,10 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
 - Retention cap: `MRMS_RETENTION_BYTES=5368709120` (5 GB)
 - Oldest snapshot files are pruned automatically after each successful ingest.
 
-## Wire Format (`application/vnd.approach-viz.mrms.v2`, v1-compatible)
+## Wire Format (`application/vnd.approach-viz.mrms.v2`)
 
 - Header magic: `AVMR`
-- Version: `2` by default (`wireVersion=1` remains available for compatibility)
+- Version: `2` (v2-only wire format)
 - Header includes:
   - source voxel count (pre-merge, v2)
   - encoded record count
@@ -52,7 +52,6 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
   - `spanY:u16` (grid-cell depth multiplier)
   - `spanZ:u16` (merged vertical levels)
   - `reserved:u16`
-- v1 record size remains `12` bytes per voxel (`x/z/bottom/top/dbz/phase/levelIdx`).
 - v2 merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
 
 ## Deployment
@@ -86,7 +85,7 @@ This script:
 
 - `GET /healthz` -> `ok`
 - `GET /v1/meta` -> readiness + scan stats
-- `GET /v1/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>&wireVersion=<1|2>` -> binary voxel payload (`2` default)
+- `GET /v1/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v2`)
 
 ## Next.js Configuration
 

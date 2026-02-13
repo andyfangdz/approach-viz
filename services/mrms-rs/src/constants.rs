@@ -71,10 +71,8 @@ pub const MAX_BASE_KEYS_LOOKUP: usize = 120;
 pub const MAX_BASE_DAY_LOOKBACK: i64 = 1;
 
 pub const WIRE_MAGIC: [u8; 4] = *b"AVMR";
-pub const WIRE_V1_VERSION: u16 = 1;
 pub const WIRE_V2_VERSION: u16 = 2;
 pub const WIRE_HEADER_BYTES: usize = 64;
-pub const WIRE_V1_RECORD_BYTES: usize = 12;
 pub const WIRE_V2_RECORD_BYTES: usize = 20;
 pub const WIRE_V2_DBZ_QUANT_STEP_TENTHS: i16 = 50;
 pub const WIRE_V2_MAX_SPAN_LOW_DBZ: u16 = 48;

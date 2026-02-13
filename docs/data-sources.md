@@ -45,7 +45,7 @@ External data feeds and their ingestion paths.
 - Phase resolution is thermodynamic-first and incorporates `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, `BrightBandTopHeight_00.00`, `BrightBandBottomHeight_00.00`, and `RadarQualityIndex_00.00`; dual-pol (`Zdr`/`RhoHV`) acts as a weighted correction layer rather than a hard first-pass classifier.
 - Dual-pol fields are fetched for the same timestamp and altitude slice as reflectivity when available. When dual-pol is sparse/lagging beyond 5 minutes ingest switches to latest available dual-pol timestamps, flags fallback in debug telemetry, and down-weights stale corrections to prevent cycle-mismatch artifacts.
 - Retry scheduling favors the earliest due pending timestamp so delayed-complete cycles are still evaluated even while newer precip events continue arriving.
-- Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v2` by default, v1 fallback) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`); v2 uses merged-brick span records to reduce client draw load.
+- Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v2`) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`); v2 uses merged-brick span records to reduce client draw load.
 - The Next.js route `app/api/weather/nexrad/route.ts` now proxies to the Rust service endpoint, and the client decodes binary payloads directly.
 - Snapshot storage is bounded to `5 GB` (oldest scans pruned first) to fit the OCI host disk budget.
 

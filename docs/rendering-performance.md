@@ -12,7 +12,7 @@
 - Live ADS-B marker meshes reuse shared sphere geometry/material instances rather than allocating one geometry/material pair per aircraft marker.
 - Live ADS-B aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead while still updating positions every poll.
 - MRMS volumetric weather is polled at a slower cadence (`~120s`) from a pre-ingested Rust weather service; the Next.js route only proxies upstream payloads (or the client can fetch upstream directly when configured), removing per-poll GRIB decode/listing work from the request path.
-- MRMS query responses use compact binary wire payloads (`application/vnd.approach-viz.mrms.v2` by default, v1 compatible) instead of large JSON voxel arrays, reducing transfer size and decode overhead for dense scans.
+- MRMS query responses use compact binary wire payloads (`application/vnd.approach-viz.mrms.v2`) instead of large JSON voxel arrays, reducing transfer size and decode overhead for dense scans.
 - MRMS v2 query serialization performs server-side brick merging (same phase + quantized dBZ + contiguous spans) so broad precipitation regions are represented by fewer, larger prisms while preserving full coverage.
 - MRMS server-side query filtering is performed against in-memory tile-indexed snapshots with precomputed phase/layer metadata, keeping per-request work bounded to AOI selection and tuple serialization.
 - MRMS overlay polling keeps rendering the last successful payload when the API returns a transient error payload, avoiding abrupt disappear/reappear flicker.

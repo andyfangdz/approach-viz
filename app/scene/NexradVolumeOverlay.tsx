@@ -10,9 +10,7 @@ const RETRY_INTERVAL_MS = 10_000;
 const DEFAULT_MAX_RANGE_NM = 120;
 const MIN_VOXEL_HEIGHT_NM = 0.04;
 const MRMS_BINARY_MAGIC = 'AVMR';
-const MRMS_BINARY_V1_VERSION = 1;
 const MRMS_BINARY_V2_VERSION = 2;
-const MRMS_BINARY_V1_RECORD_BYTES = 12;
 const MRMS_BINARY_V2_RECORD_BYTES = 20;
 const MRMS_BINARY_BASE_URL = process.env.NEXT_PUBLIC_MRMS_BINARY_BASE_URL?.trim() ?? '';
 const MRMS_LEVEL_TAGS = [
@@ -217,7 +215,7 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
   }
 
   const version = view.getUint16(4, true);
-  if (version !== MRMS_BINARY_V1_VERSION && version !== MRMS_BINARY_V2_VERSION) {
+  if (version !== MRMS_BINARY_V2_VERSION) {
     throw new Error(`Unsupported MRMS payload version (${version}).`);
   }
 
@@ -229,13 +227,9 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
   const scanTimeMs = readInt64LittleEndian(view, 28);
   const footprintXNm = view.getUint16(36, true) / 1000;
   const footprintYNm = view.getUint16(38, true) / 1000;
-  const defaultRecordBytes =
-    version === MRMS_BINARY_V2_VERSION ? MRMS_BINARY_V2_RECORD_BYTES : MRMS_BINARY_V1_RECORD_BYTES;
+  const defaultRecordBytes = MRMS_BINARY_V2_RECORD_BYTES;
   const recordBytes = recordBytesFromHeader > 0 ? recordBytesFromHeader : defaultRecordBytes;
-  if (
-    (version === MRMS_BINARY_V1_VERSION && recordBytes < MRMS_BINARY_V1_RECORD_BYTES) ||
-    (version === MRMS_BINARY_V2_VERSION && recordBytes < MRMS_BINARY_V2_RECORD_BYTES)
-  ) {
+  if (recordBytes < MRMS_BINARY_V2_RECORD_BYTES) {
     throw new Error(
       `MRMS payload record size (${recordBytes}) is incompatible with version ${version}.`
     );
@@ -262,23 +256,18 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
     const topFeet = view.getUint16(offset + 6, true);
     const dbz = view.getInt16(offset + 8, true) / 10;
     const phaseCode = view.getUint8(offset + 10);
-    if (version === MRMS_BINARY_V2_VERSION) {
-      const spanX = Math.max(1, view.getUint16(offset + 12, true));
-      const spanY = Math.max(1, view.getUint16(offset + 14, true));
-      voxels.push([
-        xNm,
-        zNm,
-        bottomFeet,
-        topFeet,
-        dbz,
-        footprintXNm * spanX,
-        footprintYNm * spanY,
-        phaseCode
-      ]);
-      continue;
-    }
-
-    voxels.push([xNm, zNm, bottomFeet, topFeet, dbz, footprintXNm, footprintYNm, phaseCode]);
+    const spanX = Math.max(1, view.getUint16(offset + 12, true));
+    const spanY = Math.max(1, view.getUint16(offset + 14, true));
+    voxels.push([
+      xNm,
+      zNm,
+      bottomFeet,
+      topFeet,
+      dbz,
+      footprintXNm * spanX,
+      footprintYNm * spanY,
+      phaseCode
+    ]);
   }
 
   const generatedAt =
@@ -588,7 +577,6 @@ export function NexradVolumeOverlay({
       params.set('lon', refLon.toFixed(6));
       params.set('minDbz', String(minDbz));
       params.set('maxRangeNm', String(maxRangeNm));
-      params.set('wireVersion', String(MRMS_BINARY_V2_VERSION));
       let nextDelayMs = POLL_INTERVAL_MS;
 
       try {
