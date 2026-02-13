@@ -69,6 +69,22 @@ sudo systemctl daemon-reload
 sudo systemctl enable approach-viz-mrms.service
 sudo systemctl restart approach-viz-mrms.service
 tailscale funnel --bg --https 8443 --set-path /mrms-v1 http://127.0.0.1:9191 >/dev/null
+
+ready=0
+for attempt in \$(seq 1 30); do
+  if curl -fsS http://127.0.0.1:9191/healthz >/dev/null; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+
+if [[ \$ready -ne 1 ]]; then
+  echo "MRMS service did not become ready after restart." >&2
+  sudo journalctl -u approach-viz-mrms.service -n 80 --no-pager >&2
+  exit 1
+fi
+
 sudo systemctl --no-pager --full status approach-viz-mrms.service | sed -n '1,40p'
 curl -fsS http://127.0.0.1:9191/v1/meta
 "

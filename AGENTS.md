@@ -29,7 +29,7 @@
 - Production build (also refreshes data): `npm run build`
 - Run production server: `npm run start`
 - Create MRMS SNS/SQS subscription wiring: `python3 scripts/mrms/setup_sns_sqs.py`
-- Deploy MRMS Rust service to OCI host: `MRMS_SQS_QUEUE_URL=... scripts/mrms/deploy_oci.sh ubuntu@100.86.128.122`
+- Deploy MRMS Rust service to OCI host: `MRMS_SQS_QUEUE_URL=... scripts/mrms/deploy_oci.sh ubuntu@100.86.128.122` (script waits for local `/healthz` readiness after restart before final `/v1/meta` smoke check)
 
 ## Directory Layout
 
