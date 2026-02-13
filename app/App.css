@@ -480,6 +480,49 @@ textarea,
   margin-bottom: 5px;
 }
 
+.debug-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+
+.debug-section-toggle .debug-title {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.debug-summary {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.debug-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-secondary);
+  transition: transform 0.15s ease;
+}
+
+.debug-chevron-open {
+  transform: rotate(180deg);
+}
+
+.debug-section-body {
+  margin-top: 5px;
+}
+
 .debug-row {
   display: flex;
   justify-content: space-between;
@@ -492,9 +535,22 @@ textarea,
   margin-bottom: 2px;
 }
 
+.debug-row span:first-child {
+  flex-shrink: 0;
+}
+
 .debug-row span:last-child {
   color: var(--accent-cyan);
   text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.debug-row-wrap {
+  word-break: break-all;
+  white-space: normal;
 }
 
 .debug-error {
