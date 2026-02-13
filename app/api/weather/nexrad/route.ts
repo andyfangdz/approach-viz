@@ -37,7 +37,12 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   }
 }
 
-function upstreamVolumeUrl(lat: number, lon: number, minDbz: number, maxRangeNm: number): string {
+function upstreamVolumeUrl(
+  lat: number,
+  lon: number,
+  minDbz: number,
+  maxRangeNm: number
+): string {
   const baseUrl = DEFAULT_UPSTREAM_BASE_URL.replace(/\/$/, '');
   const url = new URL(`${baseUrl}/v1/volume`);
   url.searchParams.set('lat', lat.toFixed(6));
@@ -73,7 +78,6 @@ export async function GET(request: NextRequest) {
     30,
     220
   );
-
   const upstreamUrl = upstreamVolumeUrl(lat, lon, minDbz, maxRangeNm);
 
   try {
@@ -101,7 +105,7 @@ export async function GET(request: NextRequest) {
     headers.set('Cache-Control', 'no-store');
     headers.set(
       'Content-Type',
-      upstreamResponse.headers.get('content-type') ?? 'application/vnd.approach-viz.mrms.v1'
+      upstreamResponse.headers.get('content-type') ?? 'application/vnd.approach-viz.mrms.v2'
     );
 
     const scanTime = upstreamResponse.headers.get('x-av-scan-time');

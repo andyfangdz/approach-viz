@@ -7,11 +7,11 @@ const FEET_PER_NM = 6076.12;
 const ALTITUDE_SCALE = 1 / FEET_PER_NM;
 const POLL_INTERVAL_MS = 120_000;
 const RETRY_INTERVAL_MS = 10_000;
-const MAX_VOXEL_INSTANCES = 1_000_000;
 const DEFAULT_MAX_RANGE_NM = 120;
 const MIN_VOXEL_HEIGHT_NM = 0.04;
 const MRMS_BINARY_MAGIC = 'AVMR';
-const MRMS_BINARY_RECORD_BYTES = 12;
+const MRMS_BINARY_V2_VERSION = 2;
+const MRMS_BINARY_V2_RECORD_BYTES = 20;
 const MRMS_BINARY_BASE_URL = process.env.NEXT_PUBLIC_MRMS_BINARY_BASE_URL?.trim() ?? '';
 const MRMS_LEVEL_TAGS = [
   '00.50',
@@ -215,21 +215,29 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
   }
 
   const version = view.getUint16(4, true);
-  if (version !== 1) {
+  if (version !== MRMS_BINARY_V2_VERSION) {
     throw new Error(`Unsupported MRMS payload version (${version}).`);
   }
 
   const headerBytes = view.getUint16(6, true);
   const voxelCount = view.getUint32(12, true);
   const layerCount = view.getUint16(16, true);
+  const recordBytesFromHeader = view.getUint16(18, true);
   const generatedAtMs = readInt64LittleEndian(view, 20);
   const scanTimeMs = readInt64LittleEndian(view, 28);
   const footprintXNm = view.getUint16(36, true) / 1000;
   const footprintYNm = view.getUint16(38, true) / 1000;
+  const defaultRecordBytes = MRMS_BINARY_V2_RECORD_BYTES;
+  const recordBytes = recordBytesFromHeader > 0 ? recordBytesFromHeader : defaultRecordBytes;
+  if (recordBytes < MRMS_BINARY_V2_RECORD_BYTES) {
+    throw new Error(
+      `MRMS payload record size (${recordBytes}) is incompatible with version ${version}.`
+    );
+  }
 
   const layerCountsOffset = headerBytes;
   const recordsOffset = layerCountsOffset + layerCount * 4;
-  const expectedBytes = recordsOffset + voxelCount * MRMS_BINARY_RECORD_BYTES;
+  const expectedBytes = recordsOffset + voxelCount * recordBytes;
   if (view.byteLength < expectedBytes) {
     throw new Error('MRMS payload ended before all voxel records were available.');
   }
@@ -241,14 +249,25 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
 
   const voxels: NexradVoxelTuple[] = [];
   for (let index = 0; index < voxelCount; index += 1) {
-    const offset = recordsOffset + index * MRMS_BINARY_RECORD_BYTES;
+    const offset = recordsOffset + index * recordBytes;
     const xNm = view.getInt16(offset, true) / 100;
     const zNm = view.getInt16(offset + 2, true) / 100;
     const bottomFeet = view.getUint16(offset + 4, true);
     const topFeet = view.getUint16(offset + 6, true);
     const dbz = view.getInt16(offset + 8, true) / 10;
     const phaseCode = view.getUint8(offset + 10);
-    voxels.push([xNm, zNm, bottomFeet, topFeet, dbz, footprintXNm, footprintYNm, phaseCode]);
+    const spanX = Math.max(1, view.getUint16(offset + 12, true));
+    const spanY = Math.max(1, view.getUint16(offset + 14, true));
+    voxels.push([
+      xNm,
+      zNm,
+      bottomFeet,
+      topFeet,
+      dbz,
+      footprintXNm * spanX,
+      footprintYNm * spanY,
+      phaseCode
+    ]);
   }
 
   const generatedAt =
@@ -391,45 +410,18 @@ function patchMaterialForInstanceAlpha(material: THREE.MeshBasicMaterial): void 
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader.replace(
       'void main() {',
-      'attribute float instanceAlpha;\nvarying float vInstanceAlpha;\nvoid main() {\n  vInstanceAlpha = instanceAlpha;'
+      'attribute float instanceAlpha;\nvarying float vInstanceAlpha;\nvarying vec3 vLocalPos;\nvoid main() {\n  vInstanceAlpha = instanceAlpha;\n  vLocalPos = position;'
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       'void main() {',
-      'varying float vInstanceAlpha;\nvoid main() {'
+      'varying float vInstanceAlpha;\nvarying vec3 vLocalPos;\nvoid main() {'
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <premultiplied_alpha_fragment>',
-      'gl_FragColor.a *= vInstanceAlpha;\n#include <premultiplied_alpha_fragment>'
+      'vec3 normalizedPos = abs(vLocalPos * 2.0);\nfloat radial = length(normalizedPos);\nfloat edgeSoftness = 1.0 - smoothstep(1.18, 1.73, radial);\nfloat verticalGlow = 0.8 + 0.2 * (1.0 - normalizedPos.y);\nfloat shapedAlpha = max(0.08, edgeSoftness * verticalGlow);\ngl_FragColor.a *= vInstanceAlpha * shapedAlpha;\n#include <premultiplied_alpha_fragment>'
     );
   };
-  material.customProgramCacheKey = () => 'instanceAlpha';
-}
-
-function sampleVoxels(voxels: RenderVoxel[], maxCount: number): RenderVoxel[] {
-  if (voxels.length <= maxCount) return voxels;
-
-  const high: RenderVoxel[] = [];
-  const low: RenderVoxel[] = [];
-  for (const v of voxels) {
-    if (v.dbz >= 45) high.push(v);
-    else low.push(v);
-  }
-
-  const decimate = (items: RenderVoxel[], target: number): RenderVoxel[] => {
-    if (target <= 0 || items.length === 0) return [];
-    if (items.length <= target) return items;
-    const result: RenderVoxel[] = [];
-    const step = items.length / target;
-    let cursor = 0;
-    for (let i = 0; i < target; i += 1) {
-      result.push(items[Math.floor(cursor)]);
-      cursor += step;
-    }
-    return result;
-  };
-
-  if (high.length >= maxCount) return decimate(high, maxCount);
-  return [...high, ...decimate(low, maxCount - high.length)];
+  material.customProgramCacheKey = () => 'instanceAlpha-softEdge';
 }
 
 function applyVoxelInstances(
@@ -477,11 +469,12 @@ export function NexradVolumeOverlay({
   const glowMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const meshDummy = useMemo(() => new THREE.Object3D(), []);
   const colorScratch = useMemo(() => new THREE.Color(), []);
+  const instanceCapacity = Math.max(payload?.voxels?.length ?? 0, 1);
   const instanceAlphaArray = useMemo(() => {
-    const array = new Float32Array(MAX_VOXEL_INSTANCES);
+    const array = new Float32Array(instanceCapacity);
     array.fill(1);
     return array;
-  }, []);
+  }, [instanceCapacity]);
 
   const geometry = useMemo(() => {
     const nextGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -697,7 +690,7 @@ export function NexradVolumeOverlay({
       });
     }
 
-    return sampleVoxels(next, MAX_VOXEL_INSTANCES);
+    return next;
   }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat, minDbz]);
 
   const phaseCounts = useMemo(() => {
@@ -803,14 +796,16 @@ export function NexradVolumeOverlay({
   return (
     <group scale={[1, verticalScale, 1]}>
       <instancedMesh
+        key={`mrms-base-${instanceCapacity}`}
         ref={baseMeshRef}
-        args={[geometry, baseMaterial, MAX_VOXEL_INSTANCES]}
+        args={[geometry, baseMaterial, instanceCapacity]}
         frustumCulled={false}
         renderOrder={80}
       />
       <instancedMesh
+        key={`mrms-glow-${instanceCapacity}`}
         ref={glowMeshRef}
-        args={[geometry, glowMaterial, MAX_VOXEL_INSTANCES]}
+        args={[geometry, glowMaterial, instanceCapacity]}
         frustumCulled={false}
         renderOrder={81}
       />

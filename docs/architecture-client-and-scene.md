@@ -19,7 +19,7 @@
 - `app/scene/ApproachPath.tsx` is an orchestration layer.
 - Geometry/altitude/math/marker primitives are split into `app/scene/approach-path/*`.
 - `app/scene/LiveTrafficOverlay.tsx` handles ADS-B polling, initial history backfill requests (based on selected history window), retention-increase backfill merges for existing tracks, history pruning, and marker/trail rendering as an optional overlay group.
-- `app/scene/NexradVolumeOverlay.tsx` polls MRMS weather (proxy by default, optional direct upstream URL), decodes compact binary voxel payloads, applies optional curvature compensation, and renders instanced volumetric weather voxels as an optional overlay group.
+- `app/scene/NexradVolumeOverlay.tsx` polls MRMS weather (proxy by default, optional direct upstream URL), decodes v2 compact binary payloads (including merged-brick span records), applies optional curvature compensation, and renders instanced volumetric weather voxels as an optional overlay group without client-side voxel decimation.
 - `app/scene/approach-path/path-builder.ts` provides pure path-geometry assembly used by `PathTube`, supporting deterministic unit tests for final/transition/missed behavior.
 - `app/scene/approach-path/runway-geometry.ts` provides pure runway pairing/reciprocal-stub geometry logic used by `AirportMarker`.
 
