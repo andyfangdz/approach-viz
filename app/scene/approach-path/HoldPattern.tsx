@@ -77,7 +77,7 @@ export function HoldPattern({
       <Html
         position={labelPosition}
         center
-        zIndexRange={[40, 0]}
+        zIndexRange={[9, 0]}
         style={{
           color,
           fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
