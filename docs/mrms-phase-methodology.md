@@ -1,60 +1,72 @@
 # MRMS Phase Methodology
 
-This document defines how the Rust MRMS service resolves voxel phase (`rain`, `mixed`, `snow`) using dual-pol as the primary signal with legacy correction/fallback signals.
+This document defines the current server-side voxel phase resolver (`rain`, `mixed`, `snow`) used by the Rust MRMS pipeline.
 
-## Goal
+## Goals
 
-- Keep reflectivity rendering phase-aware even when dual-pol products lag reflectivity publication.
-- Prefer dual-pol when timely, but avoid freezing the pipeline waiting for perfect cycle alignment.
-- Reduce false `mixed` output when dual-pol ambiguity conflicts with legacy precipitation/freezing signals.
+- Keep phase classification stable when MRMS dual-pol cadence lags reflectivity cadence.
+- Reduce false `mixed` speckle in snow regimes (for example Northeast winter stratiform events).
+- Keep fallback behavior explicit in runtime debug telemetry.
 
 ## Inputs
 
-- Reflectivity: `MergedReflectivityQC_<level>`
-- Dual-pol:
+- Reflectivity backbone: `MergedReflectivityQC_<level>`
+- Dual-pol per-level correction signals:
   - `MergedZdr_<level>`
   - `MergedRhoHV_<level>`
-- Legacy fallback:
+- Thermodynamic/context signals:
   - `PrecipFlag_00.00`
   - `Model_0degC_Height_00.50`
+  - `Model_WetBulbTemp_00.50`
+  - `Model_SurfaceTemp_00.50`
+  - `BrightBandTopHeight_00.00`
+  - `BrightBandBottomHeight_00.00`
+  - `RadarQualityIndex_00.00`
 
-## Source Selection Policy
+## Timestamp Selection
 
-1. Preferred dual-pol cycle:
-   - Try `MergedZdr_<level>` / `MergedRhoHV_<level>` at the exact reflectivity timestamp.
-2. Sparse/lagging dual-pol fallback:
-   - If exact dual-pol is missing, use the latest available dual-pol timestamp at or before reflectivity time.
-   - If selected dual-pol age exceeds `300s` (5 minutes), mark the scan as stale-aux mode.
-3. Legacy aux lookup:
-   - Fetch latest available `PrecipFlag_00.00` and `Model_0degC_Height_00.50` at or before reflectivity time.
-   - Legacy aux is always available for correction when present; stale/sparse dual-pol additionally enables explicit fallback mode.
+1. Dual-pol first tries exact reflectivity timestamp matching.
+2. If exact dual-pol is unavailable, ingest uses the latest available dual-pol timestamp at or before reflectivity time.
+3. If selected dual-pol is older than 5 minutes (`300s`) or sparse by level, ingest enters aux-fallback mode (`aux_fallback=yes` in debug detail).
+4. Thermodynamic/context fields always use the latest available timestamp at or before reflectivity time.
 
-## Per-Voxel Classification
+## Per-Voxel Resolver
 
-1. Try dual-pol phase first:
-   - Validate ZDR in `[-8.0, 8.0] dB`
-   - Validate RhoHV in `[0.0, 1.05]`
-   - If `RhoHV < 0.97` => `mixed`
-   - Else if `ZDR >= 0.3` => `rain`
-   - Else if `ZDR <= 0.1` => `snow`
-   - Else => `mixed`
-2. Resolve legacy phase for the same voxel:
-   - Use `PrecipFlag_00.00` mapping first.
-   - If precip flag is unavailable, compare voxel altitude vs `Model_0degC_Height_00.50` (+/-1500 ft transition band) for rain/mixed/snow.
-3. Final phase resolution:
-   - If `PrecipFlag_00.00` resolves `snow`, force `snow` (snow-bias correction over dual-pol rain/mixed ambiguity).
-   - Else if dual-pol resolves `mixed` and legacy resolves `rain` or `snow`, use legacy phase (mixed correction).
-   - If dual-pol is unavailable/invalid, use legacy phase when available.
-   - If neither dual-pol nor legacy resolves phase, default to `rain`.
+1. Build thermodynamic baseline scores (`rain`, `mixed`, `snow`) from:
+   - `PrecipFlag` regime (snow/rain/hail-like mixed classes)
+   - voxel altitude relative to `Model_0degC_Height`
+   - wet-bulb and surface-temperature tendencies (temperature normalization handles Celsius/Kelvin payload conventions)
+   - bright-band top/bottom placement relative to voxel altitude
+2. Build dual-pol evidence with confidence, not hard phase assignment:
+   - high-confidence rain/snow only when ZDR/RhoHV combination is coherent
+   - low RhoHV alone is treated as low-confidence mixed evidence
+3. Fuse dual-pol evidence into thermo scores with staleness/quality weighting:
+   - stale/sparse aux mode strongly down-weights dual-pol contribution
+   - `RadarQualityIndex` scales correction weight when available
+4. Apply mixed-suppression guardrails:
+   - mixed must win by margin and be near a melting-transition signal; otherwise classify rain/snow
+5. Apply snow guardrail:
+   - when `PrecipFlag` indicates snow and thermo context supports frozen precipitation, final phase is forced to snow over contradictory weak dual-pol rain/mixed signals.
+
+## PrecipFlag Mapping
+
+- `3` -> snow
+- `1, 6, 10, 91, 96` -> rain
+- `7` -> mixed/hail-like
+- `0, -3` -> no direct phase signal (not forced to rain)
 
 ## Debug Telemetry
 
-The service emits phase-source metadata so the client debug panel can show:
+`/v1/meta` and `/v1/volume` headers expose:
 
-- phase mode (`dual-pol-cycle-matched`, `dual-pol-cycle-matched+legacy-correction`, `dual-pol-last-available`, `dual-pol-last-available+legacy-fallback`)
-- dual-pol ages (`zdrAgeSeconds`, `rhohvAgeSeconds`)
-- dual-pol timestamps (`zdrTimestamp`, `rhohvTimestamp`)
-- legacy timestamps (`precipFlagTimestamp`, `freezingLevelTimestamp`)
-- detailed coverage summary (`phaseDetail`) including dual-pol coverage and correction counters (`dual_missing_voxels`, `legacy_mixed_overrides`, `legacy_only_resolves`, `legacy_snow_bias_overrides`)
-
-These fields are exposed via `/v1/meta` and mirrored as response headers on `/v1/volume`.
+- `phaseMode`: one of
+  - `thermo-primary`
+  - `thermo-primary+dual-correction`
+  - `thermo-primary+stale-dual-correction`
+  - `thermo-primary+legacy-fallback`
+- dual-pol ages/timestamps (`zdr*`, `rhohv*`)
+- legacy precip/freezing timestamps (`precipFlagTimestamp`, `freezingLevelTimestamp`)
+- `phaseDetail` counters including:
+  - aux availability flags (`legacy_wetbulb`, `legacy_surface_temp`, `legacy_brightband_pair`, `legacy_rqi`)
+  - fallback state (`aux_fallback`, `legacy_any`)
+  - voxel accounting (`thermo_signal_voxels`, `dual_adjusted_voxels`, `dual_suppressed_voxels`, `mixed_suppressed_voxels`, `precip_snow_forced_voxels`)

@@ -16,12 +16,15 @@ use tracing::{error, info, warn};
 use crate::constants::{
     AUX_TIMESTAMP_LOOKBACK_DAYS, DUAL_POL_STALE_THRESHOLD_SECONDS, FEET_PER_KM, FEET_PER_METER,
     FREEZING_LEVEL_TRANSITION_FEET, LEVEL_TAGS, MAX_BASE_DAY_LOOKBACK, MAX_BASE_KEYS_LOOKUP,
-    MAX_PENDING_ATTEMPTS, MRMS_BASE_LEVEL_TAG, MRMS_BUCKET_URL, MRMS_CONUS_PREFIX,
-    MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_PRODUCT_PREFIX,
-    MRMS_RHOHV_PRODUCT_PREFIX, MRMS_ZDR_PRODUCT_PREFIX, PHASE_MIXED, PHASE_RAIN,
-    PHASE_RHOHV_MAX_VALID, PHASE_RHOHV_MIN_VALID, PHASE_RHOHV_MIXED_MAX, PHASE_SNOW,
-    PHASE_ZDR_MAX_VALID_DB, PHASE_ZDR_MIN_VALID_DB, PHASE_ZDR_RAIN_MIN_DB, PHASE_ZDR_SNOW_MAX_DB,
-    STORE_MIN_DBZ_TENTHS,
+    MAX_PENDING_ATTEMPTS, MIXED_SELECTION_MARGIN, MRMS_BASE_LEVEL_TAG,
+    MRMS_BRIGHT_BAND_BOTTOM_PRODUCT, MRMS_BRIGHT_BAND_TOP_PRODUCT, MRMS_BUCKET_URL,
+    MRMS_CONUS_PREFIX, MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_MODEL_SURFACE_TEMP_PRODUCT,
+    MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_PRODUCT_PREFIX,
+    MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX, PHASE_MIXED, PHASE_RAIN,
+    PHASE_RHOHV_HIGH_CONFIDENCE_MIN, PHASE_RHOHV_LOW_CONFIDENCE_MAX, PHASE_RHOHV_MAX_VALID,
+    PHASE_RHOHV_MIN_VALID, PHASE_SNOW, PHASE_ZDR_MAX_VALID_DB, PHASE_ZDR_MIN_VALID_DB,
+    PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB, PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB, STORE_MIN_DBZ_TENTHS,
+    THERMO_NEAR_FREEZING_FEET, THERMO_STRONG_COLD_WET_BULB_C, THERMO_STRONG_WARM_WET_BULB_C,
 };
 use crate::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
 use crate::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
@@ -426,11 +429,41 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         .freezing_level
         .as_ref()
         .map(|(_timestamp, field)| field);
-    let legacy_available = precip_field.is_some() || freezing_field.is_some();
+    let wet_bulb_field = legacy_bundle
+        .wet_bulb_temp
+        .as_ref()
+        .map(|(_timestamp, field)| field);
+    let surface_temp_field = legacy_bundle
+        .surface_temp
+        .as_ref()
+        .map(|(_timestamp, field)| field);
+    let bright_band_top_field = legacy_bundle
+        .bright_band_top
+        .as_ref()
+        .map(|(_timestamp, field)| field);
+    let bright_band_bottom_field = legacy_bundle
+        .bright_band_bottom
+        .as_ref()
+        .map(|(_timestamp, field)| field);
+    let rqi_field = legacy_bundle
+        .radar_quality_index
+        .as_ref()
+        .map(|(_timestamp, field)| field);
+    let legacy_available = precip_field.is_some()
+        || freezing_field.is_some()
+        || wet_bulb_field.is_some()
+        || surface_temp_field.is_some()
+        || (bright_band_top_field.is_some() && bright_band_bottom_field.is_some())
+        || rqi_field.is_some();
+
     let mut dual_missing_voxel_count: u64 = 0;
-    let mut legacy_override_mixed_count: u64 = 0;
-    let mut legacy_only_resolve_count: u64 = 0;
-    let mut legacy_snow_bias_override_count: u64 = 0;
+    let mut thermo_signal_voxel_count: u64 = 0;
+    let mut thermo_no_signal_voxel_count: u64 = 0;
+    let mut dual_adjusted_voxel_count: u64 = 0;
+    let mut dual_suppressed_voxel_count: u64 = 0;
+    let mut stale_dual_adjusted_voxel_count: u64 = 0;
+    let mut mixed_suppressed_voxel_count: u64 = 0;
+    let mut precip_snow_forced_voxel_count: u64 = 0;
 
     for (level_idx, level_tag, parsed) in &levels {
         let level_index = *level_idx as usize;
@@ -466,37 +499,53 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                 }
 
                 let lon_deg360 = col_lons360[col];
-                let dual_phase = resolve_dual_pol_phase(
+                let dual_evidence = resolve_dual_pol_evidence(
                     zdr_values.and_then(|values| values.get(value_idx).copied()),
                     rhohv_values.and_then(|values| values.get(value_idx).copied()),
                 );
-                let legacy_phase = resolve_legacy_phase(
+                if dual_evidence.is_none() {
+                    dual_missing_voxel_count += 1;
+                }
+
+                let thermo_evidence = resolve_thermo_phase(
                     lat_deg,
                     lon_deg360,
                     voxel_mid_feet,
                     precip_field,
                     freezing_field,
+                    wet_bulb_field,
+                    surface_temp_field,
+                    bright_band_top_field,
+                    bright_band_bottom_field,
+                    rqi_field,
                 );
-                let legacy_phase_value = legacy_phase.map(|sample| sample.phase);
-                if dual_phase.is_none() {
-                    dual_missing_voxel_count += 1;
+                if thermo_evidence.signal_count > 0 {
+                    thermo_signal_voxel_count += 1;
+                } else {
+                    thermo_no_signal_voxel_count += 1;
                 }
-                if dual_phase == Some(PHASE_MIXED)
-                    && legacy_phase_value.is_some_and(|phase| phase != PHASE_MIXED)
-                {
-                    legacy_override_mixed_count += 1;
+
+                let resolution = resolve_phase_from_evidence(
+                    thermo_evidence,
+                    dual_evidence,
+                    use_legacy_fallback,
+                );
+                if resolution.used_dual {
+                    dual_adjusted_voxel_count += 1;
+                    if use_legacy_fallback {
+                        stale_dual_adjusted_voxel_count += 1;
+                    }
                 }
-                if dual_phase == Some(PHASE_RAIN)
-                    && legacy_phase.is_some_and(|sample| {
-                        sample.source == LegacyPhaseSource::PrecipFlag && sample.phase == PHASE_SNOW
-                    })
-                {
-                    legacy_snow_bias_override_count += 1;
+                if resolution.suppressed_dual {
+                    dual_suppressed_voxel_count += 1;
                 }
-                if dual_phase.is_none() && legacy_phase_value.is_some() {
-                    legacy_only_resolve_count += 1;
+                if resolution.suppressed_mixed {
+                    mixed_suppressed_voxel_count += 1;
                 }
-                let phase = resolve_phase_with_legacy(dual_phase, legacy_phase);
+                if resolution.forced_precip_snow {
+                    precip_snow_forced_voxel_count += 1;
+                }
+                let phase = resolution.phase;
 
                 let row_u16 = row as u16;
                 let col_u16 = col as u16;
@@ -527,22 +576,21 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         .map(|datetime| datetime.timestamp_millis())
         .unwrap_or_else(|| Utc::now().timestamp_millis());
 
-    let used_legacy_for_correction = legacy_override_mixed_count > 0
-        || legacy_only_resolve_count > 0
-        || legacy_snow_bias_override_count > 0;
     let mode = if use_legacy_fallback {
-        if legacy_available {
-            "dual-pol-last-available+legacy-fallback"
+        if dual_adjusted_voxel_count > 0 {
+            "thermo-primary+stale-dual-correction"
         } else {
-            "dual-pol-last-available"
+            "thermo-primary+legacy-fallback"
         }
-    } else if used_legacy_for_correction {
-        "dual-pol-cycle-matched+legacy-correction"
+    } else if dual_adjusted_voxel_count > 0 {
+        "thermo-primary+dual-correction"
     } else {
-        "dual-pol-cycle-matched"
+        "thermo-primary"
     };
     let detail = format!(
-        "zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},legacy_precip={},legacy_freezing={},dual_missing_voxels={},legacy_mixed_overrides={},legacy_only_resolves={},legacy_snow_bias_overrides={}",
+        "aux_fallback={},legacy_any={},zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},legacy_precip={},legacy_freezing={},legacy_wetbulb={},legacy_surface_temp={},legacy_brightband_pair={},legacy_rqi={},thermo_signal_voxels={},thermo_no_signal_voxels={},dual_missing_voxels={},dual_adjusted_voxels={},dual_suppressed_voxels={},stale_dual_adjusted_voxels={},mixed_suppressed_voxels={},precip_snow_forced_voxels={}",
+        bool_label(use_legacy_fallback),
+        bool_label(legacy_available),
         zdr_bundle.available_level_count(),
         LEVEL_TAGS.len(),
         rhohv_bundle.available_level_count(),
@@ -551,10 +599,18 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         format_optional_i64(rhohv_bundle.age_seconds),
         bool_label(precip_field.is_some()),
         bool_label(freezing_field.is_some()),
+        bool_label(wet_bulb_field.is_some()),
+        bool_label(surface_temp_field.is_some()),
+        bool_label(bright_band_top_field.is_some() && bright_band_bottom_field.is_some()),
+        bool_label(rqi_field.is_some()),
+        thermo_signal_voxel_count,
+        thermo_no_signal_voxel_count,
         dual_missing_voxel_count,
-        legacy_override_mixed_count,
-        legacy_only_resolve_count,
-        legacy_snow_bias_override_count,
+        dual_adjusted_voxel_count,
+        dual_suppressed_voxel_count,
+        stale_dual_adjusted_voxel_count,
+        mixed_suppressed_voxel_count,
+        precip_snow_forced_voxel_count,
     );
 
     Ok(Arc::new(ScanSnapshot {
@@ -591,18 +647,58 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
 struct LegacyAuxBundle {
     precip_flag: Option<(String, ParsedAuxField)>,
     freezing_level: Option<(String, ParsedAuxField)>,
+    wet_bulb_temp: Option<(String, ParsedAuxField)>,
+    surface_temp: Option<(String, ParsedAuxField)>,
+    bright_band_top: Option<(String, ParsedAuxField)>,
+    bright_band_bottom: Option<(String, ParsedAuxField)>,
+    radar_quality_index: Option<(String, ParsedAuxField)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LegacyPhaseSource {
-    PrecipFlag,
-    FreezingLevel,
+#[derive(Clone, Copy, Debug)]
+struct PhaseScores {
+    rain: f32,
+    mixed: f32,
+    snow: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct LegacyPhaseSample {
+impl PhaseScores {
+    fn add(&mut self, phase: u8, weight: f32) {
+        if !weight.is_finite() || weight <= 0.0 {
+            return;
+        }
+        match phase {
+            PHASE_RAIN => self.rain += weight,
+            PHASE_MIXED => self.mixed += weight,
+            PHASE_SNOW => self.snow += weight,
+            _ => {}
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ThermoPhaseEvidence {
+    scores: PhaseScores,
     phase: u8,
-    source: LegacyPhaseSource,
+    confidence: f32,
+    signal_count: u8,
+    near_transition: bool,
+    precip_flag_phase: Option<u8>,
+    rqi: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DualPolEvidence {
+    phase: u8,
+    confidence: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PhaseResolution {
+    phase: u8,
+    used_dual: bool,
+    suppressed_dual: bool,
+    suppressed_mixed: bool,
+    forced_precip_snow: bool,
 }
 
 struct DualPolBundle {
@@ -773,10 +869,38 @@ async fn fetch_legacy_aux_bundle(http: &Client, target_timestamp: &str) -> Legac
         target_timestamp,
     )
     .await;
+    let wet_bulb_temp = fetch_latest_aux_field_at_or_before(
+        http,
+        MRMS_MODEL_WET_BULB_TEMP_PRODUCT,
+        target_timestamp,
+    )
+    .await;
+    let surface_temp = fetch_latest_aux_field_at_or_before(
+        http,
+        MRMS_MODEL_SURFACE_TEMP_PRODUCT,
+        target_timestamp,
+    )
+    .await;
+    let bright_band_top =
+        fetch_latest_aux_field_at_or_before(http, MRMS_BRIGHT_BAND_TOP_PRODUCT, target_timestamp)
+            .await;
+    let bright_band_bottom = fetch_latest_aux_field_at_or_before(
+        http,
+        MRMS_BRIGHT_BAND_BOTTOM_PRODUCT,
+        target_timestamp,
+    )
+    .await;
+    let radar_quality_index =
+        fetch_latest_aux_field_at_or_before(http, MRMS_RQI_PRODUCT, target_timestamp).await;
 
     LegacyAuxBundle {
         precip_flag,
         freezing_level,
+        wet_bulb_temp,
+        surface_temp,
+        bright_band_top,
+        bright_band_bottom,
+        radar_quality_index,
     }
 }
 
@@ -832,27 +956,343 @@ fn is_same_grid(left: &GridDef, right: &GridDef) -> bool {
         && (left.dj_deg - right.dj_deg).abs() <= 1e-6
 }
 
-fn resolve_dual_pol_phase(zdr_value: Option<f32>, rhohv_value: Option<f32>) -> Option<u8> {
+fn resolve_dual_pol_evidence(
+    zdr_value: Option<f32>,
+    rhohv_value: Option<f32>,
+) -> Option<DualPolEvidence> {
     let zdr = zdr_value.and_then(sanitize_zdr);
     let rhohv = rhohv_value.and_then(sanitize_rhohv);
 
-    if let Some(rhohv) = rhohv {
-        if rhohv < PHASE_RHOHV_MIXED_MAX {
-            return Some(PHASE_MIXED);
+    match (zdr, rhohv) {
+        (Some(zdr), Some(rhohv)) => {
+            if rhohv < PHASE_RHOHV_LOW_CONFIDENCE_MAX {
+                if zdr >= PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB + 0.1 {
+                    Some(DualPolEvidence {
+                        phase: PHASE_RAIN,
+                        confidence: 0.55,
+                    })
+                } else if zdr <= PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB - 0.15 {
+                    Some(DualPolEvidence {
+                        phase: PHASE_SNOW,
+                        confidence: 0.55,
+                    })
+                } else {
+                    Some(DualPolEvidence {
+                        phase: PHASE_MIXED,
+                        confidence: 0.45,
+                    })
+                }
+            } else if rhohv >= PHASE_RHOHV_HIGH_CONFIDENCE_MIN {
+                if zdr >= PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB {
+                    Some(DualPolEvidence {
+                        phase: PHASE_RAIN,
+                        confidence: 0.82,
+                    })
+                } else if zdr <= PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB {
+                    Some(DualPolEvidence {
+                        phase: PHASE_SNOW,
+                        confidence: 0.82,
+                    })
+                } else {
+                    Some(DualPolEvidence {
+                        phase: PHASE_MIXED,
+                        confidence: 0.35,
+                    })
+                }
+            } else if zdr >= PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB {
+                Some(DualPolEvidence {
+                    phase: PHASE_RAIN,
+                    confidence: 0.65,
+                })
+            } else if zdr <= PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB {
+                Some(DualPolEvidence {
+                    phase: PHASE_SNOW,
+                    confidence: 0.65,
+                })
+            } else {
+                Some(DualPolEvidence {
+                    phase: PHASE_MIXED,
+                    confidence: 0.55,
+                })
+            }
+        }
+        (Some(zdr), None) => {
+            if zdr >= PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB + 0.15 {
+                Some(DualPolEvidence {
+                    phase: PHASE_RAIN,
+                    confidence: 0.50,
+                })
+            } else if zdr <= PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB - 0.2 {
+                Some(DualPolEvidence {
+                    phase: PHASE_SNOW,
+                    confidence: 0.50,
+                })
+            } else {
+                Some(DualPolEvidence {
+                    phase: PHASE_MIXED,
+                    confidence: 0.30,
+                })
+            }
+        }
+        (None, Some(rhohv)) => {
+            if rhohv < PHASE_RHOHV_LOW_CONFIDENCE_MAX - 0.02 {
+                Some(DualPolEvidence {
+                    phase: PHASE_MIXED,
+                    confidence: 0.35,
+                })
+            } else {
+                None
+            }
+        }
+        (None, None) => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_thermo_phase(
+    lat_deg: f64,
+    lon_deg360: f64,
+    voxel_mid_feet: f64,
+    precip_field: Option<&ParsedAuxField>,
+    freezing_field: Option<&ParsedAuxField>,
+    wet_bulb_field: Option<&ParsedAuxField>,
+    surface_temp_field: Option<&ParsedAuxField>,
+    bright_band_top_field: Option<&ParsedAuxField>,
+    bright_band_bottom_field: Option<&ParsedAuxField>,
+    rqi_field: Option<&ParsedAuxField>,
+) -> ThermoPhaseEvidence {
+    let mut scores = PhaseScores {
+        rain: 1.0,
+        mixed: 0.7,
+        snow: 1.0,
+    };
+    let mut signal_count = 0_u8;
+    let mut near_transition = false;
+
+    let precip_flag_phase = precip_field
+        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+        .and_then(phase_from_precip_flag);
+    if let Some(phase) = precip_flag_phase {
+        signal_count = signal_count.saturating_add(1);
+        match phase {
+            PHASE_RAIN => scores.add(PHASE_RAIN, 3.0),
+            PHASE_SNOW => scores.add(PHASE_SNOW, 3.2),
+            PHASE_MIXED => {
+                scores.add(PHASE_MIXED, 1.8);
+                scores.add(PHASE_RAIN, 0.8);
+            }
+            _ => {}
         }
     }
 
-    if let Some(zdr) = zdr {
-        if zdr >= PHASE_ZDR_RAIN_MIN_DB {
-            return Some(PHASE_RAIN);
+    if let Some(freezing_meters) = freezing_field
+        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+        .map(|value| value as f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        signal_count = signal_count.saturating_add(1);
+        if let Some(phase) = phase_from_freezing_level(voxel_mid_feet, freezing_meters) {
+            scores.add(phase, 0.6);
         }
-        if zdr <= PHASE_ZDR_SNOW_MAX_DB {
-            return Some(PHASE_SNOW);
+        let freezing_feet = freezing_meters * FEET_PER_METER;
+        let delta_feet = voxel_mid_feet - freezing_feet;
+        if delta_feet.abs() <= THERMO_NEAR_FREEZING_FEET {
+            near_transition = true;
         }
-        return Some(PHASE_MIXED);
+
+        if delta_feet >= 2_500.0 {
+            scores.add(PHASE_SNOW, 2.4);
+        } else if delta_feet >= THERMO_NEAR_FREEZING_FEET {
+            scores.add(PHASE_SNOW, 1.8);
+            scores.add(PHASE_MIXED, 0.5);
+        } else if delta_feet <= -2_500.0 {
+            scores.add(PHASE_RAIN, 2.4);
+        } else if delta_feet <= -THERMO_NEAR_FREEZING_FEET {
+            scores.add(PHASE_RAIN, 1.8);
+            scores.add(PHASE_MIXED, 0.5);
+        } else {
+            scores.add(PHASE_MIXED, 1.6);
+            if delta_feet >= 0.0 {
+                scores.add(PHASE_SNOW, 0.8);
+            } else {
+                scores.add(PHASE_RAIN, 0.8);
+            }
+        }
     }
 
-    None
+    if let Some(wet_bulb_c) = wet_bulb_field
+        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+        .and_then(normalize_temperature_celsius)
+    {
+        signal_count = signal_count.saturating_add(1);
+        if wet_bulb_c <= THERMO_STRONG_COLD_WET_BULB_C {
+            scores.add(PHASE_SNOW, 2.4);
+        } else if wet_bulb_c <= 0.5 {
+            near_transition = true;
+            scores.add(PHASE_MIXED, 1.1);
+            scores.add(PHASE_SNOW, 1.0);
+        } else if wet_bulb_c >= THERMO_STRONG_WARM_WET_BULB_C {
+            scores.add(PHASE_RAIN, 2.2);
+        } else {
+            near_transition = true;
+            scores.add(PHASE_MIXED, 1.1);
+            scores.add(PHASE_RAIN, 1.0);
+        }
+    }
+
+    if let Some(surface_temp_c) = surface_temp_field
+        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+        .and_then(normalize_temperature_celsius)
+    {
+        signal_count = signal_count.saturating_add(1);
+        let low_level_weight = ((8_000.0 - voxel_mid_feet).max(0.0) / 8_000.0) as f32;
+        if low_level_weight > 0.0 {
+            if surface_temp_c <= -0.5 {
+                scores.add(PHASE_SNOW, 1.2 * low_level_weight);
+            } else if surface_temp_c >= 2.0 {
+                scores.add(PHASE_RAIN, 1.2 * low_level_weight);
+            } else {
+                near_transition = true;
+                scores.add(PHASE_MIXED, 0.8 * low_level_weight);
+                if surface_temp_c <= 0.5 {
+                    scores.add(PHASE_SNOW, 0.4 * low_level_weight);
+                } else {
+                    scores.add(PHASE_RAIN, 0.4 * low_level_weight);
+                }
+            }
+        }
+    }
+
+    if let (Some(top_m), Some(bottom_m)) = (
+        bright_band_top_field
+            .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+            .and_then(normalize_height_meters),
+        bright_band_bottom_field
+            .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+            .and_then(normalize_height_meters),
+    ) {
+        if top_m >= bottom_m {
+            signal_count = signal_count.saturating_add(1);
+            let top_feet = top_m * FEET_PER_METER;
+            let bottom_feet = bottom_m * FEET_PER_METER;
+            if voxel_mid_feet >= bottom_feet - 400.0 && voxel_mid_feet <= top_feet + 400.0 {
+                near_transition = true;
+                scores.add(PHASE_MIXED, 2.0);
+            } else if voxel_mid_feet > top_feet + 800.0 {
+                scores.add(PHASE_SNOW, 1.2);
+            } else if voxel_mid_feet < bottom_feet - 800.0 {
+                scores.add(PHASE_RAIN, 1.2);
+            }
+        }
+    }
+
+    let rqi = rqi_field
+        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+        .and_then(normalize_rqi);
+
+    let ranked = rank_phase_scores(scores);
+    let best_score = ranked[0].1.max(0.0);
+    let second_score = ranked[1].1.max(0.0);
+    let confidence = if best_score + second_score > 0.0 {
+        (best_score - second_score) / (best_score + second_score)
+    } else {
+        0.0
+    };
+
+    ThermoPhaseEvidence {
+        scores,
+        phase: ranked[0].0,
+        confidence: confidence.clamp(0.0, 1.0),
+        signal_count,
+        near_transition,
+        precip_flag_phase,
+        rqi,
+    }
+}
+
+fn resolve_phase_from_evidence(
+    thermo: ThermoPhaseEvidence,
+    dual: Option<DualPolEvidence>,
+    use_legacy_fallback: bool,
+) -> PhaseResolution {
+    let mut scores = thermo.scores;
+    let mut used_dual = false;
+    let mut suppressed_dual = false;
+    let mut suppressed_mixed = false;
+
+    if let Some(dual) = dual {
+        let stale_weight = if use_legacy_fallback { 0.22 } else { 0.58 };
+        let rqi_weight = thermo
+            .rqi
+            .map(|value| (0.35 + 0.65 * value).clamp(0.25, 1.0))
+            .unwrap_or(0.85);
+        let mut dual_weight = stale_weight * rqi_weight * dual.confidence;
+
+        if dual.phase == PHASE_MIXED && !thermo.near_transition {
+            dual_weight *= 0.35;
+        }
+
+        if dual.phase == PHASE_RAIN
+            && thermo.phase == PHASE_SNOW
+            && thermo.confidence >= 0.35
+            && thermo.precip_flag_phase == Some(PHASE_SNOW)
+        {
+            dual_weight *= 0.2;
+        }
+
+        if dual_weight >= 0.08 {
+            scores.add(dual.phase, dual_weight * 2.2);
+            used_dual = true;
+        } else {
+            suppressed_dual = true;
+        }
+    }
+
+    let ranked = rank_phase_scores(scores);
+    let mut phase = ranked[0].0;
+    if phase == PHASE_MIXED {
+        let best_non_mixed = if ranked[1].0 == PHASE_MIXED {
+            ranked[2]
+        } else {
+            ranked[1]
+        };
+        let mixed_advantage = ranked[0].1 - best_non_mixed.1;
+        if !thermo.near_transition || mixed_advantage < MIXED_SELECTION_MARGIN {
+            phase = best_non_mixed.0;
+            suppressed_mixed = true;
+        }
+    }
+
+    let mut forced_precip_snow = false;
+    if thermo.precip_flag_phase == Some(PHASE_SNOW) && phase != PHASE_SNOW {
+        if thermo.phase == PHASE_SNOW || thermo.near_transition {
+            phase = PHASE_SNOW;
+            forced_precip_snow = true;
+        }
+    }
+
+    PhaseResolution {
+        phase,
+        used_dual,
+        suppressed_dual,
+        suppressed_mixed,
+        forced_precip_snow,
+    }
+}
+
+fn rank_phase_scores(scores: PhaseScores) -> [(u8, f32); 3] {
+    let mut ranked = [
+        (PHASE_RAIN, scores.rain),
+        (PHASE_MIXED, scores.mixed),
+        (PHASE_SNOW, scores.snow),
+    ];
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    ranked
 }
 
 fn sanitize_zdr(value: f32) -> Option<f32> {
@@ -1077,58 +1517,6 @@ fn timestamp_age_seconds(newer_timestamp: &str, older_timestamp: &str) -> Option
     Some((newer - older).num_seconds().max(0))
 }
 
-fn resolve_phase_with_legacy(
-    dual_phase: Option<u8>,
-    legacy_phase: Option<LegacyPhaseSample>,
-) -> u8 {
-    if legacy_phase.is_some_and(|sample| {
-        sample.source == LegacyPhaseSource::PrecipFlag && sample.phase == PHASE_SNOW
-    }) {
-        return PHASE_SNOW;
-    }
-
-    let legacy_phase = legacy_phase.map(|sample| sample.phase);
-    match dual_phase {
-        Some(PHASE_MIXED) => match legacy_phase {
-            Some(PHASE_RAIN) => PHASE_RAIN,
-            Some(PHASE_SNOW) => PHASE_SNOW,
-            _ => PHASE_MIXED,
-        },
-        Some(phase) => phase,
-        None => legacy_phase.unwrap_or(PHASE_RAIN),
-    }
-}
-
-fn resolve_legacy_phase(
-    lat_deg: f64,
-    lon_deg360: f64,
-    voxel_mid_feet: f64,
-    precip_field: Option<&ParsedAuxField>,
-    freezing_field: Option<&ParsedAuxField>,
-) -> Option<LegacyPhaseSample> {
-    if let Some(phase) = precip_field
-        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-        .and_then(phase_from_precip_flag)
-    {
-        return Some(LegacyPhaseSample {
-            phase,
-            source: LegacyPhaseSource::PrecipFlag,
-        });
-    }
-
-    if let Some(phase) = freezing_field
-        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-        .and_then(|meters| phase_from_freezing_level(voxel_mid_feet, meters as f64))
-    {
-        return Some(LegacyPhaseSample {
-            phase,
-            source: LegacyPhaseSource::FreezingLevel,
-        });
-    }
-
-    None
-}
-
 fn sample_aux_field(field: &ParsedAuxField, lat_deg: f64, lon_deg360: f64) -> Option<f32> {
     if field.grid.lat_step_deg.abs() < f64::EPSILON || field.grid.lon_step_deg.abs() < f64::EPSILON
     {
@@ -1156,13 +1544,13 @@ fn phase_from_precip_flag(value: f32) -> Option<u8> {
         return None;
     }
     let code = value.round() as i32;
-    Some(match code {
-        -3 | 0 => PHASE_RAIN,
-        3 => PHASE_SNOW,
-        7 => PHASE_MIXED,
-        1 | 6 | 10 | 91 | 96 => PHASE_RAIN,
-        _ => PHASE_RAIN,
-    })
+    match code {
+        -3 | 0 => None,
+        3 => Some(PHASE_SNOW),
+        7 => Some(PHASE_MIXED),
+        1 | 6 | 10 | 91 | 96 => Some(PHASE_RAIN),
+        _ => None,
+    }
 }
 
 fn phase_from_freezing_level(voxel_mid_feet: f64, freezing_level_meters_msl: f64) -> Option<u8> {
@@ -1184,6 +1572,46 @@ fn phase_from_freezing_level(voxel_mid_feet: f64, freezing_level_meters_msl: f64
     }
 }
 
+fn normalize_temperature_celsius(value: f32) -> Option<f32> {
+    if !value.is_finite() {
+        return None;
+    }
+    if (-90.0..=70.0).contains(&value) {
+        return Some(value);
+    }
+    if (150.0..=340.0).contains(&value) {
+        return Some(value - 273.15);
+    }
+    None
+}
+
+fn normalize_height_meters(value: f32) -> Option<f64> {
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    let mut meters = value as f64;
+    if meters < 50.0 {
+        meters *= 1000.0;
+    }
+    if !(100.0..=30_000.0).contains(&meters) {
+        return None;
+    }
+    Some(meters)
+}
+
+fn normalize_rqi(value: f32) -> Option<f32> {
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    if value <= 1.05 {
+        return Some(value.clamp(0.0, 1.0));
+    }
+    if value <= 100.0 {
+        return Some((value / 100.0).clamp(0.0, 1.0));
+    }
+    None
+}
+
 fn format_optional_i64(value: Option<i64>) -> String {
     value
         .map(|v| v.to_string())
@@ -1203,83 +1631,81 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_dual_pol_phase_marks_low_rhohv_as_mixed() {
-        assert_eq!(
-            resolve_dual_pol_phase(Some(0.8), Some(0.94)),
-            Some(PHASE_MIXED)
-        );
+    fn resolve_dual_pol_evidence_prefers_snow_when_rhohv_high_and_zdr_low() {
+        let evidence = resolve_dual_pol_evidence(Some(0.1), Some(0.99)).expect("dual-pol evidence");
+        assert_eq!(evidence.phase, PHASE_SNOW);
+        assert!(evidence.confidence >= 0.8);
     }
 
     #[test]
-    fn resolve_dual_pol_phase_marks_high_zdr_as_rain() {
-        assert_eq!(
-            resolve_dual_pol_phase(Some(0.7), Some(0.99)),
-            Some(PHASE_RAIN)
-        );
+    fn resolve_dual_pol_evidence_keeps_low_rhohv_mixed_confidence_low() {
+        let evidence = resolve_dual_pol_evidence(Some(0.4), Some(0.93)).expect("dual-pol evidence");
+        assert_eq!(evidence.phase, PHASE_MIXED);
+        assert!(evidence.confidence < 0.5);
     }
 
     #[test]
-    fn resolve_dual_pol_phase_marks_neutral_zdr_as_snow_when_rhohv_is_high() {
-        assert_eq!(
-            resolve_dual_pol_phase(Some(0.0), Some(0.99)),
-            Some(PHASE_SNOW)
-        );
+    fn resolve_dual_pol_evidence_returns_none_for_missing_or_invalid_inputs() {
+        assert!(resolve_dual_pol_evidence(None, None).is_none());
+        assert!(resolve_dual_pol_evidence(Some(99.0), Some(-1.0)).is_none());
     }
 
     #[test]
-    fn resolve_dual_pol_phase_returns_none_for_missing_or_invalid_dual_pol() {
-        assert_eq!(resolve_dual_pol_phase(None, None), None);
-        assert_eq!(resolve_dual_pol_phase(Some(99.0), Some(-1.0)), None);
+    fn resolve_phase_from_evidence_prefers_thermo_snow_over_weak_dual_mixed() {
+        let thermo = ThermoPhaseEvidence {
+            scores: PhaseScores {
+                rain: 1.0,
+                mixed: 1.2,
+                snow: 6.0,
+            },
+            phase: PHASE_SNOW,
+            confidence: 0.65,
+            signal_count: 3,
+            near_transition: false,
+            precip_flag_phase: Some(PHASE_SNOW),
+            rqi: Some(0.9),
+        };
+        let dual = Some(DualPolEvidence {
+            phase: PHASE_MIXED,
+            confidence: 0.45,
+        });
+        let resolution = resolve_phase_from_evidence(thermo, dual, false);
+        assert_eq!(resolution.phase, PHASE_SNOW);
+        assert!(resolution.used_dual);
     }
 
     #[test]
-    fn resolve_phase_with_legacy_prefers_snow_over_dual_mixed() {
-        assert_eq!(
-            resolve_phase_with_legacy(
-                Some(PHASE_MIXED),
-                Some(LegacyPhaseSample {
-                    phase: PHASE_SNOW,
-                    source: LegacyPhaseSource::PrecipFlag,
-                }),
-            ),
-            PHASE_SNOW
-        );
+    fn resolve_phase_from_evidence_suppresses_mixed_when_not_near_transition() {
+        let thermo = ThermoPhaseEvidence {
+            scores: PhaseScores {
+                rain: 3.0,
+                mixed: 3.2,
+                snow: 1.0,
+            },
+            phase: PHASE_MIXED,
+            confidence: 0.03,
+            signal_count: 1,
+            near_transition: false,
+            precip_flag_phase: None,
+            rqi: None,
+        };
+        let resolution = resolve_phase_from_evidence(thermo, None, false);
+        assert_eq!(resolution.phase, PHASE_RAIN);
+        assert!(resolution.suppressed_mixed);
     }
 
     #[test]
-    fn resolve_phase_with_legacy_biases_precip_flag_snow_over_dual_rain() {
-        assert_eq!(
-            resolve_phase_with_legacy(
-                Some(PHASE_RAIN),
-                Some(LegacyPhaseSample {
-                    phase: PHASE_SNOW,
-                    source: LegacyPhaseSource::PrecipFlag,
-                }),
-            ),
-            PHASE_SNOW
-        );
-    }
-
-    #[test]
-    fn resolve_phase_with_legacy_falls_back_to_legacy_when_dual_missing() {
-        assert_eq!(
-            resolve_phase_with_legacy(
-                None,
-                Some(LegacyPhaseSample {
-                    phase: PHASE_SNOW,
-                    source: LegacyPhaseSource::PrecipFlag,
-                }),
-            ),
-            PHASE_SNOW
-        );
-        assert_eq!(resolve_phase_with_legacy(None, None), PHASE_RAIN);
+    fn normalize_temperature_celsius_supports_kelvin_inputs() {
+        let kelvin = 273.15_f32;
+        let normalized = normalize_temperature_celsius(kelvin).expect("temp");
+        assert!(normalized.abs() < 0.01);
     }
 
     #[test]
     fn phase_from_precip_flag_maps_known_codes() {
         assert_eq!(phase_from_precip_flag(3.0), Some(PHASE_SNOW));
         assert_eq!(phase_from_precip_flag(7.0), Some(PHASE_MIXED));
-        assert_eq!(phase_from_precip_flag(0.0), Some(PHASE_RAIN));
+        assert_eq!(phase_from_precip_flag(0.0), None);
     }
 
     #[test]

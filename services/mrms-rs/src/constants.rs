@@ -6,6 +6,11 @@ pub const MRMS_ZDR_PRODUCT_PREFIX: &str = "MergedZdr";
 pub const MRMS_RHOHV_PRODUCT_PREFIX: &str = "MergedRhoHV";
 pub const MRMS_PRECIP_FLAG_PRODUCT: &str = "PrecipFlag_00.00";
 pub const MRMS_MODEL_FREEZING_HEIGHT_PRODUCT: &str = "Model_0degC_Height_00.50";
+pub const MRMS_MODEL_WET_BULB_TEMP_PRODUCT: &str = "Model_WetBulbTemp_00.50";
+pub const MRMS_MODEL_SURFACE_TEMP_PRODUCT: &str = "Model_SurfaceTemp_00.50";
+pub const MRMS_BRIGHT_BAND_TOP_PRODUCT: &str = "BrightBandTopHeight_00.00";
+pub const MRMS_BRIGHT_BAND_BOTTOM_PRODUCT: &str = "BrightBandBottomHeight_00.00";
+pub const MRMS_RQI_PRODUCT: &str = "RadarQualityIndex_00.00";
 pub const LEVEL_TAGS: [&str; 33] = [
     "00.50", "00.75", "01.00", "01.25", "01.50", "01.75", "02.00", "02.25", "02.50", "02.75",
     "03.00", "03.50", "04.00", "04.50", "05.00", "05.50", "06.00", "06.50", "07.00", "07.50",
@@ -28,12 +33,17 @@ pub const PHASE_ZDR_MIN_VALID_DB: f32 = -8.0;
 pub const PHASE_ZDR_MAX_VALID_DB: f32 = 8.0;
 pub const PHASE_RHOHV_MIN_VALID: f32 = 0.0;
 pub const PHASE_RHOHV_MAX_VALID: f32 = 1.05;
-pub const PHASE_RHOHV_MIXED_MAX: f32 = 0.97;
-pub const PHASE_ZDR_RAIN_MIN_DB: f32 = 0.3;
-pub const PHASE_ZDR_SNOW_MAX_DB: f32 = 0.1;
+pub const PHASE_RHOHV_LOW_CONFIDENCE_MAX: f32 = 0.94;
+pub const PHASE_RHOHV_HIGH_CONFIDENCE_MIN: f32 = 0.975;
+pub const PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB: f32 = 0.55;
+pub const PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB: f32 = 0.2;
 pub const FREEZING_LEVEL_TRANSITION_FEET: f64 = 1500.0;
 pub const DUAL_POL_STALE_THRESHOLD_SECONDS: i64 = 300;
 pub const AUX_TIMESTAMP_LOOKBACK_DAYS: i64 = 1;
+pub const THERMO_NEAR_FREEZING_FEET: f64 = 1000.0;
+pub const THERMO_STRONG_COLD_WET_BULB_C: f32 = -1.5;
+pub const THERMO_STRONG_WARM_WET_BULB_C: f32 = 2.0;
+pub const MIXED_SELECTION_MARGIN: f32 = 0.45;
 
 pub const DEFAULT_MIN_DBZ: f64 = 5.0;
 pub const DEFAULT_MAX_RANGE_NM: f64 = 120.0;

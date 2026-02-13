@@ -19,7 +19,7 @@ This project now uses an external Rust ingestion service for MRMS instead of dec
 
 ## Phase Methodology
 
-- Phase detection prefers level-matched dual-pol products (`MergedZdr`, `MergedRhoHV`) at the reflectivity timestamp, applies legacy correction when dual-pol resolves `mixed`, applies precip-flag snow bias overrides when appropriate, and falls back to latest available aux + legacy precipitation/freezing signals when dual-pol lags.
+- Phase detection is thermodynamic-first: per-voxel evidence from precip flag, freezing level, wet-bulb/surface temperature, bright-band heights, and optional RQI is computed first, then level-matched dual-pol (`MergedZdr`, `MergedRhoHV`) is applied as a weighted correction (staleness-aware, quality-aware, and mixed-suppressed).
 - Detailed thresholds, stale-aux gates, and fallback behavior live in [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md).
 - Startup bootstrap enqueues the latest 120 base-level timestamps so delayed aux availability can still produce the newest complete cycle after service restarts.
 
