@@ -16,17 +16,18 @@ use tracing::{error, info, warn};
 use crate::constants::{
     AUX_TIMESTAMP_LOOKBACK_DAYS, DUAL_POL_STALE_THRESHOLD_SECONDS, FEET_PER_KM, FEET_PER_METER,
     FREEZING_LEVEL_TRANSITION_FEET, LEVEL_TAGS, MAX_BASE_DAY_LOOKBACK, MAX_BASE_KEYS_LOOKUP,
-    MAX_PENDING_ATTEMPTS, MIXED_COMPETING_RAIN_SNOW_DELTA_MAX, MIXED_COMPETING_RAIN_SNOW_MIN_SCORE,
-    MIXED_DUAL_SUPPORT_CONFIDENCE_MIN, MIXED_SELECTION_MARGIN, MIXED_SELECTION_MARGIN_TRANSITION,
-    MRMS_BASE_LEVEL_TAG, MRMS_BRIGHT_BAND_BOTTOM_PRODUCT, MRMS_BRIGHT_BAND_TOP_PRODUCT,
-    MRMS_BUCKET_URL, MRMS_CONUS_PREFIX, MRMS_MODEL_FREEZING_HEIGHT_PRODUCT,
-    MRMS_MODEL_SURFACE_TEMP_PRODUCT, MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT,
-    MRMS_PRODUCT_PREFIX, MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX,
-    PHASE_MIXED, PHASE_RAIN, PHASE_RHOHV_HIGH_CONFIDENCE_MIN, PHASE_RHOHV_LOW_CONFIDENCE_MAX,
-    PHASE_RHOHV_MAX_VALID, PHASE_RHOHV_MIN_VALID, PHASE_SNOW, PHASE_ZDR_MAX_VALID_DB,
-    PHASE_ZDR_MIN_VALID_DB, PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB, PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB,
-    STORE_MIN_DBZ_TENTHS, THERMO_NEAR_FREEZING_FEET, THERMO_STRONG_COLD_WET_BULB_C,
-    THERMO_STRONG_WARM_WET_BULB_C,
+    MAX_PENDING_ATTEMPTS, MIXED_COMPETING_PROMOTION_GAP_MAX, MIXED_COMPETING_PROMOTION_MARGIN,
+    MIXED_COMPETING_PROMOTION_MIN_SCORE, MIXED_COMPETING_RAIN_SNOW_DELTA_MAX,
+    MIXED_COMPETING_RAIN_SNOW_MIN_SCORE, MIXED_DUAL_SUPPORT_CONFIDENCE_MIN, MIXED_SELECTION_MARGIN,
+    MIXED_SELECTION_MARGIN_TRANSITION, MRMS_BASE_LEVEL_TAG, MRMS_BRIGHT_BAND_BOTTOM_PRODUCT,
+    MRMS_BRIGHT_BAND_TOP_PRODUCT, MRMS_BUCKET_URL, MRMS_CONUS_PREFIX,
+    MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_MODEL_SURFACE_TEMP_PRODUCT,
+    MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_PRODUCT_PREFIX,
+    MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX, PHASE_MIXED, PHASE_RAIN,
+    PHASE_RHOHV_HIGH_CONFIDENCE_MIN, PHASE_RHOHV_LOW_CONFIDENCE_MAX, PHASE_RHOHV_MAX_VALID,
+    PHASE_RHOHV_MIN_VALID, PHASE_SNOW, PHASE_ZDR_MAX_VALID_DB, PHASE_ZDR_MIN_VALID_DB,
+    PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB, PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB, STORE_MIN_DBZ_TENTHS,
+    THERMO_NEAR_FREEZING_FEET, THERMO_STRONG_COLD_WET_BULB_C, THERMO_STRONG_WARM_WET_BULB_C,
 };
 use crate::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
 use crate::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
@@ -1250,6 +1251,25 @@ fn resolve_phase_from_evidence(
         }
     }
 
+    let rain_snow_competing = scores.rain >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
+        && scores.snow >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
+        && (scores.rain - scores.snow).abs() <= MIXED_COMPETING_RAIN_SNOW_DELTA_MAX;
+    let rain_snow_promotion = scores.rain >= MIXED_COMPETING_PROMOTION_MIN_SCORE
+        && scores.snow >= MIXED_COMPETING_PROMOTION_MIN_SCORE
+        && (scores.rain - scores.snow).abs() <= MIXED_COMPETING_RAIN_SNOW_DELTA_MAX;
+    if rain_snow_promotion
+        && (thermo.near_transition || dual_mixed_support || thermo.signal_count >= 2)
+    {
+        let rain_snow_peak = scores.rain.max(scores.snow);
+        let mixed_gap = rain_snow_peak - scores.mixed;
+        if mixed_gap.is_finite()
+            && mixed_gap > 0.0
+            && mixed_gap <= MIXED_COMPETING_PROMOTION_GAP_MAX
+        {
+            scores.add(PHASE_MIXED, mixed_gap + MIXED_COMPETING_PROMOTION_MARGIN);
+        }
+    }
+
     let ranked = rank_phase_scores(scores);
     let mut phase = ranked[0].0;
     if phase == PHASE_MIXED {
@@ -1259,9 +1279,6 @@ fn resolve_phase_from_evidence(
             ranked[1]
         };
         let mixed_advantage = ranked[0].1 - best_non_mixed.1;
-        let rain_snow_competing = scores.rain >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
-            && scores.snow >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
-            && (scores.rain - scores.snow).abs() <= MIXED_COMPETING_RAIN_SNOW_DELTA_MAX;
         let transition_like = thermo.near_transition || rain_snow_competing || dual_mixed_support;
         let required_margin = if transition_like {
             MIXED_SELECTION_MARGIN_TRANSITION
@@ -1724,6 +1741,45 @@ mod tests {
         let resolution = resolve_phase_from_evidence(thermo, None, false);
         assert_eq!(resolution.phase, PHASE_MIXED);
         assert!(!resolution.suppressed_mixed);
+    }
+
+    #[test]
+    fn resolve_phase_from_evidence_promotes_mixed_when_rain_and_snow_compete() {
+        let thermo = ThermoPhaseEvidence {
+            scores: PhaseScores {
+                rain: 4.1,
+                mixed: 3.2,
+                snow: 4.0,
+            },
+            phase: PHASE_RAIN,
+            confidence: 0.02,
+            signal_count: 3,
+            near_transition: false,
+            precip_flag_phase: None,
+            rqi: Some(0.8),
+        };
+        let resolution = resolve_phase_from_evidence(thermo, None, false);
+        assert_eq!(resolution.phase, PHASE_MIXED);
+        assert!(!resolution.suppressed_mixed);
+    }
+
+    #[test]
+    fn resolve_phase_from_evidence_avoids_mixed_promotion_when_gap_is_large() {
+        let thermo = ThermoPhaseEvidence {
+            scores: PhaseScores {
+                rain: 4.8,
+                mixed: 2.6,
+                snow: 4.6,
+            },
+            phase: PHASE_RAIN,
+            confidence: 0.03,
+            signal_count: 3,
+            near_transition: true,
+            precip_flag_phase: None,
+            rqi: Some(0.85),
+        };
+        let resolution = resolve_phase_from_evidence(thermo, None, false);
+        assert_eq!(resolution.phase, PHASE_RAIN);
     }
 
     #[test]
