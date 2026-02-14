@@ -39,14 +39,14 @@
 - `app/` — Next.js routes, server actions (`actions-lib/`), API proxies (`api/`), client UI (`app-client/`), and 3D scene components (`scene/`)
 - `lib/` — shared types, SQLite singleton, spatial index, and CIFP parser (`cifp/`)
 - `services/runtime-rs/` — Rust runtime service (MRMS ingest/query + ADS-B decode/query APIs), with source split by concern under `src/` (`api.rs`, `traffic_api.rs`, `ingest.rs`, `grib.rs`, `storage.rs`, `discovery.rs`, `config.rs`, `types.rs`, `utils.rs`, `constants.rs`)
-- `scripts/` — data download/build scripts, MRMS provisioning helper (`scripts/mrms/setup_sns_sqs.py`), runtime deploy helper (`scripts/runtime/deploy_oci.sh`), and dev launcher (`dev-with-ddtrace.mjs`)
-- `.agents/skills/` — reusable Codex runbooks and helper scripts for operational workflows (for example live runtime validation and OCI deploy)
+- `scripts/` — data download/build scripts, MRMS provisioning helper (`scripts/mrms/setup_sns_sqs.py`), runtime deploy helper (`scripts/runtime/deploy_oci.sh`), legacy deploy redirect (`scripts/mrms/deploy_oci.sh`), and dev launcher (`dev-with-ddtrace.mjs`)
+- `.agents/skills/` — reusable Codex runbooks and helper scripts for operational workflows (`runtime-deploy-oci`, `runtime-validate-live`)
 - `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
 - `data/` — build-time artifacts (SQLite DB, spatial index binaries)
 
 ## Documentation Index
 
-Each area below has a one-sentence summary; full details live in the linked `docs/` file.
+Each area below has a concise summary; full details live in the linked `docs/` files.
 
 ### Data Sources
 
@@ -54,40 +54,34 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 
 ### Architecture
 
-Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
+Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene. An external Rust Axum service (`services/runtime-rs/`) handles MRMS weather ingest/query and ADS-B traffic decode; Next.js routes proxy to this service. Local dev tracing is via Datadog `dd-trace` (`scripts/dev-with-ddtrace.mjs`). CI uses `npx next build` (not `npm run build`) to avoid data download in CI.
 
-- Runtime weather note: MRMS ingest/query moved to `services/runtime-rs/` (Rust Axum service). It consumes SNS->SQS new-object events, ingests/decodes complete scans once, uses the Rust `grib` crate for GRIB2 template decoding (including PNG-packed fields), stores zstd snapshots with 5 GB retention, and serves query-filtered weather payloads through the OCI host: binary reflectivity bricks (`application/vnd.approach-viz.mrms.v2`) and direct echo-top JSON (`EchoTop_18/30/50/60`). v2 payloads perform adaptive brick merging (same phase + quantized dBZ + contiguous spans) to reduce client draw load while preserving full weather coverage. `app/api/weather/nexrad/route.ts` and `app/api/weather/nexrad/echo-tops/route.ts` are thin proxies to that upstream service (`RUNTIME_UPSTREAM_BASE_URL`, fallback `MRMS_BINARY_UPSTREAM_BASE_URL`). Phase resolution is thermodynamic-first (using `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, bright-band heights, and optional RQI), then applies level-matched dual-pol correction (`MergedZdr_<level>`, `MergedRhoHV_<level>`) with staleness/quality weighting; when rain/snow evidence strongly competes it applies bounded mixed-transition promotion plus local edge blending (transition candidates adjacent to opposite rain/snow become mixed) before final mixed suppression guardrails. Stale/sparse dual-pol (>5 minutes) is still down-weighted and flagged as aux-fallback in debug telemetry. Scheduler retries pick the earliest due pending timestamp (not newest-first) to avoid starvation when aux products lag, and bootstrap enqueue scans the most recent 120 base keys so restart catches delayed-complete cycles.
-- Runtime traffic note: ADS-B tar1090 decode/history fetch moved from Next.js request handling into the same Rust runtime service (`/v1/traffic/adsbx`); `app/api/traffic/adsbx/route.ts` is now a thin proxy to that upstream endpoint (`RUNTIME_UPSTREAM_BASE_URL`, fallback `MRMS_BINARY_UPSTREAM_BASE_URL`).
-- Runtime tracing note: local dev startup (`npm run dev`) runs through `scripts/dev-with-ddtrace.mjs`, which preloads env vars (including `DD_API_KEY`) and starts Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so Datadog tracing initializes before server modules.
-
-- [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram
-- [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI
+- [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram (includes runtime service + proxy routes)
+- [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI, agent skills
 - [`docs/architecture-client-and-scene.md`](docs/architecture-client-and-scene.md) — client state orchestration, UI section boundaries, scene composition
-- [`docs/mrms-rust-pipeline.md`](docs/mrms-rust-pipeline.md) — Rust ingest/query design, wire format, deployment, and operations
-- [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md) — thermodynamic-first phase scoring, dual-pol correction weighting, fallback policy, and debug telemetry semantics
+- [`docs/mrms-rust-pipeline.md`](docs/mrms-rust-pipeline.md) — Rust ingest/query design, wire format, deployment, and service endpoints
+- [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md) — thermodynamic-first phase scoring, dual-pol correction weighting, fallback policy, and debug telemetry
 
 ### Rendering
 
-3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and MRMS volumetric precipitation weather (enabled by default) are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
-Airspace sectors with source floors at/near surface (`<= 0 ft MSL`, including parsed `SFC`) clamp their rendered floor to the selected airport elevation before extrusion so high-elevation airports do not show underground airspace volumes; near-sea-level source floors still omit bottom caps/edges to reduce surface shimmer.
-MRMS volume intensity uses phase-aware reflectivity coloring (rain/mixed/snow): server-side phase resolution is thermodynamic-first (precip flag + freezing level + wet-bulb/surface temperature + bright-band context), then applies level-matched dual-pol correction (`MergedZdr`, `MergedRhoHV`) with staleness/quality weighting; when rain/snow evidence strongly competes it promotes a bounded mixed transition and performs local edge blending for transition candidates before mixed-suppression guardrails. Stale/sparse dual-pol is down-weighted and exposed via debug fallback metadata (including `mixed_edge_promoted_voxels`). Rendering uses clip-safe color gain (preserves hue, avoids distant whitening) and transmittance-shaped alpha in a dual-pass `NormalBlending` volume (`depthWrite=false`) to reduce side-view whiteout over wide precipitation fields. MRMS view controls include declutter modes (`All/Low/Mid/High/Top Shell`), a dedicated top-shell highlight toggle, 5,000-ft altitude guides, and a vertical cross-section plane/panel with an altitude Y-axis; cross-sections keep the full thresholded vertical profile regardless of declutter selection. Echo-top caps (`18/30/50 dBZ`) use direct MRMS `EchoTop_*` products from the runtime service (not voxel interpolation), with maxima shown in debug/cross-section UI, and can be rendered even when the 3D precip volume is disabled.
-MRMS client transport decodes compact binary payloads (`application/vnd.approach-viz.mrms.v2`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays.
-MRMS client polling keeps the last successful voxel payload when transient API error payloads arrive, preventing abrupt volume disappearance during upstream hiccups.
-MRMS client polling also clears prior payload immediately when airport context changes, so stale voxels do not linger from the previous location while new volume data is loading.
-MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), using the same origin-local projection scales for both voxel placement and footprint sizing to keep cell spacing contiguous.
-MRMS default reflectivity threshold is 5 dBZ (matching standard aviation radar depiction), with a user-adjustable slider (5–60 dBZ); client-side voxel decimation is disabled so all server-provided records render, with v2 merged-brick encoding handling large-coverage performance.
-Missed-approach direct fix-join legs with explicit turn direction now include curved MAP-to-missed transitions even when the preceding segment is still part of final approach, avoiding hard-corner joins at the first missed fix.
-Missed-approach vertical profiles can enforce published FAA missed-climb requirements parsed from official `missed_instructions` text (`minimum climb of X feet per NM to Y`), and the UI can switch between parsed/published and standard climb-gradient rendering (parsed/published default when available, otherwise standard fallback).
+3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and MRMS volumetric precipitation weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
+
+Key behaviors:
+
+- Airspace sectors with surface floors clamp to airport elevation to prevent underground volumes at high-elevation airports.
+- MRMS volume uses phase-aware reflectivity coloring (rain/mixed/snow), declutter modes, echo-top caps (`18/30/50/60 dBZ`), altitude guides, and vertical cross-sections.
+- Missed-approach geometry includes curved MAP-to-missed transitions and optional published FAA climb-gradient enforcement.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes
+- [`docs/rendering-weather-volume.md`](docs/rendering-weather-volume.md) — MRMS volumetric weather overlay (phase coloring, shading, declutter, echo-tops, cross-sections, transport, instanced rendering)
 - [`docs/rendering-approach-geometry.md`](docs/rendering-approach-geometry.md) — final/missed vertical profiles, turn joins, arc legs, no-fix stubs
 - [`docs/rendering-performance.md`](docs/rendering-performance.md) — memoization, batching, instanced meshes, disposal, DPR capping
 
 ### UI, URL State, and Mobile
 
-URL-path-encoded airport/procedure selection, options panel (including traffic/weather overlays, MRMS declutter/top-shell/echo-top/altitude-guide/cross-section controls, plus missed-climb gradient source toggle) with localStorage persistence, overlay-style selectors, a top-right MRMS loading chip, a collapsible runtime debug panel (MRMS/traffic telemetry + echo-top maxima/timestamps), mobile-first collapsed defaults, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
+URL-path-encoded airport/procedure selection, options panel with localStorage persistence, overlay-style selectors, MRMS loading chip, runtime debug panel, mobile-first collapsed defaults with viewport locking, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
 
 ### Validation
 
-Automated format/lint/typecheck/test/build pipeline followed by manual spot-checks covering RF/AF/hold/missed legs and minima/plate-only procedures. → [`docs/validation.md`](docs/validation.md)
+Automated format/lint/typecheck/test/build pipeline (local full + CI subset using `npx next build`), live runtime integration tests (separate from CI), and manual spot-checks covering RF/AF/hold/missed legs, minima/plate-only procedures, weather/traffic overlays, and mobile viewport behavior. → [`docs/validation.md`](docs/validation.md)
