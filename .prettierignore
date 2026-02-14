@@ -3,5 +3,6 @@ dist
 node_modules
 data
 public/data
+next-env.d.ts
 *.sqlite
 *.png
