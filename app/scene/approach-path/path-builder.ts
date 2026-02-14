@@ -262,8 +262,7 @@ export function buildPathGeometry({
       leg.isMissedApproach &&
       isFixJoinTerminator(leg.pathTerminator) &&
       leg.turnDirection &&
-      previousLeg?.isMissedApproach &&
-      isFixJoinTerminator(previousLeg.pathTerminator);
+      isFixJoinTerminator(previousLeg?.pathTerminator);
 
     if (shouldApplyPendingCourseIntercept) {
       const turnHeading = pendingCourseToFixTurnHeading;

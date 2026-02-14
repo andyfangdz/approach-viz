@@ -329,6 +329,51 @@ test('missed CA-to-CF without explicit turn direction remains linear (no synthet
   assert.ok(maxTurnDegrees(result.points) > 150);
 });
 
+test('first missed fix-join leg with explicit turn direction curves from final segment heading', () => {
+  const refLat = 40;
+  const refLon = -100;
+  const legs = [
+    makeLeg({
+      sequence: 10,
+      waypointId: 'APT_MAP',
+      pathTerminator: 'CF',
+      course: 300,
+      altitude: 1300,
+      isMissedApproach: false
+    }),
+    makeLeg({
+      sequence: 20,
+      waypointId: 'MISSED_FIX',
+      pathTerminator: 'CF',
+      course: 135,
+      turnDirection: 'R',
+      altitude: 3000,
+      isMissedApproach: true
+    })
+  ];
+  const waypoints = new Map<string, Waypoint>([
+    ['APT_MAP', localWaypoint('APT_MAP', 0, 0, refLat, refLon)],
+    ['MISSED_FIX', localWaypoint('MISSED_FIX', 5, 5, refLat, refLon)]
+  ]);
+
+  const result = buildPathGeometry({
+    legs,
+    waypoints,
+    resolvedAltitudes: buildResolvedAltitudes(legs),
+    initialAltitudeFeet: 1200,
+    verticalScale: 1,
+    refLat,
+    refLon,
+    magVar: 0
+  });
+
+  assert.ok(result.points.length > 12);
+  assert.ok(maxTurnDegrees(result.points) < 120);
+  const secondLast = result.points[result.points.length - 2];
+  const last = result.points[result.points.length - 1];
+  const finalHeading = segmentHeadingDegrees(secondLast, last);
+  assert.ok(Math.abs(finalHeading - 135) < 8);
+});
 test('missed CF-to-CF with explicit turn direction renders smooth climbing turn join', () => {
   const refLat = 40;
   const refLon = -100;

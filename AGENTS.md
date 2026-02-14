@@ -70,6 +70,7 @@ MRMS client polling keeps the last successful voxel payload when transient API e
 MRMS client polling also clears prior payload immediately when airport context changes, so stale voxels do not linger from the previous location while new volume data is loading.
 MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), using the same origin-local projection scales for both voxel placement and footprint sizing to keep cell spacing contiguous.
 MRMS default reflectivity threshold is 5 dBZ (matching standard aviation radar depiction), with a user-adjustable slider (5–60 dBZ); client-side voxel decimation is disabled so all server-provided records render, with v2 merged-brick encoding handling large-coverage performance.
+Missed-approach direct fix-join legs with explicit turn direction now include curved MAP-to-missed transitions even when the preceding segment is still part of final approach, avoiding hard-corner joins at the first missed fix.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes
