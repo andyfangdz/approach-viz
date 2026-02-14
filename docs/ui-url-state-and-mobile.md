@@ -17,7 +17,7 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 ## Runtime Status and Debug UI
 
 - When MRMS overlay polling is active, a top-right in-scene status chip (`Loading MRMS...`) appears beneath the navbar/selector region.
-- MRMS vertical cross-section mode displays a bottom-center in-scene slice panel with distance-vs-altitude intensity and current direct echo-top maxima.
+- MRMS vertical cross-section mode displays a bottom-center in-scene slice panel with a labeled altitude Y-axis, distance-vs-altitude intensity, and current direct echo-top maxima.
 - MRMS echo tops can remain enabled even when `MRMS 3D Precip` is off, allowing top-height visualization without volumetric fill.
 - A right-side debug FAB expands into a runtime diagnostics panel with current context plus MRMS/traffic telemetry (enabled/loading/stale/error, voxel/track counts, phase mix, MRMS phase-source mode, aux age/timestamp telemetry, poll timestamps, and backfill state).
 - MRMS and traffic debug panel state is fed from scene overlays via callback props, so telemetry reflects the currently rendered overlay state rather than cached UI assumptions.

@@ -679,6 +679,14 @@ function feetLabel(feet: number | null | undefined): string {
   return `${(feet / 1000).toFixed(1)} kft`;
 }
 
+function altitudeTickLabel(feet: number): string {
+  if (feet <= 0) return 'SFC';
+  const kft = feet / 1000;
+  const rounded = Math.round(kft * 10) / 10;
+  const asInt = Math.round(rounded);
+  return Math.abs(rounded - asInt) < 0.05 ? `${asInt}k` : `${rounded.toFixed(1)}k`;
+}
+
 export function NexradVolumeOverlay({
   refLat,
   refLon,
@@ -1538,6 +1546,27 @@ export function NexradVolumeOverlay({
     [guideData.geometry]
   );
 
+  const crossSectionAltitudeTicks = useMemo(() => {
+    const maxFeet = crossSectionData?.maxTopFeet ?? 0;
+    if (!Number.isFinite(maxFeet) || maxFeet <= 0) return [];
+    const stepFeet = maxFeet <= 15_000 ? 2_500 : maxFeet <= 45_000 ? 5_000 : 10_000;
+    const values: number[] = [];
+    for (let feet = 0; feet <= maxFeet; feet += stepFeet) {
+      values.push(feet);
+    }
+    if (values[values.length - 1] !== maxFeet) {
+      values.push(maxFeet);
+    }
+    return values
+      .slice()
+      .reverse()
+      .map((feet) => ({
+        feet,
+        label: altitudeTickLabel(feet),
+        topPercent: (1 - feet / maxFeet) * 100
+      }));
+  }, [crossSectionData?.maxTopFeet]);
+
   if (!enabled) {
     return null;
   }
@@ -1672,7 +1701,22 @@ export function NexradVolumeOverlay({
                 {normalizedCrossSectionHeading}&deg; / {normalizedCrossSectionRange} NM
               </span>
             </div>
-            <canvas ref={sliceCanvasRef} className="mrms-cross-section-canvas" />
+            <div className="mrms-cross-section-body">
+              <div className="mrms-cross-section-y-axis">
+                <div className="mrms-cross-section-y-title">ALT</div>
+                {crossSectionAltitudeTicks.map((tick) => (
+                  <div
+                    key={`mrms-slice-alt-${tick.feet}`}
+                    className="mrms-cross-section-y-tick"
+                    style={{ top: `${tick.topPercent}%` }}
+                  >
+                    <span className="mrms-cross-section-y-mark" />
+                    <span>{tick.label}</span>
+                  </div>
+                ))}
+              </div>
+              <canvas ref={sliceCanvasRef} className="mrms-cross-section-canvas" />
+            </div>
             <div className="mrms-cross-section-footer">
               <span>
                 Echo Tops 18/30/50: {echoTopSummary18} / {echoTopSummary30} / {echoTopSummary50}

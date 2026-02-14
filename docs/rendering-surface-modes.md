@@ -20,7 +20,7 @@
 - MRMS still uses a dual-pass volume, but both passes use normal blending with lower-density secondary pass so long sightlines do not bleach to white as quickly.
 - MRMS supports declutter modes (`All`, `Low`, `Mid`, `High`, `Top Shell`) and draws a highlighted top-shell subset to make storm-top structure legible in oblique views.
 - Top-shell highlighting is controlled by a dedicated toggle, so the high-altitude shell accent can be disabled independently from the main MRMS volume.
-- MRMS altitude guides add 5,000-ft horizontal bands with labels, and a vertical cross-section plane/panel can be enabled to inspect distance-vs-altitude structure.
+- MRMS altitude guides add 5,000-ft horizontal bands with labels, and a vertical cross-section plane/panel can be enabled to inspect distance-vs-altitude structure with a dedicated altitude Y-axis in the slice panel.
 - Vertical cross-section sampling uses the full filtered-by-threshold voxel profile (not declutter-pruned voxels), so slice structure remains complete while declutter only affects 3D volume visibility.
 - Echo-top overlays render threshold-specific cap surfaces (`18/30/50 dBZ`) to expose top heights directly.
 - Echo-top overlays can be displayed even when MRMS 3D precipitation volume rendering is disabled.
