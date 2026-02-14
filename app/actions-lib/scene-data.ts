@@ -3,6 +3,7 @@ import { airportsWithinNm } from '@/lib/airport-index';
 import type { SceneData } from '@/lib/types';
 import { NEARBY_AIRPORT_RADIUS_NM, ELEVATION_AIRPORT_RADIUS_NM } from './constants';
 import { computeGeoidSeparationFeet } from './geo';
+import { extractMissedApproachClimbRequirement } from './missed-approach-climb';
 import {
   applyExternalVerticalAngleToApproach,
   buildApproachOptions,
@@ -30,7 +31,8 @@ function emptySceneData(): SceneData {
     elevationAirports: [],
     airspace: [],
     minimumsSummary: null,
-    approachPlate: null
+    approachPlate: null,
+    missedApproachClimbRequirement: null
   };
 }
 
@@ -99,6 +101,8 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     currentApproach,
     selectedExternalApproach
   );
+  const missedApproachClimbRequirement =
+    extractMissedApproachClimbRequirement(selectedExternalApproach);
 
   const runways = db
     .prepare('SELECT id, lat, lon FROM runways WHERE airport_id = ? ORDER BY id')
@@ -140,9 +144,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
         distanceNm: c.distNm
       };
     })
-    .filter(
-      (item): item is NonNullable<typeof item> => item !== null && item.runways.length > 0
-    )
+    .filter((item): item is NonNullable<typeof item> => item !== null && item.runways.length > 0)
     .slice(0, 8);
 
   // Elevation-only airports covering the full traffic radius (80 NM)
@@ -179,6 +181,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
       airport.id,
       selectedApproachOption,
       currentApproachWithVerticalProfile
-    )
+    ),
+    missedApproachClimbRequirement
   };
 }

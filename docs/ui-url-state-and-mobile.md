@@ -9,7 +9,7 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 ## Options Panel
 
-- Exposed controls: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle, `Live ADS-B Traffic`, `MRMS 3D Precip`, `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (20–100%), `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (1–30 min).
+- Exposed controls: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle, `Use Parsed Missed Climb Gradient` (toggles between parsed FAA missed-climb requirements and standard climb-gradient behavior; defaults to parsed when available), `Live ADS-B Traffic`, `MRMS 3D Precip`, `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (20–100%), `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (1–30 min).
 - Live traffic is enabled by default; MRMS volumetric overlay is enabled by default; `Hide Ground Traffic` is disabled by default; default traffic history window is 3 min.
 - All options-panel values are persisted to browser `localStorage` and restored on load.
 

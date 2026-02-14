@@ -20,6 +20,10 @@ export function OptionsPanel({
   onTerrainRadiusNmChange,
   flattenBathymetry,
   onFlattenBathymetryChange,
+  useParsedMissedClimbGradient,
+  hasParsedMissedClimbRequirement,
+  parsedMissedClimbRequirementLabel,
+  onUseParsedMissedClimbGradientChange,
   liveTrafficEnabled,
   onLiveTrafficEnabledChange,
   nexradVolumeEnabled,
@@ -121,6 +125,24 @@ export function OptionsPanel({
           checked={flattenBathymetry}
           onChange={(event) => onFlattenBathymetryChange(event.target.checked)}
           aria-label="Flatten bathymetry"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Use Parsed Missed Climb Gradient</span>
+          <span className="options-toggle-note">
+            {hasParsedMissedClimbRequirement
+              ? `Parsed: ${parsedMissedClimbRequirementLabel}`
+              : 'No parsed FAA missed-climb requirement for this approach'}
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={hasParsedMissedClimbRequirement && useParsedMissedClimbGradient}
+          disabled={!hasParsedMissedClimbRequirement}
+          onChange={(event) => onUseParsedMissedClimbGradientChange(event.target.checked)}
+          aria-label="Use parsed missed climb gradient"
         />
       </label>
 

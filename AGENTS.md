@@ -71,6 +71,7 @@ MRMS client polling also clears prior payload immediately when airport context c
 MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), using the same origin-local projection scales for both voxel placement and footprint sizing to keep cell spacing contiguous.
 MRMS default reflectivity threshold is 5 dBZ (matching standard aviation radar depiction), with a user-adjustable slider (5–60 dBZ); client-side voxel decimation is disabled so all server-provided records render, with v2 merged-brick encoding handling large-coverage performance.
 Missed-approach direct fix-join legs with explicit turn direction now include curved MAP-to-missed transitions even when the preceding segment is still part of final approach, avoiding hard-corner joins at the first missed fix.
+Missed-approach vertical profiles can enforce published FAA missed-climb requirements parsed from official `missed_instructions` text (`minimum climb of X feet per NM to Y`), and the UI can switch between parsed/published and standard climb-gradient rendering (parsed/published default when available).
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes
@@ -79,7 +80,7 @@ Missed-approach direct fix-join legs with explicit turn direction now include cu
 
 ### UI, URL State, and Mobile
 
-URL-path-encoded airport/procedure selection, options panel (including traffic/weather overlays) with localStorage persistence, overlay-style selectors, a top-right MRMS loading chip, a collapsible runtime debug panel (MRMS/traffic telemetry), mobile-first collapsed defaults, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
+URL-path-encoded airport/procedure selection, options panel (including traffic/weather overlays plus missed-climb gradient source toggle) with localStorage persistence, overlay-style selectors, a top-right MRMS loading chip, a collapsible runtime debug panel (MRMS/traffic telemetry), mobile-first collapsed defaults, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
 
 ### Validation
 

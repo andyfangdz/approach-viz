@@ -52,6 +52,11 @@ export interface ApproachPlate {
   plateFile: string;
 }
 
+export interface MissedApproachClimbRequirement {
+  feetPerNm: number;
+  targetAltitudeFeet?: number;
+}
+
 export interface NearbyAirport {
   airport: Airport;
   runways: RunwayThreshold[];
@@ -78,4 +83,5 @@ export interface SceneData {
   airspace: AirspaceFeature[];
   minimumsSummary: MinimumsSummary | null;
   approachPlate: ApproachPlate | null;
+  missedApproachClimbRequirement: MissedApproachClimbRequirement | null;
 }

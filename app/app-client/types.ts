@@ -83,6 +83,7 @@ export interface SceneCanvasProps {
   surfaceErrorMessage: string;
   recenterNonce: number;
   missedApproachStartAltitudeFeet?: number;
+  missedApproachClimbRequirement: SceneData['missedApproachClimbRequirement'];
   onSatelliteRuntimeError: (message: string, error?: Error) => void;
   onNexradDebugChange?: (debug: NexradDebugState) => void;
   onTrafficDebugChange?: (debug: TrafficDebugState) => void;
@@ -110,6 +111,10 @@ export interface OptionsPanelProps {
   onTerrainRadiusNmChange: (radiusNm: number) => void;
   flattenBathymetry: boolean;
   onFlattenBathymetryChange: (enabled: boolean) => void;
+  useParsedMissedClimbGradient: boolean;
+  hasParsedMissedClimbRequirement: boolean;
+  parsedMissedClimbRequirementLabel: string;
+  onUseParsedMissedClimbGradientChange: (enabled: boolean) => void;
   liveTrafficEnabled: boolean;
   onLiveTrafficEnabledChange: (enabled: boolean) => void;
   nexradVolumeEnabled: boolean;

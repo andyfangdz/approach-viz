@@ -1,4 +1,5 @@
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
+import type { MissedApproachClimbRequirement } from '@/lib/types';
 import { MISSED_DEFAULT_CLIMB_FT_PER_NM } from './constants';
 import { latLonToLocal, resolveWaypoint } from './coordinates';
 
@@ -240,7 +241,8 @@ export function resolveMissedApproachAltitudes(
   waypoints: Map<string, Waypoint>,
   refLat: number,
   refLon: number,
-  startAltitudeFeet?: number
+  startAltitudeFeet?: number,
+  missedApproachClimbRequirement?: MissedApproachClimbRequirement | null
 ): Map<ApproachLeg, number> {
   const adjusted = new Map(baseAltitudes);
   if (missedLegs.length === 0) {
@@ -304,6 +306,19 @@ export function resolveMissedApproachAltitudes(
     cumulativeDistanceNm[index] = cumulative;
   }
 
+  const climbRequirementFeetPerNm = missedApproachClimbRequirement?.feetPerNm;
+  const hasClimbRequirement =
+    typeof climbRequirementFeetPerNm === 'number' &&
+    Number.isFinite(climbRequirementFeetPerNm) &&
+    climbRequirementFeetPerNm > 0;
+  const targetAltitudeCandidate = missedApproachClimbRequirement?.targetAltitudeFeet;
+  const climbRequirementTargetAltitudeFeet =
+    typeof targetAltitudeCandidate === 'number' &&
+    Number.isFinite(targetAltitudeCandidate) &&
+    targetAltitudeCandidate > computedStartAltitude
+      ? targetAltitudeCandidate
+      : undefined;
+
   const anchors: Array<{ index: number; altitude: number }> = [
     { index: 0, altitude: computedStartAltitude }
   ];
@@ -353,6 +368,17 @@ export function resolveMissedApproachAltitudes(
     let renderedAltitude = profile[index];
     if (index > 0) {
       renderedAltitude = Math.max(renderedAltitude, profile[index - 1]);
+    }
+    if (hasClimbRequirement) {
+      const requiredUnboundedAltitude =
+        computedStartAltitude + cumulativeDistanceNm[index] * climbRequirementFeetPerNm;
+      const requiredClimbAltitude =
+        typeof climbRequirementTargetAltitudeFeet === 'number'
+          ? Math.min(requiredUnboundedAltitude, climbRequirementTargetAltitudeFeet)
+          : requiredUnboundedAltitude;
+      if (Number.isFinite(requiredClimbAltitude) && requiredClimbAltitude > renderedAltitude) {
+        renderedAltitude = requiredClimbAltitude;
+      }
     }
     const publishedAltitude = leg.altitude;
     if (

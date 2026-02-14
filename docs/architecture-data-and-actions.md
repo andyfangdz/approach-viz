@@ -25,6 +25,7 @@
 ## External Metadata and Matching Rules
 
 - Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions-lib/approaches.ts` and included in scene payloads for client rendering.
+- Matched external approach metadata is also used to parse official missed-climb requirements from `missed_instructions` text (`minimum climb of X feet per NM to Y`), which are included in scene payloads for missed-approach vertical-profile rendering.
 - CIFP-to-minima/plate matching uses runway + type-family scoring.
 - `VOR/DME` procedures prefer `VOR/DME`/`TACAN` external approaches over same-runway RNAV rows.
 - Selector data merges CIFP procedures with minima/plate-only procedures missing CIFP geometry; these still show minimums/plate and indicate geometry is unavailable from CIFP.

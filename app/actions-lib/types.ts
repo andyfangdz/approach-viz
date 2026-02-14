@@ -73,6 +73,7 @@ export interface ExternalApproach {
   plate_file?: string;
   types: string[];
   runway: string | null;
+  missed_instructions?: string | null;
   minimums: ApproachMinimums[];
   vertical_profile?: ExternalVerticalProfile | null;
 }

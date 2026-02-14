@@ -17,6 +17,7 @@ External data feeds and their ingestion paths.
 
 - Source: `ammaraskar/faa-instrument-approach-db` GitHub release asset `approaches.json`.
 - Provides per-approach MDA/DA, visibility, and vertical-profile data (VDA, TCH).
+- Also provides official `missed_instructions` text used to parse published missed-climb requirements (`minimum climb of X feet per NM to Y`) for missed-approach vertical-profile rendering when available.
 - Matched to CIFP procedures by runway + type-family scoring (see `docs/architecture-data-and-actions.md`).
 
 ## FAA Approach Plates (PDF)

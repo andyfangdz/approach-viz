@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
+import { extractMissedApproachClimbRequirement } from '@/app/actions-lib/missed-approach-climb';
 import { buildPathGeometry } from './path-builder';
 import { reciprocalRunwayId, buildRunwaySegments, parseRunwayId } from './runway-geometry';
 import {
@@ -16,6 +17,7 @@ import {
   buildHoldPoints,
   buildRfArcPoints
 } from './curves';
+import { resolveMissedApproachAltitudes } from './altitudes';
 
 function makeLeg(overrides: Partial<ApproachLeg>): ApproachLeg {
   return {
@@ -228,6 +230,94 @@ test('path geometry builds direct final segment CF path between waypoints', () =
   assert.ok(Math.abs(result.points[0].x - 0) < 0.05);
   assert.ok(Math.abs(result.points[1].x - 3) < 0.08);
   assert.equal(result.verticalLines.length, 2);
+});
+
+test('missed-instructions parser extracts strongest published climb requirement', () => {
+  const requirement = extractMissedApproachClimbRequirement({
+    name: 'RNAV (RNP) Z RWY 30',
+    types: ['RNAV (RNP)'],
+    runway: 'RW30',
+    minimums: [],
+    missed_instructions:
+      'MISSED APPROACH: Climb to 6000 on track 300° to KULOC. Missed approach requires minimum climb of 320 feet per NM to 5500. * # Missed approach requires minimum climb of 325 feet per NM to 5500.'
+  });
+
+  assert.deepEqual(requirement, {
+    feetPerNm: 325,
+    targetAltitudeFeet: 5500
+  });
+});
+
+test('missed altitude profile enforces published minimum climb gradient when provided', () => {
+  const refLat = 40;
+  const refLon = -100;
+  const legs = [
+    makeLeg({
+      sequence: 10,
+      waypointId: 'APT_MAP',
+      pathTerminator: 'TF',
+      altitude: 1300,
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 20,
+      waypointId: 'APT_KULOC',
+      pathTerminator: 'TF',
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 30,
+      waypointId: 'APT_FEXUB',
+      pathTerminator: 'RF',
+      course: 135,
+      isMissedApproach: true
+    }),
+    makeLeg({
+      sequence: 40,
+      waypointId: 'APT_QUINT',
+      pathTerminator: 'TF',
+      altitude: 6000,
+      isMissedApproach: true
+    })
+  ];
+
+  const waypoints = new Map<string, Waypoint>([
+    ['APT_MAP', localWaypoint('APT_MAP', 0, 0, refLat, refLon)],
+    ['APT_KULOC', localWaypoint('APT_KULOC', -2.6, 4.6, refLat, refLon)],
+    ['APT_FEXUB', localWaypoint('APT_FEXUB', 3.8, 10.2, refLat, refLon)],
+    ['APT_QUINT', localWaypoint('APT_QUINT', 12, -1, refLat, refLon)]
+  ]);
+
+  const baseAltitudes = new Map<ApproachLeg, number>(
+    legs.map((leg) => [leg, leg.altitude ?? 1300])
+  );
+
+  const withoutRequirement = resolveMissedApproachAltitudes(
+    legs,
+    baseAltitudes,
+    waypoints,
+    refLat,
+    refLon,
+    1300
+  );
+  const withRequirement = resolveMissedApproachAltitudes(
+    legs,
+    baseAltitudes,
+    waypoints,
+    refLat,
+    refLon,
+    1300,
+    { feetPerNm: 325, targetAltitudeFeet: 5500 }
+  );
+
+  const fexubNoRequirement = withoutRequirement.get(legs[2]) ?? 0;
+  const fexubWithRequirement = withRequirement.get(legs[2]) ?? 0;
+  const quintWithRequirement = withRequirement.get(legs[3]) ?? 0;
+
+  assert.ok(fexubNoRequirement < 5000);
+  assert.ok(fexubWithRequirement >= 5490);
+  assert.ok(fexubWithRequirement > fexubNoRequirement + 800);
+  assert.ok(quintWithRequirement >= 6000);
 });
 
 test('missed CA-to-CF with explicit turn direction renders smooth curved join', () => {

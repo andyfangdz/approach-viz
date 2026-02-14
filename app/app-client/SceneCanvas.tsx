@@ -71,6 +71,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   surfaceErrorMessage,
   recenterNonce,
   missedApproachStartAltitudeFeet,
+  missedApproachClimbRequirement,
   onSatelliteRuntimeError,
   onNexradDebugChange,
   onTrafficDebugChange
@@ -167,6 +168,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             runways={sceneData.runways}
             verticalScale={verticalScale}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
+            missedApproachClimbRequirement={missedApproachClimbRequirement}
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'
             }

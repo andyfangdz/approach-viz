@@ -5,6 +5,7 @@
 
 import { memo, useMemo } from 'react';
 import type { Approach, ApproachLeg, Airport, RunwayThreshold, Waypoint } from '@/lib/cifp/parser';
+import type { MissedApproachClimbRequirement } from '@/lib/types';
 import {
   applyGlidepathInsideFaf,
   resolveMissedApproachAltitudes,
@@ -25,6 +26,7 @@ interface ApproachPathProps {
   runways: RunwayThreshold[];
   verticalScale: number;
   missedApproachStartAltitudeFeet?: number;
+  missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
   applyEarthCurvatureCompensation?: boolean;
   nearbyAirports: Array<{
     airport: Airport;
@@ -40,6 +42,7 @@ export const ApproachPath = memo(function ApproachPath({
   runways,
   verticalScale,
   missedApproachStartAltitudeFeet,
+  missedApproachClimbRequirement,
   applyEarthCurvatureCompensation = false,
   nearbyAirports
 }: ApproachPathProps) {
@@ -126,11 +129,13 @@ export const ApproachPath = memo(function ApproachPath({
         waypoints,
         refLat,
         refLon,
-        missedApproachStartAltitudeFeet
+        missedApproachStartAltitudeFeet,
+        missedApproachClimbRequirement
       ),
     [
       approach.missedLegs,
       missedApproachStartAltitudeFeet,
+      missedApproachClimbRequirement,
       resolvedAltitudes,
       waypoints,
       refLat,

@@ -49,6 +49,7 @@ interface PersistedOptionsState {
   verticalScale?: number;
   terrainRadiusNm?: number;
   flattenBathymetry?: boolean;
+  useParsedMissedClimbGradient?: boolean;
   liveTrafficEnabled?: boolean;
   hideGroundTraffic?: boolean;
   showTrafficCallsigns?: boolean;
@@ -154,6 +155,7 @@ export function AppClient({
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
   const [terrainRadiusNm, setTerrainRadiusNm] = useState<number>(DEFAULT_TERRAIN_RADIUS_NM);
   const [flattenBathymetry, setFlattenBathymetry] = useState(true);
+  const [useParsedMissedClimbGradient, setUseParsedMissedClimbGradient] = useState(true);
   const [liveTrafficEnabled, setLiveTrafficEnabled] = useState(true);
   const [hideGroundTraffic, setHideGroundTraffic] = useState(false);
   const [showTrafficCallsigns, setShowTrafficCallsigns] = useState(false);
@@ -196,6 +198,9 @@ export function AppClient({
         }
         if (typeof persisted.flattenBathymetry === 'boolean') {
           setFlattenBathymetry(persisted.flattenBathymetry);
+        }
+        if (typeof persisted.useParsedMissedClimbGradient === 'boolean') {
+          setUseParsedMissedClimbGradient(persisted.useParsedMissedClimbGradient);
         }
         if (typeof persisted.liveTrafficEnabled === 'boolean') {
           setLiveTrafficEnabled(persisted.liveTrafficEnabled);
@@ -240,6 +245,7 @@ export function AppClient({
       verticalScale,
       terrainRadiusNm,
       flattenBathymetry,
+      useParsedMissedClimbGradient,
       liveTrafficEnabled,
       hideGroundTraffic,
       showTrafficCallsigns,
@@ -254,6 +260,7 @@ export function AppClient({
     verticalScale,
     terrainRadiusNm,
     flattenBathymetry,
+    useParsedMissedClimbGradient,
     liveTrafficEnabled,
     hideGroundTraffic,
     showTrafficCallsigns,
@@ -394,6 +401,25 @@ export function AppClient({
     sceneData.minimumsSummary?.da?.altitude ??
     sceneData.minimumsSummary?.mda?.altitude ??
     undefined;
+  const hasParsedMissedClimbRequirement = Boolean(sceneData.missedApproachClimbRequirement);
+  const parsedMissedClimbRequirementLabel = useMemo(() => {
+    const requirement = sceneData.missedApproachClimbRequirement;
+    if (!requirement) return '';
+    const roundedFeetPerNm = Math.round(requirement.feetPerNm * 10) / 10;
+    const feetPerNmText =
+      Math.abs(roundedFeetPerNm - Math.round(roundedFeetPerNm)) < 1e-6
+        ? `${Math.round(roundedFeetPerNm)}`
+        : `${roundedFeetPerNm.toFixed(1)}`;
+    const targetText =
+      typeof requirement.targetAltitudeFeet === 'number'
+        ? ` to ${Math.round(requirement.targetAltitudeFeet)} ft`
+        : '';
+    return `${feetPerNmText} ft/NM${targetText}`;
+  }, [sceneData.missedApproachClimbRequirement]);
+  const effectiveMissedApproachClimbRequirement =
+    useParsedMissedClimbGradient && hasParsedMissedClimbRequirement
+      ? sceneData.missedApproachClimbRequirement
+      : null;
   const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' =
     surfaceMode === 'plate'
       ? hasApproachPlate
@@ -497,6 +523,7 @@ export function AppClient({
             surfaceErrorMessage={surfaceErrorMessage}
             recenterNonce={recenterNonce}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
+            missedApproachClimbRequirement={effectiveMissedApproachClimbRequirement}
             onSatelliteRuntimeError={handleSatelliteRuntimeError}
             onNexradDebugChange={setNexradDebug}
             onTrafficDebugChange={setTrafficDebug}
@@ -564,6 +591,10 @@ export function AppClient({
           }
           flattenBathymetry={flattenBathymetry}
           onFlattenBathymetryChange={setFlattenBathymetry}
+          useParsedMissedClimbGradient={useParsedMissedClimbGradient}
+          hasParsedMissedClimbRequirement={hasParsedMissedClimbRequirement}
+          parsedMissedClimbRequirementLabel={parsedMissedClimbRequirementLabel}
+          onUseParsedMissedClimbGradientChange={setUseParsedMissedClimbGradient}
           liveTrafficEnabled={liveTrafficEnabled}
           onLiveTrafficEnabledChange={setLiveTrafficEnabled}
           nexradVolumeEnabled={nexradVolumeEnabled}
