@@ -60,7 +60,7 @@ This document defines the current server-side voxel phase resolver (`rain`, `mix
 
 ## Debug Telemetry
 
-`/v1/meta` and `/v1/volume` headers expose:
+`/v1/meta` and `/v1/weather/volume` headers expose (legacy weather alias `/v1/volume` is identical):
 
 - `phaseMode`: one of
   - `thermo-primary`

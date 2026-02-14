@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio MRMS service, `grib` crate decoding) + AWS SNS/SQS + `dd-trace` + ESLint/Prettier
+- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio runtime service for MRMS + ADS-B, `grib` crate decoding) + AWS SNS/SQS + `dd-trace` + ESLint/Prettier
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -22,23 +22,24 @@
 - Run full automated tests (parser + geometry): `npm run test`
 - Run CIFP parser fixture tests: `npm run test:parser`
 - Run geometry unit tests (path/curve/runway math): `npm run test:geometry`
+- Run live runtime integration tests (MRMS + traffic; requires internet/live upstream): `npm run test:integration:runtime`
 - Lint codebase with ESLint: `npm run lint`
 - Type-check without emit: `npm run typecheck`
 - Format codebase with Prettier: `npm run format`
 - Verify Prettier formatting: `npm run format:check`
-- Check Rust MRMS service compile: `cargo check --manifest-path services/mrms-rs/Cargo.toml`
+- Check Rust runtime service compile: `cargo check --manifest-path services/runtime-rs/Cargo.toml`
 - Dev server: `npm run dev` (loads `.env.local`, preloads Datadog tracer, then starts `next dev`)
 - Production build (also refreshes data): `npm run build`
 - Run production server: `npm run start`
 - Create MRMS SNS/SQS subscription wiring: `python3 scripts/mrms/setup_sns_sqs.py`
-- Deploy MRMS Rust service to OCI host: `MRMS_SQS_QUEUE_URL=... scripts/mrms/deploy_oci.sh ubuntu@100.86.128.122` (script waits for local `/healthz` readiness after restart before final `/v1/meta` smoke check)
+- Deploy Rust runtime service to OCI host: `RUNTIME_MRMS_SQS_QUEUE_URL=... scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122` (script waits for local `/healthz` readiness after restart before final `/v1/meta` smoke check)
 
 ## Directory Layout
 
 - `app/` — Next.js routes, server actions (`actions-lib/`), API proxies (`api/`), client UI (`app-client/`), and 3D scene components (`scene/`)
 - `lib/` — shared types, SQLite singleton, spatial index, and CIFP parser (`cifp/`)
-- `services/mrms-rs/` — Rust MRMS ingest/query service (SQS consumer + binary weather API), with source split by concern under `src/` (`api.rs`, `ingest.rs`, `grib.rs`, `storage.rs`, `discovery.rs`, `config.rs`, `types.rs`, `utils.rs`, `constants.rs`)
-- `scripts/` — data download/build scripts, MRMS provisioning/deploy helpers (`scripts/mrms/*`), and dev launcher (`dev-with-ddtrace.mjs`)
+- `services/runtime-rs/` — Rust runtime service (MRMS ingest/query + ADS-B decode/query APIs), with source split by concern under `src/` (`api.rs`, `traffic_api.rs`, `ingest.rs`, `grib.rs`, `storage.rs`, `discovery.rs`, `config.rs`, `types.rs`, `utils.rs`, `constants.rs`)
+- `scripts/` — data download/build scripts, MRMS provisioning helper (`scripts/mrms/setup_sns_sqs.py`), runtime deploy helper (`scripts/runtime/deploy_oci.sh`), and dev launcher (`dev-with-ddtrace.mjs`)
 - `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
 - `data/` — build-time artifacts (SQLite DB, spatial index binaries)
 
@@ -48,13 +49,14 @@ Each area below has a one-sentence summary; full details live in the linked `doc
 
 ### Data Sources
 
-CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and runtime MRMS 3D reflectivity weather are ingested/proxied from FAA and third-party feeds into SQLite (build-time), Next.js API routes (runtime), and an external Rust MRMS ingestion service (runtime weather). → [`docs/data-sources.md`](docs/data-sources.md)
+CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and runtime MRMS 3D reflectivity weather are ingested/proxied from FAA and third-party feeds into SQLite (build-time), Next.js API routes (runtime), and an external Rust runtime service (runtime weather + traffic decoding). → [`docs/data-sources.md`](docs/data-sources.md)
 
 ### Architecture
 
 Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene.
 
-- Runtime weather note: MRMS ingest/query moved to `services/mrms-rs/` (Rust Axum service). It consumes SNS->SQS new-object events, ingests/decodes complete scans once, uses the Rust `grib` crate for GRIB2 template decoding (including PNG-packed fields), stores zstd snapshots with 5 GB retention, and serves query-filtered binary voxel payloads (`application/vnd.approach-viz.mrms.v2`) through the OCI host. v2 payloads perform adaptive brick merging (same phase + quantized dBZ + contiguous spans) to reduce client draw load while preserving full weather coverage. `app/api/weather/nexrad/route.ts` is now a thin proxy to that upstream service. Phase resolution is thermodynamic-first (using `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, bright-band heights, and optional RQI), then applies level-matched dual-pol correction (`MergedZdr_<level>`, `MergedRhoHV_<level>`) with staleness/quality weighting; when rain/snow evidence strongly competes it applies bounded mixed-transition promotion plus local edge blending (transition candidates adjacent to opposite rain/snow become mixed) before final mixed suppression guardrails. Stale/sparse dual-pol (>5 minutes) is still down-weighted and flagged as aux-fallback in debug telemetry. Scheduler retries pick the earliest due pending timestamp (not newest-first) to avoid starvation when aux products lag, and bootstrap enqueue scans the most recent 120 base keys so restart catches delayed-complete cycles.
+- Runtime weather note: MRMS ingest/query moved to `services/runtime-rs/` (Rust Axum service). It consumes SNS->SQS new-object events, ingests/decodes complete scans once, uses the Rust `grib` crate for GRIB2 template decoding (including PNG-packed fields), stores zstd snapshots with 5 GB retention, and serves query-filtered binary voxel payloads (`application/vnd.approach-viz.mrms.v2`) through the OCI host. v2 payloads perform adaptive brick merging (same phase + quantized dBZ + contiguous spans) to reduce client draw load while preserving full weather coverage. `app/api/weather/nexrad/route.ts` is now a thin proxy to that upstream service (`RUNTIME_UPSTREAM_BASE_URL`, fallback `MRMS_BINARY_UPSTREAM_BASE_URL`). Phase resolution is thermodynamic-first (using `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, bright-band heights, and optional RQI), then applies level-matched dual-pol correction (`MergedZdr_<level>`, `MergedRhoHV_<level>`) with staleness/quality weighting; when rain/snow evidence strongly competes it applies bounded mixed-transition promotion plus local edge blending (transition candidates adjacent to opposite rain/snow become mixed) before final mixed suppression guardrails. Stale/sparse dual-pol (>5 minutes) is still down-weighted and flagged as aux-fallback in debug telemetry. Scheduler retries pick the earliest due pending timestamp (not newest-first) to avoid starvation when aux products lag, and bootstrap enqueue scans the most recent 120 base keys so restart catches delayed-complete cycles.
+- Runtime traffic note: ADS-B tar1090 decode/history fetch moved from Next.js request handling into the same Rust runtime service (`/v1/traffic/adsbx`); `app/api/traffic/adsbx/route.ts` is now a thin proxy to that upstream endpoint (`RUNTIME_UPSTREAM_BASE_URL`, fallback `MRMS_BINARY_UPSTREAM_BASE_URL`).
 - Runtime tracing note: local dev startup (`npm run dev`) runs through `scripts/dev-with-ddtrace.mjs`, which preloads env vars (including `DD_API_KEY`) and starts Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so Datadog tracing initializes before server modules.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram

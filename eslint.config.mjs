@@ -9,7 +9,7 @@ export default [
       'output/**',
       'data/**',
       'public/data/**',
-      'services/mrms-rs/target/**'
+      'services/runtime-rs/target/**'
     ]
   },
   {

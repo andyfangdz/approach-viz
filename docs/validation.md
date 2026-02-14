@@ -15,6 +15,17 @@ Run in order after any parser/render/data change:
 7. `npm run test:geometry` — for path/curve/runway/coordinate geometry changes.
 8. `npm run build` — production build (also refreshes data).
 
+## Runtime Integration (Live Network)
+
+Use this when validating deployed runtime service behavior end-to-end:
+
+1. `npm run test:integration:runtime` — verifies traffic (`/v1/traffic/adsbx`) and MRMS (`/v1/meta`, `/v1/weather/volume`) response structure against the configured runtime base URL.
+
+Notes:
+
+- This suite is intentionally separate from `npm run test` because it requires live internet and upstream data availability.
+- Override target host with `RUNTIME_INTEGRATION_BASE_URL` if needed.
+
 ## Manual Spot-Checks
 
 After a successful build, visually verify at least one procedure exercising each of these features:

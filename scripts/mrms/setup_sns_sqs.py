@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--queue-name",
-        default="approach-viz-mrms-oci-useast-arm-4",
+        default="approach-viz-runtime-mrms-oci-useast-arm-4",
         help="SQS queue name to create/update",
     )
     parser.add_argument(
@@ -102,8 +102,9 @@ def main() -> None:
     }
     print(json.dumps(output, indent=2))
     print()
-    print("Set this for the Rust service:")
-    print(f"MRMS_SQS_QUEUE_URL={queue_url}")
+    print("Set this for the Rust runtime service:")
+    print(f"RUNTIME_MRMS_SQS_QUEUE_URL={queue_url}")
+    print("(legacy alias still supported: MRMS_SQS_QUEUE_URL)")
 
 
 if __name__ == "__main__":

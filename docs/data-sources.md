@@ -34,20 +34,20 @@ External data feeds and their ingestion paths.
 ## Live ADS-B Traffic
 
 - Source: ADSB Exchange tar1090 `binCraft+zstd` feed (`/re-api/?binCraft&zstd&box=...`).
-- Fetched through same-origin proxy `app/api/traffic/adsbx/route.ts` with server-side zstd/binCraft decoding.
+- Fetched/decoded by the Rust runtime service (`services/runtime-rs`) endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is a thin proxy.
 - Optional initial trail backfill from tar1090 trace files (`/data/traces/<suffix>/trace_recent_<hex>.json`) when `historyMinutes` is requested.
-- Primary host override: `ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts: `ADSBX_TAR1090_FALLBACK_BASE_URLS`.
+- Primary host override: `RUNTIME_ADSBX_TAR1090_BASE_URL` (legacy alias: `ADSBX_TAR1090_BASE_URL`); optional comma-separated fallback hosts: `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy alias: `ADSBX_TAR1090_FALLBACK_BASE_URLS`).
 
 ## MRMS 3D Volumetric Weather
 
 - Source: NOAA MRMS AWS open data bucket `s3://noaa-mrms-pds` (`CONUS/MergedReflectivityQC_<height_km>` products).
-- Ingestion is event-driven in a Rust service (`services/mrms-rs`) running on OCI: SNS topic `NewMRMSObject` publishes to SQS, and the service ingests complete scans once per timestamp instead of per-client poll.
+- Ingestion is event-driven in the Rust runtime service (`services/runtime-rs`) running on OCI: SNS topic `NewMRMSObject` publishes to SQS, and the service ingests complete scans once per timestamp instead of per-client poll.
 - The service fetches/decode-checks all reflectivity levels (`00.50..19.00 km`) plus level-matched dual-pol products (`MergedZdr_<level>`, `MergedRhoHV_<level>`), decodes GRIB2 through the Rust `grib` crate (including PNG-packed payloads), computes phase-coded voxels, and stores compact zstd-compressed snapshots.
 - Phase resolution is thermodynamic-first and incorporates `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, `BrightBandTopHeight_00.00`, `BrightBandBottomHeight_00.00`, and `RadarQualityIndex_00.00`; dual-pol (`Zdr`/`RhoHV`) acts as a weighted correction layer rather than a hard first-pass classifier.
 - Dual-pol fields are fetched for the same timestamp and altitude slice as reflectivity when available. When dual-pol is sparse/lagging beyond 5 minutes ingest switches to latest available dual-pol timestamps, flags fallback in debug telemetry, and down-weights stale corrections to prevent cycle-mismatch artifacts.
 - Retry scheduling favors the earliest due pending timestamp so delayed-complete cycles are still evaluated even while newer precip events continue arriving.
 - Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v2`) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`); v2 uses merged-brick span records to reduce client draw load.
-- The Next.js route `app/api/weather/nexrad/route.ts` now proxies to the Rust service endpoint, and the client decodes binary payloads directly.
+- The Next.js route `app/api/weather/nexrad/route.ts` now proxies to the Rust runtime endpoint (`/v1/weather/volume`, legacy alias `/v1/volume`), and the client decodes binary payloads directly.
 - Snapshot storage is bounded to `5 GB` (oldest scans pruned first) to fit the OCI host disk budget.
 
 ## Airport Coverage

@@ -36,27 +36,26 @@
 
 ## Live ADS-B Traffic Access
 
-- Live ADS-B traffic is fetched through same-origin proxy `app/api/traffic/adsbx/route.ts`.
-- The proxy targets ADSB Exchange tar1090 `binCraft+zstd` endpoint (`/re-api/?binCraft&zstd&box=...`), applies tar1090-compatible validity-bit parsing, and normalizes aircraft records before client delivery.
-- The proxy supports `hideGround` query filtering (default on) so clients can include or exclude on-ground targets without changing source decoding.
-- When `historyMinutes` is requested, the proxy also fetches per-target recent traces from tar1090 trace files (`/data/traces/<suffix>/trace_recent_<hex>.json`) and returns per-aircraft history points for initial trail backfill.
-- Proxy target host defaults to `https://globe.adsbexchange.com` and can be overridden with `ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts can be supplied via `ADSBX_TAR1090_FALLBACK_BASE_URLS`.
-- On upstream fetch failures, the proxy returns an empty `aircraft` array with an `error` field (HTTP 200) so client polling remains non-fatal.
+- Live ADS-B traffic decode/query runs in the Rust runtime service endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is now a thin same-origin proxy.
+- The runtime endpoint targets ADSB Exchange tar1090 `binCraft+zstd` (`/re-api/?binCraft&zstd&box=...`), applies tar1090-compatible validity-bit parsing, and normalizes aircraft records before delivery.
+- The runtime endpoint supports `hideGround` query filtering and `historyMinutes` trace backfill (`/data/traces/<suffix>/trace_recent_<hex>.json`) for initial trail history.
+- Runtime target host defaults to `https://globe.adsbexchange.com` and can be overridden with `RUNTIME_ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts can be supplied via `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy `ADSBX_*` env aliases still supported).
+- On upstream fetch failures, the runtime endpoint returns an empty `aircraft` array with an `error` field (HTTP 200) so client polling remains non-fatal.
 - Client traffic rendering is optional and independent from SQLite/server-action scene payload assembly.
 
 ## MRMS Weather Access
 
-- 3D precipitation weather ingestion runs in an external Rust service (`services/mrms-rs`) instead of the Next.js request path.
-- The Rust service consumes NOAA SNS new-object notifications through SQS (`NewMRMSObject` -> queue subscription), then ingests MRMS timestamps asynchronously.
+- 3D precipitation weather ingestion runs in the external Rust runtime service (`services/runtime-rs`) instead of the Next.js request path.
+- The runtime service consumes NOAA SNS new-object notifications through SQS (`NewMRMSObject` -> queue subscription), then ingests MRMS timestamps asynchronously.
 - Ingestion fetches/decode-checks all configured reflectivity levels (`00.50..19.00 km`) plus level-matched dual-pol auxiliaries (`MergedZdr_<level>`, `MergedRhoHV_<level>`), decodes GRIB2 templates through the Rust `grib` crate (including PNG-packed fields), resolves per-voxel phase server-side, and persists compact zstd snapshot files.
 - Phase resolution is thermo-first: ingest builds per-voxel rain/mixed/snow evidence from `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, bright-band heights, and optional RQI, then applies weighted dual-pol correction (`MergedZdr`, `MergedRhoHV`) with staleness and quality penalties.
 - Dual-pol auxiliaries are attempted at the exact reflectivity timestamp first; if aux coverage lags (or is sparse/incompatible), ingest uses the latest available dual-pol cycle, marks fallback telemetry (`aux_fallback=yes`), and down-weights dual-pol corrections to avoid stale mixed/rain artifacts.
 - Pending ingest retries are scheduled by earliest-due timestamp (not newest-first) so delayed aux cycles are not starved by newer precip arrivals; startup bootstrap now enqueues a deeper recent-key window to recover the newest complete cycle after restarts.
-- Query endpoint (`/v1/volume`) loads latest snapshot in memory and performs fast request-origin filtering (`lat/lon/minDbz/maxRangeNm`) with tile-indexed voxel subsets before serializing compact binary v2 responses.
+- Query endpoint (`/v1/weather/volume`, with legacy `/v1/volume` alias) loads latest snapshot in memory and performs fast request-origin filtering (`lat/lon/minDbz/maxRangeNm`) with tile-indexed voxel subsets before serializing compact binary v2 responses.
 - v2 serialization performs adaptive brick merging (same phase + quantized dBZ + contiguous spans) so broad precip regions ship as fewer records while retaining full area coverage.
-- Next.js route `app/api/weather/nexrad/route.ts` is now a thin proxy to the Rust endpoint (`MRMS_BINARY_UPSTREAM_BASE_URL`, defaulting to the OCI Tailscale Funnel URL).
+- Next.js route `app/api/weather/nexrad/route.ts` is now a thin proxy to the Rust endpoint (`RUNTIME_UPSTREAM_BASE_URL`, legacy alias `MRMS_BINARY_UPSTREAM_BASE_URL`, defaulting to the OCI Tailscale Funnel URL).
 - Client overlay decodes binary wire payloads directly, with JSON fallback only for error payloads.
-- Snapshot retention is byte-capped (`MRMS_RETENTION_BYTES=5 GB`) with oldest-first pruning.
+- Snapshot retention is byte-capped (`RUNTIME_MRMS_RETENTION_BYTES=5 GB`, legacy alias `MRMS_RETENTION_BYTES`) with oldest-first pruning.
 
 ## CI and Instrumentation
 

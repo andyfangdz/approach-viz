@@ -7,8 +7,9 @@ const REQUEST_TIMEOUT_MS = 8000;
 const DEFAULT_MIN_DBZ = 5;
 const DEFAULT_MAX_RANGE_NM = 120;
 const DEFAULT_UPSTREAM_BASE_URL =
+  process.env.RUNTIME_UPSTREAM_BASE_URL ||
   process.env.MRMS_BINARY_UPSTREAM_BASE_URL ||
-  'https://oci-useast-arm-4.pigeon-justice.ts.net:8443/mrms-v1';
+  'https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1';
 
 function toFiniteNumber(value: string | null): number | null {
   if (!value) return null;
@@ -38,6 +39,21 @@ async function fetchWithTimeout(url: string): Promise<Response> {
 }
 
 function upstreamVolumeUrl(lat: number, lon: number, minDbz: number, maxRangeNm: number): string {
+  const baseUrl = DEFAULT_UPSTREAM_BASE_URL.replace(/\/$/, '');
+  const url = new URL(`${baseUrl}/v1/weather/volume`);
+  url.searchParams.set('lat', lat.toFixed(6));
+  url.searchParams.set('lon', lon.toFixed(6));
+  url.searchParams.set('minDbz', String(minDbz));
+  url.searchParams.set('maxRangeNm', String(maxRangeNm));
+  return url.toString();
+}
+
+function upstreamLegacyVolumeUrl(
+  lat: number,
+  lon: number,
+  minDbz: number,
+  maxRangeNm: number
+): string {
   const baseUrl = DEFAULT_UPSTREAM_BASE_URL.replace(/\/$/, '');
   const url = new URL(`${baseUrl}/v1/volume`);
   url.searchParams.set('lat', lat.toFixed(6));
@@ -76,7 +92,12 @@ export async function GET(request: NextRequest) {
   const upstreamUrl = upstreamVolumeUrl(lat, lon, minDbz, maxRangeNm);
 
   try {
-    const upstreamResponse = await fetchWithTimeout(upstreamUrl);
+    let upstreamResponse = await fetchWithTimeout(upstreamUrl);
+    if (upstreamResponse.status === 404) {
+      upstreamResponse = await fetchWithTimeout(
+        upstreamLegacyVolumeUrl(lat, lon, minDbz, maxRangeNm)
+      );
+    }
     if (!upstreamResponse.ok) {
       const upstreamText = await upstreamResponse.text().catch(() => '');
       return NextResponse.json(

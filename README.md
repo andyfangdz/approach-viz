@@ -7,7 +7,7 @@
 - Next.js 16 (App Router) + React + TypeScript
 - react-three-fiber (3D scene)
 - SQLite (build-time approach/airspace/minimums data)
-- Rust / Axum / Tokio (MRMS weather ingest service, `grib` crate for GRIB2 decoding)
+- Rust / Axum / Tokio (shared runtime service for MRMS weather + ADS-B traffic APIs, `grib` crate for GRIB2 decoding)
 - AWS SNS/SQS (event-driven MRMS scan ingestion)
 - Datadog `dd-trace` (runtime tracing)
 
@@ -54,6 +54,7 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 - Trail history (1–30 min, configurable) with one-time trace backfill on context change
 - Optional callsign labels, ground-traffic hiding, and instanced mesh rendering
 - Aircraft without altitude reports placed at nearest airport field elevation via spatial index
+- ADS-B decode/trace-fetch runs in Rust runtime service (`services/runtime-rs`) via Next.js proxy route
 
 ### MRMS 3D Volumetric Weather
 
@@ -65,7 +66,7 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 - Client renders all records returned by the server (no client-side voxel decimation) with dynamic instancing capacity
 - Soft-edge dual-pass shading keeps the merged volume visually smooth and aurora-like instead of blocky
 - Resilient polling: retains last good payload on transient errors, clears on airport change
-- Powered by a Rust ingest service (`services/mrms-rs`) with compact binary wire format
+- Powered by a Rust runtime service (`services/runtime-rs`) with compact binary wire format
 
 ### Options Panel
 
@@ -113,38 +114,42 @@ npm run start              # run production server
 npm run test               # all tests (parser + geometry)
 npm run test:parser        # CIFP parser fixture tests
 npm run test:geometry      # geometry unit tests
+npm run test:integration:runtime # live runtime integration checks (MRMS + traffic; requires internet)
 
 # Formatting
 npm run format             # format with Prettier
 npm run format:check       # verify formatting
 
-# Rust MRMS service
-cargo check --manifest-path services/mrms-rs/Cargo.toml
+# Rust runtime service
+cargo check --manifest-path services/runtime-rs/Cargo.toml
 ```
 
 ## MRMS Weather Pipeline
 
-MRMS volumetric weather uses an external Rust ingest service (`services/mrms-rs`) that consumes NOAA MRMS scan events via SNS/SQS, decodes GRIB2 data (including PNG-packed fields), stores zstd-compressed snapshots (5 GB retention cap), and serves compact binary voxel payloads (`application/vnd.approach-viz.mrms.v2`).
+MRMS volumetric weather uses an external Rust runtime service (`services/runtime-rs`) that consumes NOAA MRMS scan events via SNS/SQS, decodes GRIB2 data (including PNG-packed fields), stores zstd-compressed snapshots (5 GB retention cap), and serves compact binary voxel payloads (`application/vnd.approach-viz.mrms.v2`).
 
 - Next.js proxy route: `app/api/weather/nexrad/route.ts`
+- Weather runtime endpoint: `/v1/weather/volume` (legacy alias: `/v1/volume`)
+- Traffic runtime endpoint: `/v1/traffic/adsbx` (proxied by `app/api/traffic/adsbx/route.ts`)
 - Rust service docs: [`docs/mrms-rust-pipeline.md`](docs/mrms-rust-pipeline.md)
 - Optional direct client fetch override:
-  - `NEXT_PUBLIC_MRMS_BINARY_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:8443/mrms-v1`
+  - `NEXT_PUBLIC_MRMS_BINARY_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1`
 - Proxy upstream override:
-  - `MRMS_BINARY_UPSTREAM_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:8443/mrms-v1`
+  - `RUNTIME_UPSTREAM_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1`
+  - Legacy alias still supported: `MRMS_BINARY_UPSTREAM_BASE_URL`
 
 ## Data Sources
 
-| Source                | Type                         | Ingestion                             |
-| --------------------- | ---------------------------- | ------------------------------------- |
-| FAA CIFP              | Approach geometry            | Build-time → SQLite                   |
-| FAA Airspace GeoJSON  | Class B/C/D volumes          | Build-time → SQLite                   |
-| FAA Approach Minimums | MDA/DA, VDA, TCH             | Build-time → SQLite                   |
-| FAA Approach Plates   | PDF charts                   | Runtime proxy                         |
-| Terrarium Tiles       | Terrain elevation            | Runtime client fetch                  |
-| Google 3D Tiles       | Satellite / 3D Plate surface | Runtime client fetch                  |
-| ADSB Exchange tar1090 | Live traffic                 | Runtime proxy (5s poll)               |
-| NOAA MRMS             | Volumetric weather           | Rust service → binary API (120s poll) |
+| Source                | Type                         | Ingestion                                |
+| --------------------- | ---------------------------- | ---------------------------------------- |
+| FAA CIFP              | Approach geometry            | Build-time → SQLite                      |
+| FAA Airspace GeoJSON  | Class B/C/D volumes          | Build-time → SQLite                      |
+| FAA Approach Minimums | MDA/DA, VDA, TCH             | Build-time → SQLite                      |
+| FAA Approach Plates   | PDF charts                   | Runtime proxy                            |
+| Terrarium Tiles       | Terrain elevation            | Runtime client fetch                     |
+| Google 3D Tiles       | Satellite / 3D Plate surface | Runtime client fetch                     |
+| ADSB Exchange tar1090 | Live traffic                 | Rust runtime service via proxy (5s poll) |
+| NOAA MRMS             | Volumetric weather           | Rust service → binary API (120s poll)    |
 
 See [`docs/data-sources.md`](docs/data-sources.md) for details.
 

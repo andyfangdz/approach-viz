@@ -58,7 +58,9 @@ pub async fn spawn_background_workers(state: AppState) -> Result<()> {
             }
         });
     } else {
-        warn!("MRMS_SQS_QUEUE_URL is not set; relying only on periodic S3 bootstrap polling.");
+        warn!(
+            "RUNTIME_MRMS_SQS_QUEUE_URL/MRMS_SQS_QUEUE_URL is not set; relying only on periodic S3 bootstrap polling."
+        );
     }
 
     Ok(())

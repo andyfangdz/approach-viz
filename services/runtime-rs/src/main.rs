@@ -6,6 +6,7 @@ mod grib;
 mod http_client;
 mod ingest;
 mod storage;
+mod traffic_api;
 mod types;
 mod utils;
 
@@ -27,6 +28,7 @@ use crate::api::{healthz, meta, volume};
 use crate::config::Config;
 use crate::ingest::{enqueue_latest_from_s3, spawn_background_workers};
 use crate::storage::load_latest_snapshot;
+use crate::traffic_api::traffic_adsbx;
 use crate::types::AppState;
 use crate::utils::init_tracing;
 
@@ -41,7 +43,7 @@ async fn main() -> Result<()> {
 
     let http = Client::builder()
         .timeout(cfg.request_timeout)
-        .user_agent("approach-viz-mrms-rs/1.0")
+        .user_agent("approach-viz-runtime-rs/1.0")
         .build()
         .context("Failed to build reqwest client")?;
 
@@ -65,7 +67,9 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/meta", get(meta))
+        .route("/v1/weather/volume", get(volume))
         .route("/v1/volume", get(volume))
+        .route("/v1/traffic/adsbx", get(traffic_adsbx))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .layer(
@@ -80,7 +84,7 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("Failed to bind {}", cfg.listen_addr))?;
 
-    info!("MRMS rust service listening on {}", cfg.listen_addr);
+    info!("Runtime rust service listening on {}", cfg.listen_addr);
     axum::serve(listener, app)
         .await
         .context("HTTP server failed")?;

@@ -12,6 +12,7 @@
     "test": "npm run test:parser && npm run test:geometry",
     "test:parser": "node --import tsx --test lib/cifp/parser.test.ts",
     "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts",
+    "test:integration:runtime": "node --import tsx --test services/runtime-rs/runtime.integration.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "dev": "npm run prepare-data && node scripts/dev-with-ddtrace.mjs",
