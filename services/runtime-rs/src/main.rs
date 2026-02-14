@@ -24,7 +24,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
-use crate::api::{healthz, meta, volume};
+use crate::api::{echo_tops, healthz, meta, volume};
 use crate::config::Config;
 use crate::ingest::{enqueue_latest_from_s3, spawn_background_workers};
 use crate::storage::load_latest_snapshot;
@@ -68,7 +68,9 @@ async fn main() -> Result<()> {
         .route("/healthz", get(healthz))
         .route("/v1/meta", get(meta))
         .route("/v1/weather/volume", get(volume))
+        .route("/v1/weather/echo-tops", get(echo_tops))
         .route("/v1/volume", get(volume))
+        .route("/v1/echo-tops", get(echo_tops))
         .route("/v1/traffic/adsbx", get(traffic_adsbx))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())

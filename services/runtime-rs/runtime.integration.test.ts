@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const DEFAULT_RUNTIME_BASE_URL =
-  'https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1';
+const DEFAULT_RUNTIME_BASE_URL = 'https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1';
 const DEFAULT_TRAFFIC_LAT = 40.6413; // KJFK area
 const DEFAULT_TRAFFIC_LON = -73.7781;
 const DEFAULT_TRAFFIC_RADIUS_NM = 180;
@@ -72,11 +71,18 @@ test('runtime traffic endpoint returns live aircraft payload', async () => {
   assert.equal(response.status, 200, `Traffic endpoint returned ${response.status}`);
 
   const contentType = response.headers.get('content-type') || '';
-  assert.ok(contentType.toLowerCase().includes('application/json'), 'Traffic response must be JSON');
+  assert.ok(
+    contentType.toLowerCase().includes('application/json'),
+    'Traffic response must be JSON'
+  );
 
   const payload = (await parseJson(response)) as Record<string, unknown>;
   assert.equal(typeof payload.fetchedAtMs, 'number', 'Traffic payload must include fetchedAtMs');
-  assert.equal(Array.isArray(payload.aircraft), true, 'Traffic payload must include aircraft array');
+  assert.equal(
+    Array.isArray(payload.aircraft),
+    true,
+    'Traffic payload must include aircraft array'
+  );
 
   if (typeof payload.error === 'string' && payload.error.length > 0) {
     assert.fail(`Traffic endpoint returned upstream error: ${payload.error}`);
@@ -112,10 +118,7 @@ test('runtime MRMS meta and v2 wire payload are structurally valid', async () =>
   const lat = envNumber('RUNTIME_INTEGRATION_MRMS_LAT', DEFAULT_MRMS_LAT);
   const lon = envNumber('RUNTIME_INTEGRATION_MRMS_LON', DEFAULT_MRMS_LON);
   const minDbz = envNumber('RUNTIME_INTEGRATION_MRMS_MIN_DBZ', DEFAULT_MRMS_MIN_DBZ);
-  const maxRangeNm = envNumber(
-    'RUNTIME_INTEGRATION_MRMS_MAX_RANGE_NM',
-    DEFAULT_MRMS_MAX_RANGE_NM
-  );
+  const maxRangeNm = envNumber('RUNTIME_INTEGRATION_MRMS_MAX_RANGE_NM', DEFAULT_MRMS_MAX_RANGE_NM);
   const volumeUrl = new URL(`${baseUrl}/v1/weather/volume`);
   volumeUrl.searchParams.set('lat', lat.toString());
   volumeUrl.searchParams.set('lon', lon.toString());
@@ -160,5 +163,28 @@ test('runtime MRMS meta and v2 wire payload are structurally valid', async () =>
     payload.byteLength,
     expectedBytes,
     `MRMS payload length mismatch (expected ${expectedBytes}, got ${payload.byteLength})`
+  );
+
+  const echoTopUrl = new URL(`${baseUrl}/v1/weather/echo-tops`);
+  echoTopUrl.searchParams.set('lat', lat.toString());
+  echoTopUrl.searchParams.set('lon', lon.toString());
+  echoTopUrl.searchParams.set('maxRangeNm', maxRangeNm.toString());
+  const echoTopResponse = await fetchWithTimeout(echoTopUrl.toString());
+  assert.equal(echoTopResponse.status, 200, `Echo-top endpoint returned ${echoTopResponse.status}`);
+  const echoTopContentType = (echoTopResponse.headers.get('content-type') || '').toLowerCase();
+  assert.ok(
+    echoTopContentType.includes('application/json'),
+    `Unexpected echo-top content-type: ${echoTopContentType || 'none'}`
+  );
+  const echoTopPayload = (await parseJson(echoTopResponse)) as Record<string, unknown>;
+  assert.equal(
+    Array.isArray(echoTopPayload.cells),
+    true,
+    'Echo-top payload should include cells array'
+  );
+  assert.equal(
+    typeof echoTopPayload.sourceCellCount,
+    'number',
+    'Echo-top payload should include sourceCellCount'
   );
 });

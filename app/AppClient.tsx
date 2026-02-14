@@ -24,6 +24,15 @@ import {
   DEFAULT_NEXRAD_VOLUME_ENABLED,
   DEFAULT_NEXRAD_MIN_DBZ,
   DEFAULT_NEXRAD_OPACITY,
+  DEFAULT_NEXRAD_DECLUTTER_MODE,
+  DEFAULT_NEXRAD_SHOW_TOP_SHELL,
+  DEFAULT_NEXRAD_SHOW_ECHO_TOPS,
+  DEFAULT_NEXRAD_SHOW_ALTITUDE_GUIDES,
+  DEFAULT_NEXRAD_CROSS_SECTION_ENABLED,
+  DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
+  DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
+  MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
+  MAX_NEXRAD_CROSS_SECTION_RANGE_NM,
   MIN_TERRAIN_RADIUS_NM,
   MAX_TERRAIN_RADIUS_NM,
   TERRAIN_RADIUS_STEP_NM,
@@ -35,7 +44,12 @@ import {
   MAX_NEXRAD_OPACITY
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
-import type { NexradDebugState, SurfaceMode, TrafficDebugState } from '@/app/app-client/types';
+import type {
+  NexradDebugState,
+  SurfaceMode,
+  TrafficDebugState,
+  NexradDeclutterMode
+} from '@/app/app-client/types';
 import type { AirportOption, SceneData } from '@/lib/types';
 
 interface AppClientProps {
@@ -57,6 +71,13 @@ interface PersistedOptionsState {
   nexradVolumeEnabled?: boolean;
   nexradMinDbz?: number;
   nexradOpacity?: number;
+  nexradDeclutterMode?: NexradDeclutterMode;
+  nexradShowTopShell?: boolean;
+  nexradShowEchoTops?: boolean;
+  nexradShowAltitudeGuides?: boolean;
+  nexradCrossSectionEnabled?: boolean;
+  nexradCrossSectionHeadingDeg?: number;
+  nexradCrossSectionRangeNm?: number;
 }
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
@@ -83,7 +104,16 @@ const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
     rain: 0,
     mixed: 0,
     snow: 0
-  }
+  },
+  echoTopCellCount: 0,
+  echoTopMax18Feet: null,
+  echoTopMax30Feet: null,
+  echoTopMax50Feet: null,
+  echoTopMax60Feet: null,
+  echoTop18Timestamp: null,
+  echoTop30Timestamp: null,
+  echoTop50Timestamp: null,
+  echoTop60Timestamp: null
 };
 const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
   enabled: false,
@@ -128,6 +158,32 @@ function normalizeNexradOpacity(opacity: number): number {
   return Math.round(clamped * 100) / 100;
 }
 
+const NEXRAD_DECLUTTER_MODES: NexradDeclutterMode[] = ['all', 'low', 'mid', 'high', 'top-shell'];
+
+function normalizeNexradDeclutterMode(mode: unknown): NexradDeclutterMode {
+  return NEXRAD_DECLUTTER_MODES.includes(mode as NexradDeclutterMode)
+    ? (mode as NexradDeclutterMode)
+    : DEFAULT_NEXRAD_DECLUTTER_MODE;
+}
+
+function normalizeNexradCrossSectionHeadingDeg(headingDeg: number): number {
+  if (!Number.isFinite(headingDeg)) return DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG;
+  const normalized = ((Math.round(headingDeg) % 360) + 360) % 360;
+  return normalized;
+}
+
+function normalizeNexradCrossSectionRangeNm(rangeNm: number): number {
+  if (!Number.isFinite(rangeNm)) return DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM;
+  return Math.round(
+    clampValue(
+      rangeNm,
+      MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
+      MAX_NEXRAD_CROSS_SECTION_RANGE_NM,
+      DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM
+    )
+  );
+}
+
 export function AppClient({
   initialAirportOptions,
   initialSceneData,
@@ -165,6 +221,23 @@ export function AppClient({
   const [nexradVolumeEnabled, setNexradVolumeEnabled] = useState(DEFAULT_NEXRAD_VOLUME_ENABLED);
   const [nexradMinDbz, setNexradMinDbz] = useState(DEFAULT_NEXRAD_MIN_DBZ);
   const [nexradOpacity, setNexradOpacity] = useState(DEFAULT_NEXRAD_OPACITY);
+  const [nexradDeclutterMode, setNexradDeclutterMode] = useState<NexradDeclutterMode>(
+    DEFAULT_NEXRAD_DECLUTTER_MODE
+  );
+  const [nexradShowTopShell, setNexradShowTopShell] = useState(DEFAULT_NEXRAD_SHOW_TOP_SHELL);
+  const [nexradShowEchoTops, setNexradShowEchoTops] = useState(DEFAULT_NEXRAD_SHOW_ECHO_TOPS);
+  const [nexradShowAltitudeGuides, setNexradShowAltitudeGuides] = useState(
+    DEFAULT_NEXRAD_SHOW_ALTITUDE_GUIDES
+  );
+  const [nexradCrossSectionEnabled, setNexradCrossSectionEnabled] = useState(
+    DEFAULT_NEXRAD_CROSS_SECTION_ENABLED
+  );
+  const [nexradCrossSectionHeadingDeg, setNexradCrossSectionHeadingDeg] = useState(
+    DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG
+  );
+  const [nexradCrossSectionRangeNm, setNexradCrossSectionRangeNm] = useState(
+    DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM
+  );
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
@@ -230,6 +303,31 @@ export function AppClient({
         if (typeof persisted.nexradOpacity === 'number') {
           setNexradOpacity(normalizeNexradOpacity(persisted.nexradOpacity));
         }
+        if (persisted.nexradDeclutterMode) {
+          setNexradDeclutterMode(normalizeNexradDeclutterMode(persisted.nexradDeclutterMode));
+        }
+        if (typeof persisted.nexradShowTopShell === 'boolean') {
+          setNexradShowTopShell(persisted.nexradShowTopShell);
+        }
+        if (typeof persisted.nexradShowEchoTops === 'boolean') {
+          setNexradShowEchoTops(persisted.nexradShowEchoTops);
+        }
+        if (typeof persisted.nexradShowAltitudeGuides === 'boolean') {
+          setNexradShowAltitudeGuides(persisted.nexradShowAltitudeGuides);
+        }
+        if (typeof persisted.nexradCrossSectionEnabled === 'boolean') {
+          setNexradCrossSectionEnabled(persisted.nexradCrossSectionEnabled);
+        }
+        if (typeof persisted.nexradCrossSectionHeadingDeg === 'number') {
+          setNexradCrossSectionHeadingDeg(
+            normalizeNexradCrossSectionHeadingDeg(persisted.nexradCrossSectionHeadingDeg)
+          );
+        }
+        if (typeof persisted.nexradCrossSectionRangeNm === 'number') {
+          setNexradCrossSectionRangeNm(
+            normalizeNexradCrossSectionRangeNm(persisted.nexradCrossSectionRangeNm)
+          );
+        }
       }
     } catch (error) {
       console.warn('Unable to restore saved options', error);
@@ -252,7 +350,14 @@ export function AppClient({
       trafficHistoryMinutes,
       nexradVolumeEnabled,
       nexradMinDbz,
-      nexradOpacity
+      nexradOpacity,
+      nexradDeclutterMode,
+      nexradShowTopShell,
+      nexradShowEchoTops,
+      nexradShowAltitudeGuides,
+      nexradCrossSectionEnabled,
+      nexradCrossSectionHeadingDeg,
+      nexradCrossSectionRangeNm
     };
     window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
   }, [
@@ -267,7 +372,14 @@ export function AppClient({
     trafficHistoryMinutes,
     nexradVolumeEnabled,
     nexradMinDbz,
-    nexradOpacity
+    nexradOpacity,
+    nexradDeclutterMode,
+    nexradShowTopShell,
+    nexradShowEchoTops,
+    nexradShowAltitudeGuides,
+    nexradCrossSectionEnabled,
+    nexradCrossSectionHeadingDeg,
+    nexradCrossSectionRangeNm
   ]);
 
   useEffect(() => {
@@ -396,7 +508,7 @@ export function AppClient({
 
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const activeErrorMessage = errorMessage || surfaceErrorMessage;
-  const showMrmsLoadingIndicator = nexradVolumeEnabled && nexradDebug.loading;
+  const showMrmsLoadingIndicator = (nexradVolumeEnabled || nexradShowEchoTops) && nexradDebug.loading;
   const missedApproachStartAltitudeFeet =
     sceneData.minimumsSummary?.da?.altitude ??
     sceneData.minimumsSummary?.mda?.altitude ??
@@ -470,6 +582,33 @@ export function AppClient({
     });
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!nexradVolumeEnabled || event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        tagName === 'select' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (event.key.toLowerCase() !== 'v') return;
+      event.preventDefault();
+      setNexradDeclutterMode((current) => {
+        const currentIndex = NEXRAD_DECLUTTER_MODES.indexOf(current);
+        const nextIndex = (currentIndex + 1) % NEXRAD_DECLUTTER_MODES.length;
+        return NEXRAD_DECLUTTER_MODES[nextIndex];
+      });
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [nexradVolumeEnabled]);
+
   return (
     <div className="app">
       <HeaderControls
@@ -517,6 +656,13 @@ export function AppClient({
             nexradVolumeEnabled={nexradVolumeEnabled}
             nexradMinDbz={nexradMinDbz}
             nexradOpacity={nexradOpacity}
+            nexradDeclutterMode={nexradDeclutterMode}
+            nexradShowTopShell={nexradShowTopShell}
+            nexradShowEchoTops={nexradShowEchoTops}
+            nexradShowAltitudeGuides={nexradShowAltitudeGuides}
+            nexradCrossSectionEnabled={nexradCrossSectionEnabled}
+            nexradCrossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
+            nexradCrossSectionRangeNm={nexradCrossSectionRangeNm}
             surfaceMode={surfaceMode}
             satelliteRetryNonce={satelliteRetryNonce}
             satelliteRetryCount={satelliteRetryCount}
@@ -573,6 +719,7 @@ export function AppClient({
           surfaceMode={surfaceMode}
           liveTrafficEnabled={liveTrafficEnabled}
           nexradVolumeEnabled={nexradVolumeEnabled}
+          nexradShowEchoTops={nexradShowEchoTops}
           hasApproachPlate={hasApproachPlate}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
@@ -603,6 +750,24 @@ export function AppClient({
           onNexradMinDbzChange={(dbz) => setNexradMinDbz(normalizeNexradMinDbz(dbz))}
           nexradOpacity={nexradOpacity}
           onNexradOpacityChange={(opacity) => setNexradOpacity(normalizeNexradOpacity(opacity))}
+          nexradDeclutterMode={nexradDeclutterMode}
+          onNexradDeclutterModeChange={setNexradDeclutterMode}
+          nexradShowTopShell={nexradShowTopShell}
+          onNexradShowTopShellChange={setNexradShowTopShell}
+          nexradShowEchoTops={nexradShowEchoTops}
+          onNexradShowEchoTopsChange={setNexradShowEchoTops}
+          nexradShowAltitudeGuides={nexradShowAltitudeGuides}
+          onNexradShowAltitudeGuidesChange={setNexradShowAltitudeGuides}
+          nexradCrossSectionEnabled={nexradCrossSectionEnabled}
+          onNexradCrossSectionEnabledChange={setNexradCrossSectionEnabled}
+          nexradCrossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
+          onNexradCrossSectionHeadingDegChange={(headingDeg) =>
+            setNexradCrossSectionHeadingDeg(normalizeNexradCrossSectionHeadingDeg(headingDeg))
+          }
+          nexradCrossSectionRangeNm={nexradCrossSectionRangeNm}
+          onNexradCrossSectionRangeNmChange={(rangeNm) =>
+            setNexradCrossSectionRangeNm(normalizeNexradCrossSectionRangeNm(rangeNm))
+          }
           hideGroundTraffic={hideGroundTraffic}
           onHideGroundTrafficChange={setHideGroundTraffic}
           showTrafficCallsigns={showTrafficCallsigns}

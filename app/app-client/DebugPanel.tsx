@@ -36,6 +36,11 @@ function formatScanAge(scanTime: string | null): string {
   return `${Math.floor(s / 60)}m${s % 60}s ago`;
 }
 
+function formatFeet(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value <= 0) return 'n/a';
+  return `${Math.round(value).toLocaleString()} ft`;
+}
+
 export function DebugPanel({
   debugCollapsed,
   onToggleDebug,
@@ -174,6 +179,24 @@ export function DebugPanel({
               <span>{nexradDebug.phaseMode || 'n/a'}</span>
             </div>
             <div className="debug-row">
+              <span>EchoTop Cells</span>
+              <span>{nexradDebug.echoTopCellCount}</span>
+            </div>
+            <div className="debug-row">
+              <span>EchoTop 18/30</span>
+              <span>
+                {formatFeet(nexradDebug.echoTopMax18Feet)}/
+                {formatFeet(nexradDebug.echoTopMax30Feet)}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>EchoTop 50/60</span>
+              <span>
+                {formatFeet(nexradDebug.echoTopMax50Feet)}/
+                {formatFeet(nexradDebug.echoTopMax60Feet)}
+              </span>
+            </div>
+            <div className="debug-row">
               <span>Aux Age Z/R</span>
               <span>
                 {formatAgeSeconds(nexradDebug.zdrAgeSeconds)}/
@@ -192,6 +215,20 @@ export function DebugPanel({
               <span>
                 {formatTimestamp(nexradDebug.precipFlagTimestamp)}/
                 {formatTimestamp(nexradDebug.freezingLevelTimestamp)}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>EchoTop Ts 18/30</span>
+              <span>
+                {formatTimestamp(nexradDebug.echoTop18Timestamp)}/
+                {formatTimestamp(nexradDebug.echoTop30Timestamp)}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>EchoTop Ts 50/60</span>
+              <span>
+                {formatTimestamp(nexradDebug.echoTop50Timestamp)}/
+                {formatTimestamp(nexradDebug.echoTop60Timestamp)}
               </span>
             </div>
             <div className="debug-row">

@@ -8,8 +8,19 @@ import {
   MIN_NEXRAD_MIN_DBZ,
   MAX_NEXRAD_MIN_DBZ,
   MIN_NEXRAD_OPACITY,
-  MAX_NEXRAD_OPACITY
+  MAX_NEXRAD_OPACITY,
+  MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
+  MAX_NEXRAD_CROSS_SECTION_RANGE_NM
 } from './constants';
+import type { NexradDeclutterMode } from './types';
+
+const DECLUTTER_MODE_LABELS: Record<NexradDeclutterMode, string> = {
+  all: 'All Layers',
+  low: 'Low (SFC-10k)',
+  mid: 'Mid (10k-25k)',
+  high: 'High (25k+)',
+  'top-shell': 'Top Shell Only'
+};
 
 export function OptionsPanel({
   optionsCollapsed,
@@ -32,6 +43,20 @@ export function OptionsPanel({
   onNexradMinDbzChange,
   nexradOpacity,
   onNexradOpacityChange,
+  nexradDeclutterMode,
+  onNexradDeclutterModeChange,
+  nexradShowTopShell,
+  onNexradShowTopShellChange,
+  nexradShowEchoTops,
+  onNexradShowEchoTopsChange,
+  nexradShowAltitudeGuides,
+  onNexradShowAltitudeGuidesChange,
+  nexradCrossSectionEnabled,
+  onNexradCrossSectionEnabledChange,
+  nexradCrossSectionHeadingDeg,
+  onNexradCrossSectionHeadingDegChange,
+  nexradCrossSectionRangeNm,
+  onNexradCrossSectionRangeNmChange,
   hideGroundTraffic,
   onHideGroundTrafficChange,
   showTrafficCallsigns,
@@ -98,6 +123,112 @@ export function OptionsPanel({
           value={verticalScale}
           onChange={(event) => onVerticalScaleChange(parseFloat(event.target.value))}
           aria-label="Vertical scale"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">MRMS Declutter (V cycles)</span>
+        </span>
+        <select
+          className="options-inline-select"
+          value={nexradDeclutterMode}
+          disabled={!nexradVolumeEnabled}
+          onChange={(event) =>
+            onNexradDeclutterModeChange(event.target.value as NexradDeclutterMode)
+          }
+          aria-label="MRMS declutter mode"
+        >
+          {(Object.keys(DECLUTTER_MODE_LABELS) as NexradDeclutterMode[]).map((mode) => (
+            <option key={mode} value={mode}>
+              {DECLUTTER_MODE_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">MRMS Echo Tops (Direct MRMS)</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={nexradShowEchoTops}
+          onChange={(event) => onNexradShowEchoTopsChange(event.target.checked)}
+          aria-label="Show MRMS echo tops overlay"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">MRMS Top-Shell Highlight</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={nexradShowTopShell}
+          disabled={!nexradVolumeEnabled}
+          onChange={(event) => onNexradShowTopShellChange(event.target.checked)}
+          aria-label="Show MRMS top-shell highlight"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">MRMS Altitude Guides</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={nexradShowAltitudeGuides}
+          disabled={!nexradVolumeEnabled}
+          onChange={(event) => onNexradShowAltitudeGuidesChange(event.target.checked)}
+          aria-label="Show MRMS altitude guides"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">MRMS Vertical Cross-Section</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={nexradCrossSectionEnabled}
+          disabled={!nexradVolumeEnabled}
+          onChange={(event) => onNexradCrossSectionEnabledChange(event.target.checked)}
+          aria-label="Show MRMS vertical cross section"
+        />
+      </label>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">
+            Slice Heading ({nexradCrossSectionHeadingDeg}&deg;)
+          </span>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={359}
+          step={1}
+          value={nexradCrossSectionHeadingDeg}
+          disabled={!nexradVolumeEnabled || !nexradCrossSectionEnabled}
+          onChange={(event) => onNexradCrossSectionHeadingDegChange(Number(event.target.value))}
+          aria-label="MRMS cross section heading degrees"
+        />
+      </label>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Slice Range ({nexradCrossSectionRangeNm} NM)</span>
+        </span>
+        <input
+          type="range"
+          min={MIN_NEXRAD_CROSS_SECTION_RANGE_NM}
+          max={MAX_NEXRAD_CROSS_SECTION_RANGE_NM}
+          step={1}
+          value={nexradCrossSectionRangeNm}
+          disabled={!nexradVolumeEnabled || !nexradCrossSectionEnabled}
+          onChange={(event) => onNexradCrossSectionRangeNmChange(Number(event.target.value))}
+          aria-label="MRMS cross section range nautical miles"
         />
       </label>
 

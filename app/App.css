@@ -695,6 +695,12 @@ textarea,
   box-shadow: 0 0 8px rgba(199, 146, 255, 0.55);
 }
 
+.legend-color.nexrad-echo-top {
+  width: 20px;
+  background: linear-gradient(90deg, #72f1ff 0%, #ffc44a 52%, #ff5a63 100%);
+  box-shadow: 0 0 8px rgba(148, 225, 255, 0.55);
+}
+
 .legend-color.airspace-b {
   background: rgba(0, 102, 255, 0.6);
 }
@@ -790,6 +796,66 @@ textarea,
 .options-slider-row input[type='range'] {
   width: 100%;
   accent-color: var(--accent-cyan);
+}
+
+.options-inline-select {
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 5px 7px;
+  max-width: 170px;
+}
+
+.mrms-altitude-guide-label {
+  color: #d6ecff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px;
+  border: 1px solid rgba(124, 188, 255, 0.35);
+  border-radius: 4px;
+  background: rgba(8, 14, 28, 0.72);
+  pointer-events: none;
+}
+
+.mrms-cross-section-panel {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 12px;
+  width: min(460px, calc(100vw - 28px));
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(111, 165, 220, 0.38);
+  background: rgba(10, 16, 30, 0.88);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 26;
+}
+
+.mrms-cross-section-header,
+.mrms-cross-section-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #cfe6ff;
+}
+
+.mrms-cross-section-canvas {
+  width: 100%;
+  height: 112px;
+  display: block;
+  margin: 6px 0;
+  border-radius: 6px;
+  border: 1px solid rgba(120, 165, 210, 0.35);
+  background: rgba(8, 11, 22, 0.65);
+  image-rendering: pixelated;
 }
 
 .help-panel {
@@ -911,5 +977,10 @@ textarea,
 
   .help-panel {
     display: none;
+  }
+
+  .mrms-cross-section-panel {
+    bottom: 8px;
+    width: calc(100vw - 20px);
   }
 }

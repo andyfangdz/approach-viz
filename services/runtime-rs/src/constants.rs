@@ -11,6 +11,10 @@ pub const MRMS_MODEL_SURFACE_TEMP_PRODUCT: &str = "Model_SurfaceTemp_00.50";
 pub const MRMS_BRIGHT_BAND_TOP_PRODUCT: &str = "BrightBandTopHeight_00.00";
 pub const MRMS_BRIGHT_BAND_BOTTOM_PRODUCT: &str = "BrightBandBottomHeight_00.00";
 pub const MRMS_RQI_PRODUCT: &str = "RadarQualityIndex_00.00";
+pub const MRMS_ECHO_TOP_18_PRODUCT: &str = "EchoTop_18_00.50";
+pub const MRMS_ECHO_TOP_30_PRODUCT: &str = "EchoTop_30_00.50";
+pub const MRMS_ECHO_TOP_50_PRODUCT: &str = "EchoTop_50_00.50";
+pub const MRMS_ECHO_TOP_60_PRODUCT: &str = "EchoTop_60_00.50";
 pub const LEVEL_TAGS: [&str; 33] = [
     "00.50", "00.75", "01.00", "01.25", "01.50", "01.75", "02.00", "02.25", "02.50", "02.75",
     "03.00", "03.50", "04.00", "04.50", "05.00", "05.50", "06.00", "06.50", "07.00", "07.50",

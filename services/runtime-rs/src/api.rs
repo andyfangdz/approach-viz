@@ -30,6 +30,14 @@ pub(crate) struct VolumeQuery {
     max_range_nm: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct EchoTopsQuery {
+    lat: f64,
+    lon: f64,
+    #[serde(default, rename = "maxRangeNm")]
+    max_range_nm: Option<f64>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct MetaResponse {
     ready: bool,
@@ -44,6 +52,24 @@ pub(crate) struct MetaResponse {
     tile_count: usize,
     #[serde(rename = "layerCount")]
     layer_count: usize,
+    #[serde(rename = "echoTopCellCount")]
+    echo_top_cell_count: usize,
+    #[serde(rename = "echoTop18Timestamp")]
+    echo_top18_timestamp: Option<String>,
+    #[serde(rename = "echoTop30Timestamp")]
+    echo_top30_timestamp: Option<String>,
+    #[serde(rename = "echoTop50Timestamp")]
+    echo_top50_timestamp: Option<String>,
+    #[serde(rename = "echoTop60Timestamp")]
+    echo_top60_timestamp: Option<String>,
+    #[serde(rename = "echoTop18MaxFeet")]
+    echo_top18_max_feet: Option<u16>,
+    #[serde(rename = "echoTop30MaxFeet")]
+    echo_top30_max_feet: Option<u16>,
+    #[serde(rename = "echoTop50MaxFeet")]
+    echo_top50_max_feet: Option<u16>,
+    #[serde(rename = "echoTop60MaxFeet")]
+    echo_top60_max_feet: Option<u16>,
     #[serde(rename = "phaseMode")]
     phase_mode: Option<String>,
     #[serde(rename = "phaseDetail")]
@@ -68,6 +94,37 @@ pub(crate) struct MetaResponse {
     sqs_enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EchoTopsResponse {
+    generated_at: Option<String>,
+    scan_time: Option<String>,
+    timestamp: String,
+    source_cell_count: usize,
+    footprint_x_nm: f64,
+    footprint_y_nm: f64,
+    max_top18_feet: Option<u16>,
+    max_top30_feet: Option<u16>,
+    max_top50_feet: Option<u16>,
+    max_top60_feet: Option<u16>,
+    top18_timestamp: Option<String>,
+    top30_timestamp: Option<String>,
+    top50_timestamp: Option<String>,
+    top60_timestamp: Option<String>,
+    cells: Vec<EchoTopCellRecord>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EchoTopCellRecord {
+    x_nm: f32,
+    z_nm: f32,
+    top18_feet: u16,
+    top30_feet: u16,
+    top50_feet: u16,
+    top60_feet: u16,
+}
+
 pub async fn healthz() -> &'static str {
     "ok"
 }
@@ -82,6 +139,15 @@ pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
         voxel_count,
         tile_count,
         layer_count,
+        echo_top_cell_count,
+        echo_top18_timestamp,
+        echo_top30_timestamp,
+        echo_top50_timestamp,
+        echo_top60_timestamp,
+        echo_top18_max_feet,
+        echo_top30_max_feet,
+        echo_top50_max_feet,
+        echo_top60_max_feet,
         phase_mode,
         phase_detail,
         zdr_timestamp,
@@ -99,6 +165,15 @@ pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
             scan.voxels.len(),
             scan.tile_offsets.len().saturating_sub(1),
             scan.level_bounds.len(),
+            scan.echo_tops.len(),
+            scan.echo_top_debug.top18_timestamp.clone(),
+            scan.echo_top_debug.top30_timestamp.clone(),
+            scan.echo_top_debug.top50_timestamp.clone(),
+            scan.echo_top_debug.top60_timestamp.clone(),
+            scan.echo_top_debug.max_top18_feet,
+            scan.echo_top_debug.max_top30_feet,
+            scan.echo_top_debug.max_top50_feet,
+            scan.echo_top_debug.max_top60_feet,
             Some(scan.phase_debug.mode.clone()),
             Some(scan.phase_debug.detail.clone()),
             scan.phase_debug.zdr_timestamp.clone(),
@@ -110,7 +185,30 @@ pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
         )
     } else {
         (
-            false, None, None, None, 0, 0, 0, None, None, None, None, None, None, None, None,
+            false,
+            None,
+            None,
+            None,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
     };
 
@@ -122,6 +220,15 @@ pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
         voxel_count,
         tile_count,
         layer_count,
+        echo_top_cell_count,
+        echo_top18_timestamp,
+        echo_top30_timestamp,
+        echo_top50_timestamp,
+        echo_top60_timestamp,
+        echo_top18_max_feet,
+        echo_top30_max_feet,
+        echo_top50_max_feet,
+        echo_top60_max_feet,
         phase_mode,
         phase_detail,
         zdr_timestamp,
@@ -227,6 +334,26 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
                     headers.insert("X-AV-FREEZING-TIMESTAMP", header);
                 }
             }
+            if let Some(value) = scan.echo_top_debug.top18_timestamp.as_ref() {
+                if let Ok(header) = HeaderValue::from_str(value) {
+                    headers.insert("X-AV-ECHOTOP18-TIMESTAMP", header);
+                }
+            }
+            if let Some(value) = scan.echo_top_debug.top30_timestamp.as_ref() {
+                if let Ok(header) = HeaderValue::from_str(value) {
+                    headers.insert("X-AV-ECHOTOP30-TIMESTAMP", header);
+                }
+            }
+            if let Some(value) = scan.echo_top_debug.top50_timestamp.as_ref() {
+                if let Ok(header) = HeaderValue::from_str(value) {
+                    headers.insert("X-AV-ECHOTOP50-TIMESTAMP", header);
+                }
+            }
+            if let Some(value) = scan.echo_top_debug.top60_timestamp.as_ref() {
+                if let Ok(header) = HeaderValue::from_str(value) {
+                    headers.insert("X-AV-ECHOTOP60-TIMESTAMP", header);
+                }
+            }
             (headers, body).into_response()
         }
         Err(error) => {
@@ -240,6 +367,72 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
                 .into_response()
         }
     }
+}
+
+pub async fn echo_tops(
+    State(state): State<AppState>,
+    Query(query): Query<EchoTopsQuery>,
+) -> Response {
+    if query.lat < -90.0 || query.lat > 90.0 || query.lon < -180.0 || query.lon > 180.0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Invalid lat/lon query parameters."
+            })),
+        )
+            .into_response();
+    }
+
+    let max_range_nm = clamp(
+        query.max_range_nm.unwrap_or(DEFAULT_MAX_RANGE_NM),
+        MIN_ALLOWED_RANGE_NM,
+        MAX_ALLOWED_RANGE_NM,
+    );
+
+    let latest = state.latest.read().await;
+    let Some(scan) = latest.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "No MRMS scan is available yet."
+            })),
+        )
+            .into_response();
+    };
+
+    let window = build_query_window(scan, query.lat, query.lon, DEFAULT_MIN_DBZ, max_range_nm);
+    let cells = build_echo_top_cells(scan, &window);
+    let body = EchoTopsResponse {
+        generated_at: iso_from_ms(scan.generated_at_ms),
+        scan_time: iso_from_ms(scan.scan_time_ms),
+        timestamp: scan.timestamp.clone(),
+        source_cell_count: scan.echo_tops.len(),
+        footprint_x_nm: f64::from(window.footprint_x_milli) / 1000.0,
+        footprint_y_nm: f64::from(window.footprint_y_milli) / 1000.0,
+        max_top18_feet: scan.echo_top_debug.max_top18_feet,
+        max_top30_feet: scan.echo_top_debug.max_top30_feet,
+        max_top50_feet: scan.echo_top_debug.max_top50_feet,
+        max_top60_feet: scan.echo_top_debug.max_top60_feet,
+        top18_timestamp: scan.echo_top_debug.top18_timestamp.clone(),
+        top30_timestamp: scan.echo_top_debug.top30_timestamp.clone(),
+        top50_timestamp: scan.echo_top_debug.top50_timestamp.clone(),
+        top60_timestamp: scan.echo_top_debug.top60_timestamp.clone(),
+        cells,
+    };
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
+    if let Some(scan_time) = iso_from_ms(scan.scan_time_ms) {
+        if let Ok(value) = HeaderValue::from_str(&scan_time) {
+            headers.insert("X-AV-SCAN-TIME", value);
+        }
+    }
+    if let Some(generated_at) = iso_from_ms(scan.generated_at_ms) {
+        if let Ok(value) = HeaderValue::from_str(&generated_at) {
+            headers.insert("X-AV-GENERATED-AT", value);
+        }
+    }
+    (headers, Json(body)).into_response()
 }
 
 fn build_volume_wire(
@@ -465,6 +658,35 @@ fn project_grid_position_nm(
     let x_nm = delta_lon_deg * window.east_nm_per_lon_deg_safe;
     let z_nm = -(lat_deg - window.origin_lat) * window.north_nm_per_lat_deg_safe;
     (x_nm, z_nm)
+}
+
+fn build_echo_top_cells(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<EchoTopCellRecord> {
+    let mut cells = Vec::new();
+    for record in &scan.echo_tops {
+        let row = record.row as u32;
+        let col = record.col as u32;
+        if row < window.row_start || row > window.row_end {
+            continue;
+        }
+        if !window.lon_wrapped && (col < window.col_start || col > window.col_end) {
+            continue;
+        }
+
+        let (x_nm, z_nm) = project_grid_position_nm(scan, window, row as f64, col as f64);
+        if x_nm * x_nm + z_nm * z_nm > window.max_range_squared_nm {
+            continue;
+        }
+
+        cells.push(EchoTopCellRecord {
+            x_nm: x_nm as f32,
+            z_nm: z_nm as f32,
+            top18_feet: record.top18_feet,
+            top30_feet: record.top30_feet,
+            top50_feet: record.top50_feet,
+            top60_feet: record.top60_feet,
+        });
+    }
+    cells
 }
 
 fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {

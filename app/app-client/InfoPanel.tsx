@@ -9,6 +9,7 @@ export function InfoPanel({
   surfaceMode,
   liveTrafficEnabled,
   nexradVolumeEnabled,
+  nexradShowEchoTops,
   hasApproachPlate,
   sceneData,
   selectedApproachSource
@@ -79,6 +80,12 @@ export function InfoPanel({
           <div className="legend-item">
             <div className="legend-color nexrad" />
             <span>MRMS 3D Precip</span>
+          </div>
+        )}
+        {nexradVolumeEnabled && nexradShowEchoTops && (
+          <div className="legend-item">
+            <div className="legend-color nexrad-echo-top" />
+            <span>MRMS Echo Tops</span>
           </div>
         )}
         <div className="legend-item">

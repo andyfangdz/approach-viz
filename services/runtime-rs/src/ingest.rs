@@ -18,16 +18,18 @@ use crate::constants::{
     FREEZING_LEVEL_TRANSITION_FEET, LEVEL_TAGS, MAX_BASE_DAY_LOOKBACK, MAX_BASE_KEYS_LOOKUP,
     MAX_PENDING_ATTEMPTS, MIXED_COMPETING_PROMOTION_GAP_MAX, MIXED_COMPETING_PROMOTION_MARGIN,
     MIXED_COMPETING_PROMOTION_MIN_SCORE, MIXED_COMPETING_RAIN_SNOW_DELTA_MAX,
-    MIXED_COMPETING_RAIN_SNOW_MIN_SCORE, MIXED_DUAL_SUPPORT_CONFIDENCE_MIN, MIXED_SELECTION_MARGIN,
-    MIXED_SELECTION_MARGIN_TRANSITION, MRMS_BASE_LEVEL_TAG, MRMS_BRIGHT_BAND_BOTTOM_PRODUCT,
-    MRMS_BRIGHT_BAND_TOP_PRODUCT, MRMS_BUCKET_URL, MRMS_CONUS_PREFIX,
-    MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_MODEL_SURFACE_TEMP_PRODUCT,
-    MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_PRODUCT_PREFIX,
-    MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX, PHASE_MIXED, PHASE_RAIN,
-    PHASE_RHOHV_HIGH_CONFIDENCE_MIN, PHASE_RHOHV_LOW_CONFIDENCE_MAX, PHASE_RHOHV_MAX_VALID,
-    PHASE_RHOHV_MIN_VALID, PHASE_SNOW, PHASE_ZDR_MAX_VALID_DB, PHASE_ZDR_MIN_VALID_DB,
-    PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB, PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB, STORE_MIN_DBZ_TENTHS,
-    THERMO_NEAR_FREEZING_FEET, THERMO_STRONG_COLD_WET_BULB_C, THERMO_STRONG_WARM_WET_BULB_C,
+    MIXED_COMPETING_RAIN_SNOW_MIN_SCORE, MIXED_DUAL_SUPPORT_CONFIDENCE_MIN,
+    MIXED_SELECTION_MARGIN, MIXED_SELECTION_MARGIN_TRANSITION, MRMS_BASE_LEVEL_TAG,
+    MRMS_BRIGHT_BAND_BOTTOM_PRODUCT, MRMS_BRIGHT_BAND_TOP_PRODUCT, MRMS_BUCKET_URL,
+    MRMS_CONUS_PREFIX, MRMS_ECHO_TOP_18_PRODUCT, MRMS_ECHO_TOP_30_PRODUCT,
+    MRMS_ECHO_TOP_50_PRODUCT, MRMS_ECHO_TOP_60_PRODUCT, MRMS_MODEL_FREEZING_HEIGHT_PRODUCT,
+    MRMS_MODEL_SURFACE_TEMP_PRODUCT, MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT,
+    MRMS_PRODUCT_PREFIX, MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX,
+    PHASE_MIXED, PHASE_RAIN, PHASE_RHOHV_HIGH_CONFIDENCE_MIN, PHASE_RHOHV_LOW_CONFIDENCE_MAX,
+    PHASE_RHOHV_MAX_VALID, PHASE_RHOHV_MIN_VALID, PHASE_SNOW, PHASE_ZDR_MAX_VALID_DB,
+    PHASE_ZDR_MIN_VALID_DB, PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB, PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB,
+    STORE_MIN_DBZ_TENTHS, THERMO_NEAR_FREEZING_FEET, THERMO_STRONG_COLD_WET_BULB_C,
+    THERMO_STRONG_WARM_WET_BULB_C,
 };
 use crate::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
 use crate::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
@@ -35,7 +37,7 @@ use crate::http_client::fetch_bytes;
 use crate::storage::persist_snapshot;
 use crate::types::{
     AppState, GridDef, LevelBounds, ParsedAuxField, ParsedReflectivityField, PendingIngest,
-    PhaseDebugMetadata, ScanSnapshot, StoredVoxel,
+    EchoTopDebugMetadata, PhaseDebugMetadata, ScanSnapshot, StoredEchoTop, StoredVoxel,
 };
 use crate::utils::{parse_timestamp_utc, round_u16, to_lon360};
 
@@ -405,12 +407,100 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
     let use_aux_fallback = dual_pol_stale || dual_pol_incomplete;
 
     let thermo_aux_bundle = fetch_thermo_aux_bundle(&state.http, timestamp).await;
+    let echo_top_bundle = fetch_echo_top_bundle(&state.http, timestamp).await;
 
     let level_km: Vec<f64> = LEVEL_TAGS
         .iter()
         .map(|tag| tag.parse::<f64>().unwrap_or(0.0))
         .collect();
     let level_bounds = compute_level_bounds(&level_km);
+
+    let point_count = base_grid.nx as usize * base_grid.ny as usize;
+    let top18_values = validate_echo_top_values(
+        echo_top_bundle.top18.as_ref().map(|(_timestamp, field)| field),
+        &base_grid,
+        point_count,
+        MRMS_ECHO_TOP_18_PRODUCT,
+        timestamp,
+    );
+    let top30_values = validate_echo_top_values(
+        echo_top_bundle.top30.as_ref().map(|(_timestamp, field)| field),
+        &base_grid,
+        point_count,
+        MRMS_ECHO_TOP_30_PRODUCT,
+        timestamp,
+    );
+    let top50_values = validate_echo_top_values(
+        echo_top_bundle.top50.as_ref().map(|(_timestamp, field)| field),
+        &base_grid,
+        point_count,
+        MRMS_ECHO_TOP_50_PRODUCT,
+        timestamp,
+    );
+    let top60_values = validate_echo_top_values(
+        echo_top_bundle.top60.as_ref().map(|(_timestamp, field)| field),
+        &base_grid,
+        point_count,
+        MRMS_ECHO_TOP_60_PRODUCT,
+        timestamp,
+    );
+    let mut echo_tops: Vec<StoredEchoTop> = Vec::new();
+    let mut max_top18_feet: Option<u16> = None;
+    let mut max_top30_feet: Option<u16> = None;
+    let mut max_top50_feet: Option<u16> = None;
+    let mut max_top60_feet: Option<u16> = None;
+    if top18_values.is_some() || top30_values.is_some() || top50_values.is_some() || top60_values.is_some()
+    {
+        echo_tops.reserve(point_count / 32);
+        for row in 0..base_grid.ny as usize {
+            let row_offset = row * base_grid.nx as usize;
+            for col in 0..base_grid.nx as usize {
+                let value_idx = row_offset + col;
+                let top18_feet = top18_values
+                    .and_then(|values| values.get(value_idx).copied())
+                    .and_then(echo_top_km_to_feet)
+                    .unwrap_or(0);
+                let top30_feet = top30_values
+                    .and_then(|values| values.get(value_idx).copied())
+                    .and_then(echo_top_km_to_feet)
+                    .unwrap_or(0);
+                let top50_feet = top50_values
+                    .and_then(|values| values.get(value_idx).copied())
+                    .and_then(echo_top_km_to_feet)
+                    .unwrap_or(0);
+                let top60_feet = top60_values
+                    .and_then(|values| values.get(value_idx).copied())
+                    .and_then(echo_top_km_to_feet)
+                    .unwrap_or(0);
+
+                if top18_feet == 0 && top30_feet == 0 && top50_feet == 0 && top60_feet == 0 {
+                    continue;
+                }
+
+                if top18_feet > 0 {
+                    max_top18_feet = Some(max_top18_feet.map_or(top18_feet, |value| value.max(top18_feet)));
+                }
+                if top30_feet > 0 {
+                    max_top30_feet = Some(max_top30_feet.map_or(top30_feet, |value| value.max(top30_feet)));
+                }
+                if top50_feet > 0 {
+                    max_top50_feet = Some(max_top50_feet.map_or(top50_feet, |value| value.max(top50_feet)));
+                }
+                if top60_feet > 0 {
+                    max_top60_feet = Some(max_top60_feet.map_or(top60_feet, |value| value.max(top60_feet)));
+                }
+
+                echo_tops.push(StoredEchoTop {
+                    row: row as u16,
+                    col: col as u16,
+                    top18_feet,
+                    top30_feet,
+                    top50_feet,
+                    top60_feet,
+                });
+            }
+        }
+    }
 
     let tile_size = state.cfg.tile_size.max(16);
     let tile_cols = ((base_grid.nx + tile_size as u32 - 1) / tile_size as u32) as u16;
@@ -649,6 +739,29 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         level_bounds,
         tile_offsets,
         voxels,
+        echo_tops,
+        echo_top_debug: EchoTopDebugMetadata {
+            top18_timestamp: echo_top_bundle
+                .top18
+                .as_ref()
+                .map(|(timestamp, _field)| timestamp.clone()),
+            top30_timestamp: echo_top_bundle
+                .top30
+                .as_ref()
+                .map(|(timestamp, _field)| timestamp.clone()),
+            top50_timestamp: echo_top_bundle
+                .top50
+                .as_ref()
+                .map(|(timestamp, _field)| timestamp.clone()),
+            top60_timestamp: echo_top_bundle
+                .top60
+                .as_ref()
+                .map(|(timestamp, _field)| timestamp.clone()),
+            max_top18_feet,
+            max_top30_feet,
+            max_top50_feet,
+            max_top60_feet,
+        },
         phase_debug: PhaseDebugMetadata {
             mode: mode.to_string(),
             detail,
@@ -677,6 +790,14 @@ struct ThermoAuxBundle {
     bright_band_top: Option<(String, ParsedAuxField)>,
     bright_band_bottom: Option<(String, ParsedAuxField)>,
     radar_quality_index: Option<(String, ParsedAuxField)>,
+}
+
+#[derive(Default)]
+struct EchoTopBundle {
+    top18: Option<(String, ParsedAuxField)>,
+    top30: Option<(String, ParsedAuxField)>,
+    top50: Option<(String, ParsedAuxField)>,
+    top60: Option<(String, ParsedAuxField)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -938,6 +1059,24 @@ async fn fetch_thermo_aux_bundle(http: &Client, target_timestamp: &str) -> Therm
     }
 }
 
+async fn fetch_echo_top_bundle(http: &Client, target_timestamp: &str) -> EchoTopBundle {
+    let top18 =
+        fetch_latest_aux_field_at_or_before(http, MRMS_ECHO_TOP_18_PRODUCT, target_timestamp).await;
+    let top30 =
+        fetch_latest_aux_field_at_or_before(http, MRMS_ECHO_TOP_30_PRODUCT, target_timestamp).await;
+    let top50 =
+        fetch_latest_aux_field_at_or_before(http, MRMS_ECHO_TOP_50_PRODUCT, target_timestamp).await;
+    let top60 =
+        fetch_latest_aux_field_at_or_before(http, MRMS_ECHO_TOP_60_PRODUCT, target_timestamp).await;
+
+    EchoTopBundle {
+        top18,
+        top30,
+        top50,
+        top60,
+    }
+}
+
 async fn fetch_latest_aux_field_at_or_before(
     http: &Client,
     product: &'static str,
@@ -974,6 +1113,30 @@ fn validate_level_aux_values<'a>(
         warn!(
             "{product_label} aux point-count mismatch for level {level_tag} at {timestamp}: expected {}, got {}; using aux fallback for affected voxels",
             reflectivity.dbz_tenths.len(),
+            field.values.len()
+        );
+        return None;
+    }
+    Some(field.values.as_slice())
+}
+
+fn validate_echo_top_values<'a>(
+    field: Option<&'a ParsedAuxField>,
+    base_grid: &GridDef,
+    point_count: usize,
+    product_label: &str,
+    timestamp: &str,
+) -> Option<&'a [f32]> {
+    let field = field?;
+    if !is_same_grid(&field.grid, base_grid) {
+        warn!(
+            "Echo-top aux grid mismatch for {product_label} at {timestamp}; skipping echo-top product"
+        );
+        return None;
+    }
+    if field.values.len() != point_count {
+        warn!(
+            "Echo-top aux point-count mismatch for {product_label} at {timestamp}: expected {point_count}, got {}; skipping echo-top product",
             field.values.len()
         );
         return None;
@@ -1476,6 +1639,13 @@ fn compute_level_bounds(level_km: &[f64]) -> Vec<LevelBounds> {
     }
 
     bounds
+}
+
+fn echo_top_km_to_feet(value: f32) -> Option<u16> {
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    Some(round_u16(f64::from(value) * FEET_PER_KM))
 }
 
 fn build_level_key(

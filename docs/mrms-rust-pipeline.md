@@ -13,9 +13,9 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 
 1. NOAA publishes `ObjectCreated` events to SNS topic `arn:aws:sns:us-east-1:123901341784:NewMRMSObject`.
 2. SQS queue receives those messages (`RawMessageDelivery=true`).
-3. Rust runtime service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, decodes GRIB2 fields through `grib`, and stores compressed snapshots.
-4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the runtime service `v1/weather/volume` endpoint (legacy alias `v1/volume`).
-5. Client decodes compact binary payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
+3. Rust runtime service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, decodes GRIB2 fields through `grib`, and stores compressed snapshots (reflectivity voxels + direct echo-top fields).
+4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the runtime service `v1/weather/volume` endpoint (legacy alias `v1/volume`), and `app/api/weather/nexrad/echo-tops/route.ts` proxies `v1/weather/echo-tops` (legacy alias `v1/echo-tops`).
+5. Client decodes compact binary reflectivity payloads and JSON echo-top payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 
 ## Phase Methodology
 
@@ -87,6 +87,8 @@ This script:
 - `GET /v1/meta` -> readiness + scan stats
 - `GET /v1/weather/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v2`)
 - `GET /v1/volume?...` -> legacy weather alias
+- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> JSON echo-top cells (`EchoTop_18/30/50/60`)
+- `GET /v1/echo-tops?...` -> legacy echo-top alias
 - `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..30>&hideGround=<bool>` -> JSON aircraft + optional trail backfill
 
 ## Next.js Configuration

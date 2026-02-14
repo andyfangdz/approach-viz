@@ -9,13 +9,16 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 ## Options Panel
 
-- Exposed controls: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle, `Use Parsed Climb Gradient When Available` (toggles between parsed FAA missed-climb requirements and standard climb-gradient behavior; defaults to parsed when available and automatically falls back to standard when no parsed value exists), `Live ADS-B Traffic`, `MRMS 3D Precip`, `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (20–100%), `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (1–30 min).
+- Exposed controls: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle, `Use Parsed Climb Gradient When Available` (toggles between parsed FAA missed-climb requirements and standard climb-gradient behavior; defaults to parsed when available and automatically falls back to standard when no parsed value exists), `Live ADS-B Traffic`, `MRMS 3D Precip`, `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (20–100%), `MRMS Declutter` (All/Low/Mid/High/Top Shell), `MRMS Echo Tops (Direct MRMS)` toggle, `MRMS Top-Shell Highlight` toggle, `MRMS Altitude Guides` toggle, `MRMS Vertical Cross-Section` toggle with heading/range sliders, `Hide Ground Traffic`, `Show Traffic Callsigns`, and `Traffic History` (1–30 min).
 - Live traffic is enabled by default; MRMS volumetric overlay is enabled by default; `Hide Ground Traffic` is disabled by default; default traffic history window is 3 min.
+- MRMS declutter mode can also be cycled with the `V` key when focus is not in a form field.
 - All options-panel values are persisted to browser `localStorage` and restored on load.
 
 ## Runtime Status and Debug UI
 
 - When MRMS overlay polling is active, a top-right in-scene status chip (`Loading MRMS...`) appears beneath the navbar/selector region.
+- MRMS vertical cross-section mode displays a bottom-center in-scene slice panel with distance-vs-altitude intensity and current direct echo-top maxima.
+- MRMS echo tops can remain enabled even when `MRMS 3D Precip` is off, allowing top-height visualization without volumetric fill.
 - A right-side debug FAB expands into a runtime diagnostics panel with current context plus MRMS/traffic telemetry (enabled/loading/stale/error, voxel/track counts, phase mix, MRMS phase-source mode, aux age/timestamp telemetry, poll timestamps, and backfill state).
 - MRMS and traffic debug panel state is fed from scene overlays via callback props, so telemetry reflects the currently rendered overlay state rather than cached UI assumptions.
 

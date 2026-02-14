@@ -4,6 +4,7 @@ import type { SelectOption } from '@/app/app-client-utils';
 import type { SceneData } from '@/lib/types';
 
 export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
+export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high' | 'top-shell';
 
 export interface NexradDebugState {
   enabled: boolean;
@@ -29,6 +30,15 @@ export interface NexradDebugState {
     mixed: number;
     snow: number;
   };
+  echoTopCellCount: number;
+  echoTopMax18Feet: number | null;
+  echoTopMax30Feet: number | null;
+  echoTopMax50Feet: number | null;
+  echoTopMax60Feet: number | null;
+  echoTop18Timestamp: string | null;
+  echoTop30Timestamp: string | null;
+  echoTop50Timestamp: string | null;
+  echoTop60Timestamp: string | null;
 }
 
 export interface TrafficDebugState {
@@ -77,6 +87,13 @@ export interface SceneCanvasProps {
   nexradVolumeEnabled: boolean;
   nexradMinDbz: number;
   nexradOpacity: number;
+  nexradDeclutterMode: NexradDeclutterMode;
+  nexradShowTopShell: boolean;
+  nexradShowEchoTops: boolean;
+  nexradShowAltitudeGuides: boolean;
+  nexradCrossSectionEnabled: boolean;
+  nexradCrossSectionHeadingDeg: number;
+  nexradCrossSectionRangeNm: number;
   surfaceMode: SurfaceMode;
   satelliteRetryNonce: number;
   satelliteRetryCount: number;
@@ -97,6 +114,7 @@ export interface InfoPanelProps {
   surfaceMode: SurfaceMode;
   liveTrafficEnabled: boolean;
   nexradVolumeEnabled: boolean;
+  nexradShowEchoTops: boolean;
   hasApproachPlate: boolean;
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
@@ -123,6 +141,20 @@ export interface OptionsPanelProps {
   onNexradMinDbzChange: (dbz: number) => void;
   nexradOpacity: number;
   onNexradOpacityChange: (opacity: number) => void;
+  nexradDeclutterMode: NexradDeclutterMode;
+  onNexradDeclutterModeChange: (mode: NexradDeclutterMode) => void;
+  nexradShowTopShell: boolean;
+  onNexradShowTopShellChange: (enabled: boolean) => void;
+  nexradShowEchoTops: boolean;
+  onNexradShowEchoTopsChange: (enabled: boolean) => void;
+  nexradShowAltitudeGuides: boolean;
+  onNexradShowAltitudeGuidesChange: (enabled: boolean) => void;
+  nexradCrossSectionEnabled: boolean;
+  onNexradCrossSectionEnabledChange: (enabled: boolean) => void;
+  nexradCrossSectionHeadingDeg: number;
+  onNexradCrossSectionHeadingDegChange: (headingDeg: number) => void;
+  nexradCrossSectionRangeNm: number;
+  onNexradCrossSectionRangeNmChange: (rangeNm: number) => void;
   hideGroundTraffic: boolean;
   onHideGroundTrafficChange: (enabled: boolean) => void;
   showTrafficCallsigns: boolean;

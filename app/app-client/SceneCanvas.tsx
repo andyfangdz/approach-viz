@@ -65,6 +65,13 @@ export const SceneCanvas = memo(function SceneCanvas({
   nexradVolumeEnabled,
   nexradMinDbz,
   nexradOpacity,
+  nexradDeclutterMode,
+  nexradShowTopShell,
+  nexradShowEchoTops,
+  nexradShowAltitudeGuides,
+  nexradCrossSectionEnabled,
+  nexradCrossSectionHeadingDeg,
+  nexradCrossSectionRangeNm,
   surfaceMode,
   satelliteRetryNonce,
   satelliteRetryCount,
@@ -202,14 +209,22 @@ export const SceneCanvas = memo(function SceneCanvas({
           />
         )}
 
-        {nexradVolumeEnabled && (
+        {(nexradVolumeEnabled || nexradShowEchoTops) && (
           <NexradVolumeOverlay
             refLat={airport.lat}
             refLon={airport.lon}
             verticalScale={verticalScale}
             minDbz={nexradMinDbz}
-            enabled={nexradVolumeEnabled}
+            enabled={nexradVolumeEnabled || nexradShowEchoTops}
+            showVolume={nexradVolumeEnabled}
             opacity={nexradOpacity}
+            declutterMode={nexradDeclutterMode}
+            showTopShell={nexradShowTopShell}
+            showEchoTops={nexradShowEchoTops}
+            showAltitudeGuides={nexradShowAltitudeGuides}
+            showCrossSection={nexradCrossSectionEnabled}
+            crossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
+            crossSectionRangeNm={nexradCrossSectionRangeNm}
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'
             }
