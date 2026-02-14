@@ -1,4 +1,4 @@
 interface:
-  display_name: "Runtime Deploy OCI"
-  short_description: "Deploy Rust runtime service to OCI host"
-  default_prompt: "Deploy the runtime-rs service to OCI, reuse existing SQS queue URL from the server, and run health/meta smoke checks."
+  display_name: 'Runtime Deploy OCI'
+  short_description: 'Deploy Rust runtime service to OCI host'
+  default_prompt: 'Deploy the runtime-rs service to OCI, reuse existing SQS queue URL from the server, and run health/meta smoke checks.'
