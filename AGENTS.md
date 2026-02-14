@@ -40,6 +40,7 @@
 - `lib/` — shared types, SQLite singleton, spatial index, and CIFP parser (`cifp/`)
 - `services/runtime-rs/` — Rust runtime service (MRMS ingest/query + ADS-B decode/query APIs), with source split by concern under `src/` (`api.rs`, `traffic_api.rs`, `ingest.rs`, `grib.rs`, `storage.rs`, `discovery.rs`, `config.rs`, `types.rs`, `utils.rs`, `constants.rs`)
 - `scripts/` — data download/build scripts, MRMS provisioning helper (`scripts/mrms/setup_sns_sqs.py`), runtime deploy helper (`scripts/runtime/deploy_oci.sh`), and dev launcher (`dev-with-ddtrace.mjs`)
+- `.agents/skills/` — reusable Codex runbooks and helper scripts for operational workflows (for example live runtime validation and OCI deploy)
 - `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
 - `data/` — build-time artifacts (SQLite DB, spatial index binaries)
 

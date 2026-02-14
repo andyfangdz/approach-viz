@@ -1,0 +1,4 @@
+interface:
+  display_name: "Runtime Validate Live"
+  short_description: "Verify live MRMS and traffic endpoints"
+  default_prompt: "Run live integration checks for runtime traffic and MRMS endpoints, then summarize pass/fail and key payload signals."
