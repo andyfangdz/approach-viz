@@ -508,7 +508,8 @@ export function AppClient({
 
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const activeErrorMessage = errorMessage || surfaceErrorMessage;
-  const showMrmsLoadingIndicator = (nexradVolumeEnabled || nexradShowEchoTops) && nexradDebug.loading;
+  const showMrmsLoadingIndicator =
+    (nexradVolumeEnabled || nexradShowEchoTops) && nexradDebug.loading;
   const missedApproachStartAltitudeFeet =
     sceneData.minimumsSummary?.da?.altitude ??
     sceneData.minimumsSummary?.mda?.altitude ??
