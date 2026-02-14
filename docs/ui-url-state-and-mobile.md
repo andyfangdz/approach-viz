@@ -39,6 +39,7 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 - Selectors are collapsed by default.
 - Legend content is collapsed by default.
+- Viewport is locked to prevent scroll, zoom, and text selection outside form inputs, keeping the 3D scene full-screen on mobile devices.
 - Floating legend/options/recenter controls use safe-area-aware elevated bottom offset (`env(safe-area-inset-bottom) + 68px`) to reduce iOS address-bar overlap.
 - The expanded options panel also uses the same safe-area-aware bottom offset.
 - Touch/drag interactions in the 3D scene suppress iOS text selection/callout overlays (`user-select: none`, `touch-action: none`), while selector text inputs remain editable.

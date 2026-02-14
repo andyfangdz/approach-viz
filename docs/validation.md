@@ -2,7 +2,7 @@
 
 Checklist for verifying parser, render, and data-logic changes.
 
-## Automated Steps
+## Automated Steps (Local)
 
 Run in order after any parser/render/data change:
 
@@ -15,6 +15,18 @@ Run in order after any parser/render/data change:
 7. `npm run test:geometry` — for path/curve/runway/coordinate geometry changes.
 8. `npm run build` — production build (also refreshes data).
 
+## CI Pipeline
+
+CI (`.github/workflows/parser-tests.yml`) runs on every push/PR:
+
+1. `npm run format:check`
+2. `npm run lint`
+3. `npm run typecheck`
+4. `npm run test`
+5. `npx next build` — uses `npx next build` (not `npm run build`) so CI does not trigger the FAA data download that `prepare-data` includes.
+
+Runtime integration tests are intentionally excluded from CI (see below).
+
 ## Runtime Integration (Live Network)
 
 Use this when validating deployed runtime service behavior end-to-end:
@@ -23,8 +35,9 @@ Use this when validating deployed runtime service behavior end-to-end:
 
 Notes:
 
-- This suite is intentionally separate from `npm run test` because it requires live internet and upstream data availability.
+- This suite is intentionally separate from `npm run test` and CI because it requires live internet and upstream data availability.
 - Override target host with `RUNTIME_INTEGRATION_BASE_URL` if needed.
+- The `.agents/skills/runtime-validate-live` runbook provides an agent-assisted smoke-check workflow for post-deploy validation.
 
 ## Manual Spot-Checks
 
@@ -35,6 +48,9 @@ After a successful build, visually verify at least one procedure exercising each
 - Hold leg(s)
 - Missed approach with CA / DF / HM
 - Glidepath inside FAF
+- MRMS weather volume rendering (if runtime service is reachable)
+- Live ADS-B traffic overlay (if runtime service is reachable)
+- Mobile viewport behavior: viewport is locked to prevent scroll, zoom, and text selection outside form inputs.
 
 ## Minima/Plate-Only Procedure Checks
 

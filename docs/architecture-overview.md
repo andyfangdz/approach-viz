@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This project uses a server-first data-loading model with a client-side 3D scene runtime.
+This project uses a server-first data-loading model with a client-side 3D scene runtime and an external Rust runtime service for weather and traffic APIs.
 
 ## High-Level Flow
 
@@ -14,11 +14,22 @@ flowchart TD
   AL --> EXT["External Data<br/>CIFP + minima + plate metadata"]
   A --> C["Client Runtime<br/>app/AppClient.tsx"]
   C --> S["Scene Components<br/>app/app-client/* + app/scene/*"]
-  C --> P["FAA Plate Proxy<br/>app/api/faa-plate/route.ts"]
+  C --> PP["FAA Plate Proxy<br/>app/api/faa-plate/route.ts"]
   S --> G["Path Geometry Modules<br/>app/scene/approach-path/*"]
+  S --> TP["Traffic Proxy<br/>app/api/traffic/adsbx/route.ts"]
+  S --> WP["Weather Proxy<br/>app/api/weather/nexrad/route.ts"]
+  S --> EP["Echo-Top Proxy<br/>app/api/weather/nexrad/echo-tops/route.ts"]
+  TP --> RS["Rust Runtime Service<br/>services/runtime-rs"]
+  WP --> RS
+  EP --> RS
+  RS --> SQS["AWS SNS/SQS<br/>NOAA MRMS events"]
+  RS --> ADSB["ADSB Exchange<br/>tar1090 feed"]
+  RS --> S3["NOAA S3 Bucket<br/>MRMS GRIB2 data"]
 ```
 
 ## Architecture Docs
 
-- `docs/architecture-data-and-actions.md`: server data model, action layering, and matching/enrichment behavior.
-- `docs/architecture-client-and-scene.md`: client state orchestration, UI section boundaries, and scene composition responsibilities.
+- [`docs/architecture-data-and-actions.md`](architecture-data-and-actions.md): server data model, action layering, matching/enrichment, proxies, CI/instrumentation.
+- [`docs/architecture-client-and-scene.md`](architecture-client-and-scene.md): client state orchestration, UI section boundaries, scene composition.
+- [`docs/mrms-rust-pipeline.md`](mrms-rust-pipeline.md): Rust runtime service design, wire format, deployment, endpoints.
+- [`docs/mrms-phase-methodology.md`](mrms-phase-methodology.md): thermodynamic-first phase resolver, dual-pol correction, debug telemetry.

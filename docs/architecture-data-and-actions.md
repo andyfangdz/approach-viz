@@ -60,6 +60,13 @@
 
 ## CI and Instrumentation
 
-- CI workflow `.github/workflows/parser-tests.yml` runs `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build` on push/PR.
+- CI workflow `.github/workflows/parser-tests.yml` runs `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run test`, and `npx next build` on push/PR. The build step uses `npx next build` (not `npm run build`) so CI does not trigger the FAA data download that `npm run build` includes via `prepare-data`.
+- Runtime integration tests (`npm run test:integration:runtime`) are intentionally excluded from CI because they require live internet and upstream data availability. They are run manually or as part of deployment validation (see [`docs/validation.md`](validation.md)).
 - Vercel Analytics is enabled globally in `app/layout.tsx` via `@vercel/analytics/next`.
 - Local server tracing uses Datadog `dd-trace`: `npm run dev` runs `scripts/dev-with-ddtrace.mjs`, which loads `.env.local` and launches Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so tracing initializes before Next server modules.
+
+## Agent Skills
+
+- `.agents/skills/` contains reusable operational runbooks for agent-assisted workflows:
+  - `runtime-deploy-oci`: deploy the Rust runtime service to the OCI host, reading the existing SQS queue URL from the server to avoid configuration drift, then performing post-deploy health/meta smoke checks.
+  - `runtime-validate-live`: validate deployed runtime endpoints over live network paths (MRMS metadata/wire format integrity, ADS-B traffic payload shape).
