@@ -11,6 +11,7 @@
 - Optional live ADS-B callsign labels are anchored slightly above each marker in the same local coordinate frame, follow marker altitude updates, and render as text-only overlays (no bounding box).
 - In satellite/3D plate modes, live ADS-B traffic altitude is curvature-compensated (`altitudeFeet - earthCurvatureDrop`) so markers remain aligned to curved tiled surfaces.
 - In satellite/3D plate modes, MRMS voxel altitude is also curvature-compensated at each voxel position so low-level weather volumes stay registered to curved tiled surfaces.
-- Airspace sectors with floors at/near sea level (<= `100 ft MSL`) omit their bottom caps and bottom perimeter edge segments to avoid coplanar shimmering against sea-level-aligned surface meshes (plate and clamped satellite/3D tiles).
+- Airspace sectors with source floors at/near surface (`<= 0 ft MSL`, including parsed `SFC`) clamp their rendered floor to the selected airport elevation before extrusion so high-elevation airports do not show underground airspace volumes.
+- Airspace sectors with source floors at/near sea level (<= `100 ft MSL`) omit their bottom caps and bottom perimeter edge segments to avoid coplanar shimmering against sea-level-aligned surface meshes (plate and clamped satellite/3D tiles).
 - A bottom-right floating `Recenter View` control resets camera position and orbit target to airport-centered defaults.
 - On mobile (`<=900px`), floating legend/options/recenter controls use an elevated safe-area-aware bottom offset (`env(safe-area-inset-bottom) + 68px`) to avoid iOS browser chrome overlap.

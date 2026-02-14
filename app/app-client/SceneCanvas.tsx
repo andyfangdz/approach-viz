@@ -182,6 +182,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             refLat={airport.lat}
             refLon={airport.lon}
             verticalScale={verticalScale}
+            airportElevationFeet={airport.elevation}
           />
         )}
 

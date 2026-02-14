@@ -35,6 +35,7 @@ interface AirspaceVolumesProps {
   refLat: number;
   refLon: number;
   verticalScale: number;
+  airportElevationFeet: number;
 }
 
 function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number) {
@@ -58,6 +59,12 @@ function altToBaseY(altFeet: number): number {
 
 function shouldHideBottomCap(lowerAltFeet: number): boolean {
   return lowerAltFeet <= SEA_LEVEL_FEET + SEA_LEVEL_BOTTOM_CAP_HIDE_THRESHOLD_FEET;
+}
+
+function resolveLowerAltitudeFeet(lowerAltFeet: number, airportElevationFeet: number): number {
+  if (lowerAltFeet > SEA_LEVEL_FEET) return lowerAltFeet;
+  if (!Number.isFinite(airportElevationFeet)) return lowerAltFeet;
+  return Math.max(lowerAltFeet, airportElevationFeet);
 }
 
 function stripBottomCapTriangles(
@@ -151,11 +158,13 @@ function stripBottomEdgeSegments(
 function AirspaceVolume({
   feature,
   refLat,
-  refLon
+  refLon,
+  airportElevationFeet
 }: {
   feature: AirspaceFeature;
   refLat: number;
   refLon: number;
+  airportElevationFeet: number;
 }) {
   const color = COLORS[feature.class];
   if (!color) return null;
@@ -180,7 +189,8 @@ function AirspaceVolume({
         }
       }
 
-      const lowerY = altToBaseY(feature.lowerAlt);
+      const resolvedLowerAlt = resolveLowerAltitudeFeet(feature.lowerAlt, airportElevationFeet);
+      const lowerY = altToBaseY(resolvedLowerAlt);
       const upperY = altToBaseY(feature.upperAlt);
       const height = upperY - lowerY;
 
@@ -217,13 +227,13 @@ function AirspaceVolume({
     if (shouldHideBottomCap(feature.lowerAlt)) {
       stripBottomEdgeSegments(
         edgesGeometry,
-        altToBaseY(feature.lowerAlt),
+        altToBaseY(resolveLowerAltitudeFeet(feature.lowerAlt, airportElevationFeet)),
         Math.max(altToBaseY(1), 1e-6)
       );
     }
 
     return { geometry: mergedGeo, edgesGeometry };
-  }, [feature, refLat, refLon]);
+  }, [feature, refLat, refLon, airportElevationFeet]);
 
   useEffect(
     () => () => {
@@ -259,7 +269,8 @@ export const AirspaceVolumes = memo(function AirspaceVolumes({
   features,
   refLat,
   refLon,
-  verticalScale
+  verticalScale,
+  airportElevationFeet
 }: AirspaceVolumesProps) {
   return (
     <group scale={[1, verticalScale, 1]}>
@@ -269,6 +280,7 @@ export const AirspaceVolumes = memo(function AirspaceVolumes({
           feature={feature}
           refLat={refLat}
           refLon={refLon}
+          airportElevationFeet={airportElevationFeet}
         />
       ))}
     </group>
