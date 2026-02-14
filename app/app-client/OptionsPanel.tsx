@@ -130,19 +130,18 @@ export function OptionsPanel({
 
       <label className="options-toggle-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">Use Parsed Missed Climb Gradient</span>
+          <span className="options-toggle-title">Use Parsed Climb Gradient When Available</span>
           <span className="options-toggle-note">
             {hasParsedMissedClimbRequirement
               ? `Parsed: ${parsedMissedClimbRequirementLabel}`
-              : 'No parsed FAA missed-climb requirement for this approach'}
+              : 'Using standard climb gradient'}
           </span>
         </span>
         <input
           type="checkbox"
-          checked={hasParsedMissedClimbRequirement && useParsedMissedClimbGradient}
-          disabled={!hasParsedMissedClimbRequirement}
+          checked={useParsedMissedClimbGradient}
           onChange={(event) => onUseParsedMissedClimbGradientChange(event.target.checked)}
-          aria-label="Use parsed missed climb gradient"
+          aria-label="Use parsed climb gradient when available"
         />
       </label>
 

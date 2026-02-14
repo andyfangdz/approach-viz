@@ -11,7 +11,7 @@
 
 - Missed-approach path rendering starts at the MAP using selected minimums DA (or MDA fallback), and the missed profile climbs immediately from MAP by interpolating toward the next higher published missed-leg altitude targets (non-descending); this does not change final-approach glidepath-to-runway depiction.
 - Minimums selection prefers Cat A values when available; if Cat A is unavailable for a minima line, the app falls back to the lowest available category (B/C/D), displays that category in the minimums panel, and uses it for missed-approach start altitude.
-- When FAA approach metadata `missed_instructions` contains explicit missed-climb text (`minimum climb of X feet per NM to Y`), missed-profile rendering can enforce that published climb floor from MAP; the options panel lets users switch between this parsed/published gradient and the standard default gradient, with parsed/published selected by default when available.
+- When FAA approach metadata `missed_instructions` contains explicit missed-climb text (`minimum climb of X feet per NM to Y`), missed-profile rendering can enforce that published climb floor from MAP; the options panel lets users switch between this parsed/published gradient and the standard default gradient, with parsed/published selected by default when available and automatic standard fallback when unavailable.
 - Missed-profile distance interpolation treats no-fix `CA` legs as short climb segments (distance estimated from climb requirement), preventing exaggerated straight-out segments before turns when a CA leg precedes turn-to-fix legs.
 - Missed-approach interpolation handles legs without direct fix geometry using neighbor-leg distance fallback.
 

@@ -60,6 +60,6 @@
 
 ## CI and Instrumentation
 
-- CI workflow `.github/workflows/parser-tests.yml` runs `npm run test:parser` on push/PR.
+- CI workflow `.github/workflows/parser-tests.yml` runs `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build` on push/PR.
 - Vercel Analytics is enabled globally in `app/layout.tsx` via `@vercel/analytics/next`.
 - Local server tracing uses Datadog `dd-trace`: `npm run dev` runs `scripts/dev-with-ddtrace.mjs`, which loads `.env.local` and launches Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so tracing initializes before Next server modules.

@@ -37,12 +37,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   }
 }
 
-function upstreamVolumeUrl(
-  lat: number,
-  lon: number,
-  minDbz: number,
-  maxRangeNm: number
-): string {
+function upstreamVolumeUrl(lat: number, lon: number, minDbz: number, maxRangeNm: number): string {
   const baseUrl = DEFAULT_UPSTREAM_BASE_URL.replace(/\/$/, '');
   const url = new URL(`${baseUrl}/v1/volume`);
   url.searchParams.set('lat', lat.toFixed(6));

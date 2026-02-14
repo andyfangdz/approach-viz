@@ -6,11 +6,14 @@ Checklist for verifying parser, render, and data-logic changes.
 
 Run in order after any parser/render/data change:
 
-1. `npm run prepare-data` — download fresh FAA/CIFP + airspace + minimums data and rebuild SQLite.
-2. `npm run test` — full test suite (parser + geometry).
-3. `npm run test:parser` — especially after `lib/cifp/parser.ts` changes.
-4. `npm run test:geometry` — for path/curve/runway/coordinate geometry changes.
-5. `npm run build` — production build (also refreshes data).
+1. `npm run format:check` — verify repository formatting.
+2. `npm run lint` — ESLint parse/lint checks.
+3. `npm run typecheck` — TypeScript compile checks without emit.
+4. `npm run prepare-data` — download fresh FAA/CIFP + airspace + minimums data and rebuild SQLite.
+5. `npm run test` — full test suite (parser + geometry).
+6. `npm run test:parser` — especially after `lib/cifp/parser.ts` changes.
+7. `npm run test:geometry` — for path/curve/runway/coordinate geometry changes.
+8. `npm run build` — production build (also refreshes data).
 
 ## Manual Spot-Checks
 

@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio MRMS service, `grib` crate decoding) + AWS SNS/SQS + `dd-trace`
+- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio MRMS service, `grib` crate decoding) + AWS SNS/SQS + `dd-trace` + ESLint/Prettier
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -22,6 +22,8 @@
 - Run full automated tests (parser + geometry): `npm run test`
 - Run CIFP parser fixture tests: `npm run test:parser`
 - Run geometry unit tests (path/curve/runway math): `npm run test:geometry`
+- Lint codebase with ESLint: `npm run lint`
+- Type-check without emit: `npm run typecheck`
 - Format codebase with Prettier: `npm run format`
 - Verify Prettier formatting: `npm run format:check`
 - Check Rust MRMS service compile: `cargo check --manifest-path services/mrms-rs/Cargo.toml`
@@ -71,7 +73,7 @@ MRMS client polling also clears prior payload immediately when airport context c
 MRMS voxel dimensions are data-derived from decoded MRMS grid spacing (independent X/Y footprint plus per-level altitude thickness), using the same origin-local projection scales for both voxel placement and footprint sizing to keep cell spacing contiguous.
 MRMS default reflectivity threshold is 5 dBZ (matching standard aviation radar depiction), with a user-adjustable slider (5–60 dBZ); client-side voxel decimation is disabled so all server-provided records render, with v2 merged-brick encoding handling large-coverage performance.
 Missed-approach direct fix-join legs with explicit turn direction now include curved MAP-to-missed transitions even when the preceding segment is still part of final approach, avoiding hard-corner joins at the first missed fix.
-Missed-approach vertical profiles can enforce published FAA missed-climb requirements parsed from official `missed_instructions` text (`minimum climb of X feet per NM to Y`), and the UI can switch between parsed/published and standard climb-gradient rendering (parsed/published default when available).
+Missed-approach vertical profiles can enforce published FAA missed-climb requirements parsed from official `missed_instructions` text (`minimum climb of X feet per NM to Y`), and the UI can switch between parsed/published and standard climb-gradient rendering (parsed/published default when available, otherwise standard fallback).
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes
@@ -84,4 +86,4 @@ URL-path-encoded airport/procedure selection, options panel (including traffic/w
 
 ### Validation
 
-Automated test + build pipeline followed by manual spot-checks covering RF/AF/hold/missed legs and minima/plate-only procedures. → [`docs/validation.md`](docs/validation.md)
+Automated format/lint/typecheck/test/build pipeline followed by manual spot-checks covering RF/AF/hold/missed legs and minima/plate-only procedures. → [`docs/validation.md`](docs/validation.md)

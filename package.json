@@ -7,6 +7,8 @@
     "download-data": "bash scripts/download-data.sh",
     "build-db": "tsx scripts/build-db.ts",
     "prepare-data": "npm run download-data && npm run build-db",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "npm run test:parser && npm run test:geometry",
     "test:parser": "node --import tsx --test lib/cifp/parser.test.ts",
     "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts",
@@ -47,8 +49,10 @@
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.182.0",
+    "eslint": "^9.39.1",
     "prettier": "^3.8.1",
     "tsx": "^4.20.0",
+    "typescript-eslint": "^8.46.2",
     "typescript": "^5.9.3"
   }
 }
