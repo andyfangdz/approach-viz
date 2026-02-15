@@ -72,12 +72,17 @@ export function NexradVolumeOverlay({
   const echo18MeshRef = useRef<THREE.InstancedMesh | null>(null);
   const echo30MeshRef = useRef<THREE.InstancedMesh | null>(null);
   const echo50MeshRef = useRef<THREE.InstancedMesh | null>(null);
+  const payloadRef = useRef(payload);
+  payloadRef.current = payload;
+  const echoTopPayloadRef = useRef(echoTopPayload);
+  echoTopPayloadRef.current = echoTopPayload;
   const showVolumeRef = useRef(showVolume);
   showVolumeRef.current = showVolume;
   const showEchoTopsRef = useRef(showEchoTops);
   showEchoTopsRef.current = showEchoTops;
   const showCrossSectionRef = useRef(showCrossSection);
   showCrossSectionRef.current = showCrossSection;
+  const pollNowRef = useRef<(() => void) | null>(null);
   const meshDummy = useMemo(() => new THREE.Object3D(), []);
   const colorScratch = useMemo(() => new THREE.Color(), []);
   const normalizedCrossSectionHeading = ((Math.round(crossSectionHeadingDeg) % 360) + 360) % 360;
@@ -485,7 +490,7 @@ export function NexradVolumeOverlay({
               }
               return nextPayload;
             });
-          } else {
+          } else if (!showVolumeRef.current && !showCrossSectionRef.current) {
             setPayload(null);
           }
           if (shouldFetchEchoTops) {
@@ -500,7 +505,7 @@ export function NexradVolumeOverlay({
               }
               return nextEchoTopPayload ?? previousPayload;
             });
-          } else {
+          } else if (!showEchoTopsRef.current) {
             setEchoTopPayload(null);
           }
         }
@@ -522,14 +527,36 @@ export function NexradVolumeOverlay({
       }
     };
 
+    // Expose a way for external code to trigger an immediate poll cycle.
+    // Aborts any in-flight request and cancels the pending timeout so we
+    // don't double-poll.
+    pollNowRef.current = () => {
+      if (cancelled) return;
+      if (activeAbortController) activeAbortController.abort();
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = undefined;
+      void poll();
+    };
+
     void poll();
 
     return () => {
       cancelled = true;
+      pollNowRef.current = null;
       if (timeoutId) clearTimeout(timeoutId);
       if (activeAbortController) activeAbortController.abort();
     };
   }, [enabled, refLat, refLon, minDbz, maxRangeNm]);
+
+  // When a sub-layer is toggled on and has no data yet, trigger an immediate
+  // poll rather than waiting up to 120 s for the next scheduled one.
+  useEffect(() => {
+    if (!enabled) return;
+    const needEchoTops = showEchoTops && !echoTopPayloadRef.current;
+    const needVolume = (showVolume || showCrossSection) && !payloadRef.current;
+    if (!needEchoTops && !needVolume) return;
+    pollNowRef.current?.();
+  }, [enabled, showEchoTops, showVolume, showCrossSection]);
 
   const phaseCounts = (() => {
     const counts = { rain: 0, mixed: 0, snow: 0 };
@@ -632,7 +659,9 @@ export function NexradVolumeOverlay({
       if (!mesh) continue;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     }
-  }, []);
+    // Re-run when sub-layer visibility changes so newly mounted meshes
+    // get DynamicDrawUsage set before the first data arrives.
+  }, [showVolume, showEchoTops]);
 
   useEffect(() => {
     // Compute per-instance alpha from dBZ intensity (shared by both passes).
@@ -649,6 +678,9 @@ export function NexradVolumeOverlay({
     applyConstantColorInstances(echo18MeshRef.current, echoTop18Cells, meshDummy);
     applyConstantColorInstances(echo30MeshRef.current, echoTop30Cells, meshDummy);
     applyConstantColorInstances(echo50MeshRef.current, echoTop50Cells, meshDummy);
+    // showVolume/showEchoTops: re-run when sub-layer toggles so freshly
+    // mounted meshes get count set to 0 (or the real count if data exists)
+    // instead of rendering an uninitialized instance at origin.
   }, [
     renderVoxels,
     echoTop18Cells,
@@ -657,7 +689,9 @@ export function NexradVolumeOverlay({
     meshDummy,
     colorScratch,
     instanceAlphaArray,
-    voxelGeometry
+    voxelGeometry,
+    showVolume,
+    showEchoTops
   ]);
 
   const guideData = useMemo(() => {
