@@ -12,13 +12,18 @@ import {
   MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
   MAX_NEXRAD_CROSS_SECTION_RANGE_NM
 } from './constants';
-import type { NexradDeclutterMode } from './types';
+import type { NexradDeclutterMode, NexradPhaseMode } from './types';
 
 const DECLUTTER_MODE_LABELS: Record<NexradDeclutterMode, string> = {
   all: 'All Layers',
   low: 'Low (SFC-10k)',
   mid: 'Mid (10k-25k)',
   high: 'High (25k+)'
+};
+
+const PHASE_MODE_LABELS: Record<NexradPhaseMode, string> = {
+  thermo: 'Thermodynamic',
+  surface: 'Surface Precip Type'
 };
 
 export function OptionsPanel({
@@ -41,6 +46,8 @@ export function OptionsPanel({
   onNexradOpacityChange,
   nexradDeclutterMode,
   onNexradDeclutterModeChange,
+  nexradPhaseMode,
+  onNexradPhaseModeChange,
   nexradCrossSectionHeadingDeg,
   onNexradCrossSectionHeadingDegChange,
   nexradCrossSectionRangeNm,
@@ -218,6 +225,25 @@ export function OptionsPanel({
       <div className="layers-group-divider">
         <span className="layers-group-label">MRMS Weather</span>
       </div>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">MRMS Phase Detection</span>
+        </span>
+        <select
+          className="options-inline-select"
+          value={nexradPhaseMode}
+          disabled={!layers.mrms}
+          onChange={(event) => onNexradPhaseModeChange(event.target.value as NexradPhaseMode)}
+          aria-label="MRMS phase detection mode"
+        >
+          {(Object.keys(PHASE_MODE_LABELS) as NexradPhaseMode[]).map((mode) => (
+            <option key={mode} value={mode}>
+              {PHASE_MODE_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <label className="options-toggle-row">
         <span className="options-toggle-copy">
