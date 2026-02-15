@@ -1,3 +1,5 @@
+import type { LayerState, LayerId } from './types';
+
 export const DEFAULT_VERTICAL_SCALE = 3;
 export const DEFAULT_TERRAIN_RADIUS_NM = 50;
 export const MIN_TERRAIN_RADIUS_NM = 20;
@@ -26,3 +28,23 @@ export const CAMERA_POSITION: [number, number, number] = [15, 8, 15];
 export const FOG_ARGS: [string, number, number] = ['#0a0a14', 50, 200];
 export const DIRECTIONAL_LIGHT_POSITION: [number, number, number] = [10, 20, 10];
 export const ORBIT_TARGET: [number, number, number] = [0, 2, 0];
+
+export const LAYER_IDS: LayerId[] = [
+  'approach',
+  'airspace',
+  'adsb',
+  'mrms',
+  'echotops',
+  'slice',
+  'guides'
+];
+
+export const DEFAULT_LAYER_STATE: LayerState = {
+  approach: true,
+  airspace: true,
+  adsb: true,
+  mrms: true,
+  echotops: false,
+  slice: false,
+  guides: true
+};

@@ -1,6 +1,10 @@
 import type { StylesConfig } from 'react-select';
 import type { Approach, Waypoint } from '@/lib/cifp/parser';
 import type { MinimumsValueSummary, SceneData } from '@/lib/types';
+import { DEFAULT_LAYER_STATE, LAYER_IDS } from '@/app/app-client/constants';
+import type { LayerId, LayerState } from '@/app/app-client/types';
+
+export { DEFAULT_LAYER_STATE };
 
 const MAX_PICKER_RESULTS = 80;
 const MOBILE_BREAKPOINT_PX = 900;
@@ -167,4 +171,30 @@ export function sceneApproachToRuntimeApproach(scene: SceneData): Approach | nul
 
 export function sceneWaypointsToMap(scene: SceneData): Map<string, Waypoint> {
   return new Map(scene.waypoints.map((waypoint) => [waypoint.id, waypoint as Waypoint]));
+}
+
+export function parseLayersParam(param: string | null): LayerState {
+  const state = { ...DEFAULT_LAYER_STATE };
+  if (!param) return state;
+
+  for (const token of param.split(',')) {
+    const trimmed = token.trim();
+    if (trimmed.length < 2) continue;
+    const sign = trimmed[0];
+    const id = trimmed.slice(1) as LayerId;
+    if (!LAYER_IDS.includes(id)) continue;
+    if (sign === '+') state[id] = true;
+    else if (sign === '-') state[id] = false;
+  }
+  return state;
+}
+
+export function serializeLayersParam(state: LayerState): string | null {
+  const deltas: string[] = [];
+  for (const id of LAYER_IDS) {
+    if (state[id] !== DEFAULT_LAYER_STATE[id]) {
+      deltas.push(`${state[id] ? '+' : '-'}${id}`);
+    }
+  }
+  return deltas.length > 0 ? deltas.join(',') : null;
 }

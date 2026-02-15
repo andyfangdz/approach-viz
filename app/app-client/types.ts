@@ -159,3 +159,15 @@ export interface OptionsPanelProps {
   trafficHistoryMinutes: number;
   onTrafficHistoryMinutesChange: (minutes: number) => void;
 }
+
+export type LayerId = 'approach' | 'airspace' | 'adsb' | 'mrms' | 'echotops' | 'slice' | 'guides';
+
+export interface LayerState {
+  approach: boolean;
+  airspace: boolean;
+  adsb: boolean;
+  mrms: boolean;
+  echotops: boolean;
+  slice: boolean;
+  guides: boolean;
+}
