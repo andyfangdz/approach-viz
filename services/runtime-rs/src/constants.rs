@@ -75,7 +75,9 @@ pub const MAX_BASE_KEYS_LOOKUP: usize = 120;
 pub const MAX_BASE_DAY_LOOKBACK: i64 = 1;
 
 pub const WIRE_MAGIC: [u8; 4] = *b"AVMR";
+#[allow(dead_code)]
 pub const WIRE_V2_VERSION: u16 = 2;
+pub const WIRE_V3_VERSION: u16 = 3;
 pub const WIRE_HEADER_BYTES: usize = 64;
 pub const WIRE_V2_RECORD_BYTES: usize = 20;
 pub const WIRE_V2_DBZ_QUANT_STEP_TENTHS: i16 = 50;

@@ -12,7 +12,7 @@ use crate::constants::{
     DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, MAX_ALLOWED_DBZ, MAX_ALLOWED_RANGE_NM, MIN_ALLOWED_DBZ,
     MIN_ALLOWED_RANGE_NM, WIRE_HEADER_BYTES, WIRE_MAGIC, WIRE_V2_DBZ_QUANT_STEP_TENTHS,
     WIRE_V2_MAX_SPAN_HIGH_DBZ, WIRE_V2_MAX_SPAN_LOW_DBZ, WIRE_V2_MAX_VERTICAL_SPAN,
-    WIRE_V2_RECORD_BYTES, WIRE_V2_VERSION,
+    WIRE_V2_RECORD_BYTES, WIRE_V3_VERSION,
 };
 use crate::types::{AppState, ScanSnapshot};
 use crate::utils::{
@@ -185,30 +185,8 @@ pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
         )
     } else {
         (
-            false,
-            None,
-            None,
-            None,
-            0,
-            0,
-            0,
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            false, None, None, None, 0, 0, 0, 0, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
         )
     };
 
@@ -281,7 +259,7 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
             let mut headers = HeaderMap::new();
             headers.insert(
                 "Content-Type",
-                HeaderValue::from_static("application/vnd.approach-viz.mrms.v2"),
+                HeaderValue::from_static("application/vnd.approach-viz.mrms.v3"),
             );
             headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
             if let Some(scan_time) = iso_from_ms(scan.scan_time_ms) {
@@ -480,6 +458,7 @@ struct MergeCell {
     row: u32,
     col: u32,
     key: MergeKey,
+    surface_phase: u8,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -487,6 +466,7 @@ struct RowRun {
     col_start: u32,
     col_end: u32,
     key: MergeKey,
+    surface_phase: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -503,6 +483,7 @@ struct HorizontalRect {
     col_start: u32,
     col_end: u32,
     key: MergeKey,
+    surface_phase: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -523,6 +504,7 @@ struct BrickCandidate {
     level_start: u8,
     level_end: u8,
     key: MergeKey,
+    surface_phase: u8,
 }
 
 fn build_query_window(
@@ -693,7 +675,7 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
     let mut body = build_wire_header(
         scan,
         window,
-        WIRE_V2_VERSION,
+        WIRE_V3_VERSION,
         WIRE_V2_RECORD_BYTES as u16,
         WIRE_V2_DBZ_QUANT_STEP_TENTHS as u16,
     );
@@ -745,6 +727,7 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
                             WIRE_V2_DBZ_QUANT_STEP_TENTHS,
                         ),
                     },
+                    surface_phase: record.surface_phase,
                 });
             }
         }
@@ -803,6 +786,7 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
                     level_start: level_idx as u8,
                     level_end: level_idx as u8,
                     key: rect.key,
+                    surface_phase: rect.surface_phase,
                 });
                 next_active.insert(signature, new_idx);
             }
@@ -842,7 +826,8 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
         body.extend_from_slice(&span_x.to_le_bytes());
         body.extend_from_slice(&span_y.to_le_bytes());
         body.extend_from_slice(&span_z.to_le_bytes());
-        body.extend_from_slice(&0_u16.to_le_bytes());
+        body.push(brick.surface_phase); // offset 18: surface_phase
+        body.push(0); // offset 19: reserved
         brick_count = brick_count.saturating_add(1);
     }
 
@@ -893,6 +878,7 @@ fn split_rectangle(rect: HorizontalRect, max_span: u16, out: &mut Vec<Horizontal
                 col_start,
                 col_end,
                 key: rect.key,
+                surface_phase: rect.surface_phase,
             });
             if col_end == rect.col_end {
                 break;
@@ -924,6 +910,7 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
     let mut run_col_start = cells[0].col;
     let mut run_col_end = cells[0].col;
     let mut run_key = cells[0].key;
+    let mut run_surface_phase = cells[0].surface_phase;
 
     for cell in &cells[1..] {
         if cell.row == run_row && cell.key == run_key {
@@ -939,17 +926,20 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
             col_start: run_col_start,
             col_end: run_col_end,
             key: run_key,
+            surface_phase: run_surface_phase,
         });
         run_row = cell.row;
         run_col_start = cell.col;
         run_col_end = cell.col;
         run_key = cell.key;
+        run_surface_phase = cell.surface_phase;
     }
 
     runs_by_row.entry(run_row).or_default().push(RowRun {
         col_start: run_col_start,
         col_end: run_col_end,
         key: run_key,
+        surface_phase: run_surface_phase,
     });
 
     let mut rectangles: Vec<HorizontalRect> = Vec::new();
@@ -980,6 +970,7 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
                     col_start: run.col_start,
                     col_end: run.col_end,
                     key: run.key,
+                    surface_phase: run.surface_phase,
                 });
                 next_active.insert(signature, rect_idx);
             }
