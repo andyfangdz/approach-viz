@@ -572,6 +572,11 @@ export function AppClient({
     sceneData.minimumsSummary?.da?.altitude ??
     sceneData.minimumsSummary?.mda?.altitude ??
     undefined;
+  const minimumsLabel = sceneData.minimumsSummary?.da
+    ? 'DA'
+    : sceneData.minimumsSummary?.mda
+      ? 'MDA'
+      : undefined;
   const hasParsedMissedClimbRequirement = Boolean(sceneData.missedApproachClimbRequirement);
   const parsedMissedClimbRequirementLabel = useMemo(() => {
     const requirement = sceneData.missedApproachClimbRequirement;
@@ -737,6 +742,7 @@ export function AppClient({
             surfaceErrorMessage={surfaceErrorMessage}
             recenterNonce={recenterNonce}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
+            minimumsLabel={minimumsLabel}
             missedApproachClimbRequirement={effectiveMissedApproachClimbRequirement}
             onSatelliteRuntimeError={handleSatelliteRuntimeError}
             onNexradDebugChange={setNexradDebug}

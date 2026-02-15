@@ -97,6 +97,7 @@ export interface SceneCanvasProps {
   surfaceErrorMessage: string;
   recenterNonce: number;
   missedApproachStartAltitudeFeet?: number;
+  minimumsLabel?: string;
   missedApproachClimbRequirement: SceneData['missedApproachClimbRequirement'];
   onSatelliteRuntimeError: (message: string, error?: Error) => void;
   onNexradDebugChange?: (debug: NexradDebugState) => void;

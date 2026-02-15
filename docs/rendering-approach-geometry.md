@@ -6,6 +6,7 @@
 - CIFP approach continuation records (`F` subsection continuation `2` / application type `W`) are parsed as level-of-service/RNP values and are not treated as VDA.
 - FAF vertical angle for glidepath rendering is sourced from matched approach metadata (`approaches.json` `vertical_profile.vda`) when available, preventing CIFP level-of-service codes (for example `A152`) from being misread as descent angle.
 - If runway-anchored glidepath math would cause an immediate climb after FAF (for example steep VDA with FAF at/above constraints), final-path altitude falls back to smooth FAF-to-MAP interpolation to prevent abrupt altitude spikes.
+- The portion of the final approach path below MDA/DA is rendered as a dashed line instead of a solid tube, visually distinguishing the segment below minimums. The split point is interpolated exactly at the MDA/DA crossing altitude, and a waypoint-style marker labeled "MDA" or "DA" (with altitude) is placed at that crossing point. When no minimums data is available, the entire path renders as a solid tube.
 
 ## Missed Approach Vertical Profile
 
