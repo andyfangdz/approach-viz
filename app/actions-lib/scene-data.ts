@@ -1,4 +1,5 @@
 import { getDb } from '@/lib/db';
+import type Database from 'better-sqlite3';
 import { airportsWithinNm } from '@/lib/airport-index';
 import type { SceneData } from '@/lib/types';
 import { NEARBY_AIRPORT_RADIUS_NM, ELEVATION_AIRPORT_RADIUS_NM } from './constants';
@@ -16,6 +17,39 @@ import {
 } from './approaches';
 import { loadAirspaceForAirport, loadRunwayMap, rowToAirport, selectAirport } from './airports';
 import type { AirportRow, ApproachRow, MinimaRow, WaypointRow } from './types';
+
+let _stmts: {
+  selectApproaches: Database.Statement;
+  selectMinima: Database.Statement;
+  selectRunways: Database.Statement;
+  selectAirportById: Database.Statement;
+} | null = null;
+
+function stmts() {
+  if (!_stmts) {
+    const db = getDb();
+    _stmts = {
+      selectApproaches: db.prepare(`
+        SELECT airport_id, procedure_id, type, runway, data_json
+        FROM approaches
+        WHERE airport_id = ?
+        ORDER BY type, runway, procedure_id
+      `),
+      selectMinima: db.prepare(`
+        SELECT airport_id, approach_name, runway, types_json, minimums_json, cycle
+        FROM minima
+        WHERE airport_id = ?
+      `),
+      selectRunways: db.prepare(
+        'SELECT id, lat, lon FROM runways WHERE airport_id = ? ORDER BY id'
+      ),
+      selectAirportById: db.prepare(
+        'SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?'
+      )
+    };
+  }
+  return _stmts;
+}
 
 function emptySceneData(): SceneData {
   return {
@@ -37,8 +71,8 @@ function emptySceneData(): SceneData {
 }
 
 export function loadSceneData(requestedAirportId: string, requestedProcedureId = ''): SceneData {
-  const db = getDb();
-  const airportRow = selectAirport(db, requestedAirportId);
+  const s = stmts();
+  const airportRow = selectAirport(requestedAirportId);
 
   if (!airportRow) {
     return emptySceneData();
@@ -47,26 +81,8 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
   const airport = rowToAirport(airportRow);
   const geoidSeparationFeet = computeGeoidSeparationFeet(airport.lat, airport.lon);
 
-  const approachRows = db
-    .prepare(
-      `
-      SELECT airport_id, procedure_id, type, runway, data_json
-      FROM approaches
-      WHERE airport_id = ?
-      ORDER BY type, runway, procedure_id
-    `
-    )
-    .all(airport.id) as ApproachRow[];
-
-  const minimaRows = db
-    .prepare(
-      `
-      SELECT airport_id, approach_name, runway, types_json, minimums_json, cycle
-      FROM minima
-      WHERE airport_id = ?
-    `
-    )
-    .all(airport.id) as MinimaRow[];
+  const approachRows = s.selectApproaches.all(airport.id) as ApproachRow[];
+  const minimaRows = s.selectMinima.all(airport.id) as MinimaRow[];
 
   const approaches = buildApproachOptions(approachRows, minimaRows);
   const approachRowByProcedureId = new Map(approachRows.map((row) => [row.procedure_id, row]));
@@ -104,14 +120,17 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
   const missedApproachClimbRequirement =
     extractMissedApproachClimbRequirement(selectedExternalApproach);
 
-  const runways = db
-    .prepare('SELECT id, lat, lon FROM runways WHERE airport_id = ? ORDER BY id')
-    .all(airport.id) as Array<{ id: string; lat: number; lon: number }>;
+  const runways = s.selectRunways.all(airport.id) as Array<{
+    id: string;
+    lat: number;
+    lon: number;
+  }>;
 
   let waypoints: WaypointRow[] = [];
   if (currentApproachWithVerticalProfile) {
     const waypointIds = collectWaypointIds(currentApproachWithVerticalProfile);
     if (waypointIds.length > 0) {
+      const db = getDb();
       const placeholders = waypointIds.map(() => '?').join(',');
       waypoints = db
         .prepare(`SELECT id, name, lat, lon, type FROM waypoints WHERE id IN (${placeholders})`)
@@ -119,7 +138,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     }
   }
 
-  // Use kdbush spatial index for nearby airports (requires runways) and elevation airports
+  // Use R-tree spatial index for nearby airports (requires runways) and elevation airports
   const nearbyCandidates = airportsWithinNm(
     airport.lat,
     airport.lon,
@@ -129,14 +148,26 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
   nearbyCandidates.sort((a, b) => a.distNm - b.distNm);
   const nearbyTop = nearbyCandidates.slice(0, 12);
   const nearbyAirportIds = nearbyTop.map((c) => c.id);
-  const runwayMap = loadRunwayMap(db, [airport.id, ...nearbyAirportIds]);
+  const runwayMap = loadRunwayMap([airport.id, ...nearbyAirportIds]);
 
-  // Nearby airports with full details (for rendering runways etc.)
+  // Batch-fetch nearby airport details (single query instead of N+1)
+  let nearbyAirportRowMap: Map<string, AirportRow>;
+  if (nearbyAirportIds.length > 0) {
+    const db = getDb();
+    const placeholders = nearbyAirportIds.map(() => '?').join(',');
+    const nearbyRows = db
+      .prepare(
+        `SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id IN (${placeholders})`
+      )
+      .all(...nearbyAirportIds) as AirportRow[];
+    nearbyAirportRowMap = new Map(nearbyRows.map((row) => [row.id, row]));
+  } else {
+    nearbyAirportRowMap = new Map();
+  }
+
   const nearbyAirports = nearbyTop
     .map((c) => {
-      const row = db
-        .prepare('SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?')
-        .get(c.id) as AirportRow | undefined;
+      const row = nearbyAirportRowMap.get(c.id);
       if (!row) return null;
       return {
         airport: rowToAirport(row),
@@ -171,7 +202,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     runways: runwayMap.get(airport.id) || runways,
     nearbyAirports,
     elevationAirports,
-    airspace: loadAirspaceForAirport(db, airport),
+    airspace: loadAirspaceForAirport(airport),
     minimumsSummary: deriveMinimumsSummary(
       minimaRows,
       selectedApproachOption,
