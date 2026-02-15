@@ -58,17 +58,13 @@ export const SceneCanvas = memo(function SceneCanvas({
   verticalScale,
   terrainRadiusNm,
   flattenBathymetry,
-  liveTrafficEnabled,
+  layers,
   hideGroundTraffic,
   showTrafficCallsigns,
   trafficHistoryMinutes,
-  nexradVolumeEnabled,
   nexradMinDbz,
   nexradOpacity,
   nexradDeclutterMode,
-  nexradShowEchoTops,
-  nexradShowAltitudeGuides,
-  nexradCrossSectionEnabled,
   nexradCrossSectionHeadingDeg,
   nexradCrossSectionRangeNm,
   surfaceMode,
@@ -82,6 +78,13 @@ export const SceneCanvas = memo(function SceneCanvas({
   onNexradDebugChange,
   onTrafficDebugChange
 }: SceneCanvasProps) {
+  const approachVisible = layers.approach;
+  const airspaceVisible = layers.airspace;
+  const liveTrafficEnabled = layers.adsb;
+  const nexradVolumeEnabled = layers.mrms;
+  const nexradShowEchoTops = layers.echotops;
+  const nexradShowAltitudeGuides = layers.guides;
+  const nexradCrossSectionEnabled = layers.slice;
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const sceneAirports = useMemo<SceneAirport[]>(() => {
     const list: SceneAirport[] = [
@@ -166,7 +169,7 @@ export const SceneCanvas = memo(function SceneCanvas({
           </SceneErrorBoundary>
         )}
 
-        {contextApproach && (
+        {approachVisible && contextApproach && (
           <ApproachPath
             approach={contextApproach}
             waypoints={waypoints}
@@ -182,7 +185,7 @@ export const SceneCanvas = memo(function SceneCanvas({
           />
         )}
 
-        {sceneData.airspace.length > 0 && (
+        {airspaceVisible && sceneData.airspace.length > 0 && (
           <AirspaceVolumes
             features={sceneData.airspace}
             refLat={airport.lat}

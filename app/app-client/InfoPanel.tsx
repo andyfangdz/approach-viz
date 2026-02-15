@@ -7,9 +7,7 @@ export function InfoPanel({
   surfaceLegendClass,
   surfaceLegendLabel,
   surfaceMode,
-  liveTrafficEnabled,
-  nexradVolumeEnabled,
-  nexradShowEchoTops,
+  layers,
   hasApproachPlate,
   sceneData,
   selectedApproachSource
@@ -70,19 +68,19 @@ export function InfoPanel({
           <div className={`legend-color ${surfaceLegendClass}`} />
           <span>{surfaceLegendLabel}</span>
         </div>
-        {liveTrafficEnabled && (
+        {layers.adsb && (
           <div className="legend-item">
             <div className="legend-color traffic" />
             <span>Live Traffic</span>
           </div>
         )}
-        {nexradVolumeEnabled && (
+        {layers.mrms && (
           <div className="legend-item">
             <div className="legend-color nexrad" />
             <span>MRMS 3D Precip</span>
           </div>
         )}
-        {nexradVolumeEnabled && nexradShowEchoTops && (
+        {layers.mrms && layers.echotops && (
           <div className="legend-item">
             <div className="legend-color nexrad-echo-top" />
             <span>MRMS Echo Tops</span>

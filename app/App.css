@@ -206,6 +206,7 @@ header,
 .info-panel,
 .info-panel-fab,
 .options-panel-fab,
+.layers-panel-fab,
 .recenter-fab,
 .debug-panel,
 .debug-panel-fab,
@@ -401,10 +402,38 @@ textarea,
   background: rgba(0, 255, 204, 0.08);
 }
 
+.layers-panel-fab {
+  position: absolute;
+  bottom: calc(var(--floating-control-bottom) + 48px);
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(18, 18, 31, 0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 10;
+  transition:
+    border-color 0.2s,
+    color 0.2s,
+    background 0.2s;
+}
+
+.layers-panel-fab:hover {
+  border-color: var(--accent-cyan);
+  color: var(--text-primary);
+  background: rgba(0, 255, 204, 0.08);
+}
+
 .recenter-fab {
   position: absolute;
   right: 24px;
-  bottom: calc(var(--floating-control-bottom) + 48px);
+  bottom: calc(var(--floating-control-bottom) + 96px);
   width: 40px;
   height: 40px;
   display: flex;
@@ -459,6 +488,33 @@ textarea,
   padding: 10px 14px;
   min-width: 0;
   z-index: 10;
+}
+
+.layers-panel {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  background: rgba(18, 18, 31, 0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  min-width: 0;
+  z-index: 10;
+}
+
+.layers-group-divider {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.layers-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .debug-panel {
@@ -984,9 +1040,14 @@ textarea,
     right: 12px;
   }
 
-  .recenter-fab {
+  .layers-panel-fab {
     right: 12px;
     bottom: calc(var(--floating-control-bottom) + 48px);
+  }
+
+  .recenter-fab {
+    right: 12px;
+    bottom: calc(var(--floating-control-bottom) + 96px);
   }
 
   .mrms-loading-indicator {
@@ -1016,6 +1077,12 @@ textarea,
   }
 
   .options-panel {
+    left: 12px;
+    right: 12px;
+    bottom: var(--floating-control-bottom);
+  }
+
+  .layers-panel {
     left: 12px;
     right: 12px;
     bottom: var(--floating-control-bottom);
