@@ -75,6 +75,7 @@ export function LayersPanel({
           className="info-panel-close"
           onClick={onToggleLayers}
           title="Hide layers"
+          aria-label="Hide layers"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
             <path
