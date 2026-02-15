@@ -71,6 +71,7 @@ export interface HeaderControlsProps {
   surfaceMode: SurfaceMode;
   onSurfaceModeSelected: (mode: SurfaceMode) => void;
   menuPortalTarget?: HTMLElement;
+  onControlsHeightChange?: (height: number) => void;
 }
 
 export interface SceneCanvasProps {
