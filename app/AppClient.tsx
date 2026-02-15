@@ -744,6 +744,10 @@ export function AppClient({
           />
         )}
 
+        <div className="faa-disclaimer" role="note">
+          Not official FAA data — Do not use for navigation
+        </div>
+
         {showMrmsLoadingIndicator && (
           <div className="mrms-loading-indicator" role="status" aria-live="polite">
             <span className="mrms-loading-spinner" aria-hidden="true" />
