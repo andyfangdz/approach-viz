@@ -5,6 +5,7 @@ import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { buildPathGeometry } from './path-builder';
 import { altToY } from './coordinates';
 import { VerticalLines } from './VerticalLines';
+import { WaypointMarker } from './WaypointMarker';
 
 /**
  * Split an ordered array of 3D points at the altitude where the path crosses
@@ -70,7 +71,8 @@ export function PathTube({
   magVar,
   color,
   showTurnConstraintLabels = false,
-  dashedBelowAltitudeFeet
+  dashedBelowAltitudeFeet,
+  dashedBelowLabel
 }: {
   legs: ApproachLeg[];
   waypoints: Map<string, Waypoint>;
@@ -83,6 +85,7 @@ export function PathTube({
   color: string;
   showTurnConstraintLabels?: boolean;
   dashedBelowAltitudeFeet?: number;
+  dashedBelowLabel?: string;
 }) {
   const { points, verticalLines, turnConstraintLabels } = useMemo(() => {
     return buildPathGeometry({
@@ -158,6 +161,14 @@ export function PathTube({
           dashed
           dashSize={0.15}
           gapSize={0.1}
+        />
+      )}
+
+      {dashedBelowLabel && dashedLinePoints && dashedLinePoints.length >= 1 && (
+        <WaypointMarker
+          position={dashedLinePoints[0]}
+          name={dashedBelowLabel}
+          altitudeLabel={dashedBelowAltitudeFeet}
         />
       )}
 
