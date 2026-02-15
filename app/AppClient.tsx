@@ -205,6 +205,7 @@ export function AppClient({
   initialApproachId
 }: AppClientProps) {
   const [selectorsCollapsed, setSelectorsCollapsed] = useState(false);
+  const [controlsOverlayHeight, setControlsOverlayHeight] = useState(0);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [optionsCollapsed, setOptionsCollapsed] = useState(true);
   const [layersCollapsed, setLayersCollapsed] = useState(true);
@@ -710,6 +711,7 @@ export function AppClient({
         surfaceMode={surfaceMode}
         onSurfaceModeSelected={handleSurfaceModeSelected}
         menuPortalTarget={menuPortalTarget}
+        onControlsHeightChange={setControlsOverlayHeight}
       />
 
       <main className="main-content">
@@ -750,7 +752,15 @@ export function AppClient({
           />
         )}
 
-        <div className="faa-disclaimer" role="note">
+        <div
+          className="faa-disclaimer"
+          role="note"
+          style={
+            controlsOverlayHeight > 0
+              ? { top: controlsOverlayHeight + 10 }
+              : undefined
+          }
+        >
           Not official FAA data — Do not use for navigation
         </div>
 

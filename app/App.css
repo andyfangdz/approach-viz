@@ -302,6 +302,7 @@ textarea,
   -webkit-user-select: none;
   user-select: none;
   line-height: 1.3;
+  transition: top 0.2s ease;
 }
 
 .mrms-loading-spinner {

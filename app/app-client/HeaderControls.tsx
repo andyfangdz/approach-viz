@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Select from 'react-select';
 import { filterOptions, selectStyles } from '@/app/app-client-utils';
 import type { HeaderControlsProps } from './types';
@@ -17,8 +17,23 @@ export function HeaderControls({
   onApproachSelected,
   surfaceMode,
   onSurfaceModeSelected,
-  menuPortalTarget
+  menuPortalTarget,
+  onControlsHeightChange
 }: HeaderControlsProps) {
+  const controlsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = controlsRef.current;
+    if (!el) {
+      onControlsHeightChange?.(0);
+      return;
+    }
+    const report = () => onControlsHeightChange?.(el.offsetHeight);
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [selectorsCollapsed, onControlsHeightChange]);
   const [airportQuery, setAirportQuery] = useState('');
   const [approachQuery, setApproachQuery] = useState('');
   const filteredAirportOptions = useMemo(
@@ -72,7 +87,7 @@ export function HeaderControls({
       </div>
 
       {!selectorsCollapsed && (
-        <div className="controls">
+        <div className="controls" ref={controlsRef}>
           <div className="control-group">
             <label>Airport</label>
             <div className="library-select">
