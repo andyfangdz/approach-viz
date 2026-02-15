@@ -13,9 +13,11 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 ## Phase-Aware Coloring
 
 - Voxel coloring is phase-aware (rain / mixed / snow).
-- Server-side phase resolution is thermodynamic-first (precip flag + freezing level + wet-bulb/surface temperature + bright-band context), then applies level-matched dual-pol correction (`MergedZdr`, `MergedRhoHV`) with staleness/quality weighting.
-- When rain/snow evidence strongly competes the resolver promotes a bounded mixed transition band, then applies a local boundary blend (transition candidates with opposite rain/snow neighbors become mixed) before final mixed suppression.
-- Stale/sparse dual-pol (>5 minutes) is down-weighted with explicit fallback telemetry.
+- Two phase detection modes are available, selectable in the options panel:
+  - **Thermodynamic** (default): Server-side per-voxel per-altitude resolution using precip flag + freezing level + wet-bulb/surface temperature + bright-band context, then level-matched dual-pol correction (`MergedZdr`, `MergedRhoHV`) with staleness/quality weighting. When rain/snow evidence strongly competes the resolver promotes a bounded mixed transition band, then applies a local boundary blend before final mixed suppression.
+  - **Surface Precip Type**: Uses the MRMS `PrecipFlag_00.00` surface product to assign a single phase to the entire vertical column at each grid cell. Falls back to rain when PrecipFlag is unavailable. Matches the presentation of official NWS radar products.
+- Both phase values are pre-computed at ingest time and carried in the v3 wire format, so switching modes is instant (no re-fetch).
+- Stale/sparse dual-pol (>5 minutes) is down-weighted with explicit fallback telemetry (thermodynamic mode only).
 - Phase methodology details: [`docs/mrms-phase-methodology.md`](mrms-phase-methodology.md).
 
 ## Shading and Blending
@@ -57,7 +59,7 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 
 ## Transport and Polling
 
-- Client decodes compact binary payloads (`application/vnd.approach-viz.mrms.v2`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays.
+- Client decodes compact binary payloads (`application/vnd.approach-viz.mrms.v3`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays. The v3 format adds a `surface_phase` byte at record offset 18 (formerly reserved). The client also accepts v2 payloads for backward compatibility.
 - v2 transport merges contiguous same-phase / similar-dBZ cells into larger brick records server-side, reducing client instance count while preserving full coverage.
 - Wire format details: [`docs/mrms-rust-pipeline.md`](mrms-rust-pipeline.md).
 - Polling cadence: ~120 seconds.

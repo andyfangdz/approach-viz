@@ -7,6 +7,9 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 - Airport selection is encoded in the URL path: `/<AIRPORT>` or `/<AIRPORT>/<PROCEDURE_ID>`.
 - Surface mode is a query parameter: `?surface=terrain`, `?surface=plate`, `?surface=3dplate`, or `?surface=satellite`.
 - Layer visibility is a query parameter: `?layers=-mrms,+echotops` (delta-from-defaults format). `+layerId` turns a default-off layer on; `-layerId` turns a default-on layer off. Omitting `?layers=` means use all defaults. URL layer state takes precedence over localStorage on page load.
+- MRMS phase detection mode is a query parameter: `?phaseMode=surface`. Default (`thermo`) is omitted from URL. Values: `thermo` (thermodynamic per-altitude), `surface` (surface precip type for entire column).
+- MRMS declutter mode is a query parameter: `?declutter=low`. Default (`all`) is omitted from URL. Values: `all`, `low`, `mid`, `high`.
+- Both `?phaseMode` and `?declutter` override localStorage on page load (same precedence as `?layers=`).
 
 ## Layers Panel
 
@@ -31,7 +34,7 @@ The options (gear) panel contains per-layer configuration controls organized int
 - **General**: `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle.
 - **Approach**: `Use Parsed Climb Gradient When Available` (toggles between parsed FAA missed-climb requirements and standard climb-gradient behavior; defaults to parsed when available).
 - **ADS-B Traffic**: `Hide Ground Traffic`, `Show Traffic Callsigns`, `Traffic History` (1–30 min, default 3).
-- **MRMS Weather**: `MRMS Declutter` (All/Low/Mid/High, also cycled with `V` key), `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (5–100%).
+- **MRMS Weather**: `MRMS Phase Detection` (Thermodynamic/Surface Precip Type, default Thermodynamic), `MRMS Declutter` (All/Low/Mid/High, also cycled with `V` key), `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (5–100%).
 - **Vertical Slice**: `Slice Heading` (0–359°), `Slice Range` (30–140 NM).
 
 All options-panel and layer values are persisted to browser `localStorage` and restored on load.

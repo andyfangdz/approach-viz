@@ -27,12 +27,12 @@ Both phases are embedded in each wire record. The client picks which to use for 
 
 Same 20-byte record. Same header. Only difference:
 
-| Offset | v2 | v3 |
-|--------|----|----|
-| 10 | `phase` (thermo) | `phase` (thermo) -- unchanged |
-| 11 | `level_start` | `level_start` -- unchanged |
-| 18 | reserved (0) | `surface_phase` (u8: 0/1/2) |
-| 19 | reserved (0) | reserved (0) |
+| Offset | v2               | v3                            |
+| ------ | ---------------- | ----------------------------- |
+| 10     | `phase` (thermo) | `phase` (thermo) -- unchanged |
+| 11     | `level_start`    | `level_start` -- unchanged    |
+| 18     | reserved (0)     | `surface_phase` (u8: 0/1/2)   |
+| 19     | reserved (0)     | reserved (0)                  |
 
 Version field at header offset 4-5 becomes `3`. Client decoder accepts both v2 and v3 -- v2 payloads have no surface_phase (treat as 0/rain).
 
@@ -43,6 +43,7 @@ Constants: `WIRE_V3_VERSION = 3`, reuse all other v2 constants (record bytes, qu
 ## Task 1: Rust -- store surface phase in StoredVoxel and compute at ingest
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/types.rs:31-36` (StoredVoxel)
 - Modify: `services/runtime-rs/src/ingest.rs` (voxel construction loop, ~line 630-650)
 
@@ -92,6 +93,7 @@ git commit -m "feat(runtime): compute and store surface_phase per voxel at inges
 ## Task 2: Rust -- bump wire format to v3, emit surface_phase
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/constants.rs:78` (add WIRE_V3_VERSION)
 - Modify: `services/runtime-rs/src/api.rs:~245-280` (VolumeQuery, build_volume_wire, build_volume_wire_v2)
 
@@ -106,6 +108,7 @@ pub const WIRE_V3_VERSION: u16 = 3;
 **Step 2: Update `build_volume_wire` to use v3**
 
 In `api.rs`, update `build_volume_wire_v2` (rename optional -- can keep name):
+
 - Change the version written in `build_wire_header` call from `WIRE_V2_VERSION` to `WIRE_V3_VERSION`
 - In the brick serialization loop (around line 860), where `body.extend_from_slice(&0_u16.to_le_bytes())` writes the reserved 2 bytes at offsets 18-19: instead write `surface_phase` at offset 18 and `0u8` at offset 19.
 
@@ -130,10 +133,13 @@ struct BrickCandidate {
 ```
 
 In the brick record serialization, replace:
+
 ```rust
 body.extend_from_slice(&0_u16.to_le_bytes()); // reserved
 ```
+
 with:
+
 ```rust
 body.push(brick.surface_phase);  // offset 18: surface_phase
 body.push(0);                     // offset 19: reserved
@@ -160,12 +166,14 @@ git commit -m "feat(runtime): bump wire format to v3, emit surface_phase at offs
 ## Task 3: Client -- decode v3 wire format with surface_phase
 
 **Files:**
+
 - Modify: `app/scene/nexrad/nexrad-types.ts` (version const, tuple type, RenderVoxel)
 - Modify: `app/scene/nexrad/nexrad-decode.ts` (decoder)
 
 **Step 1: Add v3 constants and update types**
 
 In `nexrad-types.ts`:
+
 - Add `MRMS_BINARY_V3_VERSION = 3` constant
 - Add `surfacePhaseCode` to `NexradVoxelTuple` at index 8 (after phaseCode at index 7)
 - Add `surfacePhaseCode: number` to `RenderVoxel`
@@ -187,14 +195,13 @@ export type NexradVoxelTuple = [
 **Step 2: Update decoder to accept v2 and v3**
 
 In `nexrad-decode.ts`:
+
 - Change version check from `version !== MRMS_BINARY_V2_VERSION` to `version !== MRMS_BINARY_V2_VERSION && version !== MRMS_BINARY_V3_VERSION`
 - When `version >= 3`, read `surfacePhaseCode` from offset 18 in the record loop
 - When v2, default `surfacePhaseCode` to `phaseCode` (same as thermo -- backward compat means no visual change)
 
 ```typescript
-const surfacePhaseCode = version >= MRMS_BINARY_V3_VERSION
-  ? view.getUint8(offset + 18)
-  : phaseCode;
+const surfacePhaseCode = version >= MRMS_BINARY_V3_VERSION ? view.getUint8(offset + 18) : phaseCode;
 ```
 
 Push `surfacePhaseCode` as the 9th element of the tuple.
@@ -205,17 +212,24 @@ In `NexradVolumeOverlay.tsx`, destructure `surfacePhaseCode` from the tuple (ind
 
 ```typescript
 const [
-  offsetXNm, offsetZNm, bottomFeet, topFeet, dbz,
-  footprintXNm, footprintYNm, phaseCode, surfacePhaseCode
+  offsetXNm,
+  offsetZNm,
+  bottomFeet,
+  topFeet,
+  dbz,
+  footprintXNm,
+  footprintYNm,
+  phaseCode,
+  surfacePhaseCode
 ] = voxel;
 ```
 
 And in the push:
+
 ```typescript
-surfacePhaseCode:
-  typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
-    ? Math.round(surfacePhaseCode)
-    : PHASE_RAIN
+surfacePhaseCode: typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
+  ? Math.round(surfacePhaseCode)
+  : PHASE_RAIN;
 ```
 
 **Step 4: Run typecheck**
@@ -235,6 +249,7 @@ git commit -m "feat(client): decode v3 wire format with surface_phase"
 ## Task 4: Client types, constants, and URL state helpers
 
 **Files:**
+
 - Modify: `app/app-client/types.ts` (NexradPhaseMode type)
 - Modify: `app/app-client/constants.ts` (defaults)
 - Modify: `app/app-client-utils.ts` (URL parse helpers)
@@ -242,6 +257,7 @@ git commit -m "feat(client): decode v3 wire format with surface_phase"
 **Step 1: Add NexradPhaseMode type**
 
 In `types.ts`:
+
 ```typescript
 export type NexradPhaseMode = 'thermo' | 'surface';
 ```
@@ -249,6 +265,7 @@ export type NexradPhaseMode = 'thermo' | 'surface';
 **Step 2: Add constants**
 
 In `constants.ts`:
+
 ```typescript
 export const DEFAULT_NEXRAD_PHASE_MODE = 'thermo';
 ```
@@ -265,9 +282,7 @@ export function readPhaseModeFromSearch(search: string): 'thermo' | 'surface' | 
   return null;
 }
 
-export function readDeclutterModeFromSearch(
-  search: string
-): 'all' | 'low' | 'mid' | 'high' | null {
+export function readDeclutterModeFromSearch(search: string): 'all' | 'low' | 'mid' | 'high' | null {
   const params = new URLSearchParams(search);
   const value = params.get('declutter');
   if (value === 'all' || value === 'low' || value === 'mid' || value === 'high') return value;
@@ -292,6 +307,7 @@ git commit -m "feat: add NexradPhaseMode type, constants, and URL parse helpers"
 ## Task 5: Wire phaseMode state through AppClient
 
 **Files:**
+
 - Modify: `app/AppClient.tsx` (state, localStorage, URL read/write, prop threading)
 - Modify: `app/app-client/types.ts` (SceneCanvasProps, OptionsPanelProps)
 
@@ -314,6 +330,7 @@ function normalizeNexradPhaseMode(mode: unknown): NexradPhaseMode {
 ```
 
 State:
+
 ```typescript
 const [nexradPhaseMode, setNexradPhaseMode] = useState<NexradPhaseMode>(DEFAULT_NEXRAD_PHASE_MODE);
 ```
@@ -321,6 +338,7 @@ const [nexradPhaseMode, setNexradPhaseMode] = useState<NexradPhaseMode>(DEFAULT_
 **Step 3: Add localStorage read/write**
 
 In the init effect, after `nexradDeclutterMode` restore:
+
 ```typescript
 if (persisted.nexradPhaseMode) {
   setNexradPhaseMode(normalizeNexradPhaseMode(persisted.nexradPhaseMode));
@@ -332,6 +350,7 @@ In the persist effect, add `nexradPhaseMode` to the persisted object and dep arr
 **Step 4: Add URL read (init effect)**
 
 After the `?layers=` read block, also read `?phaseMode` and `?declutter`:
+
 ```typescript
 const phaseModeFromUrl = readPhaseModeFromSearch(window.location.search);
 if (phaseModeFromUrl) {
@@ -346,6 +365,7 @@ if (declutterFromUrl) {
 **Step 5: Add URL write (replaceState effect)**
 
 In the URL sync effect, after the `layers` serialization:
+
 ```typescript
 if (nexradPhaseMode !== DEFAULT_NEXRAD_PHASE_MODE) {
   params.set('phaseMode', nexradPhaseMode);
@@ -364,11 +384,13 @@ Add `nexradPhaseMode` and `nexradDeclutterMode` to the effect's dependency array
 **Step 6: Update prop interfaces**
 
 In `types.ts`, add to `SceneCanvasProps`:
+
 ```typescript
 nexradPhaseMode: NexradPhaseMode;
 ```
 
 Add to `OptionsPanelProps`:
+
 ```typescript
 nexradPhaseMode: NexradPhaseMode;
 onNexradPhaseModeChange: (mode: NexradPhaseMode) => void;
@@ -400,6 +422,7 @@ git commit -m "feat: wire phaseMode state, localStorage, and URL encoding throug
 ## Task 6: OptionsPanel -- add phase mode dropdown
 
 **Files:**
+
 - Modify: `app/app-client/OptionsPanel.tsx`
 
 **Step 1: Add phase mode labels and imports**
@@ -430,9 +453,7 @@ Insert before the existing declutter dropdown:
     className="options-inline-select"
     value={nexradPhaseMode}
     disabled={!layers.mrms}
-    onChange={(event) =>
-      onNexradPhaseModeChange(event.target.value as NexradPhaseMode)
-    }
+    onChange={(event) => onNexradPhaseModeChange(event.target.value as NexradPhaseMode)}
     aria-label="MRMS phase detection mode"
   >
     {(Object.keys(PHASE_MODE_LABELS) as NexradPhaseMode[]).map((mode) => (
@@ -461,6 +482,7 @@ git commit -m "feat: add MRMS phase detection mode dropdown to OptionsPanel"
 ## Task 7: SceneCanvas + NexradVolumeOverlay -- use phaseMode for coloring
 
 **Files:**
+
 - Modify: `app/app-client/SceneCanvas.tsx` (pass phaseMode through)
 - Modify: `app/scene/nexrad/nexrad-types.ts` (NexradVolumeOverlayProps)
 - Modify: `app/scene/NexradVolumeOverlay.tsx` (select phase for RenderVoxel)
@@ -469,6 +491,7 @@ git commit -m "feat: add MRMS phase detection mode dropdown to OptionsPanel"
 **Step 1: Add phaseMode to NexradVolumeOverlayProps**
 
 In `nexrad-types.ts`:
+
 ```typescript
 import type { NexradDeclutterMode, NexradPhaseMode } from '@/app/app-client/types';
 
@@ -479,8 +502,9 @@ phaseMode?: NexradPhaseMode;
 **Step 2: Thread through SceneCanvas**
 
 In `SceneCanvas.tsx`, destructure `nexradPhaseMode` from props and pass to `<NexradVolumeOverlay>`:
+
 ```tsx
-phaseMode={nexradPhaseMode}
+phaseMode = { nexradPhaseMode };
 ```
 
 **Step 3: Apply phaseMode in NexradVolumeOverlay**
@@ -490,12 +514,12 @@ In the `rawRenderVoxels` memo, select the effective phase based on mode:
 ```typescript
 const effectivePhaseCode =
   phaseMode === 'surface'
-    ? (typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
-        ? Math.round(surfacePhaseCode)
-        : PHASE_RAIN)
-    : (typeof phaseCode === 'number' && Number.isFinite(phaseCode)
-        ? Math.round(phaseCode)
-        : PHASE_RAIN);
+    ? typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
+      ? Math.round(surfacePhaseCode)
+      : PHASE_RAIN
+    : typeof phaseCode === 'number' && Number.isFinite(phaseCode)
+      ? Math.round(phaseCode)
+      : PHASE_RAIN;
 ```
 
 Use `effectivePhaseCode` for the `phaseCode` field in the RenderVoxel push. Add `phaseMode` to the memo's dependency array.
@@ -517,6 +541,7 @@ git commit -m "feat: apply phaseMode selection in volume overlay and cross secti
 ## Task 8: Update docs and AGENTS.md
 
 **Files:**
+
 - Modify: `AGENTS.md` (mention phase mode in UI/URL section)
 - Modify: `docs/ui-url-state-and-mobile.md` (add phaseMode and declutter URL params)
 - Modify: `docs/rendering-weather-volume.md` (mention dual phase modes)
@@ -542,22 +567,22 @@ git commit -m "docs: document phase detection mode, URL state, and v3 wire forma
 
 ## Summary of changes by file
 
-| File | Change |
-|------|--------|
-| `services/runtime-rs/src/types.rs` | Add `surface_phase: u8` to `StoredVoxel` |
-| `services/runtime-rs/src/ingest.rs` | Compute `surface_phase` from PrecipFlag at ingest |
-| `services/runtime-rs/src/constants.rs` | Add `WIRE_V3_VERSION = 3` |
-| `services/runtime-rs/src/api.rs` | Emit v3 header, write `surface_phase` at record offset 18, carry through merge pipeline |
-| `app/scene/nexrad/nexrad-types.ts` | v3 const, `surfacePhaseCode` in tuple + RenderVoxel + props |
-| `app/scene/nexrad/nexrad-decode.ts` | Accept v2+v3, read surface_phase at offset 18 |
-| `app/scene/NexradVolumeOverlay.tsx` | Destructure surfacePhaseCode, select by phaseMode |
-| `app/app-client/types.ts` | `NexradPhaseMode` type, prop additions |
-| `app/app-client/constants.ts` | `DEFAULT_NEXRAD_PHASE_MODE` |
-| `app/app-client-utils.ts` | `readPhaseModeFromSearch`, `readDeclutterModeFromSearch` |
-| `app/AppClient.tsx` | State, localStorage, URL read/write, prop threading |
-| `app/app-client/OptionsPanel.tsx` | Phase mode dropdown |
-| `app/app-client/SceneCanvas.tsx` | Pass phaseMode to overlay |
-| `AGENTS.md` + `docs/*.md` | Documentation updates |
+| File                                   | Change                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------------------------- |
+| `services/runtime-rs/src/types.rs`     | Add `surface_phase: u8` to `StoredVoxel`                                                |
+| `services/runtime-rs/src/ingest.rs`    | Compute `surface_phase` from PrecipFlag at ingest                                       |
+| `services/runtime-rs/src/constants.rs` | Add `WIRE_V3_VERSION = 3`                                                               |
+| `services/runtime-rs/src/api.rs`       | Emit v3 header, write `surface_phase` at record offset 18, carry through merge pipeline |
+| `app/scene/nexrad/nexrad-types.ts`     | v3 const, `surfacePhaseCode` in tuple + RenderVoxel + props                             |
+| `app/scene/nexrad/nexrad-decode.ts`    | Accept v2+v3, read surface_phase at offset 18                                           |
+| `app/scene/NexradVolumeOverlay.tsx`    | Destructure surfacePhaseCode, select by phaseMode                                       |
+| `app/app-client/types.ts`              | `NexradPhaseMode` type, prop additions                                                  |
+| `app/app-client/constants.ts`          | `DEFAULT_NEXRAD_PHASE_MODE`                                                             |
+| `app/app-client-utils.ts`              | `readPhaseModeFromSearch`, `readDeclutterModeFromSearch`                                |
+| `app/AppClient.tsx`                    | State, localStorage, URL read/write, prop threading                                     |
+| `app/app-client/OptionsPanel.tsx`      | Phase mode dropdown                                                                     |
+| `app/app-client/SceneCanvas.tsx`       | Pass phaseMode to overlay                                                               |
+| `AGENTS.md` + `docs/*.md`              | Documentation updates                                                                   |
 
 ## Not in scope
 

@@ -61,7 +61,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI, agent skills
 - [`docs/architecture-client-and-scene.md`](docs/architecture-client-and-scene.md) — client state orchestration, UI section boundaries, scene composition
 - [`docs/mrms-rust-pipeline.md`](docs/mrms-rust-pipeline.md) — Rust ingest/query design, wire format, deployment, and service endpoints
-- [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md) — thermodynamic-first phase scoring, dual-pol correction weighting, fallback policy, and debug telemetry
+- [`docs/mrms-phase-methodology.md`](docs/mrms-phase-methodology.md) — phase detection modes (thermodynamic + surface precip type), thermodynamic scoring, dual-pol correction weighting, fallback policy, and debug telemetry
 
 ### Rendering
 
@@ -70,7 +70,7 @@ Server-first data loading through Next.js server actions backed by SQLite and a 
 Key behaviors:
 
 - Airspace sectors with surface floors clamp to airport elevation to prevent underground volumes at high-elevation airports.
-- MRMS volume uses phase-aware reflectivity coloring (rain/mixed/snow), declutter modes, echo-top caps (`18/30/50/60 dBZ`), altitude guides, and vertical cross-sections.
+- MRMS volume uses phase-aware reflectivity coloring (rain/mixed/snow) with two selectable phase detection modes (thermodynamic per-altitude or surface precip type for entire column), declutter modes, echo-top caps (`18/30/50/60 dBZ`), altitude guides, and vertical cross-sections.
 - Missed-approach geometry includes curved MAP-to-missed transitions and optional published FAA climb-gradient enforcement.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
@@ -81,7 +81,7 @@ Key behaviors:
 
 ### UI, URL State, and Mobile
 
-URL-path-encoded airport/procedure selection, layers panel with 7 independent layer toggles (approach, airspace, ADS-B, MRMS 3D precip, echo tops, vertical slice, altitude guides) and delta-from-defaults `?layers=` URL encoding, options panel with localStorage persistence organized into layer-relevant sections, overlay-style selectors, MRMS loading chip, runtime debug panel, mobile-first collapsed defaults with viewport locking, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
+URL-path-encoded airport/procedure selection, layers panel with 7 independent layer toggles (approach, airspace, ADS-B, MRMS 3D precip, echo tops, vertical slice, altitude guides) and delta-from-defaults `?layers=` URL encoding, options panel with localStorage persistence organized into layer-relevant sections, `?phaseMode=` and `?declutter=` URL-encoded MRMS options (delta-from-defaults, omitted when default), overlay-style selectors, MRMS loading chip, runtime debug panel, mobile-first collapsed defaults with viewport locking, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
 
 ### Validation
 
