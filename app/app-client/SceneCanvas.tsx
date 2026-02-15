@@ -66,7 +66,6 @@ export const SceneCanvas = memo(function SceneCanvas({
   nexradMinDbz,
   nexradOpacity,
   nexradDeclutterMode,
-  nexradShowTopShell,
   nexradShowEchoTops,
   nexradShowAltitudeGuides,
   nexradCrossSectionEnabled,
@@ -219,7 +218,6 @@ export const SceneCanvas = memo(function SceneCanvas({
             showVolume={nexradVolumeEnabled}
             opacity={nexradOpacity}
             declutterMode={nexradDeclutterMode}
-            showTopShell={nexradShowTopShell}
             showEchoTops={nexradShowEchoTops}
             showAltitudeGuides={nexradShowAltitudeGuides}
             showCrossSection={nexradCrossSectionEnabled}

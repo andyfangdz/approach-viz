@@ -4,7 +4,7 @@ import type { SelectOption } from '@/app/app-client-utils';
 import type { SceneData } from '@/lib/types';
 
 export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
-export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high' | 'top-shell';
+export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high';
 
 export interface NexradDebugState {
   enabled: boolean;
@@ -88,7 +88,6 @@ export interface SceneCanvasProps {
   nexradMinDbz: number;
   nexradOpacity: number;
   nexradDeclutterMode: NexradDeclutterMode;
-  nexradShowTopShell: boolean;
   nexradShowEchoTops: boolean;
   nexradShowAltitudeGuides: boolean;
   nexradCrossSectionEnabled: boolean;
@@ -143,8 +142,6 @@ export interface OptionsPanelProps {
   onNexradOpacityChange: (opacity: number) => void;
   nexradDeclutterMode: NexradDeclutterMode;
   onNexradDeclutterModeChange: (mode: NexradDeclutterMode) => void;
-  nexradShowTopShell: boolean;
-  onNexradShowTopShellChange: (enabled: boolean) => void;
   nexradShowEchoTops: boolean;
   onNexradShowEchoTopsChange: (enabled: boolean) => void;
   nexradShowAltitudeGuides: boolean;

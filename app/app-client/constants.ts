@@ -15,7 +15,6 @@ export const DEFAULT_NEXRAD_OPACITY = 0.35;
 export const MIN_NEXRAD_OPACITY = 0.05;
 export const MAX_NEXRAD_OPACITY = 1;
 export const DEFAULT_NEXRAD_DECLUTTER_MODE = 'all';
-export const DEFAULT_NEXRAD_SHOW_TOP_SHELL = true;
 export const DEFAULT_NEXRAD_SHOW_ECHO_TOPS = true;
 export const DEFAULT_NEXRAD_SHOW_ALTITUDE_GUIDES = true;
 export const DEFAULT_NEXRAD_CROSS_SECTION_ENABLED = false;

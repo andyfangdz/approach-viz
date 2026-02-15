@@ -61,7 +61,7 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 - Enabled by default — renders NOAA MRMS multi-radar merged reflectivity as stacked 3D voxels across 33 altitude slices
 - Phase-aware coloring (rain / mixed / snow) using thermodynamic-first resolver with dual-pol correction
 - User-adjustable reflectivity threshold (5–60 dBZ) and opacity (20–100%)
-- Declutter modes (`All/Low/Mid/High/Top Shell`) with dedicated top-shell highlight toggle
+- Declutter modes (`All/Low/Mid/High`)
 - Direct echo-top caps (`18/30/50/60 dBZ`) from MRMS `EchoTop_*` products (can render without 3D volume)
 - 5,000-ft altitude guide bands for altitude reference
 - Vertical cross-section plane/panel with altitude Y-axis and echo-top maxima
@@ -82,9 +82,8 @@ All settings persist to `localStorage`:
 - **Hide Ground Traffic** / **Show Traffic Callsigns** / **Traffic History** (1–30 min)
 - **MRMS 3D Precip** — toggle overlay (on by default)
 - **MRMS Threshold** (5–60 dBZ) / **MRMS Opacity** (20–100%)
-- **MRMS Declutter** — All / Low / Mid / High / Top Shell (also cycles with `V` key)
+- **MRMS Declutter** — All / Low / Mid / High (also cycles with `V` key)
 - **MRMS Echo Tops** — direct MRMS echo-top overlay (independent of 3D volume)
-- **MRMS Top-Shell Highlight** — accent top-shell structure
 - **MRMS Altitude Guides** — 5,000-ft horizontal bands
 - **MRMS Vertical Cross-Section** — slice plane with heading/range sliders
 

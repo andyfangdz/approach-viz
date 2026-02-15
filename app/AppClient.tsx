@@ -25,7 +25,6 @@ import {
   DEFAULT_NEXRAD_MIN_DBZ,
   DEFAULT_NEXRAD_OPACITY,
   DEFAULT_NEXRAD_DECLUTTER_MODE,
-  DEFAULT_NEXRAD_SHOW_TOP_SHELL,
   DEFAULT_NEXRAD_SHOW_ECHO_TOPS,
   DEFAULT_NEXRAD_SHOW_ALTITUDE_GUIDES,
   DEFAULT_NEXRAD_CROSS_SECTION_ENABLED,
@@ -72,7 +71,7 @@ interface PersistedOptionsState {
   nexradMinDbz?: number;
   nexradOpacity?: number;
   nexradDeclutterMode?: NexradDeclutterMode;
-  nexradShowTopShell?: boolean;
+
   nexradShowEchoTops?: boolean;
   nexradShowAltitudeGuides?: boolean;
   nexradCrossSectionEnabled?: boolean;
@@ -158,7 +157,7 @@ function normalizeNexradOpacity(opacity: number): number {
   return Math.round(clamped * 100) / 100;
 }
 
-const NEXRAD_DECLUTTER_MODES: NexradDeclutterMode[] = ['all', 'low', 'mid', 'high', 'top-shell'];
+const NEXRAD_DECLUTTER_MODES: NexradDeclutterMode[] = ['all', 'low', 'mid', 'high'];
 
 function normalizeNexradDeclutterMode(mode: unknown): NexradDeclutterMode {
   return NEXRAD_DECLUTTER_MODES.includes(mode as NexradDeclutterMode)
@@ -224,7 +223,7 @@ export function AppClient({
   const [nexradDeclutterMode, setNexradDeclutterMode] = useState<NexradDeclutterMode>(
     DEFAULT_NEXRAD_DECLUTTER_MODE
   );
-  const [nexradShowTopShell, setNexradShowTopShell] = useState(DEFAULT_NEXRAD_SHOW_TOP_SHELL);
+
   const [nexradShowEchoTops, setNexradShowEchoTops] = useState(DEFAULT_NEXRAD_SHOW_ECHO_TOPS);
   const [nexradShowAltitudeGuides, setNexradShowAltitudeGuides] = useState(
     DEFAULT_NEXRAD_SHOW_ALTITUDE_GUIDES
@@ -306,9 +305,6 @@ export function AppClient({
         if (persisted.nexradDeclutterMode) {
           setNexradDeclutterMode(normalizeNexradDeclutterMode(persisted.nexradDeclutterMode));
         }
-        if (typeof persisted.nexradShowTopShell === 'boolean') {
-          setNexradShowTopShell(persisted.nexradShowTopShell);
-        }
         if (typeof persisted.nexradShowEchoTops === 'boolean') {
           setNexradShowEchoTops(persisted.nexradShowEchoTops);
         }
@@ -352,7 +348,6 @@ export function AppClient({
       nexradMinDbz,
       nexradOpacity,
       nexradDeclutterMode,
-      nexradShowTopShell,
       nexradShowEchoTops,
       nexradShowAltitudeGuides,
       nexradCrossSectionEnabled,
@@ -374,7 +369,6 @@ export function AppClient({
     nexradMinDbz,
     nexradOpacity,
     nexradDeclutterMode,
-    nexradShowTopShell,
     nexradShowEchoTops,
     nexradShowAltitudeGuides,
     nexradCrossSectionEnabled,
@@ -658,7 +652,6 @@ export function AppClient({
             nexradMinDbz={nexradMinDbz}
             nexradOpacity={nexradOpacity}
             nexradDeclutterMode={nexradDeclutterMode}
-            nexradShowTopShell={nexradShowTopShell}
             nexradShowEchoTops={nexradShowEchoTops}
             nexradShowAltitudeGuides={nexradShowAltitudeGuides}
             nexradCrossSectionEnabled={nexradCrossSectionEnabled}
@@ -753,8 +746,6 @@ export function AppClient({
           onNexradOpacityChange={(opacity) => setNexradOpacity(normalizeNexradOpacity(opacity))}
           nexradDeclutterMode={nexradDeclutterMode}
           onNexradDeclutterModeChange={setNexradDeclutterMode}
-          nexradShowTopShell={nexradShowTopShell}
-          onNexradShowTopShellChange={setNexradShowTopShell}
           nexradShowEchoTops={nexradShowEchoTops}
           onNexradShowEchoTopsChange={setNexradShowEchoTops}
           nexradShowAltitudeGuides={nexradShowAltitudeGuides}

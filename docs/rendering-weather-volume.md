@@ -35,9 +35,8 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 
 ## Declutter Modes
 
-- Supported modes: `All`, `Low`, `Mid`, `High`, `Top Shell`.
+- Supported modes: `All`, `Low`, `Mid`, `High`.
 - Declutter mode can also be cycled with the `V` key when focus is not in a form field.
-- A dedicated top-shell highlight toggle draws a highlighted top-shell subset to make storm-top structure legible in oblique views; the highlight can be disabled independently from the main volume.
 
 ## Altitude Guides
 

@@ -18,8 +18,7 @@ const DECLUTTER_MODE_LABELS: Record<NexradDeclutterMode, string> = {
   all: 'All Layers',
   low: 'Low (SFC-10k)',
   mid: 'Mid (10k-25k)',
-  high: 'High (25k+)',
-  'top-shell': 'Top Shell Only'
+  high: 'High (25k+)'
 };
 
 export function OptionsPanel({
@@ -45,8 +44,6 @@ export function OptionsPanel({
   onNexradOpacityChange,
   nexradDeclutterMode,
   onNexradDeclutterModeChange,
-  nexradShowTopShell,
-  onNexradShowTopShellChange,
   nexradShowEchoTops,
   onNexradShowEchoTopsChange,
   nexradShowAltitudeGuides,
@@ -156,19 +153,6 @@ export function OptionsPanel({
           checked={nexradShowEchoTops}
           onChange={(event) => onNexradShowEchoTopsChange(event.target.checked)}
           aria-label="Show MRMS echo tops overlay"
-        />
-      </label>
-
-      <label className="options-toggle-row">
-        <span className="options-toggle-copy">
-          <span className="options-toggle-title">MRMS Top-Shell Highlight</span>
-        </span>
-        <input
-          type="checkbox"
-          checked={nexradShowTopShell}
-          disabled={!nexradVolumeEnabled}
-          onChange={(event) => onNexradShowTopShellChange(event.target.checked)}
-          aria-label="Show MRMS top-shell highlight"
         />
       </label>
 
