@@ -160,8 +160,8 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
   assert.equal(headerBytes, WIRE_HEADER_BYTES, 'Unexpected MRMS wire header length');
   assert.equal(recordBytes, WIRE_RECORD_BYTES, 'Unexpected MRMS wire record size');
   assert.ok(layerCount > 0, 'MRMS payload should include at least one layer');
-  assert.ok(sourceVoxelCount > 0, 'MRMS payload should include at least one source voxel');
-  assert.ok(mergedBrickCount > 0, 'MRMS payload should include at least one merged brick');
+  // sourceVoxelCount and mergedBrickCount may be 0 when there is no precipitation
+  // in the queried area — this is normal, not a failure.
 
   const expectedBytes = headerBytes + layerCount * 4 + mergedBrickCount * recordBytes;
   assert.equal(

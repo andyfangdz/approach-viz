@@ -23,10 +23,10 @@ if [[ ! -f "$SERVICE_DIR/Cargo.toml" ]]; then
   exit 1
 fi
 
-tar -C "$SERVICE_DIR" -czf - . | ssh -o IdentityAgent="$IDENTITY_AGENT" "$HOST" \
+tar -C "$SERVICE_DIR" -czf - . | ssh "$HOST" \
   'mkdir -p ~/services/approach-viz-runtime && tar -xzf - -C ~/services/approach-viz-runtime'
 
-ssh -o IdentityAgent="$IDENTITY_AGENT" "$HOST" "
+ssh "$HOST" "
 set -euo pipefail
 source \"\$HOME/.cargo/env\"
 cd ~/services/approach-viz-runtime
