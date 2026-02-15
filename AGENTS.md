@@ -19,9 +19,10 @@
 - Download FAA/CIFP + airspace + approach minimums data: `npm run download-data`
 - Build local SQLite DB from downloaded sources: `npm run build-db`
 - Full data refresh (download + SQLite rebuild): `npm run prepare-data`
-- Run full automated tests (parser + geometry): `npm run test`
+- Run full automated tests (parser + geometry + layers): `npm run test`
 - Run CIFP parser fixture tests: `npm run test:parser`
 - Run geometry unit tests (path/curve/runway math): `npm run test:geometry`
+- Run layer URL parse/serialize tests: `npm run test:layers`
 - Run live runtime integration tests (MRMS + traffic; requires internet/live upstream): `npm run test:integration:runtime`
 - Lint codebase with ESLint: `npm run lint`
 - Type-check without emit: `npm run typecheck`
@@ -80,7 +81,7 @@ Key behaviors:
 
 ### UI, URL State, and Mobile
 
-URL-path-encoded airport/procedure selection, options panel with localStorage persistence, overlay-style selectors, MRMS loading chip, runtime debug panel, mobile-first collapsed defaults with viewport locking, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
+URL-path-encoded airport/procedure selection, layers panel with 7 independent layer toggles (approach, airspace, ADS-B, MRMS 3D precip, echo tops, vertical slice, altitude guides) and delta-from-defaults `?layers=` URL encoding, options panel with localStorage persistence organized into layer-relevant sections, overlay-style selectors, MRMS loading chip, runtime debug panel, mobile-first collapsed defaults with viewport locking, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
 
 ### Validation
 
