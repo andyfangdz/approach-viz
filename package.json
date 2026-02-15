@@ -16,7 +16,7 @@
     "test:integration:runtime": "node --import tsx --test services/runtime-rs/runtime.integration.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "dev": "npm run prepare-data && node scripts/dev-with-ddtrace.mjs",
+    "dev": "[ -f data/approach-viz.sqlite ] || npm run prepare-data; node scripts/dev-with-ddtrace.mjs",
     "build": "npm run prepare-data && next build",
     "start": "next start"
   },
