@@ -9,8 +9,7 @@ export const MIN_VOXEL_HEIGHT_NM = 0.04;
 export const MRMS_BINARY_MAGIC = 'AVMR';
 export const MRMS_BINARY_V2_VERSION = 2;
 export const MRMS_BINARY_V2_RECORD_BYTES = 20;
-export const MRMS_BINARY_BASE_URL =
-  process.env.NEXT_PUBLIC_MRMS_BINARY_BASE_URL?.trim() ?? '';
+export const MRMS_BINARY_BASE_URL = process.env.NEXT_PUBLIC_MRMS_BINARY_BASE_URL?.trim() ?? '';
 export const MRMS_LEVEL_TAGS = [
   '00.50',
   '00.75',

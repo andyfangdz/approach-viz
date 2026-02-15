@@ -70,10 +70,7 @@ export function NexradCrossSection({
       );
       const y1 = Math.max(
         0,
-        Math.min(
-          CROSS_SECTION_BINS_Y - 1,
-          Math.ceil((topFeet / maxTopFeet) * CROSS_SECTION_BINS_Y)
-        )
+        Math.min(CROSS_SECTION_BINS_Y - 1, Math.ceil((topFeet / maxTopFeet) * CROSS_SECTION_BINS_Y))
       );
       topEnvelopeFeet[binX] = Math.max(topEnvelopeFeet[binX], topFeet);
       for (let y = y0; y <= y1; y += 1) {

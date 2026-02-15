@@ -53,11 +53,7 @@ function applyVisibilityGain(hex: number): number {
 
   const luminanceBoostScale = MIN_VISIBLE_LUMINANCE / luminance;
   const liftedRed = THREE.MathUtils.clamp(Math.round(boostedRed * luminanceBoostScale), 0, 255);
-  const liftedGreen = THREE.MathUtils.clamp(
-    Math.round(boostedGreen * luminanceBoostScale),
-    0,
-    255
-  );
+  const liftedGreen = THREE.MathUtils.clamp(Math.round(boostedGreen * luminanceBoostScale), 0, 255);
   const liftedBlue = THREE.MathUtils.clamp(Math.round(boostedBlue * luminanceBoostScale), 0, 255);
   return (liftedRed << 16) | (liftedGreen << 8) | liftedBlue;
 }
