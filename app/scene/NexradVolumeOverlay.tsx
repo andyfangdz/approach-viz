@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { NexradDebugState, NexradDeclutterMode } from '@/app/app-client/types';
@@ -718,6 +718,12 @@ export function NexradVolumeOverlay({
   const echo30MeshRef = useRef<THREE.InstancedMesh | null>(null);
   const echo50MeshRef = useRef<THREE.InstancedMesh | null>(null);
   const sliceCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const showVolumeRef = useRef(showVolume);
+  showVolumeRef.current = showVolume;
+  const showEchoTopsRef = useRef(showEchoTops);
+  showEchoTopsRef.current = showEchoTops;
+  const showCrossSectionRef = useRef(showCrossSection);
+  showCrossSectionRef.current = showCrossSection;
   const meshDummy = useMemo(() => new THREE.Object3D(), []);
   const colorScratch = useMemo(() => new THREE.Color(), []);
   const normalizedCrossSectionHeading = useMemo(() => {
@@ -1122,8 +1128,8 @@ export function NexradVolumeOverlay({
         setIsLoading(true);
       }
       activeAbortController = new AbortController();
-      const shouldFetchVolume = showVolume || showCrossSection;
-      const shouldFetchEchoTops = showEchoTops;
+      const shouldFetchVolume = showVolumeRef.current || showCrossSectionRef.current;
+      const shouldFetchEchoTops = showEchoTopsRef.current;
       const volumeParams = new URLSearchParams();
       volumeParams.set('lat', refLat.toFixed(6));
       volumeParams.set('lon', refLon.toFixed(6));
@@ -1221,7 +1227,7 @@ export function NexradVolumeOverlay({
       if (timeoutId) clearTimeout(timeoutId);
       if (activeAbortController) activeAbortController.abort();
     };
-  }, [enabled, refLat, refLon, minDbz, maxRangeNm, showVolume, showEchoTops, showCrossSection]);
+  }, [enabled, refLat, refLon, minDbz, maxRangeNm]);
 
   const crossSectionData = useMemo<CrossSectionData | null>(() => {
     if (!showCrossSection || rawRenderVoxels.length === 0) return null;
@@ -1292,22 +1298,23 @@ export function NexradVolumeOverlay({
     crossSectionHalfWidthNm
   ]);
 
-  useEffect(() => {
-    if (!showCrossSection) return;
-    const canvas = sliceCanvasRef.current;
-    if (!canvas) return;
+  const crossSectionDataRef = useRef(crossSectionData);
+  crossSectionDataRef.current = crossSectionData;
+
+  const paintSliceCanvas = useCallback((canvas: HTMLCanvasElement) => {
     const context = canvas.getContext('2d');
     if (!context) return;
+    const data = crossSectionDataRef.current;
 
-    if (!crossSectionData) {
+    if (!data) {
       context.clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
 
     const pixelW = 2;
     const pixelH = 2;
-    const width = crossSectionData.binsX * pixelW;
-    const height = crossSectionData.binsY * pixelH;
+    const width = data.binsX * pixelW;
+    const height = data.binsY * pixelH;
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
@@ -1316,12 +1323,12 @@ export function NexradVolumeOverlay({
     context.fillStyle = '#08111d';
     context.fillRect(0, 0, width, height);
 
-    for (let y = 0; y < crossSectionData.binsY; y += 1) {
-      for (let x = 0; x < crossSectionData.binsX; x += 1) {
-        const idx = y * crossSectionData.binsX + x;
-        const dbz = crossSectionData.grid[idx];
+    for (let y = 0; y < data.binsY; y += 1) {
+      for (let x = 0; x < data.binsX; x += 1) {
+        const idx = y * data.binsX + x;
+        const dbz = data.grid[idx];
         if (!(dbz >= 0)) continue;
-        const phaseCode = crossSectionData.phaseGrid[idx];
+        const phaseCode = data.phaseGrid[idx];
         const hex = dbzToHex(dbz, phaseCode);
         const cssHex = `#${hex.toString(16).padStart(6, '0')}`;
         context.fillStyle = cssHex;
@@ -1335,11 +1342,11 @@ export function NexradVolumeOverlay({
     context.lineWidth = 1;
     context.beginPath();
     let started = false;
-    for (let x = 0; x < crossSectionData.binsX; x += 1) {
-      const topFeet = crossSectionData.topEnvelopeFeet[x];
+    for (let x = 0; x < data.binsX; x += 1) {
+      const topFeet = data.topEnvelopeFeet[x];
       if (!Number.isFinite(topFeet) || topFeet <= 0) continue;
       const px = x * pixelW + pixelW / 2;
-      const py = height - (topFeet / crossSectionData.maxTopFeet) * height;
+      const py = height - (topFeet / data.maxTopFeet) * height;
       if (!started) {
         context.moveTo(px, py);
         started = true;
@@ -1350,7 +1357,22 @@ export function NexradVolumeOverlay({
     if (started) {
       context.stroke();
     }
-  }, [showCrossSection, crossSectionData]);
+  }, []);
+
+  const sliceCanvasCallbackRef = useCallback(
+    (node: HTMLCanvasElement | null) => {
+      sliceCanvasRef.current = node;
+      if (node) paintSliceCanvas(node);
+    },
+    [paintSliceCanvas]
+  );
+
+  useEffect(() => {
+    if (!showCrossSection) return;
+    const canvas = sliceCanvasRef.current;
+    if (!canvas) return;
+    paintSliceCanvas(canvas);
+  }, [showCrossSection, crossSectionData, paintSliceCanvas]);
 
   const phaseCounts = useMemo(() => {
     const counts = { rain: 0, mixed: 0, snow: 0 };
@@ -1715,7 +1737,7 @@ export function NexradVolumeOverlay({
                   </div>
                 ))}
               </div>
-              <canvas ref={sliceCanvasRef} className="mrms-cross-section-canvas" />
+              <canvas ref={sliceCanvasCallbackRef} className="mrms-cross-section-canvas" />
             </div>
             <div className="mrms-cross-section-footer">
               <span>
