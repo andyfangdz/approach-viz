@@ -285,6 +285,25 @@ textarea,
   pointer-events: none;
 }
 
+.faa-disclaimer {
+  position: absolute;
+  top: 16px;
+  left: 24px;
+  padding: 7px 11px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-secondary);
+  background: rgba(18, 18, 31, 0.82);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  z-index: 24;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  line-height: 1.3;
+}
+
 .mrms-loading-spinner {
   width: 12px;
   height: 12px;
@@ -1053,6 +1072,12 @@ textarea,
   .mrms-loading-indicator {
     right: 12px;
     top: 12px;
+  }
+
+  .faa-disclaimer {
+    left: 12px;
+    top: 12px;
+    font-size: 10px;
   }
 
   .debug-panel-fab {
