@@ -29,6 +29,7 @@ pub struct StoredVoxel {
     pub col: u16,
     pub level_idx: u8,
     pub phase: u8,
+    pub surface_phase: u8, // from PrecipFlag_00.00, 0=rain, 1=mixed, 2=snow
     pub dbz_tenths: i16,
 }
 

@@ -18,26 +18,25 @@ use crate::constants::{
     FREEZING_LEVEL_TRANSITION_FEET, LEVEL_TAGS, MAX_BASE_DAY_LOOKBACK, MAX_BASE_KEYS_LOOKUP,
     MAX_PENDING_ATTEMPTS, MIXED_COMPETING_PROMOTION_GAP_MAX, MIXED_COMPETING_PROMOTION_MARGIN,
     MIXED_COMPETING_PROMOTION_MIN_SCORE, MIXED_COMPETING_RAIN_SNOW_DELTA_MAX,
-    MIXED_COMPETING_RAIN_SNOW_MIN_SCORE, MIXED_DUAL_SUPPORT_CONFIDENCE_MIN,
-    MIXED_SELECTION_MARGIN, MIXED_SELECTION_MARGIN_TRANSITION, MRMS_BASE_LEVEL_TAG,
-    MRMS_BRIGHT_BAND_BOTTOM_PRODUCT, MRMS_BRIGHT_BAND_TOP_PRODUCT, MRMS_BUCKET_URL,
-    MRMS_CONUS_PREFIX, MRMS_ECHO_TOP_18_PRODUCT, MRMS_ECHO_TOP_30_PRODUCT,
-    MRMS_ECHO_TOP_50_PRODUCT, MRMS_ECHO_TOP_60_PRODUCT, MRMS_MODEL_FREEZING_HEIGHT_PRODUCT,
-    MRMS_MODEL_SURFACE_TEMP_PRODUCT, MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT,
-    MRMS_PRODUCT_PREFIX, MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX,
-    PHASE_MIXED, PHASE_RAIN, PHASE_RHOHV_HIGH_CONFIDENCE_MIN, PHASE_RHOHV_LOW_CONFIDENCE_MAX,
-    PHASE_RHOHV_MAX_VALID, PHASE_RHOHV_MIN_VALID, PHASE_SNOW, PHASE_ZDR_MAX_VALID_DB,
-    PHASE_ZDR_MIN_VALID_DB, PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB, PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB,
-    STORE_MIN_DBZ_TENTHS, THERMO_NEAR_FREEZING_FEET, THERMO_STRONG_COLD_WET_BULB_C,
-    THERMO_STRONG_WARM_WET_BULB_C,
+    MIXED_COMPETING_RAIN_SNOW_MIN_SCORE, MIXED_DUAL_SUPPORT_CONFIDENCE_MIN, MIXED_SELECTION_MARGIN,
+    MIXED_SELECTION_MARGIN_TRANSITION, MRMS_BASE_LEVEL_TAG, MRMS_BRIGHT_BAND_BOTTOM_PRODUCT,
+    MRMS_BRIGHT_BAND_TOP_PRODUCT, MRMS_BUCKET_URL, MRMS_CONUS_PREFIX, MRMS_ECHO_TOP_18_PRODUCT,
+    MRMS_ECHO_TOP_30_PRODUCT, MRMS_ECHO_TOP_50_PRODUCT, MRMS_ECHO_TOP_60_PRODUCT,
+    MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_MODEL_SURFACE_TEMP_PRODUCT,
+    MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_PRODUCT_PREFIX,
+    MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX, PHASE_MIXED, PHASE_RAIN,
+    PHASE_RHOHV_HIGH_CONFIDENCE_MIN, PHASE_RHOHV_LOW_CONFIDENCE_MAX, PHASE_RHOHV_MAX_VALID,
+    PHASE_RHOHV_MIN_VALID, PHASE_SNOW, PHASE_ZDR_MAX_VALID_DB, PHASE_ZDR_MIN_VALID_DB,
+    PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB, PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB, STORE_MIN_DBZ_TENTHS,
+    THERMO_NEAR_FREEZING_FEET, THERMO_STRONG_COLD_WET_BULB_C, THERMO_STRONG_WARM_WET_BULB_C,
 };
 use crate::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
 use crate::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
 use crate::http_client::fetch_bytes;
 use crate::storage::persist_snapshot;
 use crate::types::{
-    AppState, GridDef, LevelBounds, ParsedAuxField, ParsedReflectivityField, PendingIngest,
-    EchoTopDebugMetadata, PhaseDebugMetadata, ScanSnapshot, StoredEchoTop, StoredVoxel,
+    AppState, EchoTopDebugMetadata, GridDef, LevelBounds, ParsedAuxField, ParsedReflectivityField,
+    PendingIngest, PhaseDebugMetadata, ScanSnapshot, StoredEchoTop, StoredVoxel,
 };
 use crate::utils::{parse_timestamp_utc, round_u16, to_lon360};
 
@@ -417,28 +416,40 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
 
     let point_count = base_grid.nx as usize * base_grid.ny as usize;
     let top18_values = validate_echo_top_values(
-        echo_top_bundle.top18.as_ref().map(|(_timestamp, field)| field),
+        echo_top_bundle
+            .top18
+            .as_ref()
+            .map(|(_timestamp, field)| field),
         &base_grid,
         point_count,
         MRMS_ECHO_TOP_18_PRODUCT,
         timestamp,
     );
     let top30_values = validate_echo_top_values(
-        echo_top_bundle.top30.as_ref().map(|(_timestamp, field)| field),
+        echo_top_bundle
+            .top30
+            .as_ref()
+            .map(|(_timestamp, field)| field),
         &base_grid,
         point_count,
         MRMS_ECHO_TOP_30_PRODUCT,
         timestamp,
     );
     let top50_values = validate_echo_top_values(
-        echo_top_bundle.top50.as_ref().map(|(_timestamp, field)| field),
+        echo_top_bundle
+            .top50
+            .as_ref()
+            .map(|(_timestamp, field)| field),
         &base_grid,
         point_count,
         MRMS_ECHO_TOP_50_PRODUCT,
         timestamp,
     );
     let top60_values = validate_echo_top_values(
-        echo_top_bundle.top60.as_ref().map(|(_timestamp, field)| field),
+        echo_top_bundle
+            .top60
+            .as_ref()
+            .map(|(_timestamp, field)| field),
         &base_grid,
         point_count,
         MRMS_ECHO_TOP_60_PRODUCT,
@@ -449,7 +460,10 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
     let mut max_top30_feet: Option<u16> = None;
     let mut max_top50_feet: Option<u16> = None;
     let mut max_top60_feet: Option<u16> = None;
-    if top18_values.is_some() || top30_values.is_some() || top50_values.is_some() || top60_values.is_some()
+    if top18_values.is_some()
+        || top30_values.is_some()
+        || top50_values.is_some()
+        || top60_values.is_some()
     {
         echo_tops.reserve(point_count / 32);
         for row in 0..base_grid.ny as usize {
@@ -478,16 +492,20 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                 }
 
                 if top18_feet > 0 {
-                    max_top18_feet = Some(max_top18_feet.map_or(top18_feet, |value| value.max(top18_feet)));
+                    max_top18_feet =
+                        Some(max_top18_feet.map_or(top18_feet, |value| value.max(top18_feet)));
                 }
                 if top30_feet > 0 {
-                    max_top30_feet = Some(max_top30_feet.map_or(top30_feet, |value| value.max(top30_feet)));
+                    max_top30_feet =
+                        Some(max_top30_feet.map_or(top30_feet, |value| value.max(top30_feet)));
                 }
                 if top50_feet > 0 {
-                    max_top50_feet = Some(max_top50_feet.map_or(top50_feet, |value| value.max(top50_feet)));
+                    max_top50_feet =
+                        Some(max_top50_feet.map_or(top50_feet, |value| value.max(top50_feet)));
                 }
                 if top60_feet > 0 {
-                    max_top60_feet = Some(max_top60_feet.map_or(top60_feet, |value| value.max(top60_feet)));
+                    max_top60_feet =
+                        Some(max_top60_feet.map_or(top60_feet, |value| value.max(top60_feet)));
                 }
 
                 echo_tops.push(StoredEchoTop {
@@ -668,11 +686,18 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
             let tile_row = voxel.row as usize / tile_size as usize;
             let tile_col = voxel.col as usize / tile_size as usize;
             let tile_idx = tile_row * tile_cols as usize + tile_col;
+            let lat_deg = row_lats[voxel.row as usize];
+            let lon_deg360 = col_lons360[voxel.col as usize];
+            let surface_phase = precip_field
+                .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+                .and_then(phase_from_precip_flag)
+                .unwrap_or(PHASE_RAIN);
             buckets[tile_idx].push(StoredVoxel {
                 row: voxel.row,
                 col: voxel.col,
                 level_idx: *level_idx,
                 phase: voxel.phase,
+                surface_phase,
                 dbz_tenths: voxel.dbz_tenths,
             });
         }
