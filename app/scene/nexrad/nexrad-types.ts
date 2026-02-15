@@ -1,4 +1,8 @@
-import type { NexradDebugState, NexradDeclutterMode } from '@/app/app-client/types';
+import type {
+  NexradDebugState,
+  NexradDeclutterMode,
+  NexradPhaseMode
+} from '@/app/app-client/types';
 
 export const FEET_PER_NM = 6076.12;
 export const ALTITUDE_SCALE = 1 / FEET_PER_NM;
@@ -56,6 +60,7 @@ export interface NexradVolumeOverlayProps {
   enabled?: boolean;
   showVolume?: boolean;
   declutterMode?: NexradDeclutterMode;
+  phaseMode?: NexradPhaseMode;
   showEchoTops?: boolean;
   showAltitudeGuides?: boolean;
   showCrossSection?: boolean;

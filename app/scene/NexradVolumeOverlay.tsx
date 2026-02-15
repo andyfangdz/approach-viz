@@ -52,6 +52,7 @@ export function NexradVolumeOverlay({
   enabled = false,
   showVolume = true,
   declutterMode = 'all',
+  phaseMode = 'thermo',
   showEchoTops = true,
   showAltitudeGuides = true,
   showCrossSection = false,
@@ -147,9 +148,13 @@ export function NexradVolumeOverlay({
         footprintYNm: footprintYNmSafe,
         dbz,
         phaseCode:
-          typeof phaseCode === 'number' && Number.isFinite(phaseCode)
-            ? Math.round(phaseCode)
-            : PHASE_RAIN,
+          phaseMode === 'surface'
+            ? typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
+              ? Math.round(surfacePhaseCode)
+              : PHASE_RAIN
+            : typeof phaseCode === 'number' && Number.isFinite(phaseCode)
+              ? Math.round(phaseCode)
+              : PHASE_RAIN,
         surfacePhaseCode:
           typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
             ? Math.round(surfacePhaseCode)
@@ -158,7 +163,7 @@ export function NexradVolumeOverlay({
     }
 
     return next;
-  }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat, minDbz]);
+  }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat, minDbz, phaseMode]);
 
   const renderVoxels = useMemo(
     () =>
