@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import KDBush from 'kdbush';
 import { parseCIFP } from '../lib/cifp/parser';
 
 interface ApproachMinimumsDb {
@@ -111,7 +110,12 @@ function main() {
   if (fs.existsSync(sidecarShm)) fs.unlinkSync(sidecarShm);
 
   const db = new Database(DB_PATH);
-  // Keep runtime reads simple in serverless/read-only filesystems.
+  // DELETE journal mode is chosen deliberately: the DB is opened read-only at
+  // runtime (see lib/db.ts) and deployed to environments with read-only
+  // filesystems (e.g. Vercel serverless lambdas).  WAL mode requires the
+  // runtime to create -wal and -shm sidecar files, which fails on read-only
+  // mounts.  DELETE mode produces a single self-contained .sqlite file that
+  // works everywhere without sidecar writes.
   db.pragma('journal_mode = DELETE');
   db.pragma('synchronous = NORMAL');
 
@@ -175,14 +179,17 @@ function main() {
       name TEXT NOT NULL,
       lower_alt INTEGER NOT NULL,
       upper_alt INTEGER NOT NULL,
-      min_lat REAL NOT NULL,
-      max_lat REAL NOT NULL,
-      min_lon REAL NOT NULL,
-      max_lon REAL NOT NULL,
       coordinates_json TEXT NOT NULL
     );
 
-    CREATE INDEX idx_airspace_bounds ON airspace(min_lat, max_lat, min_lon, max_lon);
+    CREATE VIRTUAL TABLE airspace_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+
+    CREATE TABLE airport_rtree_map (
+      id INTEGER PRIMARY KEY,
+      airport_id TEXT NOT NULL
+    );
+
+    CREATE VIRTUAL TABLE airport_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
   `);
 
   const cifpContent = fs.readFileSync(CIFP_PATH, 'utf8');
@@ -205,7 +212,16 @@ function main() {
     'INSERT INTO minima (airport_id, approach_name, runway, types_json, minimums_json, cycle) VALUES (?, ?, ?, ?, ?, ?)'
   );
   const insertAirspace = db.prepare(
-    'INSERT INTO airspace (class, name, lower_alt, upper_alt, min_lat, max_lat, min_lon, max_lon, coordinates_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO airspace (class, name, lower_alt, upper_alt, coordinates_json) VALUES (?, ?, ?, ?, ?)'
+  );
+  const insertAirspaceRtree = db.prepare(
+    'INSERT INTO airspace_rtree (id, min_lat, max_lat, min_lon, max_lon) VALUES (?, ?, ?, ?, ?)'
+  );
+  const insertAirportRtreeMap = db.prepare(
+    'INSERT INTO airport_rtree_map (id, airport_id) VALUES (?, ?)'
+  );
+  const insertAirportRtree = db.prepare(
+    'INSERT INTO airport_rtree (id, min_lat, max_lat, min_lon, max_lon) VALUES (?, ?, ?, ?, ?)'
   );
 
   const insertCifpData = db.transaction(() => {
@@ -303,22 +319,38 @@ function main() {
         const rings = extractRings(feature);
         if (!rings.length) continue;
         const bounds = computeBounds(rings);
-        insertAirspace.run(
+        const info = insertAirspace.run(
           classCode,
           feature.properties.NAME || feature.properties.AIRSPACE || `${classCode} Airspace`,
           parseAltitude(feature.properties.LOWALT),
           parseAltitude(feature.properties.HIGHALT),
+          JSON.stringify(rings)
+        );
+        insertAirspaceRtree.run(
+          info.lastInsertRowid,
           bounds.minLat,
           bounds.maxLat,
           bounds.minLon,
-          bounds.maxLon,
-          JSON.stringify(rings)
+          bounds.maxLon
         );
       }
     }
   });
 
   insertAirspaceData();
+
+  // Build airport R-tree spatial index (replaces external kdbush binary)
+  const insertAirportSpatial = db.transaction(() => {
+    let idx = 1;
+    for (const airport of parsed.airports.values()) {
+      if (!Number.isFinite(airport.lat) || !Number.isFinite(airport.lon)) continue;
+      insertAirportRtreeMap.run(idx, airport.id);
+      insertAirportRtree.run(idx, airport.lat, airport.lat, airport.lon, airport.lon);
+      idx++;
+    }
+    return idx - 1;
+  });
+  const airportSpatialCount = insertAirportSpatial();
 
   insertMetadata.run('dtpp_cycle_number', minimumsDb.dtpp_cycle_number || '');
   insertMetadata.run('generated_at', new Date().toISOString());
@@ -330,22 +362,7 @@ function main() {
 
   db.close();
   console.log(`✅ SQLite DB built at ${DB_PATH}`);
-
-  // Build kdbush spatial index for all airports
-  const airports = Array.from(parsed.airports.values()).filter(
-    (a) => Number.isFinite(a.lat) && Number.isFinite(a.lon)
-  );
-  const index = new KDBush(airports.length);
-  const meta: Array<{ id: string; lat: number; lon: number; elevation: number }> = [];
-  for (const airport of airports) {
-    index.add(airport.lat, airport.lon);
-    meta.push({ id: airport.id, lat: airport.lat, lon: airport.lon, elevation: airport.elevation });
-  }
-  index.finish();
-
-  fs.writeFileSync(path.join(DB_DIR, 'airport-spatial.bin'), Buffer.from(index.data));
-  fs.writeFileSync(path.join(DB_DIR, 'airport-spatial-meta.json'), JSON.stringify(meta));
-  console.log(`✅ Airport spatial index built (${airports.length} airports)`);
+  console.log(`✅ Airport spatial R-tree built (${airportSpatialCount} airports)`);
 }
 
 main();
