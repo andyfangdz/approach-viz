@@ -8,6 +8,7 @@ export const DEFAULT_MAX_RANGE_NM = 120;
 export const MIN_VOXEL_HEIGHT_NM = 0.04;
 export const MRMS_BINARY_MAGIC = 'AVMR';
 export const MRMS_BINARY_V2_VERSION = 2;
+export const MRMS_BINARY_V3_VERSION = 3;
 export const MRMS_BINARY_V2_RECORD_BYTES = 20;
 export const MRMS_BINARY_BASE_URL = process.env.NEXT_PUBLIC_MRMS_BINARY_BASE_URL?.trim() ?? '';
 export const MRMS_LEVEL_TAGS = [
@@ -73,7 +74,8 @@ export type NexradVoxelTuple = [
   dbz: number,
   footprintXNm: number,
   footprintYNm?: number,
-  phaseCode?: number
+  phaseCode?: number,
+  surfacePhaseCode?: number
 ];
 
 export interface NexradRadarPayload {
@@ -148,6 +150,7 @@ export interface RenderVoxel {
   footprintYNm: number;
   dbz: number;
   phaseCode: number;
+  surfacePhaseCode: number;
 }
 
 export interface RenderEchoTopCell {

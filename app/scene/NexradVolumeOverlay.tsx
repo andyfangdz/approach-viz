@@ -103,7 +103,8 @@ export function NexradVolumeOverlay({
         dbz,
         footprintXNm,
         footprintYNm,
-        phaseCode
+        phaseCode,
+        surfacePhaseCode
       ] = voxel;
       if (dbz < minDbz) continue;
       const x = offsetXNm;
@@ -148,6 +149,10 @@ export function NexradVolumeOverlay({
         phaseCode:
           typeof phaseCode === 'number' && Number.isFinite(phaseCode)
             ? Math.round(phaseCode)
+            : PHASE_RAIN,
+        surfacePhaseCode:
+          typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
+            ? Math.round(surfacePhaseCode)
             : PHASE_RAIN
       });
     }

@@ -8,6 +8,7 @@ import type {
 import {
   MRMS_BINARY_MAGIC,
   MRMS_BINARY_V2_VERSION,
+  MRMS_BINARY_V3_VERSION,
   MRMS_BINARY_V2_RECORD_BYTES,
   MRMS_BINARY_BASE_URL,
   MRMS_LEVEL_TAGS
@@ -50,7 +51,7 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
   }
 
   const version = view.getUint16(4, true);
-  if (version !== MRMS_BINARY_V2_VERSION) {
+  if (version !== MRMS_BINARY_V2_VERSION && version !== MRMS_BINARY_V3_VERSION) {
     throw new Error(`Unsupported MRMS payload version (${version}).`);
   }
 
@@ -91,6 +92,8 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
     const topFeet = view.getUint16(offset + 6, true);
     const dbz = view.getInt16(offset + 8, true) / 10;
     const phaseCode = view.getUint8(offset + 10);
+    const surfacePhaseCode =
+      version >= MRMS_BINARY_V3_VERSION ? view.getUint8(offset + 18) : phaseCode;
     const spanX = Math.max(1, view.getUint16(offset + 12, true));
     const spanY = Math.max(1, view.getUint16(offset + 14, true));
     voxels.push([
@@ -101,7 +104,8 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
       dbz,
       footprintXNm * spanX,
       footprintYNm * spanY,
-      phaseCode
+      phaseCode,
+      surfacePhaseCode
     ]);
   }
 
