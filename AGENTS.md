@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio runtime service for MRMS + ADS-B, `grib` crate decoding) + AWS SNS/SQS + `dd-trace` + ESLint/Prettier
+- Stack: Next.js 16 (App Router, React Compiler enabled) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio runtime service for MRMS + ADS-B, `grib` crate decoding) + AWS SNS/SQS + `dd-trace` + ESLint/Prettier
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule
@@ -54,7 +54,7 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and run
 
 ### Architecture
 
-Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene. An external Rust Axum service (`services/runtime-rs/`) handles MRMS weather ingest/query and ADS-B traffic decode; Next.js routes proxy to this service. Local dev tracing is via Datadog `dd-trace` (`scripts/dev-with-ddtrace.mjs`). CI uses `npx next build` (not `npm run build`) to avoid data download in CI.
+Server-first data loading through Next.js server actions backed by SQLite and a kdbush spatial index, with a thin client runtime coordinating UI sections and a react-three-fiber scene. An external Rust Axum service (`services/runtime-rs/`) handles MRMS weather ingest/query and ADS-B traffic decode; Next.js routes proxy to this service. Local dev tracing is via Datadog `dd-trace` (`scripts/dev-with-ddtrace.mjs`). CI uses `npx next build` (not `npm run build`) to avoid data download in CI. React Compiler is enabled globally via `next.config.ts` (`reactCompiler: true`) with `babel-plugin-react-compiler` in `devDependencies`.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram (includes runtime service + proxy routes)
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI, agent skills
