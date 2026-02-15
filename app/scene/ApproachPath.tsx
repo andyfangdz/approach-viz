@@ -192,6 +192,7 @@ export const ApproachPath = memo(function ApproachPath({
           refLon={refLon}
           magVar={airport.magVar}
           color={COLORS.approach}
+          dashedBelowAltitudeFeet={missedApproachStartAltitudeFeet}
         />
       )}
 
