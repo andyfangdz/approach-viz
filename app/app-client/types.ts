@@ -88,6 +88,7 @@ export interface SceneCanvasProps {
   nexradMinDbz: number;
   nexradOpacity: number;
   nexradDeclutterMode: NexradDeclutterMode;
+  nexradPhaseMode: NexradPhaseMode;
   nexradCrossSectionHeadingDeg: number;
   nexradCrossSectionRangeNm: number;
   surfaceMode: SurfaceMode;
@@ -134,6 +135,8 @@ export interface OptionsPanelProps {
   onNexradOpacityChange: (opacity: number) => void;
   nexradDeclutterMode: NexradDeclutterMode;
   onNexradDeclutterModeChange: (mode: NexradDeclutterMode) => void;
+  nexradPhaseMode: NexradPhaseMode;
+  onNexradPhaseModeChange: (mode: NexradPhaseMode) => void;
   nexradCrossSectionHeadingDeg: number;
   onNexradCrossSectionHeadingDegChange: (headingDeg: number) => void;
   nexradCrossSectionRangeNm: number;

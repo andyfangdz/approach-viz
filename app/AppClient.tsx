@@ -7,6 +7,8 @@ import {
   formatApproachLabel,
   isMobileViewport,
   parseLayersParam,
+  readDeclutterModeFromSearch,
+  readPhaseModeFromSearch,
   readSurfaceModeFromSearch,
   sceneApproachToRuntimeApproach,
   sceneWaypointsToMap,
@@ -28,6 +30,7 @@ import {
   DEFAULT_NEXRAD_MIN_DBZ,
   DEFAULT_NEXRAD_OPACITY,
   DEFAULT_NEXRAD_DECLUTTER_MODE,
+  DEFAULT_NEXRAD_PHASE_MODE,
   DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
   MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
@@ -46,6 +49,7 @@ import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import type {
   LayerState,
   NexradDebugState,
+  NexradPhaseMode,
   SurfaceMode,
   TrafficDebugState,
   NexradDeclutterMode
@@ -70,6 +74,7 @@ interface PersistedOptionsState {
   nexradMinDbz?: number;
   nexradOpacity?: number;
   nexradDeclutterMode?: NexradDeclutterMode;
+  nexradPhaseMode?: NexradPhaseMode;
   nexradCrossSectionHeadingDeg?: number;
   nexradCrossSectionRangeNm?: number;
   layers?: LayerState;
@@ -167,6 +172,14 @@ function normalizeNexradDeclutterMode(mode: unknown): NexradDeclutterMode {
     : DEFAULT_NEXRAD_DECLUTTER_MODE;
 }
 
+const NEXRAD_PHASE_MODES: NexradPhaseMode[] = ['thermo', 'surface'];
+
+function normalizeNexradPhaseMode(mode: unknown): NexradPhaseMode {
+  return NEXRAD_PHASE_MODES.includes(mode as NexradPhaseMode)
+    ? (mode as NexradPhaseMode)
+    : DEFAULT_NEXRAD_PHASE_MODE;
+}
+
 function normalizeNexradCrossSectionHeadingDeg(headingDeg: number): number {
   if (!Number.isFinite(headingDeg)) return DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG;
   const normalized = ((Math.round(headingDeg) % 360) + 360) % 360;
@@ -225,6 +238,8 @@ export function AppClient({
   const [nexradDeclutterMode, setNexradDeclutterMode] = useState<NexradDeclutterMode>(
     DEFAULT_NEXRAD_DECLUTTER_MODE
   );
+  const [nexradPhaseMode, setNexradPhaseMode] =
+    useState<NexradPhaseMode>(DEFAULT_NEXRAD_PHASE_MODE);
 
   const [nexradCrossSectionHeadingDeg, setNexradCrossSectionHeadingDeg] = useState(
     DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG
@@ -306,6 +321,9 @@ export function AppClient({
         if (persisted.nexradDeclutterMode) {
           setNexradDeclutterMode(normalizeNexradDeclutterMode(persisted.nexradDeclutterMode));
         }
+        if (persisted.nexradPhaseMode) {
+          setNexradPhaseMode(normalizeNexradPhaseMode(persisted.nexradPhaseMode));
+        }
         if (typeof persisted.nexradCrossSectionHeadingDeg === 'number') {
           setNexradCrossSectionHeadingDeg(
             normalizeNexradCrossSectionHeadingDeg(persisted.nexradCrossSectionHeadingDeg)
@@ -350,6 +368,14 @@ export function AppClient({
     if (layersParam) {
       setLayers(parseLayersParam(layersParam));
     }
+    const phaseModeFromUrl = readPhaseModeFromSearch(window.location.search);
+    if (phaseModeFromUrl) {
+      setNexradPhaseMode(normalizeNexradPhaseMode(phaseModeFromUrl));
+    }
+    const declutterFromUrl = readDeclutterModeFromSearch(window.location.search);
+    if (declutterFromUrl) {
+      setNexradDeclutterMode(normalizeNexradDeclutterMode(declutterFromUrl));
+    }
     setDidInitFromLocation(true);
   }, []);
 
@@ -366,6 +392,7 @@ export function AppClient({
       nexradMinDbz,
       nexradOpacity,
       nexradDeclutterMode,
+      nexradPhaseMode,
       nexradCrossSectionHeadingDeg,
       nexradCrossSectionRangeNm,
       layers
@@ -383,6 +410,7 @@ export function AppClient({
     nexradMinDbz,
     nexradOpacity,
     nexradDeclutterMode,
+    nexradPhaseMode,
     nexradCrossSectionHeadingDeg,
     nexradCrossSectionRangeNm,
     layers
@@ -421,12 +449,30 @@ export function AppClient({
     } else {
       params.delete('layers');
     }
+    if (nexradPhaseMode !== DEFAULT_NEXRAD_PHASE_MODE) {
+      params.set('phaseMode', nexradPhaseMode);
+    } else {
+      params.delete('phaseMode');
+    }
+    if (nexradDeclutterMode !== DEFAULT_NEXRAD_DECLUTTER_MODE) {
+      params.set('declutter', nexradDeclutterMode);
+    } else {
+      params.delete('declutter');
+    }
     const nextSearch = params.toString();
     const nextUrl = `${nextPath}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
       window.history.replaceState(null, '', nextUrl);
     }
-  }, [selectedAirport, selectedApproach, surfaceMode, layers, didInitFromLocation]);
+  }, [
+    selectedAirport,
+    selectedApproach,
+    surfaceMode,
+    layers,
+    nexradPhaseMode,
+    nexradDeclutterMode,
+    didInitFromLocation
+  ]);
 
   const requestSceneData = useCallback(
     (airportId: string, procedureId: string) => {
@@ -682,6 +728,7 @@ export function AppClient({
             nexradMinDbz={nexradMinDbz}
             nexradOpacity={nexradOpacity}
             nexradDeclutterMode={nexradDeclutterMode}
+            nexradPhaseMode={nexradPhaseMode}
             nexradCrossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
             nexradCrossSectionRangeNm={nexradCrossSectionRangeNm}
             surfaceMode={surfaceMode}
@@ -775,6 +822,8 @@ export function AppClient({
           onNexradOpacityChange={(opacity) => setNexradOpacity(normalizeNexradOpacity(opacity))}
           nexradDeclutterMode={nexradDeclutterMode}
           onNexradDeclutterModeChange={setNexradDeclutterMode}
+          nexradPhaseMode={nexradPhaseMode}
+          onNexradPhaseModeChange={setNexradPhaseMode}
           nexradCrossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
           onNexradCrossSectionHeadingDegChange={(headingDeg) =>
             setNexradCrossSectionHeadingDeg(normalizeNexradCrossSectionHeadingDeg(headingDeg))
