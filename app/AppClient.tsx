@@ -755,11 +755,7 @@ export function AppClient({
         <div
           className="faa-disclaimer"
           role="note"
-          style={
-            controlsOverlayHeight > 0
-              ? { top: controlsOverlayHeight + 10 }
-              : undefined
-          }
+          style={controlsOverlayHeight > 0 ? { top: controlsOverlayHeight + 10 } : undefined}
         >
           Not official FAA data — Do not use for navigation
         </div>
