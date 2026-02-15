@@ -11,8 +11,8 @@ function getStmt() {
       FROM airport_rtree r
       JOIN airport_rtree_map m ON m.id = r.id
       JOIN airports a ON a.id = m.airport_id
-      WHERE r.min_lat >= ? AND r.max_lat <= ?
-        AND r.min_lon >= ? AND r.max_lon <= ?
+      WHERE r.max_lat >= ? AND r.min_lat <= ?
+        AND r.max_lon >= ? AND r.min_lon <= ?
     `);
   }
   return _stmt;
