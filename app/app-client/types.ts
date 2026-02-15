@@ -5,6 +5,7 @@ import type { SceneData } from '@/lib/types';
 
 export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
 export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high';
+export type NexradPhaseMode = 'thermo' | 'surface';
 
 export interface NexradDebugState {
   enabled: boolean;

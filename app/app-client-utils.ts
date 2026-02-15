@@ -198,3 +198,17 @@ export function serializeLayersParam(state: LayerState): string | null {
   }
   return deltas.length > 0 ? deltas.join(',') : null;
 }
+
+export function readPhaseModeFromSearch(search: string): 'thermo' | 'surface' | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('phaseMode');
+  if (value === 'thermo' || value === 'surface') return value;
+  return null;
+}
+
+export function readDeclutterModeFromSearch(search: string): 'all' | 'low' | 'mid' | 'high' | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('declutter');
+  if (value === 'all' || value === 'low' || value === 'mid' || value === 'high') return value;
+  return null;
+}
