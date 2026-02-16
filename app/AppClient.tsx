@@ -63,6 +63,7 @@ interface AppClientProps {
   initialSceneData: SceneData;
   initialAirportId: string;
   initialApproachId: string;
+  isDefaultRoute?: boolean;
 }
 
 interface PersistedOptionsState {
@@ -90,6 +91,8 @@ interface PersistedOptionsState {
 }
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
+const SELECTION_STORAGE_KEY = 'approach-viz:last-selection';
+const DEFAULT_SELECTIONS = [{ airportId: 'KCDW', approachId: 'L22' }];
 const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
   enabled: false,
   loading: false,
@@ -213,7 +216,8 @@ export function AppClient({
   initialAirportOptions,
   initialSceneData,
   initialAirportId,
-  initialApproachId
+  initialApproachId,
+  isDefaultRoute = false
 }: AppClientProps) {
   const [selectorsCollapsed, setSelectorsCollapsed] = useState(false);
   const [controlsOverlayHeight, setControlsOverlayHeight] = useState(0);
@@ -395,6 +399,49 @@ export function AppClient({
       setNexradDeclutterMode(normalizeNexradDeclutterMode(declutterFromUrl));
     }
     setDidInitFromLocation(true);
+
+    // Restore last-selected airport/approach on the default route
+    if (isDefaultRoute) {
+      let target: { airportId: string; approachId: string } | null = null;
+      try {
+        const raw = window.localStorage.getItem(SELECTION_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (
+            typeof parsed.airportId === 'string' &&
+            parsed.airportId.length > 0 &&
+            typeof parsed.approachId === 'string'
+          ) {
+            target = parsed;
+          }
+        }
+      } catch {
+        // corrupt or missing — fall through to defaults
+      }
+      if (!target) {
+        target = DEFAULT_SELECTIONS[Math.floor(Math.random() * DEFAULT_SELECTIONS.length)];
+      }
+      // Skip fetch if server already loaded the exact airport+approach
+      if (
+        target.airportId === initialAirportId &&
+        (!target.approachId || target.approachId === initialApproachId)
+      ) {
+        return;
+      }
+      setSelectedAirport(target.airportId);
+      setSelectedApproach(target.approachId);
+      setLoading(true);
+      loadSceneDataAction(target.airportId, target.approachId)
+        .then((nextSceneData) => {
+          setSceneData(nextSceneData);
+          setSelectedAirport(nextSceneData.airport?.id ?? target.airportId);
+          setSelectedApproach(nextSceneData.selectedApproachId || target.approachId);
+          setLoading(false);
+        })
+        .catch(() => {
+          setLoading(false);
+        });
+    }
   }, []);
 
   useEffect(() => {
@@ -483,6 +530,14 @@ export function AppClient({
     const nextUrl = `${nextPath}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
       window.history.replaceState(null, '', nextUrl);
+    }
+    try {
+      window.localStorage.setItem(
+        SELECTION_STORAGE_KEY,
+        JSON.stringify({ airportId: selectedAirport, approachId: selectedApproach })
+      );
+    } catch {
+      // localStorage full or unavailable
     }
   }, [
     selectedAirport,

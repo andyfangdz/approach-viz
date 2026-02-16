@@ -40,6 +40,12 @@ The options (gear) panel contains per-layer configuration controls organized int
 
 All options-panel and layer values are persisted to browser `localStorage` and restored on load, including the selected camera-control mode.
 
+### Last Selection Persistence
+
+- On every airport/approach change, the selection is written to `localStorage` under key `'approach-viz:last-selection'` as `{ airportId, approachId }`.
+- When visiting `/` (no airport/approach in URL), the client reads this key and loads the remembered selection. If absent or invalid, a random entry from `DEFAULT_SELECTIONS` (currently only `KCDW/L22`) is used.
+- The URL is updated via `replaceState` to reflect the restored selection, making it shareable.
+
 ## Runtime Status and Debug UI
 
 - When MRMS overlay polling is active, a top-right in-scene status chip (`Loading MRMS...`) appears beneath the navbar/selector region.

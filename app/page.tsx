@@ -4,5 +4,5 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export default async function Page() {
-  return renderScenePage(DEFAULT_AIRPORT_ID, '');
+  return renderScenePage(DEFAULT_AIRPORT_ID, '', true);
 }

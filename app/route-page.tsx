@@ -16,7 +16,11 @@ function normalizeProcedureId(procedureId: string | undefined): string {
   }
 }
 
-export async function renderScenePage(airportIdParam?: string, procedureIdParam?: string) {
+export async function renderScenePage(
+  airportIdParam?: string,
+  procedureIdParam?: string,
+  isDefaultRoute = false
+) {
   const airportId = normalizeAirportId(airportIdParam);
   const procedureId = normalizeProcedureId(procedureIdParam);
   const initialSceneData = await loadSceneDataAction(airportId, procedureId);
@@ -27,6 +31,7 @@ export async function renderScenePage(airportIdParam?: string, procedureIdParam?
       initialSceneData={initialSceneData}
       initialAirportId={initialSceneData.airport?.id ?? airportId}
       initialApproachId={initialSceneData.selectedApproachId || procedureId}
+      isDefaultRoute={isDefaultRoute}
     />
   );
 }
