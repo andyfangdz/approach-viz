@@ -51,11 +51,11 @@ Each area below has a concise summary; full details live in the linked `docs/` f
 
 ### Data Sources
 
-CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, and runtime MRMS 3D reflectivity + echo-top weather products are ingested/proxied from FAA and third-party feeds into SQLite (build-time), Next.js API routes (runtime), and an external Rust runtime service (runtime weather + traffic decoding). → [`docs/data-sources.md`](docs/data-sources.md)
+CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, runtime MRMS 3D reflectivity + echo-top weather products, and MRMS ProbSevere storm-cell objects are ingested/proxied from FAA and third-party feeds into SQLite (build-time), Next.js API routes (runtime), and an external Rust runtime service (runtime weather + traffic decoding). → [`docs/data-sources.md`](docs/data-sources.md)
 
 ### Architecture
 
-Server-first data loading through Next.js server actions backed by SQLite (with R-tree spatial indexes for airports and airspace), with a thin client runtime coordinating UI sections and a react-three-fiber scene. An external Rust Axum service (`services/runtime-rs/`) handles MRMS weather ingest/query and ADS-B traffic decode; Next.js routes proxy to this service. Local dev tracing is via Datadog `dd-trace` (`scripts/dev-with-ddtrace.mjs`). CI uses `npx next build` (not `npm run build`) to avoid data download in CI. React Compiler is enabled globally via `next.config.ts` (`reactCompiler: true`) with `babel-plugin-react-compiler` in `devDependencies`.
+Server-first data loading through Next.js server actions backed by SQLite (with R-tree spatial indexes for airports and airspace), with a thin client runtime coordinating UI sections and a react-three-fiber scene. An external Rust Axum service (`services/runtime-rs/`) handles MRMS weather ingest/query and ADS-B traffic decode; Next.js routes proxy to this service for MRMS volume/echo-tops and traffic, while a separate Next.js route proxies NOAA ProbSevere storm-cell objects directly. Local dev tracing is via Datadog `dd-trace` (`scripts/dev-with-ddtrace.mjs`). CI uses `npx next build` (not `npm run build`) to avoid data download in CI. React Compiler is enabled globally via `next.config.ts` (`reactCompiler: true`) with `babel-plugin-react-compiler` in `devDependencies`.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram (includes runtime service + proxy routes)
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI, agent skills
@@ -65,24 +65,26 @@ Server-first data loading through Next.js server actions backed by SQLite (with 
 
 ### Rendering
 
-3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, and MRMS volumetric precipitation weather are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
+3D approach paths, airspace volumes, terrain/satellite surfaces, live traffic, MRMS volumetric precipitation weather, and ProbSevere storm-cell objects are rendered in a local-NM coordinate frame with user-adjustable vertical exaggeration.
 
 Key behaviors:
 
 - Airspace sectors with surface floors clamp to airport elevation to prevent underground volumes at high-elevation airports.
 - MRMS volume uses phase-aware reflectivity coloring (rain/mixed/snow) with two selectable phase detection modes (thermodynamic per-altitude or surface precip type for entire column), declutter modes, echo-top caps (`18/30/50/60 dBZ`), altitude guides, and vertical cross-sections.
+- ProbSevere storm cells render as discrete in-range polygon footprints with optional top-height caps/labels from `REF20`/`REF10`/`EchoTop_50` fallback (nullable when unavailable), and motion-direction vectors from `MOTION_EAST`/`MOTION_SOUTH` anchored at polygon-derived centroids.
 - Final approach path below MDA/DA renders as dashed segments instead of a solid tube, visually distinguishing the below-minimums portion; a waypoint-style marker labeled "MDA" or "DA" (with altitude) marks the crossing point.
 - Missed-approach geometry includes curved MAP-to-missed transitions and optional published FAA climb-gradient enforcement.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes
 - [`docs/rendering-weather-volume.md`](docs/rendering-weather-volume.md) — MRMS volumetric weather overlay (phase coloring, shading, declutter, echo-tops, cross-sections, transport, instanced rendering)
+- [`docs/rendering-storm-cells.md`](docs/rendering-storm-cells.md) — ProbSevere storm-cell overlay (top heights, polygons, movement vectors)
 - [`docs/rendering-approach-geometry.md`](docs/rendering-approach-geometry.md) — final/missed vertical profiles, turn joins, arc legs, no-fix stubs
 - [`docs/rendering-performance.md`](docs/rendering-performance.md) — memoization, batching, instanced meshes, disposal, DPR capping
 
 ### UI, URL State, and Mobile
 
-URL-path-encoded airport/procedure selection, layers panel with 7 independent layer toggles (approach, airspace, ADS-B, MRMS 3D precip, echo tops, vertical slice, altitude guides) and delta-from-defaults `?layers=` URL encoding, options panel with localStorage persistence organized into layer-relevant sections, `?phaseMode=` and `?declutter=` URL-encoded MRMS options (delta-from-defaults, omitted when default), overlay-style selectors, MRMS loading chip, runtime debug panel, mobile-first collapsed defaults with viewport locking, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
+URL-path-encoded airport/procedure selection, layers panel with 8 independent layer toggles (approach, airspace, ADS-B, MRMS 3D precip, ProbSevere, echo tops, vertical slice, altitude guides) and delta-from-defaults `?layers=` URL encoding, options panel with localStorage persistence organized into layer-relevant sections, `?phaseMode=` and `?declutter=` URL-encoded MRMS options (delta-from-defaults, omitted when default), overlay-style selectors, MRMS loading chip, runtime debug panel, mobile-first collapsed defaults with viewport locking, and PWA metadata. → [`docs/ui-url-state-and-mobile.md`](docs/ui-url-state-and-mobile.md)
 
 ### Validation
 

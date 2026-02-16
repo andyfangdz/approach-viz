@@ -51,6 +51,13 @@ External data feeds and their ingestion paths.
 - The Next.js routes `app/api/weather/nexrad/route.ts` and `app/api/weather/nexrad/echo-tops/route.ts` proxy to the Rust runtime endpoints, and the client decodes binary reflectivity + JSON echo-top payloads directly.
 - Snapshot storage is bounded to `5 GB` (oldest scans pruned first) to fit the OCI host disk budget.
 
+## MRMS ProbSevere Storm Cells
+
+- Source: NOAA MRMS ProbSevere object feed `https://mrms.ncep.noaa.gov/ProbSevere/PROBSEVERE/` (`MRMS_PROBSEVERE_*.json`).
+- Next.js route `app/api/weather/nexrad/prob-severe/route.ts` fetches the latest ProbSevere JSON object list, normalizes feature polygons/metadata, and returns range-filtered storm cells around request origin (`lat/lon/maxRangeNm`).
+- Normalized response includes polygon geometry, centroid, optional top height derived with `REF20` -> `REF10` -> `EchoTop_50` fallback (nullable when unavailable), and `MOTION_EAST`/`MOTION_SOUTH` vector components for movement-direction rendering.
+- Route output keeps all in-range features; missing top metrics do not remove cells from the response.
+
 ## Airport Coverage
 
 - The airport/approach selectors expose all airports present in parsed FAA CIFP data (not a curated list).

@@ -5,7 +5,7 @@
 - `app/AppClient.tsx` coordinates client state and effects.
 - Picker formatting/filtering/runtime conversion helpers are delegated to `app/app-client-utils.ts`.
 - Optional live traffic state (enable flag + hide-ground toggle + callsign-label toggle + history retention minutes) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
-- Optional MRMS weather state (volume enable toggle + reflectivity threshold dBZ + opacity + declutter mode + direct echo-top overlay toggle that can run without volume + altitude-guide toggle + vertical cross-section controls) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
+- Optional MRMS weather state (volume enable toggle + reflectivity threshold dBZ + opacity + declutter mode + direct echo-top overlay toggle that can run without volume + altitude-guide toggle + vertical cross-section controls) plus ProbSevere storm-cell layer visibility are managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
 - Options-panel state (vertical scale, terrain radius, bathymetry, traffic toggles/history window, MRMS weather toggles/threshold/opacity/declutter/slice controls) is persisted in browser `localStorage` and restored on client startup.
 - Major UI sections are delegated to `app/app-client/*`:
 - `HeaderControls`
@@ -20,6 +20,7 @@
 - Geometry/altitude/math/marker primitives are split into `app/scene/approach-path/*`.
 - `app/scene/LiveTrafficOverlay.tsx` handles ADS-B polling, initial history backfill requests (based on selected history window), retention-increase backfill merges for existing tracks, history pruning, and marker/trail rendering as an optional overlay group.
 - `app/scene/NexradVolumeOverlay.tsx` polls MRMS reflectivity + echo-top products (proxy by default, optional direct upstream URL), decodes v2 compact binary reflectivity payloads (including merged-brick span records), applies optional curvature compensation, and renders instanced volumetric weather voxels plus thresholded echo-top caps/altitude guides/cross-section aids as optional overlay groups without client-side voxel decimation.
+- `app/scene/ProbSevereOverlay.tsx` polls normalized ProbSevere storm-cell payloads, projects cell polygons into local NM space, applies optional curvature compensation to top heights, and renders base outlines for all in-range cells plus optional top caps/labels with movement vectors anchored at polygon-derived centroids.
 - `app/scene/approach-path/path-builder.ts` provides pure path-geometry assembly used by `PathTube`, supporting deterministic unit tests for final/transition/missed behavior.
 - `app/scene/approach-path/runway-geometry.ts` provides pure runway pairing/reciprocal-stub geometry logic used by `AirportMarker`.
 

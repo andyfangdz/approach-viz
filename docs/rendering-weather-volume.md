@@ -9,6 +9,7 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 - Default reflectivity threshold is 5 dBZ (matching standard aviation radar depiction), with a user-adjustable slider (5–60 dBZ).
 - Overlay opacity is user-configurable (20–100%) and updates mutate both voxel-pass opacities in place (no voxel remount/rebuild).
 - Enabled by default; toggled via `MRMS 3D Precip` in the options panel.
+- Discrete ProbSevere storm-cell polygons/motion vectors are documented separately in [`docs/rendering-storm-cells.md`](rendering-storm-cells.md).
 
 ## Phase-Aware Coloring
 

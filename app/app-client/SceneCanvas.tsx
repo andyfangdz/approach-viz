@@ -10,6 +10,7 @@ import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
 import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
 import { LiveTrafficOverlay, type SceneAirport } from '@/app/scene/LiveTrafficOverlay';
 import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
+import { ProbSevereOverlay } from '@/app/scene/ProbSevereOverlay';
 import {
   CAMERA_POSITION,
   DIRECTIONAL_LIGHT_POSITION,
@@ -84,6 +85,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   const airspaceVisible = layers.airspace;
   const liveTrafficEnabled = layers.adsb;
   const nexradVolumeEnabled = layers.mrms;
+  const probSevereEnabled = layers.probsevere;
   const nexradShowEchoTops = layers.echotops;
   const nexradShowAltitudeGuides = layers.guides;
   const nexradCrossSectionEnabled = layers.slice;
@@ -234,6 +236,18 @@ export const SceneCanvas = memo(function SceneCanvas({
               surfaceMode === 'satellite' || surfaceMode === '3dplate'
             }
             onDebugChange={onNexradDebugChange}
+          />
+        )}
+
+        {probSevereEnabled && (
+          <ProbSevereOverlay
+            refLat={airport.lat}
+            refLon={airport.lon}
+            verticalScale={verticalScale}
+            enabled={probSevereEnabled}
+            applyEarthCurvatureCompensation={
+              surfaceMode === 'satellite' || surfaceMode === '3dplate'
+            }
           />
         )}
 

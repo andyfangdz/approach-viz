@@ -49,6 +49,7 @@ After a successful build, visually verify at least one procedure exercising each
 - Missed approach with CA / DF / HM
 - Glidepath inside FAF
 - MRMS weather volume rendering (if runtime service is reachable)
+- ProbSevere storm-cell overlay rendering (all in-range footprints, optional top caps/labels, movement vectors)
 - Live ADS-B traffic overlay (if runtime service is reachable)
 - Mobile viewport behavior: viewport is locked to prevent scroll, zoom, and text selection outside form inputs.
 
