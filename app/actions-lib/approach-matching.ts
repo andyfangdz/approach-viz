@@ -31,6 +31,21 @@ function parseApproachNameVariant(name: string): string {
   return match ? match[1] : '';
 }
 
+/**
+ * Returns true if the approach name indicates a CAT II or CAT III plate
+ * (e.g. "ILS RWY 16L (CAT II - III)") but NOT a CAT I plate
+ * (e.g. "ILS RWY 10 (SA CAT I - II)" → false because it includes CAT I).
+ *
+ * CAT II/III plates require special crew/aircraft authorization and are less
+ * useful as a default display than the standard CAT I plate.
+ */
+function isCatIIOrIIIOnly(name: string): boolean {
+  const upper = name.toUpperCase();
+  if (!/\bCAT\b/.test(upper)) return false;
+  // "CAT I" not followed by another "I" (to avoid matching inside "CAT II")
+  return !/\bCAT\s+I(?!I)\b/.test(upper);
+}
+
 function parseApproachCirclingSuffix(raw: string): string {
   const upper = raw.toUpperCase().trim();
   const dashed = upper.match(/-([A-Z])\s*$/);
@@ -197,7 +212,8 @@ function resolveExternalApproach(
             ? 0
             : 1;
         const typeScore = getTypeMatchScore(approach.type, candidate);
-        return { candidate, score: suffixScore + typeScore };
+        const catPenalty = isCatIIOrIIIOnly(candidate.name) ? -0.5 : 0;
+        return { candidate, score: suffixScore + typeScore + catPenalty };
       })
       .sort((a, b) => b.score - a.score);
 
@@ -221,7 +237,8 @@ function resolveExternalApproach(
           ? 0
           : 1;
       const typeScore = getTypeMatchScore(approach.type, candidate);
-      return { candidate, score: variantScore + typeScore };
+      const catPenalty = isCatIIOrIIIOnly(candidate.name) ? -0.5 : 0;
+      return { candidate, score: variantScore + typeScore + catPenalty };
     })
     .sort((a, b) => b.score - a.score);
 
