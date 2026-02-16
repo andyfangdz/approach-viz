@@ -6,7 +6,8 @@
 - Picker formatting/filtering/runtime conversion helpers are delegated to `app/app-client-utils.ts`.
 - Optional live traffic state (enable flag + hide-ground toggle + callsign-label toggle + history retention minutes) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
 - Optional MRMS weather state (volume enable toggle + reflectivity threshold dBZ + opacity + declutter mode + direct echo-top overlay toggle that can run without volume + altitude-guide toggle + vertical cross-section controls) plus ProbSevere storm-cell layer visibility are managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
-- Options-panel state (vertical scale, terrain radius, bathymetry, traffic toggles/history window, MRMS weather toggles/threshold/opacity/declutter/slice controls) is persisted in browser `localStorage` and restored on client startup.
+- Camera-control mode state (`orbit`/`arcball`/`map`) is managed in `app/AppClient.tsx`, selected in `OptionsPanel`, and consumed by `SceneCanvas` to mount the corresponding Drei controls component.
+- Options-panel state (camera control mode, vertical scale, terrain radius, bathymetry, traffic toggles/history window, MRMS weather toggles/threshold/opacity/declutter/slice controls) is persisted in browser `localStorage` and restored on client startup.
 - Major UI sections are delegated to `app/app-client/*`:
 - `HeaderControls`
 - `SceneCanvas`

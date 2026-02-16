@@ -31,6 +31,7 @@ import {
   DEFAULT_NEXRAD_OPACITY,
   DEFAULT_NEXRAD_DECLUTTER_MODE,
   DEFAULT_NEXRAD_PHASE_MODE,
+  DEFAULT_CAMERA_CONTROL_MODE,
   DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
   MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
@@ -50,6 +51,7 @@ import type {
   LayerState,
   NexradDebugState,
   NexradPhaseMode,
+  CameraControlMode,
   SurfaceMode,
   TrafficDebugState,
   NexradDeclutterMode
@@ -75,6 +77,7 @@ interface PersistedOptionsState {
   nexradOpacity?: number;
   nexradDeclutterMode?: NexradDeclutterMode;
   nexradPhaseMode?: NexradPhaseMode;
+  cameraControlMode?: CameraControlMode;
   nexradCrossSectionHeadingDeg?: number;
   nexradCrossSectionRangeNm?: number;
   layers?: LayerState;
@@ -180,6 +183,14 @@ function normalizeNexradPhaseMode(mode: unknown): NexradPhaseMode {
     : DEFAULT_NEXRAD_PHASE_MODE;
 }
 
+const CAMERA_CONTROL_MODES: CameraControlMode[] = ['orbit', 'arcball', 'map'];
+
+function normalizeCameraControlMode(mode: unknown): CameraControlMode {
+  return CAMERA_CONTROL_MODES.includes(mode as CameraControlMode)
+    ? (mode as CameraControlMode)
+    : DEFAULT_CAMERA_CONTROL_MODE;
+}
+
 function normalizeNexradCrossSectionHeadingDeg(headingDeg: number): number {
   if (!Number.isFinite(headingDeg)) return DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG;
   const normalized = ((Math.round(headingDeg) % 360) + 360) % 360;
@@ -241,6 +252,8 @@ export function AppClient({
   );
   const [nexradPhaseMode, setNexradPhaseMode] =
     useState<NexradPhaseMode>(DEFAULT_NEXRAD_PHASE_MODE);
+  const [cameraControlMode, setCameraControlMode] =
+    useState<CameraControlMode>(DEFAULT_CAMERA_CONTROL_MODE);
 
   const [nexradCrossSectionHeadingDeg, setNexradCrossSectionHeadingDeg] = useState(
     DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG
@@ -325,6 +338,9 @@ export function AppClient({
         if (persisted.nexradPhaseMode) {
           setNexradPhaseMode(normalizeNexradPhaseMode(persisted.nexradPhaseMode));
         }
+        if (persisted.cameraControlMode) {
+          setCameraControlMode(normalizeCameraControlMode(persisted.cameraControlMode));
+        }
         if (typeof persisted.nexradCrossSectionHeadingDeg === 'number') {
           setNexradCrossSectionHeadingDeg(
             normalizeNexradCrossSectionHeadingDeg(persisted.nexradCrossSectionHeadingDeg)
@@ -394,6 +410,7 @@ export function AppClient({
       nexradOpacity,
       nexradDeclutterMode,
       nexradPhaseMode,
+      cameraControlMode,
       nexradCrossSectionHeadingDeg,
       nexradCrossSectionRangeNm,
       layers
@@ -412,6 +429,7 @@ export function AppClient({
     nexradOpacity,
     nexradDeclutterMode,
     nexradPhaseMode,
+    cameraControlMode,
     nexradCrossSectionHeadingDeg,
     nexradCrossSectionRangeNm,
     layers
@@ -743,6 +761,7 @@ export function AppClient({
             satelliteRetryCount={satelliteRetryCount}
             surfaceErrorMessage={surfaceErrorMessage}
             recenterNonce={recenterNonce}
+            cameraControlMode={cameraControlMode}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
             missedApproachClimbRequirement={effectiveMissedApproachClimbRequirement}
@@ -827,6 +846,8 @@ export function AppClient({
           }
           flattenBathymetry={flattenBathymetry}
           onFlattenBathymetryChange={setFlattenBathymetry}
+          cameraControlMode={cameraControlMode}
+          onCameraControlModeChange={setCameraControlMode}
           useParsedMissedClimbGradient={useParsedMissedClimbGradient}
           hasParsedMissedClimbRequirement={hasParsedMissedClimbRequirement}
           parsedMissedClimbRequirementLabel={parsedMissedClimbRequirementLabel}

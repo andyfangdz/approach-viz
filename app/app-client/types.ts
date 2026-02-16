@@ -6,6 +6,7 @@ import type { SceneData } from '@/lib/types';
 export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
 export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high';
 export type NexradPhaseMode = 'thermo' | 'surface';
+export type CameraControlMode = 'orbit' | 'arcball' | 'map';
 
 export interface NexradDebugState {
   enabled: boolean;
@@ -97,6 +98,7 @@ export interface SceneCanvasProps {
   satelliteRetryCount: number;
   surfaceErrorMessage: string;
   recenterNonce: number;
+  cameraControlMode: CameraControlMode;
   missedApproachStartAltitudeFeet?: number;
   minimumsLabel?: string;
   missedApproachClimbRequirement: SceneData['missedApproachClimbRequirement'];
@@ -126,6 +128,8 @@ export interface OptionsPanelProps {
   onTerrainRadiusNmChange: (radiusNm: number) => void;
   flattenBathymetry: boolean;
   onFlattenBathymetryChange: (enabled: boolean) => void;
+  cameraControlMode: CameraControlMode;
+  onCameraControlModeChange: (mode: CameraControlMode) => void;
   useParsedMissedClimbGradient: boolean;
   hasParsedMissedClimbRequirement: boolean;
   parsedMissedClimbRequirementLabel: string;

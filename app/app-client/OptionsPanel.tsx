@@ -12,7 +12,7 @@ import {
   MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
   MAX_NEXRAD_CROSS_SECTION_RANGE_NM
 } from './constants';
-import type { NexradDeclutterMode, NexradPhaseMode } from './types';
+import type { CameraControlMode, NexradDeclutterMode, NexradPhaseMode } from './types';
 
 const DECLUTTER_MODE_LABELS: Record<NexradDeclutterMode, string> = {
   all: 'All Layers',
@@ -26,6 +26,12 @@ const PHASE_MODE_LABELS: Record<NexradPhaseMode, string> = {
   surface: 'Surface Precip Type'
 };
 
+const CAMERA_CONTROL_MODE_LABELS: Record<CameraControlMode, string> = {
+  orbit: 'OrbitControls',
+  arcball: 'ArcballControls',
+  map: 'MapControls'
+};
+
 export function OptionsPanel({
   optionsCollapsed,
   onToggleOptions,
@@ -35,6 +41,8 @@ export function OptionsPanel({
   onTerrainRadiusNmChange,
   flattenBathymetry,
   onFlattenBathymetryChange,
+  cameraControlMode,
+  onCameraControlModeChange,
   useParsedMissedClimbGradient,
   hasParsedMissedClimbRequirement,
   parsedMissedClimbRequirementLabel,
@@ -107,6 +115,24 @@ export function OptionsPanel({
       </div>
 
       {/* General */}
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Camera Controls</span>
+        </span>
+        <select
+          className="options-inline-select"
+          value={cameraControlMode}
+          onChange={(event) => onCameraControlModeChange(event.target.value as CameraControlMode)}
+          aria-label="Camera controls mode"
+        >
+          {(Object.keys(CAMERA_CONTROL_MODE_LABELS) as CameraControlMode[]).map((mode) => (
+            <option key={mode} value={mode}>
+              {CAMERA_CONTROL_MODE_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+      </label>
+
       <label className="options-slider-row">
         <span className="options-toggle-copy">
           <span className="options-toggle-title">Vertical Scale ({verticalScale.toFixed(1)}x)</span>

@@ -1,7 +1,11 @@
-import { Suspense, memo, useEffect, useMemo, useRef, type RefObject } from 'react';
+import { Suspense, memo, useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
-import { Environment, Html, OrbitControls } from '@react-three/drei';
-import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { ArcballControls, Environment, Html, MapControls, OrbitControls } from '@react-three/drei';
+import type {
+  ArcballControls as ArcballControlsImpl,
+  MapControls as MapControlsImpl,
+  OrbitControls as OrbitControlsImpl
+} from 'three-stdlib';
 import { AirspaceVolumes } from '@/app/scene/AirspaceVolumes';
 import { ApproachPath } from '@/app/scene/ApproachPath';
 import { ApproachPlateSurface } from '@/app/scene/ApproachPlateSurface';
@@ -20,6 +24,12 @@ import {
 } from './constants';
 import type { SceneCanvasProps } from './types';
 
+interface RecenterControlsApi {
+  target: { set: (x: number, y: number, z: number) => void };
+  update: () => void;
+  setTarget?: (x: number, y: number, z: number) => void;
+}
+
 function LoadingFallback() {
   return (
     <Html center>
@@ -33,7 +43,7 @@ function RecenterCamera({
   controlsRef
 }: {
   recenterNonce: number;
-  controlsRef: RefObject<OrbitControlsImpl | null>;
+  controlsRef: RefObject<RecenterControlsApi | null>;
 }) {
   const { camera } = useThree();
 
@@ -43,7 +53,11 @@ function RecenterCamera({
     camera.lookAt(...ORBIT_TARGET);
     const controls = controlsRef.current;
     if (controls) {
-      controls.target.set(...ORBIT_TARGET);
+      if (typeof controls.setTarget === 'function') {
+        controls.setTarget(...ORBIT_TARGET);
+      } else {
+        controls.target.set(...ORBIT_TARGET);
+      }
       controls.update();
     }
   }, [camera, controlsRef, recenterNonce]);
@@ -74,6 +88,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   satelliteRetryCount,
   surfaceErrorMessage,
   recenterNonce,
+  cameraControlMode,
   missedApproachStartAltitudeFeet,
   minimumsLabel,
   missedApproachClimbRequirement,
@@ -89,7 +104,16 @@ export const SceneCanvas = memo(function SceneCanvas({
   const nexradShowEchoTops = layers.echotops;
   const nexradShowAltitudeGuides = layers.guides;
   const nexradCrossSectionEnabled = layers.slice;
-  const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const controlsRef = useRef<RecenterControlsApi | null>(null);
+  const handleOrbitControlsRef = useCallback((controls: OrbitControlsImpl | null) => {
+    controlsRef.current = controls;
+  }, []);
+  const handleMapControlsRef = useCallback((controls: MapControlsImpl | null) => {
+    controlsRef.current = controls;
+  }, []);
+  const handleArcballControlsRef = useCallback((controls: ArcballControlsImpl | null) => {
+    controlsRef.current = controls;
+  }, []);
   const sceneAirports = useMemo<SceneAirport[]>(() => {
     const list: SceneAirport[] = [
       { lat: airport.lat, lon: airport.lon, elevation: airport.elevation }
@@ -251,7 +275,25 @@ export const SceneCanvas = memo(function SceneCanvas({
           />
         )}
 
-        <OrbitControls ref={controlsRef} enableDamping dampingFactor={0.05} target={ORBIT_TARGET} />
+        {cameraControlMode === 'orbit' && (
+          <OrbitControls
+            ref={handleOrbitControlsRef}
+            enableDamping
+            dampingFactor={0.05}
+            target={ORBIT_TARGET}
+          />
+        )}
+        {cameraControlMode === 'map' && (
+          <MapControls
+            ref={handleMapControlsRef}
+            enableDamping
+            dampingFactor={0.05}
+            target={ORBIT_TARGET}
+          />
+        )}
+        {cameraControlMode === 'arcball' && (
+          <ArcballControls ref={handleArcballControlsRef} target={ORBIT_TARGET} />
+        )}
       </Suspense>
     </Canvas>
   );
