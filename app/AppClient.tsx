@@ -252,8 +252,9 @@ export function AppClient({
   );
   const [nexradPhaseMode, setNexradPhaseMode] =
     useState<NexradPhaseMode>(DEFAULT_NEXRAD_PHASE_MODE);
-  const [cameraControlMode, setCameraControlMode] =
-    useState<CameraControlMode>(DEFAULT_CAMERA_CONTROL_MODE);
+  const [cameraControlMode, setCameraControlMode] = useState<CameraControlMode>(
+    DEFAULT_CAMERA_CONTROL_MODE
+  );
 
   const [nexradCrossSectionHeadingDeg, setNexradCrossSectionHeadingDeg] = useState(
     DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG
