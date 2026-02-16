@@ -1,6 +1,7 @@
 import { Html } from '@react-three/drei';
 import { useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
+import { parseNumberLike, parseStringLike } from '@/lib/parse-like';
 import { earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
 
 const FEET_PER_NM = 6076.12;
@@ -66,26 +67,6 @@ interface RenderLabel {
   yNm: number;
   z: number;
   text: string;
-}
-
-function parseNumberLike(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function parseStringLike(value: unknown): string | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  return null;
 }
 
 function isSameLonLat(first: LonLatTuple, second: LonLatTuple): boolean {
@@ -384,8 +365,6 @@ export function ProbSevereOverlay({
       geometryBundle.vectorGeometry
     ]
   );
-
-  if (!enabled) return null;
 
   const hasRenderableData =
     Boolean(geometryBundle.topGeometry) ||
