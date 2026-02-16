@@ -1,9 +1,49 @@
 import { getDb } from '@/lib/db';
+import type Database from 'better-sqlite3';
 import type { AirspaceFeature, AirportOption } from '@/lib/types';
 import type { Airport } from '@/lib/cifp/parser';
 import { AIRSPACE_RADIUS_NM, DEFAULT_AIRPORT_ID } from './constants';
 import { latLonDistanceNm } from './geo';
 import type { AirportRow, AirspaceRow, RunwayRow } from './types';
+
+let _stmts: {
+  selectAirportById: Database.Statement;
+  selectFirstAirport: Database.Statement;
+  selectAirspace: Database.Statement;
+  listAirportOptions: Database.Statement;
+} | null = null;
+
+function stmts() {
+  if (!_stmts) {
+    const db = getDb();
+    _stmts = {
+      selectAirportById: db.prepare(
+        'SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?'
+      ),
+      selectFirstAirport: db.prepare(
+        'SELECT id, name, lat, lon, elevation, mag_var FROM airports ORDER BY id LIMIT 1'
+      ),
+      selectAirspace: db.prepare(`
+        SELECT a.class, a.name, a.lower_alt, a.upper_alt, a.coordinates_json
+        FROM airspace_rtree r
+        JOIN airspace a ON a.id = r.id
+        WHERE r.max_lat >= ? AND r.min_lat <= ?
+          AND r.max_lon >= ? AND r.min_lon <= ?
+      `),
+      listAirportOptions: db.prepare(`
+        SELECT a.id, a.name
+        FROM airports a
+        WHERE EXISTS (
+          SELECT 1
+          FROM approaches ap
+          WHERE ap.airport_id = a.id
+        )
+        ORDER BY a.id
+      `)
+    };
+  }
+  return _stmts;
+}
 
 export function rowToAirport(row: AirportRow): Airport {
   return {
@@ -16,30 +56,23 @@ export function rowToAirport(row: AirportRow): Airport {
   };
 }
 
-export function selectAirport(db: ReturnType<typeof getDb>, airportId: string): AirportRow | null {
+export function selectAirport(airportId: string): AirportRow | null {
+  const s = stmts();
   const normalized = airportId.trim().toUpperCase();
-  const byId = db
-    .prepare('SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?')
-    .get(normalized) as AirportRow | undefined;
+  const byId = s.selectAirportById.get(normalized) as AirportRow | undefined;
   if (byId) return byId;
 
-  const fallback = db
-    .prepare('SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?')
-    .get(DEFAULT_AIRPORT_ID) as AirportRow | undefined;
+  const fallback = s.selectAirportById.get(DEFAULT_AIRPORT_ID) as AirportRow | undefined;
   if (fallback) return fallback;
 
-  return (
-    (db
-      .prepare('SELECT id, name, lat, lon, elevation, mag_var FROM airports ORDER BY id LIMIT 1')
-      .get() as AirportRow | undefined) || null
-  );
+  return (s.selectFirstAirport.get() as AirportRow | undefined) || null;
 }
 
 export function loadRunwayMap(
-  db: ReturnType<typeof getDb>,
   airportIds: string[]
 ): Map<string, Array<{ id: string; lat: number; lon: number }>> {
   if (airportIds.length === 0) return new Map();
+  const db = getDb();
   const placeholders = airportIds.map(() => '?').join(',');
   const rows = db
     .prepare(
@@ -57,10 +90,7 @@ export function loadRunwayMap(
   return byAirport;
 }
 
-export function loadAirspaceForAirport(
-  db: ReturnType<typeof getDb>,
-  airport: Airport
-): AirspaceFeature[] {
+export function loadAirspaceForAirport(airport: Airport): AirspaceFeature[] {
   const latRadius = AIRSPACE_RADIUS_NM / 60;
   const lonRadius =
     AIRSPACE_RADIUS_NM / (60 * Math.max(0.2, Math.cos((airport.lat * Math.PI) / 180)));
@@ -69,15 +99,7 @@ export function loadAirspaceForAirport(
   const minLon = airport.lon - lonRadius;
   const maxLon = airport.lon + lonRadius;
 
-  const rows = db
-    .prepare(
-      `
-      SELECT class, name, lower_alt, upper_alt, coordinates_json
-      FROM airspace
-      WHERE max_lat >= ? AND min_lat <= ? AND max_lon >= ? AND min_lon <= ?
-    `
-    )
-    .all(minLat, maxLat, minLon, maxLon) as AirspaceRow[];
+  const rows = stmts().selectAirspace.all(minLat, maxLat, minLon, maxLon) as AirspaceRow[];
 
   return rows
     .map((row) => ({
@@ -102,21 +124,7 @@ export function loadAirspaceForAirport(
 }
 
 export function listAirportOptions(): AirportOption[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `
-      SELECT a.id, a.name
-      FROM airports a
-      WHERE EXISTS (
-        SELECT 1
-        FROM approaches ap
-        WHERE ap.airport_id = a.id
-      )
-      ORDER BY a.id
-    `
-    )
-    .all() as Array<{ id: string; name: string }>;
+  const rows = stmts().listAirportOptions.all() as Array<{ id: string; name: string }>;
 
   return rows.map((row) => ({
     id: row.id,

@@ -3,8 +3,8 @@
 ## Data Backbone
 
 - Server-side data is backed by `data/approach-viz.sqlite`.
-- A kdbush spatial index (`data/airport-spatial.bin` + `data/airport-spatial-meta.json`) is built at `build-db` time and accelerates nearby-airport queries during scene-data assembly.
-- The spatial index also provides `elevationAirports` covering the full 80 NM traffic radius, used to place ADS-B targets without reported altitude at their nearest airport's field elevation.
+- An SQLite R-tree spatial index (`airport_rtree` + `airport_rtree_map` tables) is built at `build-db` time and accelerates nearby-airport queries during scene-data assembly. A second R-tree (`airspace_rtree`) indexes airspace bounding boxes for efficient overlap queries.
+- The airport spatial index also provides `elevationAirports` covering the full 80 NM traffic radius, used to place ADS-B targets without reported altitude at their nearest airport's field elevation.
 - Build/runtime geometry source of truth is CIFP data; approach geometry remains CIFP-only.
 
 ## Server Action Layering
