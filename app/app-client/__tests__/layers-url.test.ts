@@ -18,8 +18,8 @@ test('parseLayersParam returns defaults when param is empty string', () => {
 });
 
 test('parseLayersParam turns off a default-on layer with -', () => {
-  const result = parseLayersParam('-mrms');
-  assert.equal(result.mrms, false);
+  const result = parseLayersParam('-probsevere');
+  assert.equal(result.probsevere, false);
   assert.equal(result.approach, true);
   assert.equal(result.airspace, true);
 });
@@ -29,9 +29,9 @@ test('parseLayersParam turns on a default-off layer with +', () => {
   assert.equal(result.echotops, true);
 });
 
-test('parseLayersParam turns on ProbSevere layer with +', () => {
-  const result = parseLayersParam('+probsevere');
-  assert.equal(result.probsevere, true);
+test('parseLayersParam turns on a default-off layer (mrms) with +', () => {
+  const result = parseLayersParam('+mrms');
+  assert.equal(result.mrms, true);
 });
 
 test('parseLayersParam handles multiple deltas', () => {
@@ -53,8 +53,8 @@ test('parseLayersParam handles redundant entries as no-ops', () => {
 });
 
 test('parseLayersParam trims whitespace', () => {
-  const result = parseLayersParam(' -mrms , +slice ');
-  assert.equal(result.mrms, false);
+  const result = parseLayersParam(' -probsevere , +slice ');
+  assert.equal(result.probsevere, false);
   assert.equal(result.slice, true);
 });
 
@@ -65,8 +65,8 @@ test('serializeLayersParam returns null when state matches defaults', () => {
 });
 
 test('serializeLayersParam serializes turned-off default-on layers with -', () => {
-  const state: LayerState = { ...DEFAULT_LAYER_STATE, mrms: false };
-  assert.equal(serializeLayersParam(state), '-mrms');
+  const state: LayerState = { ...DEFAULT_LAYER_STATE, probsevere: false };
+  assert.equal(serializeLayersParam(state), '-probsevere');
 });
 
 test('serializeLayersParam serializes turned-on default-off layers with +', () => {
@@ -74,9 +74,9 @@ test('serializeLayersParam serializes turned-on default-off layers with +', () =
   assert.equal(serializeLayersParam(state), '+echotops');
 });
 
-test('serializeLayersParam serializes ProbSevere default-off layer with +', () => {
-  const state: LayerState = { ...DEFAULT_LAYER_STATE, probsevere: true };
-  assert.equal(serializeLayersParam(state), '+probsevere');
+test('serializeLayersParam serializes turned-on default-off layer (mrms) with +', () => {
+  const state: LayerState = { ...DEFAULT_LAYER_STATE, mrms: true };
+  assert.equal(serializeLayersParam(state), '+mrms');
 });
 
 test('serializeLayersParam serializes multiple deltas sorted by layer ID', () => {

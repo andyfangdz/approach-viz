@@ -16,7 +16,7 @@ export const DEFAULT_NEXRAD_OPACITY = 0.35;
 export const MIN_NEXRAD_OPACITY = 0.05;
 export const MAX_NEXRAD_OPACITY = 1;
 export const DEFAULT_NEXRAD_DECLUTTER_MODE = 'all';
-export const DEFAULT_NEXRAD_PHASE_MODE = 'thermo';
+export const DEFAULT_NEXRAD_PHASE_MODE = 'surface';
 export const DEFAULT_CAMERA_CONTROL_MODE = 'orbit';
 export const DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG = 90;
 export const DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM = 80;
@@ -42,8 +42,8 @@ export const DEFAULT_LAYER_STATE: LayerState = {
   approach: true,
   airspace: true,
   adsb: true,
-  mrms: true,
-  probsevere: false,
+  mrms: false,
+  probsevere: true,
   echotops: false,
   slice: false,
   guides: true
