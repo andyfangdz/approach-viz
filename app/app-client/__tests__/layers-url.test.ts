@@ -29,6 +29,11 @@ test('parseLayersParam turns on a default-off layer with +', () => {
   assert.equal(result.echotops, true);
 });
 
+test('parseLayersParam turns on ProbSevere layer with +', () => {
+  const result = parseLayersParam('+probsevere');
+  assert.equal(result.probsevere, true);
+});
+
 test('parseLayersParam handles multiple deltas', () => {
   const result = parseLayersParam('-airspace,+slice,+echotops');
   assert.equal(result.airspace, false);
@@ -67,6 +72,11 @@ test('serializeLayersParam serializes turned-off default-on layers with -', () =
 test('serializeLayersParam serializes turned-on default-off layers with +', () => {
   const state: LayerState = { ...DEFAULT_LAYER_STATE, echotops: true };
   assert.equal(serializeLayersParam(state), '+echotops');
+});
+
+test('serializeLayersParam serializes ProbSevere default-off layer with +', () => {
+  const state: LayerState = { ...DEFAULT_LAYER_STATE, probsevere: true };
+  assert.equal(serializeLayersParam(state), '+probsevere');
 });
 
 test('serializeLayersParam serializes multiple deltas sorted by layer ID', () => {

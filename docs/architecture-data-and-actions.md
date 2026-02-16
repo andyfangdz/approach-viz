@@ -58,6 +58,13 @@
 - Client overlay decodes binary reflectivity wire payloads plus JSON echo-top payloads directly, with JSON fallback only for error payloads.
 - Snapshot retention is byte-capped (`RUNTIME_MRMS_RETENTION_BYTES=5 GB`, legacy alias `MRMS_RETENTION_BYTES`) with oldest-first pruning.
 
+## ProbSevere Storm-Cell Access
+
+- Next.js route `app/api/weather/nexrad/prob-severe/route.ts` fetches the latest NOAA MRMS ProbSevere object file from `mrms.ncep.noaa.gov`, normalizes polygon/object fields, and applies query-window filtering (`lat/lon/maxRangeNm`).
+- The route returns storm-cell polygons with centroid, optional top heights from `REF20` -> `REF10` -> `EchoTop_50` fallback (nullable when unavailable), and `MOTION_EAST`/`MOTION_SOUTH` vector components used by the scene overlay.
+- Cells remain included when top metrics are missing; only query-window range filtering is applied.
+- Client rendering in `app/scene/ProbSevereOverlay.tsx` polls this route directly on a weather-like cadence and preserves the last successful payload on transient failures.
+
 ## CI and Instrumentation
 
 - CI workflow `.github/workflows/parser-tests.yml` runs `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run test`, and `npx next build` on push/PR. The build step uses `npx next build` (not `npm run build`) so CI does not trigger the FAA data download that `npm run build` includes via `prepare-data`.

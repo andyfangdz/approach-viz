@@ -13,17 +13,18 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 ## Layers Panel
 
-Seven independent layer toggles control visibility of major scene overlays. The layers panel opens from a stacked-layers FAB between the gear and recenter buttons (bottom-right). It is mutually exclusive with the options panel — opening one closes the other.
+Eight independent layer toggles control visibility of major scene overlays. The layers panel opens from a stacked-layers FAB between the gear and recenter buttons (bottom-right). It is mutually exclusive with the options panel — opening one closes the other.
 
-| Group         | Layer ID   | Label           | Default |
-| ------------- | ---------- | --------------- | ------- |
-| _(ungrouped)_ | `approach` | Approach        | on      |
-| _(ungrouped)_ | `airspace` | Airspace        | on      |
-| _(ungrouped)_ | `adsb`     | ADS-B Traffic   | on      |
-| Weather       | `mrms`     | MRMS 3D Precip  | on      |
-| Weather       | `echotops` | Echo Tops       | off     |
-| Weather       | `slice`    | Vertical Slice  | off     |
-| Weather       | `guides`   | Altitude Guides | on      |
+| Group         | Layer ID     | Label           | Default |
+| ------------- | ------------ | --------------- | ------- |
+| _(ungrouped)_ | `approach`   | Approach        | on      |
+| _(ungrouped)_ | `airspace`   | Airspace        | on      |
+| _(ungrouped)_ | `adsb`       | ADS-B Traffic   | on      |
+| Weather       | `mrms`       | MRMS 3D Precip  | on      |
+| Weather       | `probsevere` | ProbSevere      | off     |
+| Weather       | `echotops`   | Echo Tops       | off     |
+| Weather       | `slice`      | Vertical Slice  | off     |
+| Weather       | `guides`     | Altitude Guides | on      |
 
 Layer state is persisted to both `localStorage` and the `?layers=` URL query parameter.
 

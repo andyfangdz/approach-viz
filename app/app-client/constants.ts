@@ -31,6 +31,7 @@ export const LAYER_IDS: LayerId[] = [
   'airspace',
   'adsb',
   'mrms',
+  'probsevere',
   'echotops',
   'slice',
   'guides'
@@ -41,6 +42,7 @@ export const DEFAULT_LAYER_STATE: LayerState = {
   airspace: true,
   adsb: true,
   mrms: true,
+  probsevere: false,
   echotops: false,
   slice: false,
   guides: true

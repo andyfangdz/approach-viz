@@ -80,6 +80,12 @@ export function InfoPanel({
             <span>MRMS 3D Precip</span>
           </div>
         )}
+        {layers.probsevere && (
+          <div className="legend-item">
+            <div className="legend-color probsevere" />
+            <span>ProbSevere</span>
+          </div>
+        )}
         {layers.mrms && layers.echotops && (
           <div className="legend-item">
             <div className="legend-color nexrad-echo-top" />

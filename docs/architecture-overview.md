@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This project uses a server-first data-loading model with a client-side 3D scene runtime and an external Rust runtime service for weather and traffic APIs.
+This project uses a server-first data-loading model with a client-side 3D scene runtime, an external Rust runtime service for MRMS volume/echo-top + traffic APIs, and a direct NOAA ProbSevere proxy route for storm-cell objects.
 
 ## High-Level Flow
 
@@ -19,9 +19,11 @@ flowchart TD
   S --> TP["Traffic Proxy<br/>app/api/traffic/adsbx/route.ts"]
   S --> WP["Weather Proxy<br/>app/api/weather/nexrad/route.ts"]
   S --> EP["Echo-Top Proxy<br/>app/api/weather/nexrad/echo-tops/route.ts"]
+  S --> PS["ProbSevere Proxy<br/>app/api/weather/nexrad/prob-severe/route.ts"]
   TP --> RS["Rust Runtime Service<br/>services/runtime-rs"]
   WP --> RS
   EP --> RS
+  PS --> NPS["NOAA MRMS ProbSevere<br/>mrms.ncep.noaa.gov"]
   RS --> SQS["AWS SNS/SQS<br/>NOAA MRMS events"]
   RS --> ADSB["ADSB Exchange<br/>tar1090 feed"]
   RS --> S3["NOAA S3 Bucket<br/>MRMS GRIB2 data"]
