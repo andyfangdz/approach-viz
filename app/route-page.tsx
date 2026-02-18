@@ -1,6 +1,9 @@
 import { AppClient } from '@/app/AppClient';
 import { loadSceneDataAction } from '@/app/actions';
-import { pickRandomDefaultSelection } from '@/app/default-selections';
+import {
+  pickDefaultApproachForAirport,
+  pickRandomDefaultSelection
+} from '@/app/default-selections';
 
 function normalizeAirportId(airportId: string | undefined): string {
   return (airportId || '').trim().toUpperCase();
@@ -25,7 +28,7 @@ export async function renderScenePage(
   const defaultSelection = requestedAirportId ? null : pickRandomDefaultSelection();
   const airportId = requestedAirportId || defaultSelection?.airportId || '';
   const procedureId = requestedAirportId
-    ? requestedProcedureId
+    ? requestedProcedureId || pickDefaultApproachForAirport(requestedAirportId) || ''
     : defaultSelection?.approachId || '';
   const initialSceneData = await loadSceneDataAction(airportId, procedureId);
 

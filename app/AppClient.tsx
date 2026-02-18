@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import type { Approach } from '@/lib/cifp/parser';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
+import { pickDefaultApproachForAirport } from '@/app/default-selections';
 import {
   formatApproachLabel,
   isMobileViewport,
@@ -772,9 +773,10 @@ export function AppClient({
         airportOptionsLoading={airportOptionsLoading}
         effectiveAirportOptionsLength={effectiveAirportOptions.length}
         onAirportSelected={(airportId) => {
+          const defaultApproachId = pickDefaultApproachForAirport(airportId) || '';
           setSelectedAirport(airportId);
-          setSelectedApproach('');
-          requestSceneData(airportId, '');
+          setSelectedApproach(defaultApproachId);
+          requestSceneData(airportId, defaultApproachId);
         }}
         approachOptions={approachOptions}
         selectedApproachOption={selectedApproachOption}

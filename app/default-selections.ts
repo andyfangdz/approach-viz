@@ -18,3 +18,13 @@ export function pickRandomDefaultSelection(): DefaultSelection | null {
   if (DEFAULT_SELECTIONS.length === 0) return null;
   return DEFAULT_SELECTIONS[Math.floor(Math.random() * DEFAULT_SELECTIONS.length)];
 }
+
+export function pickDefaultApproachForAirport(airportId: string): string | null {
+  const normalizedAirportId = airportId.trim().toUpperCase();
+  if (!normalizedAirportId) return null;
+  const matches = DEFAULT_SELECTIONS.filter(
+    (selection) => selection.airportId.trim().toUpperCase() === normalizedAirportId
+  ).map((selection) => selection.approachId);
+  if (matches.length === 0) return null;
+  return matches[Math.floor(Math.random() * matches.length)];
+}
