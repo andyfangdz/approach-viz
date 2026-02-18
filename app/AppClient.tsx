@@ -92,7 +92,6 @@ interface PersistedOptionsState {
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
 const SELECTION_STORAGE_KEY = 'approach-viz:last-selection';
-const DEFAULT_SELECTIONS = [{ airportId: 'KCDW', approachId: 'L22' }];
 const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
   enabled: false,
   loading: false,
@@ -416,10 +415,10 @@ export function AppClient({
           }
         }
       } catch {
-        // corrupt or missing — fall through to defaults
+        // corrupt or missing — keep server-provided default selection
       }
       if (!target) {
-        target = DEFAULT_SELECTIONS[Math.floor(Math.random() * DEFAULT_SELECTIONS.length)];
+        return;
       }
       // Skip fetch if server already loaded the exact airport+approach
       if (
@@ -428,11 +427,13 @@ export function AppClient({
       ) {
         return;
       }
-      setSelectedAirport(target.airportId);
-      setSelectedApproach(target.approachId);
       setLoading(true);
       loadSceneDataAction(target.airportId, target.approachId)
         .then((nextSceneData) => {
+          if (!nextSceneData.airport) {
+            setLoading(false);
+            return;
+          }
           setSceneData(nextSceneData);
           setSelectedAirport(nextSceneData.airport?.id ?? target.airportId);
           setSelectedApproach(nextSceneData.selectedApproachId || target.approachId);

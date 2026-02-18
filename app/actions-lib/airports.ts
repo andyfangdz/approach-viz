@@ -2,13 +2,13 @@ import { getDb } from '@/lib/db';
 import type Database from 'better-sqlite3';
 import type { AirspaceFeature, AirportOption } from '@/lib/types';
 import type { Airport } from '@/lib/cifp/parser';
-import { AIRSPACE_RADIUS_NM, DEFAULT_AIRPORT_ID } from './constants';
+import { DEFAULT_SELECTIONS } from '@/app/default-selections';
+import { AIRSPACE_RADIUS_NM } from './constants';
 import { latLonDistanceNm } from './geo';
 import type { AirportRow, AirspaceRow, RunwayRow } from './types';
 
 let _stmts: {
   selectAirportById: Database.Statement;
-  selectFirstAirport: Database.Statement;
   selectAirspace: Database.Statement;
   listAirportOptions: Database.Statement;
 } | null = null;
@@ -19,9 +19,6 @@ function stmts() {
     _stmts = {
       selectAirportById: db.prepare(
         'SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?'
-      ),
-      selectFirstAirport: db.prepare(
-        'SELECT id, name, lat, lon, elevation, mag_var FROM airports ORDER BY id LIMIT 1'
       ),
       selectAirspace: db.prepare(`
         SELECT a.class, a.name, a.lower_alt, a.upper_alt, a.coordinates_json
@@ -57,15 +54,10 @@ export function rowToAirport(row: AirportRow): Airport {
 }
 
 export function selectAirport(airportId: string): AirportRow | null {
-  const s = stmts();
   const normalized = airportId.trim().toUpperCase();
-  const byId = s.selectAirportById.get(normalized) as AirportRow | undefined;
-  if (byId) return byId;
-
-  const fallback = s.selectAirportById.get(DEFAULT_AIRPORT_ID) as AirportRow | undefined;
-  if (fallback) return fallback;
-
-  return (s.selectFirstAirport.get() as AirportRow | undefined) || null;
+  if (!normalized) return null;
+  const byId = stmts().selectAirportById.get(normalized) as AirportRow | undefined;
+  return byId || null;
 }
 
 export function loadRunwayMap(
@@ -125,6 +117,18 @@ export function loadAirspaceForAirport(airport: Airport): AirspaceFeature[] {
 
 export function listAirportOptions(): AirportOption[] {
   const rows = stmts().listAirportOptions.all() as Array<{ id: string; name: string }>;
+  const prioritizedIds = Array.from(
+    new Set(DEFAULT_SELECTIONS.map((selection) => selection.airportId.trim().toUpperCase()))
+  );
+  const prioritizedIndex = new Map(prioritizedIds.map((id, index) => [id, index]));
+  rows.sort((a, b) => {
+    const aPriority = prioritizedIndex.get(a.id);
+    const bPriority = prioritizedIndex.get(b.id);
+    if (aPriority !== undefined && bPriority !== undefined) return aPriority - bPriority;
+    if (aPriority !== undefined) return -1;
+    if (bPriority !== undefined) return 1;
+    return a.id.localeCompare(b.id);
+  });
 
   return rows.map((row) => ({
     id: row.id,

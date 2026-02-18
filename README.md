@@ -100,7 +100,7 @@ All settings persist to `localStorage`:
 
 ## Routes
 
-- `/` — default airport view
+- `/` — default selection view (restores last selection or uses predefined defaults)
 - `/<AIRPORT>` — airport view
 - `/<AIRPORT>/<PROCEDURE_ID>` — approach view
 - Optional query: `?surface=terrain|plate|3dplate|satellite`

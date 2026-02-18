@@ -1,10 +1,9 @@
 import { AppClient } from '@/app/AppClient';
 import { loadSceneDataAction } from '@/app/actions';
-
-export const DEFAULT_AIRPORT_ID = 'KCDW';
+import { pickRandomDefaultSelection } from '@/app/default-selections';
 
 function normalizeAirportId(airportId: string | undefined): string {
-  return (airportId || DEFAULT_AIRPORT_ID).toUpperCase();
+  return (airportId || '').trim().toUpperCase();
 }
 
 function normalizeProcedureId(procedureId: string | undefined): string {
@@ -21,8 +20,13 @@ export async function renderScenePage(
   procedureIdParam?: string,
   isDefaultRoute = false
 ) {
-  const airportId = normalizeAirportId(airportIdParam);
-  const procedureId = normalizeProcedureId(procedureIdParam);
+  const requestedAirportId = normalizeAirportId(airportIdParam);
+  const requestedProcedureId = normalizeProcedureId(procedureIdParam);
+  const defaultSelection = requestedAirportId ? null : pickRandomDefaultSelection();
+  const airportId = requestedAirportId || defaultSelection?.airportId || '';
+  const procedureId = requestedAirportId
+    ? requestedProcedureId
+    : defaultSelection?.approachId || '';
   const initialSceneData = await loadSceneDataAction(airportId, procedureId);
 
   return (

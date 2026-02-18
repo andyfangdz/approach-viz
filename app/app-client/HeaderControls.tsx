@@ -89,7 +89,7 @@ export function HeaderControls({
       {!selectorsCollapsed && (
         <div className="controls" ref={controlsRef}>
           <div className="control-group">
-            <label>Airport</label>
+            <label>Airport (Type to search)</label>
             <div className="library-select">
               <Select
                 instanceId="airport-select"

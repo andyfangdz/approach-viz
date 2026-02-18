@@ -43,7 +43,7 @@ All options-panel and layer values are persisted to browser `localStorage` and r
 ### Last Selection Persistence
 
 - On every airport/approach change, the selection is written to `localStorage` under key `'approach-viz:last-selection'` as `{ airportId, approachId }`.
-- When visiting `/` (no airport/approach in URL), the client reads this key and loads the remembered selection. If absent or invalid, a random entry from `DEFAULT_SELECTIONS` (currently only `KCDW/L22`) is used.
+- When visiting `/` (no airport/approach in URL), the server initially loads a random entry from `DEFAULT_SELECTIONS` (airport+approach pair). On mount, the client reads `'approach-viz:last-selection'` and, when valid, replaces the initial selection with the remembered value.
 - The URL is updated via `replaceState` to reflect the restored selection, making it shareable.
 
 ## Runtime Status and Debug UI
@@ -57,6 +57,7 @@ All options-panel and layer values are persisted to browser `localStorage` and r
 ## Header and Selector Layout
 
 - Airport/approach selectors use `react-select` searchable comboboxes.
+- Airport dropdown options are ordered with `DEFAULT_SELECTIONS` airport IDs first (in configured order), then remaining airports alphabetically by ID.
 - Search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header and avoid scene re-renders.
 - Selector-collapse toggle uses chevron icon states (up/down) with accessible show/hide labels.
 - Expanded selector controls render as an overlay panel (absolute-positioned beneath the header row), so opening selectors does not push/reflow the scene canvas.
