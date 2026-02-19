@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Runtime Profile Live'
+  short_description: 'Profile live MRMS and traffic endpoint latency'
+  default_prompt: 'Profile runtime endpoint latency for volume and traffic routes, summarize percentile timings, and report artifacts for before/after comparisons.'

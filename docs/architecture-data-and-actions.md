@@ -77,3 +77,5 @@
 - `.agents/skills/` contains reusable operational runbooks for agent-assisted workflows:
   - `runtime-deploy-oci`: deploy the Rust runtime service to the OCI host, reading the existing SQS queue URL from the server to avoid configuration drift, then performing post-deploy health/meta smoke checks.
   - `runtime-validate-live`: validate deployed runtime endpoints over live network paths (MRMS metadata/wire format integrity, ADS-B traffic payload shape).
+  - `runtime-profile-ingestion`: run deterministic one-shot ingestion profiling at a fixed timestamp (with optional local mirror seed/offline replay and parse-concurrency matrix reporting).
+  - `runtime-profile-live`: run repeated live latency probes for runtime volume/traffic routes and summarize percentile timings for regression checks.

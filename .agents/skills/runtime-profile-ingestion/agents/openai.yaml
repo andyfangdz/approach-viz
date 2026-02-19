@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Runtime Profile Ingestion'
+  short_description: 'Profile one-shot MRMS ingestion and compare parse concurrency'
+  default_prompt: 'Run ingestion profiling at a fixed timestamp, optionally seed a local mirror/offline replay, summarize elapsed timing stats, and compare parse-concurrency settings if requested.'

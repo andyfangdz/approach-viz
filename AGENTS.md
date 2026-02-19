@@ -35,6 +35,8 @@
 - Create MRMS SNS/SQS subscription wiring: `python3 scripts/mrms/setup_sns_sqs.py`
 - Deploy Rust runtime service to OCI host: `RUNTIME_MRMS_SQS_QUEUE_URL=... scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122` (script waits for local `/healthz` readiness after restart before final `/v1/meta` smoke check)
 - Run one-shot ingestion profile at a fixed timestamp (optional local MRMS mirror/offline mode): `RUNTIME_STORAGE_DIR=... RUNTIME_INGEST_PROFILE_TIMESTAMP=20260219-042441 RUNTIME_INGEST_PROFILE_REPEATS=3 RUNTIME_MRMS_LOCAL_DATA_DIR=... RUNTIME_MRMS_LOCAL_DATA_OFFLINE=true services/runtime-rs/target/release/approach-viz-runtime`
+- Skill helper for one-shot ingestion profile + summary: `bash .agents/skills/runtime-profile-ingestion/scripts/profile_ingest_one_shot.sh --timestamp 20260219-042441 --repeats 3`
+- Skill helper for live runtime route latency profiling (volume + traffic): `bash .agents/skills/runtime-profile-live/scripts/profile_runtime_routes.sh --iterations 20`
 
 ## Directory Layout
 
@@ -42,7 +44,7 @@
 - `lib/` — shared types, SQLite singleton, R-tree spatial queries, and CIFP parser (`cifp/`)
 - `services/runtime-rs/` — Rust runtime service (MRMS ingest/query + ADS-B decode/query APIs), with source split by concern under `src/` (`api/mod.rs` + `api/wire.rs`, `traffic_api.rs`, `ingest/mod.rs` + `ingest/phase.rs` + `ingest/sources.rs`, `grib.rs`, `storage.rs`, `discovery.rs`, `config.rs`, `types.rs`, `utils.rs`, `constants.rs`)
 - `scripts/` — data download/build scripts, MRMS provisioning helper (`scripts/mrms/setup_sns_sqs.py`), runtime deploy helper (`scripts/runtime/deploy_oci.sh`), legacy deploy redirect (`scripts/mrms/deploy_oci.sh`), and dev launcher (`dev-with-ddtrace.mjs`)
-- `.agents/skills/` — reusable Codex runbooks and helper scripts for operational workflows (`runtime-deploy-oci`, `runtime-validate-live`)
+- `.agents/skills/` — reusable Codex runbooks and helper scripts for operational workflows (`runtime-deploy-oci`, `runtime-validate-live`, `runtime-profile-ingestion`, `runtime-profile-live`)
 - `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
 - `data/` — build-time artifacts (SQLite DB with embedded R-tree spatial indexes)
 
