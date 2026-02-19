@@ -69,9 +69,15 @@ export interface ElevationAirport {
   elevation: number;
 }
 
+export interface CycleInfo {
+  cifpCycle: string;
+  dtppCycle: string;
+}
+
 export interface SceneData {
   airport: Airport | null;
   geoidSeparationFeet: number;
+  cycleInfo: CycleInfo | null;
   approaches: ApproachOption[];
   selectedApproachId: string;
   requestedProcedureNotInCifp: string | null;

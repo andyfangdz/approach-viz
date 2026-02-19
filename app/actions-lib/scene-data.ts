@@ -51,10 +51,25 @@ function stmts() {
   return _stmts;
 }
 
+function loadCycleInfo(): SceneData['cycleInfo'] {
+  try {
+    const db = getDb();
+    const cifpRow = db.prepare("SELECT value FROM metadata WHERE key = 'cifp_cycle'").get() as { value: string } | undefined;
+    const dtppRow = db.prepare("SELECT value FROM metadata WHERE key = 'dtpp_cycle_number'").get() as { value: string } | undefined;
+    return {
+      cifpCycle: cifpRow?.value || '',
+      dtppCycle: dtppRow?.value || ''
+    };
+  } catch {
+    return null;
+  }
+}
+
 function emptySceneData(): SceneData {
   return {
     airport: null,
     geoidSeparationFeet: 0,
+    cycleInfo: null,
     approaches: [],
     selectedApproachId: '',
     requestedProcedureNotInCifp: null,
@@ -213,6 +228,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
       selectedApproachOption,
       currentApproachWithVerticalProfile
     ),
-    missedApproachClimbRequirement
+    missedApproachClimbRequirement,
+    cycleInfo: loadCycleInfo()
   };
 }

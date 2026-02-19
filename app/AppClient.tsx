@@ -871,6 +871,8 @@ export function AppClient({
           surfaceMode={surfaceMode}
           nexradDebug={nexradDebug}
           trafficDebug={trafficDebug}
+          cycleInfo={sceneData.cycleInfo}
+          currentApproach={sceneData.currentApproach}
         />
 
         <InfoPanel

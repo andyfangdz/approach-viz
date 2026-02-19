@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { NexradDebugState, SurfaceMode, TrafficDebugState } from './types';
+import type { CycleInfo, SerializedApproach } from '@/lib/types';
+import type { ApproachLeg } from '@/lib/cifp/parser';
 
 interface DebugPanelProps {
   debugCollapsed: boolean;
@@ -9,6 +11,8 @@ interface DebugPanelProps {
   surfaceMode: SurfaceMode;
   nexradDebug: NexradDebugState;
   trafficDebug: TrafficDebugState;
+  cycleInfo: CycleInfo | null;
+  currentApproach: SerializedApproach | null;
 }
 
 function formatTimestamp(value: string | null): string {
@@ -41,6 +45,46 @@ function formatFeet(value: number | null): string {
   return `${Math.round(value).toLocaleString()} ft`;
 }
 
+function formatAltConstraint(leg: ApproachLeg): string {
+  if (leg.altitude == null) return '';
+  const prefix = leg.altitudeConstraint === '+' ? '≥' : leg.altitudeConstraint === '-' ? '≤' : leg.altitudeConstraint === 'at' ? '@' : '';
+  return `${prefix}${leg.altitude}`;
+}
+
+function formatLeg(leg: ApproachLeg): string {
+  const parts: string[] = [
+    leg.pathTerminator.padEnd(2),
+    (leg.waypointId || '—').padEnd(5)
+  ];
+  const alt = formatAltConstraint(leg);
+  if (alt) parts.push(alt);
+  if (leg.course != null) parts.push(`crs ${leg.course.toFixed(0)}°`);
+  if (leg.distance != null) parts.push(`${leg.distance.toFixed(1)} NM`);
+  if (leg.verticalAngleDeg != null) parts.push(`VDA ${leg.verticalAngleDeg.toFixed(2)}°`);
+  const flags: string[] = [];
+  if (leg.isInitialFix) flags.push('IF');
+  if (leg.isFinalApproachFix) flags.push('FAF');
+  if (leg.isFinalFix) flags.push('MAP');
+  if (leg.isMissedApproach) flags.push('MA');
+  if (flags.length) parts.push(`[${flags.join(',')}]`);
+  return parts.join(' ');
+}
+
+function LegTable({ label, legs }: { label: string; legs: ApproachLeg[] }) {
+  if (!legs.length) return null;
+  return (
+    <div className="debug-leg-group">
+      <div className="debug-leg-label">{label}</div>
+      {legs.map((leg, i) => (
+        <div key={`${label}-${i}`} className="debug-leg-row">
+          <span className="debug-leg-seq">{leg.sequence}</span>
+          <span className="debug-leg-detail">{formatLeg(leg)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function DebugPanel({
   debugCollapsed,
   onToggleDebug,
@@ -48,9 +92,12 @@ export function DebugPanel({
   approachId,
   surfaceMode,
   nexradDebug,
-  trafficDebug
+  trafficDebug,
+  cycleInfo,
+  currentApproach
 }: DebugPanelProps) {
   const [mrmsExpanded, setMrmsExpanded] = useState(false);
+  const [procedureExpanded, setProcedureExpanded] = useState(false);
 
   if (debugCollapsed) {
     return (
@@ -109,7 +156,76 @@ export function DebugPanel({
           <span>Surface</span>
           <span>{surfaceMode}</span>
         </div>
+        {cycleInfo && (
+          <>
+            <div className="debug-row">
+              <span>CIFP Cycle</span>
+              <span>{cycleInfo.cifpCycle || 'n/a'}</span>
+            </div>
+            <div className="debug-row">
+              <span>d-TPP Cycle</span>
+              <span>{cycleInfo.dtppCycle || 'n/a'}</span>
+            </div>
+            {cycleInfo.cifpCycle && cycleInfo.dtppCycle && cycleInfo.cifpCycle !== cycleInfo.dtppCycle && (
+              <div className="debug-error">Cycle mismatch!</div>
+            )}
+          </>
+        )}
       </div>
+
+      {currentApproach && (
+        <div className="debug-section">
+          <button
+            type="button"
+            className="debug-section-toggle"
+            onClick={() => setProcedureExpanded((v) => !v)}
+            aria-expanded={procedureExpanded}
+          >
+            <span className="debug-title">Procedure (ARINC)</span>
+            <span className="debug-summary">
+              {currentApproach.type} {currentApproach.runway} &middot;{' '}
+              {currentApproach.finalLegs.length + currentApproach.missedLegs.length} legs
+            </span>
+            <svg
+              className={`debug-chevron${procedureExpanded ? ' debug-chevron-open' : ''}`}
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              aria-hidden="true"
+            >
+              <path
+                d="M2.5 3.5L5 6.5L7.5 3.5"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          {procedureExpanded && (
+            <div className="debug-section-body debug-procedure-body">
+              <div className="debug-row">
+                <span>Procedure ID</span>
+                <span>{currentApproach.procedureId}</span>
+              </div>
+              <div className="debug-row">
+                <span>Type</span>
+                <span>{currentApproach.type}</span>
+              </div>
+              <div className="debug-row">
+                <span>Runway</span>
+                <span>{currentApproach.runway}</span>
+              </div>
+              {currentApproach.transitions.map(([name, legs]) => (
+                <LegTable key={`tr-${name}`} label={`Transition: ${name}`} legs={legs} />
+              ))}
+              <LegTable label="Final" legs={currentApproach.finalLegs} />
+              <LegTable label="Missed" legs={currentApproach.missedLegs} />
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="debug-section">
         <button
