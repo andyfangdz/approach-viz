@@ -170,11 +170,7 @@ export function DebugPanel({
               <span>d-TPP Cycle</span>
               <span>{cycleInfo.dtppCycle || 'n/a'}</span>
             </div>
-            {cycleInfo.cifpCycle &&
-              cycleInfo.dtppCycle &&
-              cycleInfo.cifpCycle !== cycleInfo.dtppCycle && (
-                <div className="debug-error">Cycle mismatch!</div>
-              )}
+            {/* Cycles may differ — only matters if approach-db references a different CIFP */}
           </>
         )}
       </div>
