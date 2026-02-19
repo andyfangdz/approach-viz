@@ -5,7 +5,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use tracing::warn;
 
 use crate::constants::{
@@ -447,6 +447,49 @@ struct QueryWindow {
     footprint_y_milli: u16,
 }
 
+struct QueryProjection {
+    row_start: u32,
+    col_start: u32,
+    row_z_nm: Vec<f64>,
+    col_x_nm: Vec<f64>,
+}
+
+impl QueryProjection {
+    fn new(scan: &ScanSnapshot, window: &QueryWindow) -> Self {
+        let row_count = (window.row_end.saturating_sub(window.row_start) + 1) as usize;
+        let col_count = (window.col_end.saturating_sub(window.col_start) + 1) as usize;
+
+        let mut row_z_nm = Vec::with_capacity(row_count);
+        for row in window.row_start..=window.row_end {
+            let lat_deg = scan.grid.la1_deg + row as f64 * scan.grid.lat_step_deg;
+            row_z_nm.push(-(lat_deg - window.origin_lat) * window.north_nm_per_lat_deg_safe);
+        }
+
+        let mut col_x_nm = Vec::with_capacity(col_count);
+        for col in window.col_start..=window.col_end {
+            let lon_deg360 = to_lon360(scan.grid.lo1_deg360 + col as f64 * scan.grid.lon_step_deg);
+            let delta_lon_deg = shortest_lon_delta_degrees(lon_deg360, window.origin_lon360);
+            col_x_nm.push(delta_lon_deg * window.east_nm_per_lon_deg_safe);
+        }
+
+        Self {
+            row_start: window.row_start,
+            col_start: window.col_start,
+            row_z_nm,
+            col_x_nm,
+        }
+    }
+
+    #[inline]
+    fn project_cell_nm(&self, row: u32, col: u32) -> (f64, f64) {
+        debug_assert!(row >= self.row_start);
+        debug_assert!(col >= self.col_start);
+        let row_idx = (row - self.row_start) as usize;
+        let col_idx = (col - self.col_start) as usize;
+        (self.col_x_nm[col_idx], self.row_z_nm[row_idx])
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct MergeKey {
     phase: u8,
@@ -643,6 +686,7 @@ fn project_grid_position_nm(
 }
 
 fn build_echo_top_cells(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<EchoTopCellRecord> {
+    let projection = QueryProjection::new(scan, window);
     let mut cells = Vec::new();
     for record in &scan.echo_tops {
         let row = record.row as u32;
@@ -654,7 +698,7 @@ fn build_echo_top_cells(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<EchoTo
             continue;
         }
 
-        let (x_nm, z_nm) = project_grid_position_nm(scan, window, row as f64, col as f64);
+        let (x_nm, z_nm) = projection.project_cell_nm(row, col);
         if x_nm * x_nm + z_nm * z_nm > window.max_range_squared_nm {
             continue;
         }
@@ -672,6 +716,7 @@ fn build_echo_top_cells(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<EchoTo
 }
 
 fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
+    let projection = QueryProjection::new(scan, window);
     let mut body = build_wire_header(
         scan,
         window,
@@ -706,7 +751,7 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
                     continue;
                 }
 
-                let (x_nm, z_nm) = project_grid_position_nm(scan, window, row as f64, col as f64);
+                let (x_nm, z_nm) = projection.project_cell_nm(row, col);
                 if x_nm * x_nm + z_nm * z_nm > window.max_range_squared_nm {
                     continue;
                 }
@@ -733,24 +778,20 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
         }
     }
 
-    let mut rectangles_by_level: Vec<Vec<HorizontalRect>> =
-        Vec::with_capacity(cells_by_level.len());
-    for cells in &mut cells_by_level {
+    let mut active: HashMap<VerticalSignature, usize> = HashMap::new();
+    let mut merged_bricks: Vec<BrickCandidate> = Vec::new();
+
+    for (level_idx, cells) in cells_by_level.iter_mut().enumerate() {
         let mut rectangles = build_level_rectangles(cells);
         let mut split_rectangles: Vec<HorizontalRect> = Vec::with_capacity(rectangles.len());
         for rect in rectangles.drain(..) {
             let max_span = max_span_for_dbz(rect.key.dbz_tenths);
             split_rectangle(rect, max_span, &mut split_rectangles);
         }
-        rectangles_by_level.push(split_rectangles);
-    }
 
-    let mut active: HashMap<VerticalSignature, usize> = HashMap::new();
-    let mut merged_bricks: Vec<BrickCandidate> = Vec::new();
-
-    for (level_idx, rectangles) in rectangles_by_level.iter().enumerate() {
-        let mut next_active: HashMap<VerticalSignature, usize> = HashMap::new();
-        for rect in rectangles {
+        let mut next_active: HashMap<VerticalSignature, usize> =
+            HashMap::with_capacity(split_rectangles.len());
+        for rect in split_rectangles {
             let signature = VerticalSignature {
                 row_start: rect.row_start,
                 row_end: rect.row_end,
@@ -892,6 +933,47 @@ fn split_rectangle(rect: HorizontalRect, max_span: u16, out: &mut Vec<Horizontal
     }
 }
 
+fn merge_row_runs_into_rectangles(
+    row: u32,
+    runs: &[RowRun],
+    rectangles: &mut Vec<HorizontalRect>,
+    active: &mut HashMap<RunSignature, usize>,
+    prev_row: &mut Option<u32>,
+) {
+    if let Some(previous_row) = *prev_row {
+        if row != previous_row.saturating_add(1) {
+            active.clear();
+        }
+    }
+
+    let mut next_active: HashMap<RunSignature, usize> = HashMap::with_capacity(runs.len());
+    for run in runs {
+        let signature = RunSignature {
+            col_start: run.col_start,
+            col_end: run.col_end,
+            key: run.key,
+        };
+        if let Some(rect_idx) = active.remove(&signature) {
+            rectangles[rect_idx].row_end = row;
+            next_active.insert(signature, rect_idx);
+        } else {
+            let rect_idx = rectangles.len();
+            rectangles.push(HorizontalRect {
+                row_start: row,
+                row_end: row,
+                col_start: run.col_start,
+                col_end: run.col_end,
+                key: run.key,
+                surface_phase: run.surface_phase,
+            });
+            next_active.insert(signature, rect_idx);
+        }
+    }
+
+    *active = next_active;
+    *prev_row = Some(row);
+}
+
 fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
     if cells.is_empty() {
         return Vec::new();
@@ -905,7 +987,11 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
             .then(a.key.dbz_tenths.cmp(&b.key.dbz_tenths))
     });
 
-    let mut runs_by_row: BTreeMap<u32, Vec<RowRun>> = BTreeMap::new();
+    let mut rectangles: Vec<HorizontalRect> = Vec::new();
+    let mut active: HashMap<RunSignature, usize> = HashMap::new();
+    let mut prev_row: Option<u32> = None;
+    let mut runs_for_row: Vec<RowRun> = Vec::new();
+
     let mut run_row = cells[0].row;
     let mut run_col_start = cells[0].col;
     let mut run_col_end = cells[0].col;
@@ -922,12 +1008,22 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
                 continue;
             }
         }
-        runs_by_row.entry(run_row).or_default().push(RowRun {
+        runs_for_row.push(RowRun {
             col_start: run_col_start,
             col_end: run_col_end,
             key: run_key,
             surface_phase: run_surface_phase,
         });
+        if cell.row != run_row {
+            merge_row_runs_into_rectangles(
+                run_row,
+                &runs_for_row,
+                &mut rectangles,
+                &mut active,
+                &mut prev_row,
+            );
+            runs_for_row.clear();
+        }
         run_row = cell.row;
         run_col_start = cell.col;
         run_col_end = cell.col;
@@ -935,49 +1031,183 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
         run_surface_phase = cell.surface_phase;
     }
 
-    runs_by_row.entry(run_row).or_default().push(RowRun {
+    runs_for_row.push(RowRun {
         col_start: run_col_start,
         col_end: run_col_end,
         key: run_key,
         surface_phase: run_surface_phase,
     });
 
-    let mut rectangles: Vec<HorizontalRect> = Vec::new();
-    let mut active: HashMap<RunSignature, usize> = HashMap::new();
-    let mut prev_row: Option<u32> = None;
-
-    for (row, runs) in runs_by_row {
-        if let Some(previous_row) = prev_row {
-            if row != previous_row.saturating_add(1) {
-                active.clear();
-            }
-        }
-        let mut next_active: HashMap<RunSignature, usize> = HashMap::new();
-        for run in runs {
-            let signature = RunSignature {
-                col_start: run.col_start,
-                col_end: run.col_end,
-                key: run.key,
-            };
-            if let Some(rect_idx) = active.remove(&signature) {
-                rectangles[rect_idx].row_end = row;
-                next_active.insert(signature, rect_idx);
-            } else {
-                let rect_idx = rectangles.len();
-                rectangles.push(HorizontalRect {
-                    row_start: row,
-                    row_end: row,
-                    col_start: run.col_start,
-                    col_end: run.col_end,
-                    key: run.key,
-                    surface_phase: run.surface_phase,
-                });
-                next_active.insert(signature, rect_idx);
-            }
-        }
-        active = next_active;
-        prev_row = Some(row);
-    }
+    merge_row_runs_into_rectangles(
+        run_row,
+        &runs_for_row,
+        &mut rectangles,
+        &mut active,
+        &mut prev_row,
+    );
 
     rectangles
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{EchoTopDebugMetadata, GridDef, LevelBounds, PhaseDebugMetadata};
+
+    fn sample_scan_for_projection() -> ScanSnapshot {
+        ScanSnapshot {
+            timestamp: "202602190000".to_string(),
+            generated_at_ms: 0,
+            scan_time_ms: 0,
+            grid: GridDef {
+                nx: 8,
+                ny: 6,
+                la1_deg: 35.0,
+                lo1_deg360: 250.0,
+                di_deg: 0.05,
+                dj_deg: 0.05,
+                scanning_mode: 0,
+                lat_step_deg: 0.05,
+                lon_step_deg: 0.05,
+            },
+            tile_size: 4,
+            tile_cols: 2,
+            tile_rows: 2,
+            level_bounds: vec![LevelBounds {
+                bottom_feet: 1_000,
+                top_feet: 2_000,
+            }],
+            tile_offsets: vec![0],
+            voxels: Vec::new(),
+            echo_tops: Vec::new(),
+            echo_top_debug: EchoTopDebugMetadata::default(),
+            phase_debug: PhaseDebugMetadata::default(),
+        }
+    }
+
+    #[test]
+    fn projection_cache_matches_direct_projection_for_integer_cells() {
+        let scan = sample_scan_for_projection();
+        let window = build_query_window(&scan, 35.15, -109.55, DEFAULT_MIN_DBZ, 40.0);
+        let projection = QueryProjection::new(&scan, &window);
+
+        for row in window.row_start..=window.row_end {
+            for col in window.col_start..=window.col_end {
+                let (cached_x, cached_z) = projection.project_cell_nm(row, col);
+                let (direct_x, direct_z) =
+                    project_grid_position_nm(&scan, &window, row as f64, col as f64);
+                assert!((cached_x - direct_x).abs() < 1e-9);
+                assert!((cached_z - direct_z).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn build_level_rectangles_merges_runs_and_respects_row_gaps() {
+        let key_a = MergeKey {
+            phase: 1,
+            dbz_tenths: 300,
+        };
+        let key_b = MergeKey {
+            phase: 2,
+            dbz_tenths: 300,
+        };
+
+        let mut cells = vec![
+            MergeCell {
+                row: 1,
+                col: 1,
+                key: key_a,
+                surface_phase: 1,
+            },
+            MergeCell {
+                row: 0,
+                col: 1,
+                key: key_a,
+                surface_phase: 1,
+            },
+            MergeCell {
+                row: 0,
+                col: 0,
+                key: key_a,
+                surface_phase: 1,
+            },
+            MergeCell {
+                row: 1,
+                col: 0,
+                key: key_a,
+                surface_phase: 1,
+            },
+            MergeCell {
+                row: 1,
+                col: 4,
+                key: key_a,
+                surface_phase: 1,
+            },
+            MergeCell {
+                row: 2,
+                col: 4,
+                key: key_a,
+                surface_phase: 1,
+            },
+            MergeCell {
+                row: 4,
+                col: 0,
+                key: key_a,
+                surface_phase: 1,
+            },
+            MergeCell {
+                row: 0,
+                col: 6,
+                key: key_b,
+                surface_phase: 2,
+            },
+            MergeCell {
+                row: 1,
+                col: 6,
+                key: key_b,
+                surface_phase: 2,
+            },
+            MergeCell {
+                row: 1,
+                col: 6,
+                key: key_b,
+                surface_phase: 2,
+            },
+        ];
+
+        let mut rectangles = build_level_rectangles(&mut cells);
+        rectangles.sort_unstable_by(|a, b| {
+            a.row_start
+                .cmp(&b.row_start)
+                .then(a.col_start.cmp(&b.col_start))
+                .then(a.key.phase.cmp(&b.key.phase))
+        });
+
+        assert_eq!(rectangles.len(), 4);
+
+        assert_eq!(rectangles[0].row_start, 0);
+        assert_eq!(rectangles[0].row_end, 1);
+        assert_eq!(rectangles[0].col_start, 0);
+        assert_eq!(rectangles[0].col_end, 1);
+        assert_eq!(rectangles[0].key, key_a);
+
+        assert_eq!(rectangles[1].row_start, 0);
+        assert_eq!(rectangles[1].row_end, 1);
+        assert_eq!(rectangles[1].col_start, 6);
+        assert_eq!(rectangles[1].col_end, 6);
+        assert_eq!(rectangles[1].key, key_b);
+
+        assert_eq!(rectangles[2].row_start, 1);
+        assert_eq!(rectangles[2].row_end, 2);
+        assert_eq!(rectangles[2].col_start, 4);
+        assert_eq!(rectangles[2].col_end, 4);
+        assert_eq!(rectangles[2].key, key_a);
+
+        assert_eq!(rectangles[3].row_start, 4);
+        assert_eq!(rectangles[3].row_end, 4);
+        assert_eq!(rectangles[3].col_start, 0);
+        assert_eq!(rectangles[3].col_end, 0);
+        assert_eq!(rectangles[3].key, key_a);
+    }
 }

@@ -89,4 +89,4 @@ URL-path-encoded airport/procedure selection, layers panel with 8 independent la
 
 ### Validation
 
-Automated format/lint/typecheck/test/build pipeline (local full + CI subset using `npx next build`), live runtime integration tests (separate from CI), and manual spot-checks covering RF/AF/hold/missed legs, minima/plate-only procedures, weather/traffic overlays, and mobile viewport behavior. → [`docs/validation.md`](docs/validation.md)
+Automated format/lint/typecheck/test/build pipeline (local full + CI subset using `npx next build`), Rust runtime unit tests covering MRMS volume merge/projection math and ingestion phase-heuristic helpers, live runtime integration tests (separate from CI), and manual spot-checks covering RF/AF/hold/missed legs, minima/plate-only procedures, weather/traffic overlays, and mobile viewport behavior. → [`docs/validation.md`](docs/validation.md)

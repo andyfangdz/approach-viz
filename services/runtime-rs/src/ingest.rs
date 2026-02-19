@@ -527,13 +527,6 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
 
     let mut buckets: Vec<Vec<StoredVoxel>> = (0..tile_count).map(|_| Vec::new()).collect();
 
-    let row_lats: Vec<f64> = (0..base_grid.ny)
-        .map(|row| base_grid.la1_deg + row as f64 * base_grid.lat_step_deg)
-        .collect();
-    let col_lons360: Vec<f64> = (0..base_grid.nx)
-        .map(|col| to_lon360(base_grid.lo1_deg360 + col as f64 * base_grid.lon_step_deg))
-        .collect();
-
     let precip_field = thermo_aux_bundle
         .precip_flag
         .as_ref()
@@ -568,6 +561,86 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         || surface_temp_field.is_some()
         || (bright_band_top_field.is_some() && bright_band_bottom_field.is_some())
         || rqi_field.is_some();
+    let base_point_count = base_grid.nx as usize * base_grid.ny as usize;
+    let precip_values = validate_base_aux_values(
+        precip_field,
+        &base_grid,
+        base_point_count,
+        "PrecipFlag_00.00",
+        timestamp,
+    );
+    let freezing_values = validate_base_aux_values(
+        freezing_field,
+        &base_grid,
+        base_point_count,
+        "ModelFreezingLevel",
+        timestamp,
+    );
+    let wet_bulb_values = validate_base_aux_values(
+        wet_bulb_field,
+        &base_grid,
+        base_point_count,
+        "ModelWetBulbTemp",
+        timestamp,
+    );
+    let surface_temp_values = validate_base_aux_values(
+        surface_temp_field,
+        &base_grid,
+        base_point_count,
+        "ModelSurfaceTemp",
+        timestamp,
+    );
+    let bright_band_top_values = validate_base_aux_values(
+        bright_band_top_field,
+        &base_grid,
+        base_point_count,
+        "BrightBandTop",
+        timestamp,
+    );
+    let bright_band_bottom_values = validate_base_aux_values(
+        bright_band_bottom_field,
+        &base_grid,
+        base_point_count,
+        "BrightBandBottom",
+        timestamp,
+    );
+    let rqi_values = validate_base_aux_values(
+        rqi_field,
+        &base_grid,
+        base_point_count,
+        "RadarQualityIndex",
+        timestamp,
+    );
+    let precip_sampler = AuxFieldSampler::new(precip_field, precip_values);
+    let freezing_sampler = AuxFieldSampler::new(freezing_field, freezing_values);
+    let wet_bulb_sampler = AuxFieldSampler::new(wet_bulb_field, wet_bulb_values);
+    let surface_temp_sampler = AuxFieldSampler::new(surface_temp_field, surface_temp_values);
+    let bright_band_top_sampler =
+        AuxFieldSampler::new(bright_band_top_field, bright_band_top_values);
+    let bright_band_bottom_sampler =
+        AuxFieldSampler::new(bright_band_bottom_field, bright_band_bottom_values);
+    let rqi_sampler = AuxFieldSampler::new(rqi_field, rqi_values);
+    let needs_geo_sampling = precip_sampler.needs_geo_sampling()
+        || freezing_sampler.needs_geo_sampling()
+        || wet_bulb_sampler.needs_geo_sampling()
+        || surface_temp_sampler.needs_geo_sampling()
+        || bright_band_top_sampler.needs_geo_sampling()
+        || bright_band_bottom_sampler.needs_geo_sampling()
+        || rqi_sampler.needs_geo_sampling();
+    let row_lats: Vec<f64> = if needs_geo_sampling {
+        (0..base_grid.ny)
+            .map(|row| base_grid.la1_deg + row as f64 * base_grid.lat_step_deg)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let col_lons360: Vec<f64> = if needs_geo_sampling {
+        (0..base_grid.nx)
+            .map(|col| to_lon360(base_grid.lo1_deg360 + col as f64 * base_grid.lon_step_deg))
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let mut dual_missing_voxel_count: u64 = 0;
     let mut thermo_signal_voxel_count: u64 = 0;
@@ -585,7 +658,8 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
             continue;
         };
         let voxel_mid_feet = (bounds.bottom_feet as f64 + bounds.top_feet as f64) / 2.0;
-        let mut level_voxels: Vec<LevelPhaseVoxel> = Vec::new();
+        let mut level_voxels: Vec<LevelPhaseVoxel> =
+            Vec::with_capacity((parsed.grid.nx as usize * parsed.grid.ny as usize) / 4);
 
         let zdr_values = validate_level_aux_values(
             zdr_bundle.fields_by_level[level_index].as_ref(),
@@ -603,7 +677,11 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         );
 
         for row in 0..parsed.grid.ny as usize {
-            let lat_deg = row_lats[row];
+            let lat_deg = if needs_geo_sampling {
+                row_lats[row]
+            } else {
+                0.0
+            };
             let row_offset = row * parsed.grid.nx as usize;
 
             for col in 0..parsed.grid.nx as usize {
@@ -613,7 +691,11 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                     continue;
                 }
 
-                let lon_deg360 = col_lons360[col];
+                let lon_deg360 = if needs_geo_sampling {
+                    col_lons360[col]
+                } else {
+                    0.0
+                };
                 let dual_evidence = resolve_dual_pol_evidence(
                     zdr_values.and_then(|values| values.get(value_idx).copied()),
                     rhohv_values.and_then(|values| values.get(value_idx).copied()),
@@ -622,17 +704,25 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                     dual_missing_voxel_count += 1;
                 }
 
+                let precip_value = precip_sampler.sample(value_idx, lat_deg, lon_deg360);
+                let freezing_value = freezing_sampler.sample(value_idx, lat_deg, lon_deg360);
+                let wet_bulb_value = wet_bulb_sampler.sample(value_idx, lat_deg, lon_deg360);
+                let surface_temp_value =
+                    surface_temp_sampler.sample(value_idx, lat_deg, lon_deg360);
+                let bright_band_top_value =
+                    bright_band_top_sampler.sample(value_idx, lat_deg, lon_deg360);
+                let bright_band_bottom_value =
+                    bright_band_bottom_sampler.sample(value_idx, lat_deg, lon_deg360);
+                let rqi_value = rqi_sampler.sample(value_idx, lat_deg, lon_deg360);
                 let thermo_evidence = resolve_thermo_phase(
-                    lat_deg,
-                    lon_deg360,
                     voxel_mid_feet,
-                    precip_field,
-                    freezing_field,
-                    wet_bulb_field,
-                    surface_temp_field,
-                    bright_band_top_field,
-                    bright_band_bottom_field,
-                    rqi_field,
+                    precip_value,
+                    freezing_value,
+                    wet_bulb_value,
+                    surface_temp_value,
+                    bright_band_top_value,
+                    bright_band_bottom_value,
+                    rqi_value,
                 );
                 if thermo_evidence.signal_count > 0 {
                     thermo_signal_voxel_count += 1;
@@ -668,12 +758,14 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                     && (thermo_evidence.near_transition
                         || thermo_competing
                         || dual_mixed_candidate);
+                let surface_phase = thermo_evidence.precip_flag_phase.unwrap_or(PHASE_RAIN);
 
                 level_voxels.push(LevelPhaseVoxel {
                     row: row as u16,
                     col: col as u16,
                     dbz_tenths,
                     phase: resolution.phase,
+                    surface_phase,
                     transition_candidate,
                 });
             }
@@ -686,18 +778,12 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
             let tile_row = voxel.row as usize / tile_size as usize;
             let tile_col = voxel.col as usize / tile_size as usize;
             let tile_idx = tile_row * tile_cols as usize + tile_col;
-            let lat_deg = row_lats[voxel.row as usize];
-            let lon_deg360 = col_lons360[voxel.col as usize];
-            let surface_phase = precip_field
-                .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-                .and_then(phase_from_precip_flag)
-                .unwrap_or(PHASE_RAIN);
             buckets[tile_idx].push(StoredVoxel {
                 row: voxel.row,
                 col: voxel.col,
                 level_idx: *level_idx,
                 phase: voxel.phase,
-                surface_phase,
+                surface_phase: voxel.surface_phase,
                 dbz_tenths: voxel.dbz_tenths,
             });
         }
@@ -705,7 +791,8 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
 
     let mut tile_offsets = Vec::with_capacity(tile_count + 1);
     tile_offsets.push(0_u32);
-    let mut voxels = Vec::new();
+    let total_voxel_count: usize = buckets.iter().map(Vec::len).sum();
+    let mut voxels = Vec::with_capacity(total_voxel_count);
     for bucket in buckets {
         voxels.extend(bucket);
         tile_offsets.push(voxels.len() as u32);
@@ -878,7 +965,37 @@ struct LevelPhaseVoxel {
     col: u16,
     dbz_tenths: i16,
     phase: u8,
+    surface_phase: u8,
     transition_candidate: bool,
+}
+
+#[derive(Clone, Copy)]
+struct AuxFieldSampler<'a> {
+    field: Option<&'a ParsedAuxField>,
+    direct_values: Option<&'a [f32]>,
+}
+
+impl<'a> AuxFieldSampler<'a> {
+    fn new(field: Option<&'a ParsedAuxField>, direct_values: Option<&'a [f32]>) -> Self {
+        Self {
+            field,
+            direct_values,
+        }
+    }
+
+    #[inline]
+    fn needs_geo_sampling(&self) -> bool {
+        self.direct_values.is_none() && self.field.is_some()
+    }
+
+    #[inline]
+    fn sample(&self, value_idx: usize, lat_deg: f64, lon_deg360: f64) -> Option<f32> {
+        if let Some(values) = self.direct_values {
+            return values.get(value_idx).copied();
+        }
+        self.field
+            .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+    }
 }
 
 struct DualPolBundle {
@@ -1145,6 +1262,30 @@ fn validate_level_aux_values<'a>(
     Some(field.values.as_slice())
 }
 
+fn validate_base_aux_values<'a>(
+    field: Option<&'a ParsedAuxField>,
+    base_grid: &GridDef,
+    point_count: usize,
+    product_label: &str,
+    timestamp: &str,
+) -> Option<&'a [f32]> {
+    let field = field?;
+    if !is_same_grid(&field.grid, base_grid) {
+        warn!(
+            "{product_label} aux grid mismatch at {timestamp}; using coordinate-sampled aux fallback"
+        );
+        return None;
+    }
+    if field.values.len() != point_count {
+        warn!(
+            "{product_label} aux point-count mismatch at {timestamp}: expected {point_count}, got {}; using coordinate-sampled aux fallback",
+            field.values.len()
+        );
+        return None;
+    }
+    Some(field.values.as_slice())
+}
+
 fn validate_echo_top_values<'a>(
     field: Option<&'a ParsedAuxField>,
     base_grid: &GridDef,
@@ -1272,16 +1413,14 @@ fn resolve_dual_pol_evidence(
 
 #[allow(clippy::too_many_arguments)]
 fn resolve_thermo_phase(
-    lat_deg: f64,
-    lon_deg360: f64,
     voxel_mid_feet: f64,
-    precip_field: Option<&ParsedAuxField>,
-    freezing_field: Option<&ParsedAuxField>,
-    wet_bulb_field: Option<&ParsedAuxField>,
-    surface_temp_field: Option<&ParsedAuxField>,
-    bright_band_top_field: Option<&ParsedAuxField>,
-    bright_band_bottom_field: Option<&ParsedAuxField>,
-    rqi_field: Option<&ParsedAuxField>,
+    precip_flag_value: Option<f32>,
+    freezing_level_value: Option<f32>,
+    wet_bulb_value: Option<f32>,
+    surface_temp_value: Option<f32>,
+    bright_band_top_value: Option<f32>,
+    bright_band_bottom_value: Option<f32>,
+    rqi_value: Option<f32>,
 ) -> ThermoPhaseEvidence {
     let mut scores = PhaseScores {
         rain: 1.0,
@@ -1291,9 +1430,7 @@ fn resolve_thermo_phase(
     let mut signal_count = 0_u8;
     let mut near_transition = false;
 
-    let precip_flag_phase = precip_field
-        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-        .and_then(phase_from_precip_flag);
+    let precip_flag_phase = precip_flag_value.and_then(phase_from_precip_flag);
     if let Some(phase) = precip_flag_phase {
         signal_count = signal_count.saturating_add(1);
         match phase {
@@ -1307,8 +1444,7 @@ fn resolve_thermo_phase(
         }
     }
 
-    if let Some(freezing_meters) = freezing_field
-        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+    if let Some(freezing_meters) = freezing_level_value
         .map(|value| value as f64)
         .filter(|value| value.is_finite() && *value > 0.0)
     {
@@ -1342,10 +1478,7 @@ fn resolve_thermo_phase(
         }
     }
 
-    if let Some(wet_bulb_c) = wet_bulb_field
-        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-        .and_then(normalize_temperature_celsius)
-    {
+    if let Some(wet_bulb_c) = wet_bulb_value.and_then(normalize_temperature_celsius) {
         signal_count = signal_count.saturating_add(1);
         if wet_bulb_c <= THERMO_STRONG_COLD_WET_BULB_C {
             scores.add(PHASE_SNOW, 2.4);
@@ -1362,10 +1495,7 @@ fn resolve_thermo_phase(
         }
     }
 
-    if let Some(surface_temp_c) = surface_temp_field
-        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-        .and_then(normalize_temperature_celsius)
-    {
+    if let Some(surface_temp_c) = surface_temp_value.and_then(normalize_temperature_celsius) {
         signal_count = signal_count.saturating_add(1);
         let low_level_weight = ((8_000.0 - voxel_mid_feet).max(0.0) / 8_000.0) as f32;
         if low_level_weight > 0.0 {
@@ -1386,12 +1516,8 @@ fn resolve_thermo_phase(
     }
 
     if let (Some(top_m), Some(bottom_m)) = (
-        bright_band_top_field
-            .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-            .and_then(normalize_height_meters),
-        bright_band_bottom_field
-            .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-            .and_then(normalize_height_meters),
+        bright_band_top_value.and_then(normalize_height_meters),
+        bright_band_bottom_value.and_then(normalize_height_meters),
     ) {
         if top_m >= bottom_m {
             signal_count = signal_count.saturating_add(1);
@@ -1408,9 +1534,7 @@ fn resolve_thermo_phase(
         }
     }
 
-    let rqi = rqi_field
-        .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
-        .and_then(normalize_rqi);
+    let rqi = rqi_value.and_then(normalize_rqi);
 
     let ranked = rank_phase_scores(scores);
     let best_score = ranked[0].1.max(0.0);
@@ -1603,18 +1727,21 @@ fn promote_mixed_transition_edges(
 }
 
 fn rank_phase_scores(scores: PhaseScores) -> [(u8, f32); 3] {
-    let mut ranked = [
-        (PHASE_RAIN, scores.rain),
-        (PHASE_MIXED, scores.mixed),
-        (PHASE_SNOW, scores.snow),
-    ];
-    ranked.sort_by(|left, right| {
-        right
-            .1
-            .partial_cmp(&left.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    ranked
+    let mut first = (PHASE_RAIN, scores.rain);
+    let mut second = (PHASE_MIXED, scores.mixed);
+    let mut third = (PHASE_SNOW, scores.snow);
+
+    if second.1 > first.1 {
+        std::mem::swap(&mut first, &mut second);
+    }
+    if third.1 > second.1 {
+        std::mem::swap(&mut second, &mut third);
+    }
+    if second.1 > first.1 {
+        std::mem::swap(&mut first, &mut second);
+    }
+
+    [first, second, third]
 }
 
 fn sanitize_zdr(value: f32) -> Option<f32> {
@@ -2090,6 +2217,7 @@ mod tests {
                 col: 10,
                 dbz_tenths: 180,
                 phase: PHASE_RAIN,
+                surface_phase: PHASE_RAIN,
                 transition_candidate: true,
             },
             LevelPhaseVoxel {
@@ -2097,6 +2225,7 @@ mod tests {
                 col: 11,
                 dbz_tenths: 170,
                 phase: PHASE_SNOW,
+                surface_phase: PHASE_SNOW,
                 transition_candidate: true,
             },
             LevelPhaseVoxel {
@@ -2104,6 +2233,7 @@ mod tests {
                 col: 20,
                 dbz_tenths: 160,
                 phase: PHASE_SNOW,
+                surface_phase: PHASE_SNOW,
                 transition_candidate: true,
             },
         ];
@@ -2122,6 +2252,7 @@ mod tests {
                 col: 15,
                 dbz_tenths: 150,
                 phase: PHASE_RAIN,
+                surface_phase: PHASE_RAIN,
                 transition_candidate: false,
             },
             LevelPhaseVoxel {
@@ -2129,6 +2260,7 @@ mod tests {
                 col: 16,
                 dbz_tenths: 150,
                 phase: PHASE_SNOW,
+                surface_phase: PHASE_SNOW,
                 transition_candidate: false,
             },
         ];
@@ -2136,6 +2268,19 @@ mod tests {
         assert_eq!(promoted, 0);
         assert_eq!(records[0].phase, PHASE_RAIN);
         assert_eq!(records[1].phase, PHASE_SNOW);
+    }
+
+    #[test]
+    fn rank_phase_scores_orders_descending_and_keeps_tie_order() {
+        let scores = PhaseScores {
+            rain: 2.0,
+            mixed: 2.0,
+            snow: 1.0,
+        };
+        let ranked = rank_phase_scores(scores);
+        assert_eq!(ranked[0], (PHASE_RAIN, 2.0));
+        assert_eq!(ranked[1], (PHASE_MIXED, 2.0));
+        assert_eq!(ranked[2], (PHASE_SNOW, 1.0));
     }
 
     #[test]
