@@ -47,15 +47,19 @@ function formatFeet(value: number | null): string {
 
 function formatAltConstraint(leg: ApproachLeg): string {
   if (leg.altitude == null) return '';
-  const prefix = leg.altitudeConstraint === '+' ? '≥' : leg.altitudeConstraint === '-' ? '≤' : leg.altitudeConstraint === 'at' ? '@' : '';
+  const prefix =
+    leg.altitudeConstraint === '+'
+      ? '≥'
+      : leg.altitudeConstraint === '-'
+        ? '≤'
+        : leg.altitudeConstraint === 'at'
+          ? '@'
+          : '';
   return `${prefix}${leg.altitude}`;
 }
 
 function formatLeg(leg: ApproachLeg): string {
-  const parts: string[] = [
-    leg.pathTerminator.padEnd(2),
-    (leg.waypointId || '—').padEnd(5)
-  ];
+  const parts: string[] = [leg.pathTerminator.padEnd(2), (leg.waypointId || '—').padEnd(5)];
   const alt = formatAltConstraint(leg);
   if (alt) parts.push(alt);
   if (leg.course != null) parts.push(`crs ${leg.course.toFixed(0)}°`);
@@ -166,9 +170,11 @@ export function DebugPanel({
               <span>d-TPP Cycle</span>
               <span>{cycleInfo.dtppCycle || 'n/a'}</span>
             </div>
-            {cycleInfo.cifpCycle && cycleInfo.dtppCycle && cycleInfo.cifpCycle !== cycleInfo.dtppCycle && (
-              <div className="debug-error">Cycle mismatch!</div>
-            )}
+            {cycleInfo.cifpCycle &&
+              cycleInfo.dtppCycle &&
+              cycleInfo.cifpCycle !== cycleInfo.dtppCycle && (
+                <div className="debug-error">Cycle mismatch!</div>
+              )}
           </>
         )}
       </div>
