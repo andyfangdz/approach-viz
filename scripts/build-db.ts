@@ -352,29 +352,13 @@ function main() {
   });
   const airportSpatialCount = insertAirportSpatial();
 
-  // Extract CIFP effective date from header line (e.g. "29-JAN-2026" → "260129")
-  const cifpHeader = cifpContent.split('\n')[0] || '';
-  const cifpDateMatch = cifpHeader.match(/(\d{2})-([A-Z]{3})-(\d{4})/);
+  // Read CIFP cycle from cycle.txt (written by download-data.sh from zip filename)
+  const cifpCyclePath = path.join(DATA_DIR, 'cifp', 'cycle.txt');
   let cifpCycle = '';
-  if (cifpDateMatch) {
-    const months: Record<string, string> = {
-      JAN: '01',
-      FEB: '02',
-      MAR: '03',
-      APR: '04',
-      MAY: '05',
-      JUN: '06',
-      JUL: '07',
-      AUG: '08',
-      SEP: '09',
-      OCT: '10',
-      NOV: '11',
-      DEC: '12'
-    };
-    const yy = cifpDateMatch[3].slice(2);
-    const mm = months[cifpDateMatch[2]] || '00';
-    const dd = cifpDateMatch[1];
-    cifpCycle = `${yy}${mm}${dd}`;
+  try {
+    cifpCycle = fs.readFileSync(cifpCyclePath, 'utf8').trim();
+  } catch {
+    // cycle.txt missing — leave blank
   }
   insertMetadata.run('cifp_cycle', cifpCycle);
   insertMetadata.run('dtpp_cycle_number', minimumsDb.dtpp_cycle_number || '');

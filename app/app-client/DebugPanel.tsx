@@ -170,7 +170,13 @@ export function DebugPanel({
               <span>d-TPP Cycle</span>
               <span>{cycleInfo.dtppCycle || 'n/a'}</span>
             </div>
-            {/* Cycles may differ — only matters if approach-db references a different CIFP */}
+            {cycleInfo.cifpCycle &&
+              cycleInfo.dtppCycle &&
+              cycleInfo.cifpCycle !== cycleInfo.dtppCycle && (
+                <div className="debug-error">
+                  Incompatible: CIFP and d-TPP from different AIRAC cycles
+                </div>
+              )}
           </>
         )}
       </div>

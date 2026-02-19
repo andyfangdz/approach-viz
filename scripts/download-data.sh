@@ -29,11 +29,13 @@ if [ -z "$CIFP_ZIP_URL" ]; then
   exit 1
 fi
 
-echo "Fetching CIFP from $CIFP_ZIP_URL..."
+CIFP_CYCLE="$(basename "$CIFP_ZIP_URL" | sed 's/CIFP_//;s/\.zip//')"
+echo "Fetching CIFP from $CIFP_ZIP_URL (cycle $CIFP_CYCLE)..."
 curl -fsSL "$CIFP_ZIP_URL" -o "/tmp/cifp.zip"
 unzip -o -j "/tmp/cifp.zip" "FAACIFP18" -d "$CIFP_DIR"
 rm "/tmp/cifp.zip"
-echo "✅ CIFP data downloaded ($(wc -c < "$CIFP_DIR/FAACIFP18" | tr -d ' ') bytes)"
+echo "$CIFP_CYCLE" > "$CIFP_DIR/cycle.txt"
+echo "✅ CIFP data downloaded ($(wc -c < "$CIFP_DIR/FAACIFP18" | tr -d ' ') bytes, cycle $CIFP_CYCLE)"
 
 # Download US Class B/C/D airspace (from drnic/faa-airspace-data)
 # This source has proper altitude bands for approach visualization
@@ -79,7 +81,6 @@ echo "✅ Approach DB downloaded ($(wc -c < "$APPROACH_DB_DIR/approaches.json" |
 
 # Validate AIRAC cycle consistency between CIFP and approach-db
 echo "Validating AIRAC cycle consistency..."
-CIFP_CYCLE="$(basename "$CIFP_ZIP_URL" | sed 's/CIFP_//;s/\.zip//')"
 APPROACH_DB_CYCLE="$(node -e '
   const path = require("path");
   const d = require(path.resolve("'"$APPROACH_DB_DIR/approaches.json"'"));
