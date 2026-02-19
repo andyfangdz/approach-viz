@@ -18,7 +18,7 @@ use axum::routing::get;
 use axum::Router;
 use reqwest::Client;
 use tokio::fs;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -26,7 +26,7 @@ use tracing::{info, warn};
 
 use crate::api::{echo_tops, healthz, meta, volume};
 use crate::config::Config;
-use crate::ingest::{enqueue_latest_from_s3, spawn_background_workers};
+use crate::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
 use crate::storage::load_latest_snapshot;
 use crate::traffic_api::traffic_adsbx;
 use crate::types::AppState;
@@ -54,7 +54,13 @@ async fn main() -> Result<()> {
         latest,
         pending: Arc::new(Mutex::new(HashMap::new())),
         recent_timestamps: Arc::new(Mutex::new(HashSet::new())),
+        ingest_parse_limiter: Arc::new(Semaphore::new(cfg.ingest_parse_concurrency as usize)),
     };
+
+    if let Some(timestamp) = state.cfg.ingest_profile_timestamp.clone() {
+        run_ingest_profile(&state, &timestamp, state.cfg.ingest_profile_repeats).await?;
+        return Ok(());
+    }
 
     if state.latest.read().await.is_none() {
         if let Err(error) = enqueue_latest_from_s3(&state).await {

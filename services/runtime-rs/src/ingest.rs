@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,7 +9,7 @@ use aws_sdk_sqs::Client as SqsClient;
 use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use regex::Regex;
-use reqwest::Client;
+use rustc_hash::FxHashMap;
 use serde_json::Value;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -61,6 +62,36 @@ pub async fn spawn_background_workers(state: AppState) -> Result<()> {
     } else {
         warn!(
             "RUNTIME_MRMS_SQS_QUEUE_URL/MRMS_SQS_QUEUE_URL is not set; relying only on periodic S3 bootstrap polling."
+        );
+    }
+
+    Ok(())
+}
+
+pub async fn run_ingest_profile(state: &AppState, timestamp: &str, repeats: u32) -> Result<()> {
+    info!(
+        "Starting one-shot ingest profile mode: timestamp={}, repeats={}, local_dir={}, offline={}",
+        timestamp,
+        repeats.max(1),
+        state
+            .cfg
+            .ingest_local_data_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<none>".to_string()),
+        bool_label(state.cfg.ingest_local_data_offline),
+    );
+
+    for run_idx in 1..=repeats.max(1) {
+        let started = Instant::now();
+        let scan = ingest_timestamp(state, timestamp).await?;
+        info!(
+            "Profile ingest run {}/{} complete: {} stored voxels, {} echo-top cells, elapsed={}ms",
+            run_idx,
+            repeats.max(1),
+            scan.voxels.len(),
+            scan.echo_tops.len(),
+            started.elapsed().as_millis(),
         );
     }
 
@@ -334,20 +365,16 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
 
     let mut futures = FuturesUnordered::new();
     for (level_idx, level_tag) in LEVEL_TAGS.iter().enumerate() {
-        let http = state.http.clone();
+        let state = state.clone();
         let level_tag = level_tag.to_string();
         let timestamp = timestamp.to_string();
         let date_part = date_part.to_string();
         futures.push(async move {
             let reflectivity_key =
                 build_level_key(MRMS_PRODUCT_PREFIX, &level_tag, &date_part, &timestamp);
-            let reflectivity_zipped =
-                fetch_bytes(&http, &format!("{MRMS_BUCKET_URL}/{reflectivity_key}")).await?;
-            let reflectivity = tokio::task::spawn_blocking(move || {
-                parse_reflectivity_grib_gzipped(&reflectivity_zipped)
-            })
-            .await
-            .context("Join error while parsing level GRIB")??;
+            let reflectivity_zipped = fetch_mrms_key_bytes(&state, &reflectivity_key).await?;
+            let reflectivity =
+                parse_reflectivity_grib_with_limit(&state, reflectivity_zipped).await?;
             Ok::<_, anyhow::Error>((level_idx, level_tag, reflectivity))
         });
     }
@@ -379,10 +406,8 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         }
     }
 
-    let mut zdr_bundle =
-        fetch_dual_pol_bundle(&state.http, MRMS_ZDR_PRODUCT_PREFIX, timestamp).await;
-    let mut rhohv_bundle =
-        fetch_dual_pol_bundle(&state.http, MRMS_RHOHV_PRODUCT_PREFIX, timestamp).await;
+    let mut zdr_bundle = fetch_dual_pol_bundle(state, MRMS_ZDR_PRODUCT_PREFIX, timestamp).await;
+    let mut rhohv_bundle = fetch_dual_pol_bundle(state, MRMS_RHOHV_PRODUCT_PREFIX, timestamp).await;
 
     if zdr_bundle.fields_by_level.len() != LEVEL_TAGS.len() {
         zdr_bundle
@@ -405,8 +430,8 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         || rhohv_bundle.available_level_count() < LEVEL_TAGS.len();
     let use_aux_fallback = dual_pol_stale || dual_pol_incomplete;
 
-    let thermo_aux_bundle = fetch_thermo_aux_bundle(&state.http, timestamp).await;
-    let echo_top_bundle = fetch_echo_top_bundle(&state.http, timestamp).await;
+    let thermo_aux_bundle = fetch_thermo_aux_bundle(state, timestamp).await;
+    let echo_top_bundle = fetch_echo_top_bundle(state, timestamp).await;
 
     let level_km: Vec<f64> = LEVEL_TAGS
         .iter()
@@ -1014,7 +1039,7 @@ impl DualPolBundle {
 }
 
 async fn fetch_dual_pol_bundle(
-    http: &Client,
+    state: &AppState,
     product_prefix: &'static str,
     target_timestamp: &str,
 ) -> DualPolBundle {
@@ -1032,7 +1057,7 @@ async fn fetch_dual_pol_bundle(
 
     let mut selected_timestamp = Some(target_timestamp.to_string());
     let mut base_level_field: Option<ParsedAuxField> = match fetch_level_aux_field_at_timestamp(
-        http,
+        state,
         product_prefix,
         MRMS_BASE_LEVEL_TAG,
         target_date_part,
@@ -1051,7 +1076,7 @@ async fn fetch_dual_pol_bundle(
 
     if base_level_field.is_none() {
         selected_timestamp = find_latest_level_timestamp_at_or_before(
-            http,
+            state,
             product_prefix,
             MRMS_BASE_LEVEL_TAG,
             target_timestamp,
@@ -1072,7 +1097,7 @@ async fn fetch_dual_pol_bundle(
                 }
             };
             base_level_field = fetch_level_aux_field_at_timestamp(
-                http,
+                state,
                 product_prefix,
                 MRMS_BASE_LEVEL_TAG,
                 date_part,
@@ -1120,7 +1145,7 @@ async fn fetch_dual_pol_bundle(
             continue;
         }
 
-        let http = http.clone();
+        let state = state.clone();
         let level_tag = level_tag.to_string();
         let product_prefix = product_prefix.to_string();
         let date_part = selected_date_part.clone();
@@ -1128,7 +1153,7 @@ async fn fetch_dual_pol_bundle(
 
         futures.push(async move {
             let field = fetch_level_aux_field_at_timestamp(
-                &http,
+                &state,
                 &product_prefix,
                 &level_tag,
                 &date_part,
@@ -1157,38 +1182,39 @@ async fn fetch_dual_pol_bundle(
     }
 }
 
-async fn fetch_thermo_aux_bundle(http: &Client, target_timestamp: &str) -> ThermoAuxBundle {
+async fn fetch_thermo_aux_bundle(state: &AppState, target_timestamp: &str) -> ThermoAuxBundle {
     let precip_flag =
-        fetch_latest_aux_field_at_or_before(http, MRMS_PRECIP_FLAG_PRODUCT, target_timestamp).await;
+        fetch_latest_aux_field_at_or_before(state, MRMS_PRECIP_FLAG_PRODUCT, target_timestamp)
+            .await;
     let freezing_level = fetch_latest_aux_field_at_or_before(
-        http,
+        state,
         MRMS_MODEL_FREEZING_HEIGHT_PRODUCT,
         target_timestamp,
     )
     .await;
     let wet_bulb_temp = fetch_latest_aux_field_at_or_before(
-        http,
+        state,
         MRMS_MODEL_WET_BULB_TEMP_PRODUCT,
         target_timestamp,
     )
     .await;
     let surface_temp = fetch_latest_aux_field_at_or_before(
-        http,
+        state,
         MRMS_MODEL_SURFACE_TEMP_PRODUCT,
         target_timestamp,
     )
     .await;
     let bright_band_top =
-        fetch_latest_aux_field_at_or_before(http, MRMS_BRIGHT_BAND_TOP_PRODUCT, target_timestamp)
+        fetch_latest_aux_field_at_or_before(state, MRMS_BRIGHT_BAND_TOP_PRODUCT, target_timestamp)
             .await;
     let bright_band_bottom = fetch_latest_aux_field_at_or_before(
-        http,
+        state,
         MRMS_BRIGHT_BAND_BOTTOM_PRODUCT,
         target_timestamp,
     )
     .await;
     let radar_quality_index =
-        fetch_latest_aux_field_at_or_before(http, MRMS_RQI_PRODUCT, target_timestamp).await;
+        fetch_latest_aux_field_at_or_before(state, MRMS_RQI_PRODUCT, target_timestamp).await;
 
     ThermoAuxBundle {
         precip_flag,
@@ -1201,15 +1227,19 @@ async fn fetch_thermo_aux_bundle(http: &Client, target_timestamp: &str) -> Therm
     }
 }
 
-async fn fetch_echo_top_bundle(http: &Client, target_timestamp: &str) -> EchoTopBundle {
+async fn fetch_echo_top_bundle(state: &AppState, target_timestamp: &str) -> EchoTopBundle {
     let top18 =
-        fetch_latest_aux_field_at_or_before(http, MRMS_ECHO_TOP_18_PRODUCT, target_timestamp).await;
+        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_18_PRODUCT, target_timestamp)
+            .await;
     let top30 =
-        fetch_latest_aux_field_at_or_before(http, MRMS_ECHO_TOP_30_PRODUCT, target_timestamp).await;
+        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_30_PRODUCT, target_timestamp)
+            .await;
     let top50 =
-        fetch_latest_aux_field_at_or_before(http, MRMS_ECHO_TOP_50_PRODUCT, target_timestamp).await;
+        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_50_PRODUCT, target_timestamp)
+            .await;
     let top60 =
-        fetch_latest_aux_field_at_or_before(http, MRMS_ECHO_TOP_60_PRODUCT, target_timestamp).await;
+        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_60_PRODUCT, target_timestamp)
+            .await;
 
     EchoTopBundle {
         top18,
@@ -1220,13 +1250,14 @@ async fn fetch_echo_top_bundle(http: &Client, target_timestamp: &str) -> EchoTop
 }
 
 async fn fetch_latest_aux_field_at_or_before(
-    http: &Client,
+    state: &AppState,
     product: &'static str,
     target_timestamp: &str,
 ) -> Option<(String, ParsedAuxField)> {
-    let timestamp = find_latest_aux_timestamp_at_or_before(http, product, target_timestamp).await?;
+    let timestamp =
+        find_latest_aux_timestamp_at_or_before(state, product, target_timestamp).await?;
     let date_part = timestamp.split('-').next()?;
-    match fetch_aux_field_at_timestamp(http, product, date_part, &timestamp).await {
+    match fetch_aux_field_at_timestamp(state, product, date_part, &timestamp).await {
         Ok(field) => Some((timestamp, field)),
         Err(error) => {
             warn!(
@@ -1664,7 +1695,8 @@ fn promote_mixed_transition_edges(
         return 0;
     }
 
-    let mut position_to_index: HashMap<u32, usize> = HashMap::with_capacity(records.len());
+    let mut position_to_index: FxHashMap<u32, usize> =
+        FxHashMap::with_capacity_and_hasher(records.len(), Default::default());
     for (idx, record) in records.iter().enumerate() {
         let key = record.row as u32 * grid_nx + record.col as u32;
         position_to_index.insert(key, idx);
@@ -1811,19 +1843,47 @@ fn build_level_key(
     )
 }
 
+async fn parse_reflectivity_grib_with_limit(
+    state: &AppState,
+    zipped: Vec<u8>,
+) -> Result<ParsedReflectivityField> {
+    let permit = state
+        .ingest_parse_limiter
+        .clone()
+        .acquire_owned()
+        .await
+        .context("Failed to acquire ingest parse limiter permit")?;
+    let parsed = tokio::task::spawn_blocking(move || parse_reflectivity_grib_gzipped(&zipped))
+        .await
+        .context("Join error while parsing level GRIB")??;
+    drop(permit);
+    Ok(parsed)
+}
+
+async fn parse_aux_grib_with_limit(state: &AppState, zipped: Vec<u8>) -> Result<ParsedAuxField> {
+    let permit = state
+        .ingest_parse_limiter
+        .clone()
+        .acquire_owned()
+        .await
+        .context("Failed to acquire ingest parse limiter permit")?;
+    let parsed = tokio::task::spawn_blocking(move || parse_aux_grib_gzipped(&zipped))
+        .await
+        .context("Join error while parsing aux GRIB")??;
+    drop(permit);
+    Ok(parsed)
+}
+
 async fn fetch_level_aux_field_at_timestamp(
-    http: &Client,
+    state: &AppState,
     product_prefix: &str,
     level_tag: &str,
     date_part: &str,
     timestamp: &str,
 ) -> Result<ParsedAuxField> {
     let key = build_level_key(product_prefix, level_tag, date_part, timestamp);
-    let url = format!("{MRMS_BUCKET_URL}/{key}");
-    let zipped = fetch_bytes(http, &url).await?;
-    let parsed = tokio::task::spawn_blocking(move || parse_aux_grib_gzipped(&zipped))
-        .await
-        .context("Join error while parsing aux GRIB")??;
+    let zipped = fetch_mrms_key_bytes(state, &key).await?;
+    let parsed = parse_aux_grib_with_limit(state, zipped).await?;
     Ok(parsed)
 }
 
@@ -1832,28 +1892,25 @@ fn build_aux_key(product: &str, date_part: &str, timestamp: &str) -> String {
 }
 
 async fn fetch_aux_field_at_timestamp(
-    http: &Client,
+    state: &AppState,
     product: &str,
     date_part: &str,
     timestamp: &str,
 ) -> Result<ParsedAuxField> {
     let key = build_aux_key(product, date_part, timestamp);
-    let url = format!("{MRMS_BUCKET_URL}/{key}");
-    let zipped = fetch_bytes(http, &url).await?;
-    let parsed = tokio::task::spawn_blocking(move || parse_aux_grib_gzipped(&zipped))
-        .await
-        .context("Join error while parsing aux context GRIB")??;
+    let zipped = fetch_mrms_key_bytes(state, &key).await?;
+    let parsed = parse_aux_grib_with_limit(state, zipped).await?;
     Ok(parsed)
 }
 
 async fn find_latest_level_timestamp_at_or_before(
-    http: &Client,
+    state: &AppState,
     product_prefix: &str,
     level_tag: &str,
     target_timestamp: &str,
 ) -> Option<String> {
     find_latest_timestamp_at_or_before(
-        http,
+        state,
         |day| format!("{MRMS_CONUS_PREFIX}/{product_prefix}_{level_tag}/{day}/"),
         target_timestamp,
     )
@@ -1861,12 +1918,12 @@ async fn find_latest_level_timestamp_at_or_before(
 }
 
 async fn find_latest_aux_timestamp_at_or_before(
-    http: &Client,
+    state: &AppState,
     product: &str,
     target_timestamp: &str,
 ) -> Option<String> {
     find_latest_timestamp_at_or_before(
-        http,
+        state,
         |day| format!("{MRMS_CONUS_PREFIX}/{product}/{day}/"),
         target_timestamp,
     )
@@ -1874,7 +1931,7 @@ async fn find_latest_aux_timestamp_at_or_before(
 }
 
 async fn find_latest_timestamp_at_or_before<F>(
-    http: &Client,
+    state: &AppState,
     prefix_builder: F,
     target_timestamp: &str,
 ) -> Option<String>
@@ -1896,7 +1953,7 @@ where
             .format("%Y%m%d")
             .to_string();
         let prefix = prefix_builder(&day);
-        let keys = match list_keys_for_prefix(http, &prefix).await {
+        let keys = match list_keys_for_prefix(state, &prefix).await {
             Ok(value) => value,
             Err(error) => {
                 warn!("Failed listing MRMS keys for prefix {prefix}: {error:#}");
@@ -1921,7 +1978,14 @@ where
     best
 }
 
-async fn list_keys_for_prefix(http: &Client, prefix: &str) -> Result<Vec<String>> {
+async fn list_keys_for_prefix(state: &AppState, prefix: &str) -> Result<Vec<String>> {
+    if let Some(root) = state.cfg.ingest_local_data_dir.as_ref() {
+        let keys = list_keys_for_prefix_local(root, prefix).await?;
+        if !keys.is_empty() || state.cfg.ingest_local_data_offline {
+            return Ok(keys);
+        }
+    }
+
     let mut keys = Vec::new();
     let mut continuation_token: Option<String> = None;
 
@@ -1935,7 +1999,7 @@ async fn list_keys_for_prefix(http: &Client, prefix: &str) -> Result<Vec<String>
             url.push_str(&urlencoding::encode(token));
         }
 
-        let xml = crate::http_client::fetch_text(http, &url).await?;
+        let xml = crate::http_client::fetch_text(&state.http, &url).await?;
         keys.extend(parse_xml_tag_values(&xml, "Key"));
 
         let is_truncated = parse_xml_tag_value(&xml, "IsTruncated")
@@ -1954,13 +2018,119 @@ async fn list_keys_for_prefix(http: &Client, prefix: &str) -> Result<Vec<String>
     Ok(keys)
 }
 
+async fn fetch_mrms_key_bytes(state: &AppState, key: &str) -> Result<Vec<u8>> {
+    if let Some(root) = state.cfg.ingest_local_data_dir.as_ref() {
+        let local_path = root.join(key);
+        match tokio::fs::read(&local_path).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) => {
+                if state.cfg.ingest_local_data_offline {
+                    bail!(
+                        "Local MRMS mirror miss in offline mode for key {} (path {}): {}",
+                        key,
+                        local_path.display(),
+                        error
+                    );
+                }
+            }
+        }
+    }
+
+    let url = format!("{MRMS_BUCKET_URL}/{key}");
+    let bytes = fetch_bytes(&state.http, &url).await?;
+
+    if let Some(root) = state.cfg.ingest_local_data_dir.as_ref() {
+        let local_path = root.join(key);
+        if let Some(parent) = local_path.parent() {
+            if let Err(error) = tokio::fs::create_dir_all(parent).await {
+                warn!(
+                    "Failed creating local MRMS mirror directory {}: {}",
+                    parent.display(),
+                    error
+                );
+            }
+        }
+        if let Err(error) = tokio::fs::write(&local_path, &bytes).await {
+            warn!(
+                "Failed writing local MRMS mirror file {}: {}",
+                local_path.display(),
+                error
+            );
+        }
+    }
+
+    Ok(bytes)
+}
+
+async fn list_keys_for_prefix_local(root: &Path, prefix: &str) -> Result<Vec<String>> {
+    let root = root.to_path_buf();
+    let prefix = prefix.to_string();
+    tokio::task::spawn_blocking(move || list_keys_for_prefix_local_blocking(&root, &prefix))
+        .await
+        .context("Join error while listing local MRMS mirror keys")?
+}
+
+fn list_keys_for_prefix_local_blocking(root: &Path, prefix: &str) -> Result<Vec<String>> {
+    let prefix_dir = root.join(prefix);
+    if !prefix_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut stack: Vec<PathBuf> = vec![prefix_dir];
+    let mut keys = Vec::new();
+    while let Some(path) = stack.pop() {
+        let entries = std::fs::read_dir(&path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.with_context(|| format!("Failed reading entry in {}", path.display()))?;
+            let entry_path = entry.path();
+            let file_type = entry.file_type().with_context(|| {
+                format!("Failed reading file type for {}", entry_path.display())
+            })?;
+            if file_type.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            if !entry_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".grib2.gz"))
+            {
+                continue;
+            }
+
+            let relative = entry_path
+                .strip_prefix(root)
+                .with_context(|| format!("Failed strip_prefix for {}", entry_path.display()))?;
+            keys.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+
+    Ok(keys)
+}
+
 fn parse_xml_tag_values(xml: &str, tag_name: &str) -> Vec<String> {
-    let regex = Regex::new(&format!(r"<{0}>([^<]+)</{0}>", regex::escape(tag_name)))
-        .unwrap_or_else(|_| Regex::new(r"$^").unwrap());
-    regex
-        .captures_iter(xml)
-        .filter_map(|captures| captures.get(1).map(|value| value.as_str().to_string()))
-        .collect()
+    let start_tag = format!("<{tag_name}>");
+    let end_tag = format!("</{tag_name}>");
+    let mut values = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(start_idx) = xml[cursor..].find(&start_tag) {
+        let value_start = cursor + start_idx + start_tag.len();
+        let Some(end_idx_rel) = xml[value_start..].find(&end_tag) else {
+            break;
+        };
+        let value_end = value_start + end_idx_rel;
+        values.push(xml[value_start..value_end].to_string());
+        cursor = value_end + end_tag.len();
+    }
+
+    values
 }
 
 fn parse_xml_tag_value(xml: &str, tag_name: &str) -> Option<String> {

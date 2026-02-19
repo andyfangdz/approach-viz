@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 
 use crate::config::Config;
 
@@ -15,6 +15,7 @@ pub struct AppState {
     pub latest: Arc<RwLock<Option<Arc<ScanSnapshot>>>>,
     pub pending: Arc<Mutex<HashMap<String, PendingIngest>>>,
     pub recent_timestamps: Arc<Mutex<HashSet<String>>>,
+    pub ingest_parse_limiter: Arc<Semaphore>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

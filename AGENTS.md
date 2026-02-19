@@ -34,6 +34,7 @@
 - Run production server: `npm run start`
 - Create MRMS SNS/SQS subscription wiring: `python3 scripts/mrms/setup_sns_sqs.py`
 - Deploy Rust runtime service to OCI host: `RUNTIME_MRMS_SQS_QUEUE_URL=... scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122` (script waits for local `/healthz` readiness after restart before final `/v1/meta` smoke check)
+- Run one-shot ingestion profile at a fixed timestamp (optional local MRMS mirror/offline mode): `RUNTIME_STORAGE_DIR=... RUNTIME_INGEST_PROFILE_TIMESTAMP=20260219-042441 RUNTIME_INGEST_PROFILE_REPEATS=3 RUNTIME_MRMS_LOCAL_DATA_DIR=... RUNTIME_MRMS_LOCAL_DATA_OFFLINE=true services/runtime-rs/target/release/approach-viz-runtime`
 
 ## Directory Layout
 
@@ -55,7 +56,7 @@ CIFP, airspace, minimums, plate PDFs, terrain tiles, live ADS-B traffic, runtime
 
 ### Architecture
 
-Server-first data loading through Next.js server actions backed by SQLite (with R-tree spatial indexes for airports and airspace), with a thin client runtime coordinating UI sections and a react-three-fiber scene. An external Rust Axum service (`services/runtime-rs/`) handles MRMS weather ingest/query and ADS-B traffic decode; Next.js routes proxy to this service for MRMS volume/echo-tops and traffic, while a separate Next.js route proxies NOAA ProbSevere storm-cell objects directly. Local dev tracing is via Datadog `dd-trace` (`scripts/dev-with-ddtrace.mjs`). CI uses `npx next build` (not `npm run build`) to avoid data download in CI. React Compiler is enabled globally via `next.config.ts` (`reactCompiler: true`) with `babel-plugin-react-compiler` in `devDependencies`. Scene camera-control mode selection (`OrbitControls`/`ArcballControls`/`MapControls`) is client-managed in options state and persisted to localStorage.
+Server-first data loading through Next.js server actions backed by SQLite (with R-tree spatial indexes for airports and airspace), with a thin client runtime coordinating UI sections and a react-three-fiber scene. An external Rust Axum service (`services/runtime-rs/`) handles MRMS weather ingest/query and ADS-B traffic decode; Next.js routes proxy to this service for MRMS volume/echo-tops and traffic, while a separate Next.js route proxies NOAA ProbSevere storm-cell objects directly. Runtime ingestion supports a one-shot fixed-timestamp profiling mode (`RUNTIME_INGEST_PROFILE_TIMESTAMP`) and optional local MRMS mirror read-through/offline execution (`RUNTIME_MRMS_LOCAL_DATA_DIR`, `RUNTIME_MRMS_LOCAL_DATA_OFFLINE`), with bounded GRIB parse concurrency via `RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY`. Local dev tracing is via Datadog `dd-trace` (`scripts/dev-with-ddtrace.mjs`). CI uses `npx next build` (not `npm run build`) to avoid data download in CI. React Compiler is enabled globally via `next.config.ts` (`reactCompiler: true`) with `babel-plugin-react-compiler` in `devDependencies`. Scene camera-control mode selection (`OrbitControls`/`ArcballControls`/`MapControls`) is client-managed in options state and persisted to localStorage.
 
 - [`docs/architecture-overview.md`](docs/architecture-overview.md) — high-level flow diagram (includes runtime service + proxy routes)
 - [`docs/architecture-data-and-actions.md`](docs/architecture-data-and-actions.md) — server data model, action layering, matching/enrichment, proxies, CI, agent skills

@@ -23,6 +23,11 @@ pub struct Config {
     pub tile_size: u16,
     pub adsbx_primary_base_url: String,
     pub adsbx_fallback_base_urls: Vec<String>,
+    pub ingest_profile_timestamp: Option<String>,
+    pub ingest_profile_repeats: u32,
+    pub ingest_local_data_dir: Option<PathBuf>,
+    pub ingest_local_data_offline: bool,
+    pub ingest_parse_concurrency: u16,
 }
 
 impl Config {
@@ -82,6 +87,32 @@ impl Config {
         .map(trim_base_url)
         .filter(|entry| !entry.is_empty())
         .collect::<Vec<_>>();
+        let ingest_profile_timestamp = env_optional("RUNTIME_INGEST_PROFILE_TIMESTAMP")
+            .or_else(|| env_optional("MRMS_INGEST_PROFILE_TIMESTAMP"));
+        let ingest_profile_repeats = env_u32_with_fallback(
+            "RUNTIME_INGEST_PROFILE_REPEATS",
+            "MRMS_INGEST_PROFILE_REPEATS",
+            1,
+        )?
+        .max(1);
+        let ingest_local_data_dir = env_optional("RUNTIME_MRMS_LOCAL_DATA_DIR")
+            .or_else(|| env_optional("MRMS_LOCAL_DATA_DIR"))
+            .map(PathBuf::from);
+        let ingest_local_data_offline = env_bool_with_fallback(
+            "RUNTIME_MRMS_LOCAL_DATA_OFFLINE",
+            "MRMS_LOCAL_DATA_OFFLINE",
+            false,
+        );
+        let default_parse_concurrency = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get())
+            .unwrap_or(8)
+            .clamp(1, u16::MAX as usize) as u16;
+        let ingest_parse_concurrency = env_u16_with_fallback(
+            "RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY",
+            "MRMS_INGEST_PARSE_CONCURRENCY",
+            default_parse_concurrency,
+        )?
+        .max(1);
 
         Ok(Self {
             listen_addr,
@@ -96,6 +127,11 @@ impl Config {
             tile_size,
             adsbx_primary_base_url,
             adsbx_fallback_base_urls,
+            ingest_profile_timestamp,
+            ingest_profile_repeats,
+            ingest_local_data_dir,
+            ingest_local_data_offline,
+            ingest_parse_concurrency,
         })
     }
 
@@ -158,6 +194,21 @@ fn env_u16_with_fallback(primary: &str, fallback: &str, default: u16) -> Result<
     env_u16(fallback, default)
 }
 
+fn env_u32_with_fallback(primary: &str, fallback: &str, default: u32) -> Result<u32> {
+    if let Some(value) = env_optional(primary) {
+        return value
+            .parse::<u32>()
+            .with_context(|| format!("Failed to parse {}={} as u32", primary, value));
+    }
+    env_u32(fallback, default)
+}
+
+fn env_bool_with_fallback(primary: &str, fallback: &str, default: bool) -> bool {
+    env_bool(primary)
+        .or_else(|| env_bool(fallback))
+        .unwrap_or(default)
+}
+
 fn env_string(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
 }
@@ -177,5 +228,23 @@ fn env_u16(name: &str, default: u16) -> Result<u16> {
             .parse::<u16>()
             .with_context(|| format!("Failed to parse {}={} as u16", name, value)),
         Err(_) => Ok(default),
+    }
+}
+
+fn env_u32(name: &str, default: u32) -> Result<u32> {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<u32>()
+            .with_context(|| format!("Failed to parse {}={} as u32", name, value)),
+        Err(_) => Ok(default),
+    }
+}
+
+fn env_bool(name: &str) -> Option<bool> {
+    let raw = std::env::var(name).ok()?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
