@@ -40,7 +40,7 @@
 
 - `app/` — Next.js routes, server actions (`actions-lib/`), API proxies (`api/`), client UI (`app-client/`), and 3D scene components (`scene/`)
 - `lib/` — shared types, SQLite singleton, R-tree spatial queries, and CIFP parser (`cifp/`)
-- `services/runtime-rs/` — Rust runtime service (MRMS ingest/query + ADS-B decode/query APIs), with source split by concern under `src/` (`api.rs`, `traffic_api.rs`, `ingest.rs`, `grib.rs`, `storage.rs`, `discovery.rs`, `config.rs`, `types.rs`, `utils.rs`, `constants.rs`)
+- `services/runtime-rs/` — Rust runtime service (MRMS ingest/query + ADS-B decode/query APIs), with source split by concern under `src/` (`api/mod.rs` + `api/wire.rs`, `traffic_api.rs`, `ingest/mod.rs` + `ingest/phase.rs` + `ingest/sources.rs`, `grib.rs`, `storage.rs`, `discovery.rs`, `config.rs`, `types.rs`, `utils.rs`, `constants.rs`)
 - `scripts/` — data download/build scripts, MRMS provisioning helper (`scripts/mrms/setup_sns_sqs.py`), runtime deploy helper (`scripts/runtime/deploy_oci.sh`), legacy deploy redirect (`scripts/mrms/deploy_oci.sh`), and dev launcher (`dev-with-ddtrace.mjs`)
 - `.agents/skills/` — reusable Codex runbooks and helper scripts for operational workflows (`runtime-deploy-oci`, `runtime-validate-live`)
 - `docs/` — detailed topic documentation (architecture, rendering, data sources, UI, validation)
