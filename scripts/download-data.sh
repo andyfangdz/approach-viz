@@ -49,9 +49,10 @@ echo "Fetching Class D airspace..."
 curl -fsSL "https://raw.githubusercontent.com/drnic/faa-airspace-data/master/class_d.geo.json" -o "$AIRSPACE_DIR/class_d.geojson"
 echo "✅ Class D airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_d.geojson" | tr -d ' ') bytes)"
 
-# Download instrument approach minimums from ammaraskar/faa-instrument-approach-db
+# Download instrument approach minimums from andyfangdz/faa-instrument-approach-db
+# (fork of ammaraskar/faa-instrument-approach-db with automated AIRAC-cycle releases)
 echo "Fetching FAA instrument approach database release..."
-APPROACH_DB_RELEASE_API="https://api.github.com/repos/ammaraskar/faa-instrument-approach-db/releases/latest"
+APPROACH_DB_RELEASE_API="https://api.github.com/repos/andyfangdz/faa-instrument-approach-db/releases/latest"
 APPROACH_DB_URL="$(
   curl -fsSL "$APPROACH_DB_RELEASE_API" \
     | node -e '
@@ -75,5 +76,20 @@ fi
 echo "Fetching approach DB from $APPROACH_DB_URL..."
 curl -fsSL "$APPROACH_DB_URL" -o "$APPROACH_DB_DIR/approaches.json"
 echo "✅ Approach DB downloaded ($(wc -c < "$APPROACH_DB_DIR/approaches.json" | tr -d ' ') bytes)"
+
+# Validate AIRAC cycle consistency between CIFP and approach-db
+echo "Validating AIRAC cycle consistency..."
+CIFP_CYCLE="$(basename "$CIFP_ZIP_URL" | sed 's/CIFP_//;s/\.zip//')"
+APPROACH_DB_CYCLE="$(node -e '
+  const d = require("'"$APPROACH_DB_DIR/approaches.json"'");
+  process.stdout.write(d.dtpp_cycle_number || "unknown");
+')"
+
+if [ "$CIFP_CYCLE" != "$APPROACH_DB_CYCLE" ]; then
+  echo "⚠️  AIRAC cycle mismatch! CIFP=$CIFP_CYCLE, approach-db=$APPROACH_DB_CYCLE"
+  echo "   Plate references and minimums may be out of sync."
+else
+  echo "✅ AIRAC cycles match: $CIFP_CYCLE"
+fi
 
 echo "🎉 All data downloaded successfully!"
