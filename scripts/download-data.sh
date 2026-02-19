@@ -81,7 +81,8 @@ echo "✅ Approach DB downloaded ($(wc -c < "$APPROACH_DB_DIR/approaches.json" |
 echo "Validating AIRAC cycle consistency..."
 CIFP_CYCLE="$(basename "$CIFP_ZIP_URL" | sed 's/CIFP_//;s/\.zip//')"
 APPROACH_DB_CYCLE="$(node -e '
-  const d = require("'"$APPROACH_DB_DIR/approaches.json"'");
+  const path = require("path");
+  const d = require(path.resolve("'"$APPROACH_DB_DIR/approaches.json"'"));
   process.stdout.write(d.dtpp_cycle_number || "unknown");
 ')"
 
