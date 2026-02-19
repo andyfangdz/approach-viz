@@ -544,6 +544,7 @@ textarea,
   width: min(350px, calc(100vw - 48px));
   max-height: calc(100vh - 180px);
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(18, 18, 31, 0.92);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
