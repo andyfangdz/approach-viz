@@ -3,7 +3,7 @@
 ## Project
 
 - Name: `approach-viz`
-- Stack: Next.js 16 (App Router, React Compiler enabled) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio runtime service for MRMS + ADS-B, `grib` crate decoding) + AWS SNS/SQS + `dd-trace` + ESLint/Prettier
+- Stack: Next.js 16 (App Router, React Compiler enabled) + React + TypeScript + react-three-fiber + SQLite + Rust (Axum/Tokio runtime service for MRMS + ADS-B, `grib` crate decoding, `rustc-hash` for hot-path merge maps) + AWS SNS/SQS + `dd-trace` + ESLint/Prettier
 - Purpose: visualize instrument approaches and related airspace/terrain in 3D
 
 ## Agent Maintenance Rule

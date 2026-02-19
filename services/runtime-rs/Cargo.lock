@@ -47,6 +47,7 @@ dependencies = [
  "grib",
  "regex",
  "reqwest",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tokio",

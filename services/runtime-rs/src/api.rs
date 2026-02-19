@@ -3,9 +3,9 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
-use std::collections::HashMap;
 use tracing::warn;
 
 use crate::constants::{
@@ -778,7 +778,7 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
         }
     }
 
-    let mut active: HashMap<VerticalSignature, usize> = HashMap::new();
+    let mut active: FxHashMap<VerticalSignature, usize> = FxHashMap::default();
     let mut merged_bricks: Vec<BrickCandidate> = Vec::new();
 
     for (level_idx, cells) in cells_by_level.iter_mut().enumerate() {
@@ -789,8 +789,8 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
             split_rectangle(rect, max_span, &mut split_rectangles);
         }
 
-        let mut next_active: HashMap<VerticalSignature, usize> =
-            HashMap::with_capacity(split_rectangles.len());
+        let mut next_active: FxHashMap<VerticalSignature, usize> =
+            FxHashMap::with_capacity_and_hasher(split_rectangles.len(), Default::default());
         for rect in split_rectangles {
             let signature = VerticalSignature {
                 row_start: rect.row_start,
@@ -937,7 +937,7 @@ fn merge_row_runs_into_rectangles(
     row: u32,
     runs: &[RowRun],
     rectangles: &mut Vec<HorizontalRect>,
-    active: &mut HashMap<RunSignature, usize>,
+    active: &mut FxHashMap<RunSignature, usize>,
     prev_row: &mut Option<u32>,
 ) {
     if let Some(previous_row) = *prev_row {
@@ -946,7 +946,8 @@ fn merge_row_runs_into_rectangles(
         }
     }
 
-    let mut next_active: HashMap<RunSignature, usize> = HashMap::with_capacity(runs.len());
+    let mut next_active: FxHashMap<RunSignature, usize> =
+        FxHashMap::with_capacity_and_hasher(runs.len(), Default::default());
     for run in runs {
         let signature = RunSignature {
             col_start: run.col_start,
@@ -979,18 +980,12 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
         return Vec::new();
     }
 
-    cells.sort_unstable_by(|a, b| {
-        a.row
-            .cmp(&b.row)
-            .then(a.col.cmp(&b.col))
-            .then(a.key.phase.cmp(&b.key.phase))
-            .then(a.key.dbz_tenths.cmp(&b.key.dbz_tenths))
-    });
+    cells.sort_unstable_by_key(|cell| ((cell.row as u64) << 32) | cell.col as u64);
 
     let mut rectangles: Vec<HorizontalRect> = Vec::new();
-    let mut active: HashMap<RunSignature, usize> = HashMap::new();
+    let mut active: FxHashMap<RunSignature, usize> = FxHashMap::default();
     let mut prev_row: Option<u32> = None;
-    let mut runs_for_row: Vec<RowRun> = Vec::new();
+    let mut runs_for_row: Vec<RowRun> = Vec::with_capacity(32);
 
     let mut run_row = cells[0].row;
     let mut run_col_start = cells[0].col;
