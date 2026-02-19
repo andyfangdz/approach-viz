@@ -70,7 +70,8 @@ export interface ElevationAirport {
 }
 
 export interface CycleInfo {
-  cycle: string;
+  cifpCycle: string;
+  dtppCycle: string;
 }
 
 export interface SceneData {

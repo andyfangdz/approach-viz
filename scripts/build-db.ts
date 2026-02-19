@@ -352,6 +352,16 @@ function main() {
   });
   const airportSpatialCount = insertAirportSpatial();
 
+  // cifp_cycle from cycle.txt (release tag, written by download-data.sh)
+  const cifpCyclePath = path.join(DATA_DIR, 'cifp', 'cycle.txt');
+  let cifpCycle = '';
+  try {
+    cifpCycle = fs.readFileSync(cifpCyclePath, 'utf8').trim();
+  } catch {
+    // cycle.txt missing — leave blank
+  }
+  insertMetadata.run('cifp_cycle', cifpCycle);
+  // dtpp_cycle_number from approaches.json (d-TPP cycle embedded by scraper)
   insertMetadata.run('dtpp_cycle_number', minimumsDb.dtpp_cycle_number || '');
   insertMetadata.run('generated_at', new Date().toISOString());
   insertMetadata.run('airport_count', String(parsed.airports.size));

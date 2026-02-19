@@ -161,10 +161,16 @@ export function DebugPanel({
           <span>{surfaceMode}</span>
         </div>
         {cycleInfo && (
-          <div className="debug-row">
-            <span>Cycle</span>
-            <span>{cycleInfo.cycle || 'n/a'}</span>
-          </div>
+          <>
+            <div className="debug-row">
+              <span>CIFP Cycle</span>
+              <span>{cycleInfo.cifpCycle || 'n/a'}</span>
+            </div>
+            <div className="debug-row">
+              <span>d-TPP Cycle</span>
+              <span>{cycleInfo.dtppCycle || 'n/a'}</span>
+            </div>
+          </>
         )}
       </div>
 
