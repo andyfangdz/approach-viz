@@ -54,16 +54,10 @@ function stmts() {
 function loadCycleInfo(): SceneData['cycleInfo'] {
   try {
     const db = getDb();
-    const cifpRow = db.prepare("SELECT value FROM metadata WHERE key = 'cifp_cycle'").get() as
+    const row = db.prepare("SELECT value FROM metadata WHERE key = 'dtpp_cycle_number'").get() as
       | { value: string }
       | undefined;
-    const dtppRow = db
-      .prepare("SELECT value FROM metadata WHERE key = 'dtpp_cycle_number'")
-      .get() as { value: string } | undefined;
-    return {
-      cifpCycle: cifpRow?.value || '',
-      dtppCycle: dtppRow?.value || ''
-    };
+    return { cycle: row?.value || '' };
   } catch {
     return null;
   }

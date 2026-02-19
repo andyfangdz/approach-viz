@@ -38,21 +38,20 @@ echo "Fetching approach DB from $APPROACH_DB_URL..."
 curl -fsSL "$APPROACH_DB_URL" -o "$APPROACH_DB_DIR/approaches.json"
 echo "✅ Approach DB downloaded ($(wc -c < "$APPROACH_DB_DIR/approaches.json" | tr -d ' ') bytes)"
 
-# Extract the CIFP cycle the approach-db was built against
+# The scraper downloads CIFP and d-TPP for the same cycle,
+# so dtpp_cycle_number is also the CIFP cycle.
 CIFP_CYCLE="$(node -e '
   const path = require("path");
   const d = require(path.resolve("'"$APPROACH_DB_DIR/approaches.json"'"));
-  process.stdout.write(d.cifp_cycle || "");
+  process.stdout.write(d.dtpp_cycle_number || "");
 ')"
 
 if [ -z "$CIFP_CYCLE" ]; then
-  echo "❌ approach-db does not contain a cifp_cycle field — cannot determine which CIFP to download"
-  echo "   The approach-db release may predate the cifp_cycle addition."
-  echo "   Trigger a new scrape at: https://github.com/andyfangdz/faa-instrument-approach-db/actions"
+  echo "❌ approach-db has no dtpp_cycle_number — cannot determine which CIFP to download"
   exit 1
 fi
 
-echo "📌 Approach DB references CIFP cycle: $CIFP_CYCLE"
+echo "📌 Approach DB cycle: $CIFP_CYCLE"
 
 # ── Step 2: Download the matching CIFP ───────────────────────────────────────
 CIFP_ZIP_URL="https://aeronav.faa.gov/Upload_313-d/cifp/CIFP_${CIFP_CYCLE}.zip"

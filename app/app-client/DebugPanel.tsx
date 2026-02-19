@@ -161,23 +161,10 @@ export function DebugPanel({
           <span>{surfaceMode}</span>
         </div>
         {cycleInfo && (
-          <>
-            <div className="debug-row">
-              <span>CIFP Cycle</span>
-              <span>{cycleInfo.cifpCycle || 'n/a'}</span>
-            </div>
-            <div className="debug-row">
-              <span>d-TPP Cycle</span>
-              <span>{cycleInfo.dtppCycle || 'n/a'}</span>
-            </div>
-            {cycleInfo.cifpCycle &&
-              cycleInfo.dtppCycle &&
-              cycleInfo.cifpCycle !== cycleInfo.dtppCycle && (
-                <div className="debug-error">
-                  Incompatible: CIFP and d-TPP from different AIRAC cycles
-                </div>
-              )}
-          </>
+          <div className="debug-row">
+            <span>Cycle</span>
+            <span>{cycleInfo.cycle || 'n/a'}</span>
+          </div>
         )}
       </div>
 
