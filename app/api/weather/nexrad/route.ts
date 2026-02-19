@@ -9,7 +9,7 @@ const DEFAULT_MAX_RANGE_NM = 120;
 const DEFAULT_UPSTREAM_BASE_URL =
   process.env.RUNTIME_UPSTREAM_BASE_URL ||
   process.env.MRMS_BINARY_UPSTREAM_BASE_URL ||
-  'https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1';
+  'https://approach-runtime.andyfang.app';
 
 function toFiniteNumber(value: string | null): number | null {
   if (!value) return null;
