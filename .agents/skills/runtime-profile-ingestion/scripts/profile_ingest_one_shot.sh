@@ -173,6 +173,7 @@ run_profile() {
 
   local -a cmd=(
     env
+    "RUST_LOG=info"
     "RUNTIME_STORAGE_DIR=$storage_dir"
     "RUNTIME_INGEST_PROFILE_TIMESTAMP=$timestamp"
     "RUNTIME_INGEST_PROFILE_REPEATS=$run_repeats"
@@ -212,7 +213,11 @@ fi
 echo "Running measured ingestion profile..."
 run_profile "$repeats" "$offline" "$log_file" "$((1 - quiet_runtime))"
 
-mapfile -t elapsed_values < <(rg -o 'elapsed=[0-9]+ms' "$log_file" | sed -E 's/elapsed=([0-9]+)ms/\1/')
+elapsed_values=()
+while IFS= read -r line; do
+  elapsed_values+=("$line")
+done < <(rg -o 'elapsed=[0-9]+ms' "$log_file" | sed -E 's/elapsed=([0-9]+)ms/\1/')
+
 if [[ "${#elapsed_values[@]}" -eq 0 ]]; then
   echo "No elapsed timings found in log: $log_file" >&2
   tail -n 40 "$log_file" >&2 || true

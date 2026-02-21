@@ -323,32 +323,6 @@ pub(super) fn timestamp_age_seconds(newer_timestamp: &str, older_timestamp: &str
     Some((newer - older).num_seconds().max(0))
 }
 
-pub(super) fn sample_aux_field(
-    field: &ParsedAuxField,
-    lat_deg: f64,
-    lon_deg360: f64,
-) -> Option<f32> {
-    if field.grid.lat_step_deg.abs() < f64::EPSILON || field.grid.lon_step_deg.abs() < f64::EPSILON
-    {
-        return None;
-    }
-
-    let row = ((lat_deg - field.grid.la1_deg) / field.grid.lat_step_deg).round() as i64;
-    let col = ((lon_deg360 - field.grid.lo1_deg360) / field.grid.lon_step_deg).round() as i64;
-    if row < 0 || col < 0 {
-        return None;
-    }
-
-    let row_u = row as u32;
-    let col_u = col as u32;
-    if row_u >= field.grid.ny || col_u >= field.grid.nx {
-        return None;
-    }
-
-    let index = row_u as usize * field.grid.nx as usize + col_u as usize;
-    field.values.get(index).copied()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

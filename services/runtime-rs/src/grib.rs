@@ -35,7 +35,7 @@ fn parse_grib_values(buffer: &[u8]) -> Result<(GridDef, Vec<f32>)> {
         bail!("MRMS payload does not start with GRIB bytes");
     }
 
-    let grib2 = grib::from_reader(Cursor::new(buffer.to_vec()))
+    let grib2 = grib::from_reader(Cursor::new(buffer))
         .map_err(|error| anyhow!("Failed to parse GRIB2 stream: {error}"))?;
 
     let mut submessages = grib2.iter();
@@ -51,7 +51,8 @@ fn parse_grib_values(buffer: &[u8]) -> Result<(GridDef, Vec<f32>)> {
     let decoded = decoder
         .dispatch()
         .map_err(|error| anyhow!("Failed to decode GRIB2 values: {error}"))?;
-    let values: Vec<f32> = decoded.collect();
+    let mut values = Vec::with_capacity(expected_count);
+    values.extend(decoded);
 
     if values.len() != expected_count {
         bail!(

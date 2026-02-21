@@ -22,7 +22,7 @@ use self::phase::{
 use self::sources::{
     build_level_key, fetch_aux_field_at_timestamp, fetch_level_aux_field_at_timestamp,
     fetch_mrms_key_bytes, find_latest_aux_timestamp_at_or_before,
-    find_latest_level_timestamp_at_or_before, parse_reflectivity_grib_with_limit, sample_aux_field,
+    find_latest_level_timestamp_at_or_before, parse_reflectivity_grib_with_limit,
     timestamp_age_seconds,
 };
 use crate::constants::{
@@ -638,36 +638,19 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         "RadarQualityIndex",
         timestamp,
     );
-    let precip_sampler = AuxFieldSampler::new(precip_field, precip_values);
-    let freezing_sampler = AuxFieldSampler::new(freezing_field, freezing_values);
-    let wet_bulb_sampler = AuxFieldSampler::new(wet_bulb_field, wet_bulb_values);
-    let surface_temp_sampler = AuxFieldSampler::new(surface_temp_field, surface_temp_values);
+    let precip_sampler = AuxFieldSampler::new(precip_field, precip_values, &base_grid);
+    let freezing_sampler = AuxFieldSampler::new(freezing_field, freezing_values, &base_grid);
+    let wet_bulb_sampler = AuxFieldSampler::new(wet_bulb_field, wet_bulb_values, &base_grid);
+    let surface_temp_sampler =
+        AuxFieldSampler::new(surface_temp_field, surface_temp_values, &base_grid);
     let bright_band_top_sampler =
-        AuxFieldSampler::new(bright_band_top_field, bright_band_top_values);
-    let bright_band_bottom_sampler =
-        AuxFieldSampler::new(bright_band_bottom_field, bright_band_bottom_values);
-    let rqi_sampler = AuxFieldSampler::new(rqi_field, rqi_values);
-    let needs_geo_sampling = precip_sampler.needs_geo_sampling()
-        || freezing_sampler.needs_geo_sampling()
-        || wet_bulb_sampler.needs_geo_sampling()
-        || surface_temp_sampler.needs_geo_sampling()
-        || bright_band_top_sampler.needs_geo_sampling()
-        || bright_band_bottom_sampler.needs_geo_sampling()
-        || rqi_sampler.needs_geo_sampling();
-    let row_lats: Vec<f64> = if needs_geo_sampling {
-        (0..base_grid.ny)
-            .map(|row| base_grid.la1_deg + row as f64 * base_grid.lat_step_deg)
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let col_lons360: Vec<f64> = if needs_geo_sampling {
-        (0..base_grid.nx)
-            .map(|col| to_lon360(base_grid.lo1_deg360 + col as f64 * base_grid.lon_step_deg))
-            .collect()
-    } else {
-        Vec::new()
-    };
+        AuxFieldSampler::new(bright_band_top_field, bright_band_top_values, &base_grid);
+    let bright_band_bottom_sampler = AuxFieldSampler::new(
+        bright_band_bottom_field,
+        bright_band_bottom_values,
+        &base_grid,
+    );
+    let rqi_sampler = AuxFieldSampler::new(rqi_field, rqi_values, &base_grid);
 
     let mut dual_missing_voxel_count: u64 = 0;
     let mut thermo_signal_voxel_count: u64 = 0;
@@ -704,11 +687,6 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         );
 
         for row in 0..parsed.grid.ny as usize {
-            let lat_deg = if needs_geo_sampling {
-                row_lats[row]
-            } else {
-                0.0
-            };
             let row_offset = row * parsed.grid.nx as usize;
 
             for col in 0..parsed.grid.nx as usize {
@@ -718,11 +696,6 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                     continue;
                 }
 
-                let lon_deg360 = if needs_geo_sampling {
-                    col_lons360[col]
-                } else {
-                    0.0
-                };
                 let dual_evidence = resolve_dual_pol_evidence(
                     zdr_values.and_then(|values| values.get(value_idx).copied()),
                     rhohv_values.and_then(|values| values.get(value_idx).copied()),
@@ -731,16 +704,14 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
                     dual_missing_voxel_count += 1;
                 }
 
-                let precip_value = precip_sampler.sample(value_idx, lat_deg, lon_deg360);
-                let freezing_value = freezing_sampler.sample(value_idx, lat_deg, lon_deg360);
-                let wet_bulb_value = wet_bulb_sampler.sample(value_idx, lat_deg, lon_deg360);
-                let surface_temp_value =
-                    surface_temp_sampler.sample(value_idx, lat_deg, lon_deg360);
-                let bright_band_top_value =
-                    bright_band_top_sampler.sample(value_idx, lat_deg, lon_deg360);
+                let precip_value = precip_sampler.sample(value_idx, row, col);
+                let freezing_value = freezing_sampler.sample(value_idx, row, col);
+                let wet_bulb_value = wet_bulb_sampler.sample(value_idx, row, col);
+                let surface_temp_value = surface_temp_sampler.sample(value_idx, row, col);
+                let bright_band_top_value = bright_band_top_sampler.sample(value_idx, row, col);
                 let bright_band_bottom_value =
-                    bright_band_bottom_sampler.sample(value_idx, lat_deg, lon_deg360);
-                let rqi_value = rqi_sampler.sample(value_idx, lat_deg, lon_deg360);
+                    bright_band_bottom_sampler.sample(value_idx, row, col);
+                let rqi_value = rqi_sampler.sample(value_idx, row, col);
                 let thermo_evidence = resolve_thermo_phase(
                     voxel_mid_feet,
                     precip_value,
@@ -939,32 +910,95 @@ struct EchoTopBundle {
     top60: Option<(String, ParsedAuxField)>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct AuxFieldSampler<'a> {
-    field: Option<&'a ParsedAuxField>,
     direct_values: Option<&'a [f32]>,
+    sampled_lookup: Option<AuxFieldLookup<'a>>,
 }
 
 impl<'a> AuxFieldSampler<'a> {
-    fn new(field: Option<&'a ParsedAuxField>, direct_values: Option<&'a [f32]>) -> Self {
+    fn new(
+        field: Option<&'a ParsedAuxField>,
+        direct_values: Option<&'a [f32]>,
+        base_grid: &GridDef,
+    ) -> Self {
         Self {
-            field,
             direct_values,
+            sampled_lookup: if direct_values.is_none() {
+                field.and_then(|field| AuxFieldLookup::build(field, base_grid))
+            } else {
+                None
+            },
         }
     }
 
     #[inline]
-    fn needs_geo_sampling(&self) -> bool {
-        self.direct_values.is_none() && self.field.is_some()
-    }
-
-    #[inline]
-    fn sample(&self, value_idx: usize, lat_deg: f64, lon_deg360: f64) -> Option<f32> {
+    fn sample(&self, value_idx: usize, row: usize, col: usize) -> Option<f32> {
         if let Some(values) = self.direct_values {
             return values.get(value_idx).copied();
         }
-        self.field
-            .and_then(|field| sample_aux_field(field, lat_deg, lon_deg360))
+        self.sampled_lookup
+            .as_ref()
+            .and_then(|lookup| lookup.sample(row, col))
+    }
+}
+
+#[derive(Clone, Debug)]
+struct AuxFieldLookup<'a> {
+    values: &'a [f32],
+    nx: u32,
+    row_map: Vec<Option<u32>>,
+    col_map: Vec<Option<u32>>,
+}
+
+impl<'a> AuxFieldLookup<'a> {
+    fn build(field: &'a ParsedAuxField, base_grid: &GridDef) -> Option<Self> {
+        if field.grid.lat_step_deg.abs() < f64::EPSILON
+            || field.grid.lon_step_deg.abs() < f64::EPSILON
+        {
+            return None;
+        }
+
+        let row_map = (0..base_grid.ny)
+            .map(|base_row| {
+                let lat_deg = base_grid.la1_deg + base_row as f64 * base_grid.lat_step_deg;
+                let row = ((lat_deg - field.grid.la1_deg) / field.grid.lat_step_deg).round() as i64;
+                if row < 0 || row >= field.grid.ny as i64 {
+                    None
+                } else {
+                    Some(row as u32)
+                }
+            })
+            .collect();
+
+        let col_map = (0..base_grid.nx)
+            .map(|base_col| {
+                let lon_deg360 =
+                    to_lon360(base_grid.lo1_deg360 + base_col as f64 * base_grid.lon_step_deg);
+                let col =
+                    ((lon_deg360 - field.grid.lo1_deg360) / field.grid.lon_step_deg).round() as i64;
+                if col < 0 || col >= field.grid.nx as i64 {
+                    None
+                } else {
+                    Some(col as u32)
+                }
+            })
+            .collect();
+
+        Some(Self {
+            values: field.values.as_slice(),
+            nx: field.grid.nx,
+            row_map,
+            col_map,
+        })
+    }
+
+    #[inline]
+    fn sample(&self, row: usize, col: usize) -> Option<f32> {
+        let sample_row = self.row_map.get(row).and_then(|value| *value)?;
+        let sample_col = self.col_map.get(col).and_then(|value| *value)?;
+        let index = sample_row as usize * self.nx as usize + sample_col as usize;
+        self.values.get(index).copied()
     }
 }
 
@@ -1059,7 +1093,7 @@ async fn fetch_dual_pol_bundle(
         }
     }
 
-    let Some(selected_timestamp_value) = selected_timestamp.clone() else {
+    let Some(selected_timestamp_value) = selected_timestamp else {
         return DualPolBundle {
             selected_timestamp: None,
             age_seconds: None,
@@ -1082,14 +1116,10 @@ async fn fetch_dual_pol_bundle(
     };
 
     let mut fields_by_level = vec![None; LEVEL_TAGS.len()];
+    fields_by_level[0] = base_level_field.take();
     let mut futures = FuturesUnordered::new();
 
-    for (level_idx, level_tag) in LEVEL_TAGS.iter().enumerate() {
-        if level_idx == 0 {
-            fields_by_level[level_idx] = base_level_field.clone();
-            continue;
-        }
-
+    for (level_idx, level_tag) in LEVEL_TAGS.iter().enumerate().skip(1) {
         let state = state.clone();
         let level_tag = level_tag.to_string();
         let product_prefix = product_prefix.to_string();
@@ -1120,9 +1150,10 @@ async fn fetch_dual_pol_bundle(
         fields_by_level[level_idx] = field;
     }
 
+    let age_seconds = timestamp_age_seconds(target_timestamp, &selected_timestamp_value);
     DualPolBundle {
-        selected_timestamp: Some(selected_timestamp_value.clone()),
-        age_seconds: timestamp_age_seconds(target_timestamp, &selected_timestamp_value),
+        selected_timestamp: Some(selected_timestamp_value),
+        age_seconds,
         fields_by_level,
     }
 }

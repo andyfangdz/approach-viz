@@ -1,6 +1,5 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use reqwest::Client;
 
 use crate::constants::{
@@ -74,12 +73,22 @@ async fn list_keys_for_prefix(http: &Client, prefix: &str) -> Result<Vec<String>
 }
 
 fn parse_xml_tag_values(xml: &str, tag_name: &str) -> Vec<String> {
-    let regex = Regex::new(&format!(r"<{0}>([^<]+)</{0}>", regex::escape(tag_name)))
-        .unwrap_or_else(|_| Regex::new(r"$^").unwrap());
-    regex
-        .captures_iter(xml)
-        .filter_map(|captures| captures.get(1).map(|value| value.as_str().to_string()))
-        .collect()
+    let start_tag = format!("<{tag_name}>");
+    let end_tag = format!("</{tag_name}>");
+    let mut values = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(start_idx) = xml[cursor..].find(&start_tag) {
+        let value_start = cursor + start_idx + start_tag.len();
+        let Some(end_idx_rel) = xml[value_start..].find(&end_tag) else {
+            break;
+        };
+        let value_end = value_start + end_idx_rel;
+        values.push(xml[value_start..value_end].to_string());
+        cursor = value_end + end_tag.len();
+    }
+
+    values
 }
 
 fn parse_xml_tag_value(xml: &str, tag_name: &str) -> Option<String> {
@@ -91,8 +100,19 @@ fn is_mrms_grib2_key(key: &str) -> bool {
 }
 
 pub fn extract_timestamp_from_key(key: &str) -> Option<String> {
-    let regex = Regex::new(r"_(\d{8}-\d{6})\.grib2\.gz$").ok()?;
-    regex
-        .captures(key)
-        .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()))
+    const SUFFIX: &str = ".grib2.gz";
+    let stem = key.strip_suffix(SUFFIX)?;
+    let underscore_idx = stem.rfind('_')?;
+    let timestamp = &stem[underscore_idx + 1..];
+    if timestamp.len() != 15 {
+        return None;
+    }
+    let bytes = timestamp.as_bytes();
+    if !bytes[..8].iter().all(|ch| ch.is_ascii_digit())
+        || bytes[8] != b'-'
+        || !bytes[9..].iter().all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(timestamp.to_string())
 }

@@ -103,10 +103,12 @@ impl Config {
             "MRMS_LOCAL_DATA_OFFLINE",
             false,
         );
-        let default_parse_concurrency = std::thread::available_parallelism()
+        let available_parse_concurrency = std::thread::available_parallelism()
             .map(|parallelism| parallelism.get())
             .unwrap_or(8)
             .clamp(1, u16::MAX as usize) as u16;
+        // Ingestion profiling consistently shows diminishing returns above 8 parser workers.
+        let default_parse_concurrency = available_parse_concurrency.min(8);
         let ingest_parse_concurrency = env_u16_with_fallback(
             "RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY",
             "MRMS_INGEST_PARSE_CONCURRENCY",
