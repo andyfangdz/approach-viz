@@ -70,6 +70,7 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 ## Instanced Rendering
 
 - All voxels render through one `InstancedMesh` (shared box geometry/material) with per-instance transforms/colors and per-instance dBZ-driven alpha (via `InstancedBufferAttribute` + `onBeforeCompile` shader patch).
+- Volume uses a dual-pass look (base + glow), but voxel transforms/colors are populated once on the base mesh and the glow pass shares those populated instance buffers to avoid duplicate per-voxel writes.
 - Draw calls remain bounded even during dense precipitation events.
-- Client rendering does not apply client-side voxel decimation; instanced-mesh capacity scales to payload size so every server record is rendered.
+- Client rendering does not apply client-side voxel decimation; instanced-mesh capacity scales in grow-only buckets so every server record is rendered while avoiding frequent geometry/attribute reallocations when voxel counts fluctuate.
 - Dataset-derived voxel dimensions (X/Y footprint from grid spacing + per-level altitude thickness) ensure visual cell size tracks source resolution.

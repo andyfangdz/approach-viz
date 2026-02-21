@@ -43,6 +43,26 @@ import {
 } from './nexrad/nexrad-render';
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
 
+const MIN_INSTANCE_CAPACITY = 1;
+
+function nextInstanceCapacity(currentCapacity: number, requiredCount: number): number {
+  const safeRequiredCount = Math.max(MIN_INSTANCE_CAPACITY, requiredCount);
+  if (safeRequiredCount <= currentCapacity) return currentCapacity;
+  let nextCapacity = Math.max(MIN_INSTANCE_CAPACITY, currentCapacity);
+  while (nextCapacity < safeRequiredCount) {
+    nextCapacity *= 2;
+  }
+  return nextCapacity;
+}
+
+function useGrowingInstanceCapacity(requiredCount: number): number {
+  const capacityRef = useRef(Math.max(MIN_INSTANCE_CAPACITY, requiredCount));
+  if (requiredCount > capacityRef.current) {
+    capacityRef.current = nextInstanceCapacity(capacityRef.current, requiredCount);
+  }
+  return capacityRef.current;
+}
+
 export function NexradVolumeOverlay({
   refLat,
   refLon,
@@ -88,8 +108,11 @@ export function NexradVolumeOverlay({
   const normalizedCrossSectionHeading = ((Math.round(crossSectionHeadingDeg) % 360) + 360) % 360;
   const normalizedCrossSectionRange = Math.max(30, Math.min(140, Math.round(crossSectionRangeNm)));
   const headingRad = (normalizedCrossSectionHeading * Math.PI) / 180;
-  const sliceAxis = { x: Math.sin(headingRad), z: -Math.cos(headingRad) };
-  const slicePerpAxis = { x: -sliceAxis.z, z: sliceAxis.x };
+  const sliceAxis = useMemo(
+    () => ({ x: Math.sin(headingRad), z: -Math.cos(headingRad) }),
+    [headingRad]
+  );
+  const slicePerpAxis = useMemo(() => ({ x: -sliceAxis.z, z: sliceAxis.x }), [sliceAxis]);
   const crossSectionHalfWidthNm = THREE.MathUtils.lerp(
     MIN_CROSS_SECTION_HALF_WIDTH_NM,
     MAX_CROSS_SECTION_HALF_WIDTH_NM,
@@ -216,55 +239,52 @@ export function NexradVolumeOverlay({
     }
     return next;
   }, [enabled, showEchoTops, echoTopPayload, applyEarthCurvatureCompensation, refLat]);
-  const echoTop18Cells = useMemo<EchoTopSurfaceCell[]>(
-    () =>
-      renderEchoTopCells
-        .filter((cell) => cell.top18Feet > 0)
-        .map((cell) => ({
+  const echoTopSurfaces = useMemo(() => {
+    const echoTop18Cells: EchoTopSurfaceCell[] = [];
+    const echoTop30Cells: EchoTopSurfaceCell[] = [];
+    const echoTop50Cells: EchoTopSurfaceCell[] = [];
+    for (const cell of renderEchoTopCells) {
+      if (cell.top18Feet > 0) {
+        echoTop18Cells.push({
           x: cell.x,
           z: cell.z,
           yBase: feetToNm(cell.top18Feet),
           footprintXNm: cell.footprintXNm,
           footprintYNm: cell.footprintYNm
-        })),
-    [renderEchoTopCells]
-  );
-  const echoTop30Cells = useMemo<EchoTopSurfaceCell[]>(
-    () =>
-      renderEchoTopCells
-        .filter((cell) => cell.top30Feet > 0)
-        .map((cell) => ({
+        });
+      }
+      if (cell.top30Feet > 0) {
+        echoTop30Cells.push({
           x: cell.x,
           z: cell.z,
           yBase: feetToNm(cell.top30Feet),
           footprintXNm: cell.footprintXNm,
           footprintYNm: cell.footprintYNm
-        })),
-    [renderEchoTopCells]
-  );
-  const echoTop50Cells = useMemo<EchoTopSurfaceCell[]>(
-    () =>
-      renderEchoTopCells
-        .filter((cell) => cell.top50Feet > 0)
-        .map((cell) => ({
+        });
+      }
+      if (cell.top50Feet > 0) {
+        echoTop50Cells.push({
           x: cell.x,
           z: cell.z,
           yBase: feetToNm(cell.top50Feet),
           footprintXNm: cell.footprintXNm,
           footprintYNm: cell.footprintYNm
-        })),
-    [renderEchoTopCells]
-  );
+        });
+      }
+    }
+    return { echoTop18Cells, echoTop30Cells, echoTop50Cells };
+  }, [renderEchoTopCells]);
+  const { echoTop18Cells, echoTop30Cells, echoTop50Cells } = echoTopSurfaces;
 
-  const instanceCapacity = Math.max(renderVoxels.length, 1);
+  const instanceCapacity = useGrowingInstanceCapacity(renderVoxels.length);
   const instanceAlphaArray = useMemo(() => {
     const array = new Float32Array(instanceCapacity);
     array.fill(1);
     return array;
   }, [instanceCapacity]);
-  const echo18Capacity = Math.max(echoTop18Cells.length, 1);
-  const echo30Capacity = Math.max(echoTop30Cells.length, 1);
-  const echo50Capacity = Math.max(echoTop50Cells.length, 1);
+  const echo18Capacity = useGrowingInstanceCapacity(echoTop18Cells.length);
+  const echo30Capacity = useGrowingInstanceCapacity(echoTop30Cells.length);
+  const echo50Capacity = useGrowingInstanceCapacity(echoTop50Cells.length);
 
   const voxelGeometry = useMemo(() => {
     const nextGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -558,7 +578,7 @@ export function NexradVolumeOverlay({
     pollNowRef.current?.();
   }, [enabled, showEchoTops, showVolume, showCrossSection]);
 
-  const phaseCounts = (() => {
+  const phaseCounts = useMemo(() => {
     const counts = { rain: 0, mixed: 0, snow: 0 };
     const voxels = payload?.voxels ?? [];
     for (const voxel of voxels) {
@@ -572,7 +592,7 @@ export function NexradVolumeOverlay({
       }
     }
     return counts;
-  })();
+  }, [payload?.voxels]);
 
   const debugState: NexradDebugState = {
     enabled,
@@ -673,8 +693,24 @@ export function NexradVolumeOverlay({
       (alphaAttribute as THREE.InstancedBufferAttribute).needsUpdate = true;
     }
 
-    applyVoxelInstances(baseMeshRef.current, renderVoxels, meshDummy, colorScratch);
-    applyVoxelInstances(glowMeshRef.current, renderVoxels, meshDummy, colorScratch);
+    const baseMesh = baseMeshRef.current;
+    applyVoxelInstances(baseMesh, renderVoxels, meshDummy, colorScratch);
+    const glowMesh = glowMeshRef.current;
+    if (baseMesh && glowMesh) {
+      // Share the populated instance buffers so the glow pass avoids a second
+      // full per-voxel transform/color write on every update.
+      if (glowMesh.instanceMatrix !== baseMesh.instanceMatrix) {
+        glowMesh.instanceMatrix = baseMesh.instanceMatrix;
+      }
+      if (baseMesh.instanceColor && glowMesh.instanceColor !== baseMesh.instanceColor) {
+        glowMesh.instanceColor = baseMesh.instanceColor;
+      }
+      glowMesh.count = baseMesh.count;
+      glowMesh.instanceMatrix.needsUpdate = true;
+      if (glowMesh.instanceColor) {
+        glowMesh.instanceColor.needsUpdate = true;
+      }
+    }
     applyConstantColorInstances(echo18MeshRef.current, echoTop18Cells, meshDummy);
     applyConstantColorInstances(echo30MeshRef.current, echoTop30Cells, meshDummy);
     applyConstantColorInstances(echo50MeshRef.current, echoTop50Cells, meshDummy);

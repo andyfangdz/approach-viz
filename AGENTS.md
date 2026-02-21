@@ -74,6 +74,7 @@ Key behaviors:
 
 - Airspace sectors with surface floors clamp to airport elevation to prevent underground volumes at high-elevation airports.
 - MRMS volume uses phase-aware reflectivity coloring (rain/mixed/snow) with two selectable phase detection modes (thermodynamic per-altitude or surface precip type for entire column), declutter modes, echo-top caps (`18/30/50/60 dBZ`), altitude guides, and vertical cross-sections.
+- MRMS base/glow volume rendering shares populated instanced transforms/colors between passes and uses grow-only instanced capacity buckets to reduce per-poll frontend churn when voxel counts fluctuate.
 - ProbSevere storm cells render as discrete in-range polygon footprints with optional top-height caps/labels from `REF20`/`REF10`/`EchoTop_50` fallback (nullable when unavailable), and motion-direction vectors from `MOTION_EAST`/`MOTION_SOUTH` anchored at polygon-derived centroids.
 - Final approach path below MDA/DA renders as dashed segments instead of a solid tube, visually distinguishing the below-minimums portion; a waypoint-style marker labeled "MDA" or "DA" (with altitude) marks the crossing point.
 - Missed-approach geometry includes curved MAP-to-missed transitions and optional published FAA climb-gradient enforcement.

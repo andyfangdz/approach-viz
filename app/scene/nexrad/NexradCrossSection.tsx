@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { CrossSectionData, RenderVoxel } from './nexrad-types';
@@ -101,7 +101,7 @@ export function NexradCrossSection({
   const crossSectionDataRef = useRef(crossSectionData);
   crossSectionDataRef.current = crossSectionData;
 
-  const paintSliceCanvas = (canvas: HTMLCanvasElement) => {
+  const paintSliceCanvas = useCallback((canvas: HTMLCanvasElement) => {
     const context = canvas.getContext('2d');
     if (!context) return;
     const data = crossSectionDataRef.current;
@@ -157,12 +157,15 @@ export function NexradCrossSection({
     if (started) {
       context.stroke();
     }
-  };
+  }, []);
 
-  const sliceCanvasCallbackRef = (node: HTMLCanvasElement | null) => {
-    sliceCanvasRef.current = node;
-    if (node) paintSliceCanvas(node);
-  };
+  const sliceCanvasCallbackRef = useCallback(
+    (node: HTMLCanvasElement | null) => {
+      sliceCanvasRef.current = node;
+      if (node) paintSliceCanvas(node);
+    },
+    [paintSliceCanvas]
+  );
 
   useEffect(() => {
     const canvas = sliceCanvasRef.current;
@@ -170,7 +173,7 @@ export function NexradCrossSection({
     paintSliceCanvas(canvas);
   }, [crossSectionData, paintSliceCanvas]);
 
-  const crossSectionAltitudeTicks = (() => {
+  const crossSectionAltitudeTicks = useMemo(() => {
     const maxFeet = crossSectionData?.maxTopFeet ?? 0;
     if (!Number.isFinite(maxFeet) || maxFeet <= 0) return [];
     const stepFeet = maxFeet <= 15_000 ? 2_500 : maxFeet <= 45_000 ? 5_000 : 10_000;
@@ -189,7 +192,7 @@ export function NexradCrossSection({
         label: altitudeTickLabel(feet),
         topPercent: (1 - feet / maxFeet) * 100
       }));
-  })();
+  }, [crossSectionData?.maxTopFeet]);
 
   if (!crossSectionData) {
     return null;
