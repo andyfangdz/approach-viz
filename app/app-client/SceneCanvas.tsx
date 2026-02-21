@@ -57,9 +57,7 @@ function CameraStabilityGuard({
 
     const target = controls.target;
     const position = camera.position;
-    if (
-      !hasFiniteComponents([position.x, position.y, position.z, target.x, target.y, target.z])
-    ) {
+    if (!hasFiniteComponents([position.x, position.y, position.z, target.x, target.y, target.z])) {
       camera.position.set(...CAMERA_POSITION);
       camera.up.set(0, 1, 0);
       controls.setTarget?.(...ORBIT_TARGET);
