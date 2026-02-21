@@ -77,7 +77,7 @@ Key behaviors:
 - ProbSevere storm cells render as discrete in-range polygon footprints with optional top-height caps/labels from `REF20`/`REF10`/`EchoTop_50` fallback (nullable when unavailable), and motion-direction vectors from `MOTION_EAST`/`MOTION_SOUTH` anchored at polygon-derived centroids.
 - Final approach path below MDA/DA renders as dashed segments instead of a solid tube, visually distinguishing the below-minimums portion; a waypoint-style marker labeled "MDA" or "DA" (with altitude) marks the crossing point.
 - Missed-approach geometry includes curved MAP-to-missed transitions and optional published FAA climb-gradient enforcement.
-- Camera interaction controls are selectable between `OrbitControls`, `ArcballControls`, and `MapControls`; recenter resets camera position plus the active control target.
+- Camera interaction controls are selectable between `OrbitControls`, `ArcballControls`, and `MapControls`; controls apply defensive zoom/polar bounds, and recenter resets camera position/target while remounting the active control instance to recover from transient stuck-control states.
 
 - [`docs/rendering-coordinate-system.md`](docs/rendering-coordinate-system.md) — local NM frame, vertical scale, magnetic-to-true conversion, ADS-B placement
 - [`docs/rendering-surface-modes.md`](docs/rendering-surface-modes.md) — Terrain, FAA Plate, 3D Plate, and Satellite modes

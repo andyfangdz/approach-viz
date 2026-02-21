@@ -14,5 +14,6 @@
 - Airspace sectors with source floors at/near surface (`<= 0 ft MSL`, including parsed `SFC`) clamp their rendered floor to the selected airport elevation before extrusion so high-elevation airports do not show underground airspace volumes.
 - Airspace sectors with source floors at/near sea level (<= `100 ft MSL`) omit their bottom caps and bottom perimeter edge segments to avoid coplanar shimmering against sea-level-aligned surface meshes (plate and clamped satellite/3D tiles).
 - Camera interaction mode is user-selectable from the options panel (`OrbitControls`, `ArcballControls`, `MapControls`) and is applied by mounting the corresponding Drei control component.
-- A bottom-right floating `Recenter View` control resets camera position and the active control target to airport-centered defaults.
+- Camera controls enforce defensive zoom bounds (non-zero minimum and capped maximum camera-target distance) and safe polar-angle limits to avoid degenerate orbit states under aggressive wheel zoom input.
+- A bottom-right floating `Recenter View` control resets camera position/target, remounts the active controls instance, and refreshes control saved state so users can recover from a transient stuck-control condition.
 - On mobile (`<=900px`), floating legend/options/recenter controls use an elevated safe-area-aware bottom offset (`env(safe-area-inset-bottom) + 68px`) to avoid iOS browser chrome overlap.

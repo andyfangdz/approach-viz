@@ -1,5 +1,5 @@
 import { Suspense, memo, useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { ArcballControls, Environment, Html, MapControls, OrbitControls } from '@react-three/drei';
 import type {
   ArcballControls as ArcballControlsImpl,
@@ -25,9 +25,86 @@ import {
 import type { SceneCanvasProps } from './types';
 
 interface RecenterControlsApi {
-  target: { set: (x: number, y: number, z: number) => void };
+  target: { x: number; y: number; z: number; set: (x: number, y: number, z: number) => void };
   update: () => void;
   setTarget?: (x: number, y: number, z: number) => void;
+  reset?: () => void;
+  saveState?: () => void;
+}
+
+const MIN_CAMERA_DISTANCE = 0.35;
+const MAX_CAMERA_DISTANCE = 250;
+const ORBIT_MIN_POLAR_ANGLE = 0.01;
+const ORBIT_MAX_POLAR_ANGLE = Math.PI - 0.01;
+const MAP_MIN_POLAR_ANGLE = 0.01;
+const MAP_MAX_POLAR_ANGLE = Math.PI / 2 - 0.01;
+
+function hasFiniteComponents(values: number[]): boolean {
+  return values.every((value) => Number.isFinite(value));
+}
+
+function CameraStabilityGuard({
+  controlsRef
+}: {
+  controlsRef: RefObject<RecenterControlsApi | null>;
+}) {
+  const { camera } = useThree();
+  const fallbackDirectionRef = useRef<[number, number, number]>([1, 0.35, 1]);
+
+  useFrame(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+
+    const target = controls.target;
+    const position = camera.position;
+    if (
+      !hasFiniteComponents([position.x, position.y, position.z, target.x, target.y, target.z])
+    ) {
+      camera.position.set(...CAMERA_POSITION);
+      camera.up.set(0, 1, 0);
+      controls.setTarget?.(...ORBIT_TARGET);
+      if (typeof controls.setTarget !== 'function') {
+        controls.target.set(...ORBIT_TARGET);
+      }
+      controls.update();
+      return;
+    }
+
+    const dx = position.x - target.x;
+    const dy = position.y - target.y;
+    const dz = position.z - target.z;
+    let distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq < MIN_CAMERA_DISTANCE * MIN_CAMERA_DISTANCE) {
+      let dirX = dx;
+      let dirY = dy;
+      let dirZ = dz;
+      let dirLenSq = distanceSq;
+      if (dirLenSq < 1e-9) {
+        [dirX, dirY, dirZ] = fallbackDirectionRef.current;
+        dirLenSq = dirX * dirX + dirY * dirY + dirZ * dirZ;
+      }
+      const invLen = 1 / Math.sqrt(dirLenSq);
+      position.set(
+        target.x + dirX * invLen * MIN_CAMERA_DISTANCE,
+        target.y + dirY * invLen * MIN_CAMERA_DISTANCE,
+        target.z + dirZ * invLen * MIN_CAMERA_DISTANCE
+      );
+      controls.update();
+      distanceSq = MIN_CAMERA_DISTANCE * MIN_CAMERA_DISTANCE;
+    }
+
+    if (distanceSq >= 1e-9) {
+      fallbackDirectionRef.current = [dx, dy, dz];
+    }
+
+    const up = camera.up;
+    if (!hasFiniteComponents([up.x, up.y, up.z]) || up.lengthSq() < 1e-9) {
+      up.set(0, 1, 0);
+      controls.update();
+    }
+  });
+
+  return null;
 }
 
 function LoadingFallback() {
@@ -50,15 +127,18 @@ function RecenterCamera({
   useEffect(() => {
     if (recenterNonce <= 0) return;
     camera.position.set(...CAMERA_POSITION);
+    camera.up.set(0, 1, 0);
     camera.lookAt(...ORBIT_TARGET);
     const controls = controlsRef.current;
     if (controls) {
+      controls.reset?.();
       if (typeof controls.setTarget === 'function') {
         controls.setTarget(...ORBIT_TARGET);
       } else {
         controls.target.set(...ORBIT_TARGET);
       }
       controls.update();
+      controls.saveState?.();
     }
   }, [camera, controlsRef, recenterNonce]);
 
@@ -145,6 +225,7 @@ export const SceneCanvas = memo(function SceneCanvas({
 
       <Suspense fallback={<LoadingFallback />}>
         <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />
+        <CameraStabilityGuard controlsRef={controlsRef} />
         <ambientLight intensity={0.4} />
         <directionalLight position={DIRECTIONAL_LIGHT_POSITION} intensity={0.8} />
         <Environment preset="night" />
@@ -277,22 +358,38 @@ export const SceneCanvas = memo(function SceneCanvas({
 
         {cameraControlMode === 'orbit' && (
           <OrbitControls
+            key={`orbit-${recenterNonce}`}
             ref={handleOrbitControlsRef}
             enableDamping
             dampingFactor={0.05}
+            minDistance={MIN_CAMERA_DISTANCE}
+            maxDistance={MAX_CAMERA_DISTANCE}
+            minPolarAngle={ORBIT_MIN_POLAR_ANGLE}
+            maxPolarAngle={ORBIT_MAX_POLAR_ANGLE}
             target={ORBIT_TARGET}
           />
         )}
         {cameraControlMode === 'map' && (
           <MapControls
+            key={`map-${recenterNonce}`}
             ref={handleMapControlsRef}
             enableDamping
             dampingFactor={0.05}
+            minDistance={MIN_CAMERA_DISTANCE}
+            maxDistance={MAX_CAMERA_DISTANCE}
+            minPolarAngle={MAP_MIN_POLAR_ANGLE}
+            maxPolarAngle={MAP_MAX_POLAR_ANGLE}
             target={ORBIT_TARGET}
           />
         )}
         {cameraControlMode === 'arcball' && (
-          <ArcballControls ref={handleArcballControlsRef} target={ORBIT_TARGET} />
+          <ArcballControls
+            key={`arcball-${recenterNonce}`}
+            ref={handleArcballControlsRef}
+            minDistance={MIN_CAMERA_DISTANCE}
+            maxDistance={MAX_CAMERA_DISTANCE}
+            target={ORBIT_TARGET}
+          />
         )}
       </Suspense>
     </Canvas>
