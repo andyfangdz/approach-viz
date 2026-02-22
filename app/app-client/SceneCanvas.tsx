@@ -360,9 +360,7 @@ export const SceneCanvas = memo(function SceneCanvas({
           runwayColor={COLORS.runway}
           airportLabelColor={COLORS.runway}
           showRunwayLabels
-          applyEarthCurvatureCompensation={
-            surfaceMode === 'satellite' || surfaceMode === '3dplate'
-          }
+          applyEarthCurvatureCompensation={surfaceMode === 'satellite' || surfaceMode === '3dplate'}
         />
 
         {sceneData.nearbyAirports.map(({ airport: nearbyAirport, runways: nearbyRunways }) => (

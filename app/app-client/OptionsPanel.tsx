@@ -184,9 +184,7 @@ export function OptionsPanel({
       <label className="options-toggle-row">
         <span className="options-toggle-copy">
           <span className="options-toggle-title">Retina Rendering (2x)</span>
-          <span className="options-toggle-note">
-            Higher quality, may reduce performance
-          </span>
+          <span className="options-toggle-note">Higher quality, may reduce performance</span>
         </span>
         <input
           type="checkbox"
