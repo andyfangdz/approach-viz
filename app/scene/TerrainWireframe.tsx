@@ -1,3 +1,4 @@
+import { useThree } from '@react-three/fiber';
 import { memo, useEffect, useState } from 'react';
 import * as THREE from 'three';
 
@@ -138,6 +139,7 @@ export const TerrainWireframe = memo(function TerrainWireframe({
   radiusNm = TERRAIN_RADIUS_NM,
   verticalScale
 }: TerrainWireframeProps) {
+  const dpr = useThree((s) => s.viewport.dpr);
   const [terrainGeometry, setTerrainGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [wireGeometry, setWireGeometry] = useState<THREE.WireframeGeometry | null>(null);
 
@@ -276,7 +278,7 @@ export const TerrainWireframe = memo(function TerrainWireframe({
         />
       </mesh>
       <lineSegments geometry={wireGeometry} position={[0, -0.005, 0]} scale={[1, verticalScale, 1]}>
-        <lineBasicMaterial color="#4ea0db" transparent opacity={0.58} />
+        <lineBasicMaterial color="#4ea0db" transparent opacity={0.58} linewidth={Math.round(dpr)} />
       </lineSegments>
     </group>
   );

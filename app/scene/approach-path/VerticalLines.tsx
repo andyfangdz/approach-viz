@@ -1,8 +1,10 @@
+import { useThree } from '@react-three/fiber';
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { VerticalLineData } from './types';
 
 export function VerticalLines({ lines, color }: { lines: VerticalLineData[]; color: string }) {
+  const dpr = useThree((s) => s.viewport.dpr);
   const geometry = useMemo(() => {
     const positions = new Float32Array(lines.length * 2 * 3);
     for (let i = 0; i < lines.length; i += 1) {
@@ -30,7 +32,7 @@ export function VerticalLines({ lines, color }: { lines: VerticalLineData[]; col
   if (lines.length === 0) return null;
   return (
     <lineSegments geometry={geometry}>
-      <lineBasicMaterial color={color} transparent opacity={0.2} />
+      <lineBasicMaterial color={color} transparent opacity={0.2} linewidth={Math.round(dpr)} />
     </lineSegments>
   );
 }

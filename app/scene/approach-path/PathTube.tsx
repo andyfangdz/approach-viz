@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Html, Line } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { buildPathGeometryWithWorker } from './approach-worker-client';
@@ -88,6 +89,7 @@ export function PathTube({
   dashedBelowAltitudeFeet?: number;
   dashedBelowLabel?: string;
 }) {
+  const dpr = useThree((s) => s.viewport.dpr);
   const [points, setPoints] = useState<THREE.Vector3[]>([]);
   const [verticalLines, setVerticalLines] = useState<{ x: number; y: number; z: number }[]>([]);
   const [turnConstraintLabels, setTurnConstraintLabels] = useState<
@@ -199,7 +201,7 @@ export function PathTube({
         <Line
           points={dashedLinePoints}
           color={color}
-          lineWidth={3}
+          lineWidth={3 * dpr}
           dashed
           dashSize={0.15}
           gapSize={0.1}

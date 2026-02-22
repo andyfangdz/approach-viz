@@ -3,6 +3,7 @@
  * Renders translucent Class B/C/D airspace boundaries
  */
 
+import { useThree } from '@react-three/fiber';
 import { memo, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 
@@ -166,6 +167,7 @@ function AirspaceVolume({
   refLon: number;
   airportElevationFeet: number;
 }) {
+  const dpr = useThree((s) => s.viewport.dpr);
   const color = COLORS[feature.class];
   if (!color) return null;
 
@@ -258,7 +260,7 @@ function AirspaceVolume({
       </mesh>
       {edgesGeometry && (
         <lineSegments geometry={edgesGeometry}>
-          <lineBasicMaterial color={color} transparent opacity={0.4} />
+          <lineBasicMaterial color={color} transparent opacity={0.4} linewidth={Math.round(dpr)} />
         </lineSegments>
       )}
     </group>
