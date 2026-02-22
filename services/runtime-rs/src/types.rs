@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -15,7 +15,36 @@ pub struct AppState {
     pub latest: Arc<RwLock<Option<Arc<ScanSnapshot>>>>,
     pub pending: Arc<Mutex<HashMap<String, PendingIngest>>>,
     pub recent_timestamps: Arc<Mutex<HashSet<String>>>,
+    pub traffic_cache: Arc<RwLock<TrafficCacheState>>,
     pub ingest_parse_limiter: Arc<Semaphore>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TrafficCacheState {
+    pub updated_at_ms: i64,
+    pub source: Option<String>,
+    pub tracks_by_hex: HashMap<String, TrafficCacheTrack>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrafficCacheTrack {
+    pub hex: String,
+    pub flight: Option<String>,
+    pub is_on_ground: bool,
+    pub altitude_feet: Option<f64>,
+    pub ground_speed_kt: Option<f64>,
+    pub track_deg: Option<f64>,
+    pub last_observed_at_ms: i64,
+    pub points: VecDeque<TrafficCachePoint>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct TrafficCachePoint {
+    pub timestamp_ms: i64,
+    pub lat: f64,
+    pub lon: f64,
+    pub altitude_feet: f64,
+    pub is_on_ground: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

@@ -28,6 +28,8 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - Snapshot storage path: `/var/lib/approach-viz-runtime/scans`
 - Retention cap: `RUNTIME_MRMS_RETENTION_BYTES=5368709120` (5 GB; legacy alias `MRMS_RETENTION_BYTES`)
 - Oldest snapshot files are pruned automatically after each successful ingest.
+- ADS-B traffic cache snapshot path: `RUNTIME_STORAGE_DIR/traffic-cache.avtc.zst`
+- ADS-B cache retention window: 1 hour of per-aircraft points (in-memory + persisted snapshot restore on restart).
 
 ## Wire Format (`application/vnd.approach-viz.mrms.v2`)
 
@@ -75,7 +77,7 @@ scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
 
 This script:
 
-- syncs `services/runtime-rs/`
+- syncs `services/runtime-rs/` through a staged remote directory replacement (prevents stale file collisions from prior layouts) and excludes local `target/` build artifacts from upload
 - builds `cargo build --release`
 - installs `/usr/local/bin/approach-viz-runtime`
 - installs/enables `approach-viz-runtime.service`
@@ -89,7 +91,7 @@ This script:
 - `GET /v1/volume?...` -> legacy weather alias
 - `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> JSON echo-top cells (`EchoTop_18/30/50/60`)
 - `GET /v1/echo-tops?...` -> legacy echo-top alias
-- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..30>&hideGround=<bool>` -> JSON aircraft + optional trail backfill
+- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>` -> JSON aircraft + optional trail history from the runtime’s 1-hour global ADS-B cache (with optional per-hex scoping). Runtime polls ADS-B Exchange in the background at 1 Hz across US regions and persists the cache snapshot to `RUNTIME_STORAGE_DIR/traffic-cache.avtc.zst` for restart recovery.
 
 ## Next.js Configuration
 

@@ -57,6 +57,26 @@ async function parseJson(response: Response): Promise<unknown> {
   }
 }
 
+function assertTrafficPayloadShape(payload: Record<string, unknown>, contextLabel: string) {
+  assert.equal(
+    typeof payload.fetchedAtMs,
+    'number',
+    `${contextLabel}: payload must include fetchedAtMs`
+  );
+  assert.equal(
+    Array.isArray(payload.aircraft),
+    true,
+    `${contextLabel}: payload must include aircraft array`
+  );
+
+  if (typeof payload.error === 'string' && payload.error.length > 0) {
+    assert.fail(`${contextLabel}: endpoint returned upstream error: ${payload.error}`);
+  }
+
+  assert.equal(typeof payload.source, 'string', `${contextLabel}: payload must include source`);
+  assert.ok((payload.source as string).length > 0, `${contextLabel}: source should not be empty`);
+}
+
 test('runtime traffic endpoint returns live aircraft payload', async () => {
   const baseUrl = runtimeBaseUrl();
   const lat = envNumber('RUNTIME_INTEGRATION_TRAFFIC_LAT', DEFAULT_TRAFFIC_LAT);
@@ -78,19 +98,7 @@ test('runtime traffic endpoint returns live aircraft payload', async () => {
   );
 
   const payload = (await parseJson(response)) as Record<string, unknown>;
-  assert.equal(typeof payload.fetchedAtMs, 'number', 'Traffic payload must include fetchedAtMs');
-  assert.equal(
-    Array.isArray(payload.aircraft),
-    true,
-    'Traffic payload must include aircraft array'
-  );
-
-  if (typeof payload.error === 'string' && payload.error.length > 0) {
-    assert.fail(`Traffic endpoint returned upstream error: ${payload.error}`);
-  }
-
-  assert.equal(typeof payload.source, 'string', 'Traffic payload must include source');
-  assert.ok((payload.source as string).length > 0, 'Traffic source should not be empty');
+  assertTrafficPayloadShape(payload, 'traffic');
 
   const aircraft = payload.aircraft as Array<Record<string, unknown>>;
   assert.ok(
@@ -102,6 +110,97 @@ test('runtime traffic endpoint returns live aircraft payload', async () => {
   assert.equal(typeof sample.hex, 'string', 'Aircraft entries must include hex');
   assert.equal(typeof sample.lat, 'number', 'Aircraft entries must include numeric lat');
   assert.equal(typeof sample.lon, 'number', 'Aircraft entries must include numeric lon');
+});
+
+test('runtime traffic historyHexes query constrains trace backfill scope', async () => {
+  const baseUrl = runtimeBaseUrl();
+  const lat = envNumber('RUNTIME_INTEGRATION_TRAFFIC_LAT', DEFAULT_TRAFFIC_LAT);
+  const lon = envNumber('RUNTIME_INTEGRATION_TRAFFIC_LON', DEFAULT_TRAFFIC_LON);
+  const radiusNm = envNumber('RUNTIME_INTEGRATION_TRAFFIC_RADIUS_NM', DEFAULT_TRAFFIC_RADIUS_NM);
+
+  const seedUrl = new URL(`${baseUrl}/v1/traffic/adsbx`);
+  seedUrl.searchParams.set('lat', lat.toString());
+  seedUrl.searchParams.set('lon', lon.toString());
+  seedUrl.searchParams.set('radiusNm', radiusNm.toString());
+  seedUrl.searchParams.set('limit', '120');
+  seedUrl.searchParams.set('historyMinutes', '3');
+
+  const seedResponse = await fetchWithTimeout(seedUrl.toString());
+  assert.equal(seedResponse.status, 200, `Seed traffic endpoint returned ${seedResponse.status}`);
+  const seedPayload = (await parseJson(seedResponse)) as Record<string, unknown>;
+  assertTrafficPayloadShape(seedPayload, 'seed traffic');
+
+  const seedAircraft = seedPayload.aircraft as Array<Record<string, unknown>>;
+  const requestedHexes = Array.from(
+    new Set(
+      seedAircraft
+        .map((aircraft) => aircraft.hex)
+        .filter((hex): hex is string => typeof hex === 'string' && hex.length > 0)
+    )
+  ).slice(0, 3);
+  assert.ok(
+    requestedHexes.length > 0,
+    `Expected at least one aircraft near lat=${lat}, lon=${lon}, radiusNm=${radiusNm}`
+  );
+
+  const constrainedUrl = new URL(`${baseUrl}/v1/traffic/adsbx`);
+  constrainedUrl.searchParams.set('lat', lat.toString());
+  constrainedUrl.searchParams.set('lon', lon.toString());
+  constrainedUrl.searchParams.set('radiusNm', radiusNm.toString());
+  constrainedUrl.searchParams.set('limit', '120');
+  constrainedUrl.searchParams.set('historyMinutes', '3');
+  constrainedUrl.searchParams.set(
+    'historyHexes',
+    `${requestedHexes.join(',')},not-a-real-hex,${requestedHexes[0]}`
+  );
+
+  const constrainedResponse = await fetchWithTimeout(constrainedUrl.toString());
+  assert.equal(
+    constrainedResponse.status,
+    200,
+    `Constrained traffic endpoint returned ${constrainedResponse.status}`
+  );
+  const constrainedPayload = (await parseJson(constrainedResponse)) as Record<string, unknown>;
+  assertTrafficPayloadShape(constrainedPayload, 'constrained traffic');
+
+  const requestedSet = new Set(
+    [...requestedHexes, 'not-a-real-hex'].map((hex) => hex.toLowerCase())
+  );
+  const historyByHexRaw = constrainedPayload.historyByHex;
+  assert.ok(
+    historyByHexRaw === undefined ||
+      (historyByHexRaw !== null && typeof historyByHexRaw === 'object'),
+    'Constrained traffic payload historyByHex should be an object when present'
+  );
+  const historyByHex = (historyByHexRaw ?? {}) as Record<string, unknown>;
+  const returnedHistoryHexes = Object.keys(historyByHex);
+
+  for (const hex of returnedHistoryHexes) {
+    assert.ok(
+      requestedSet.has(hex.toLowerCase()),
+      `historyByHex returned unexpected hex ${hex}; expected subset of requested historyHexes`
+    );
+
+    const points = historyByHex[hex];
+    assert.equal(Array.isArray(points), true, `historyByHex.${hex} must be an array`);
+    for (const point of points as Array<Record<string, unknown>>) {
+      assert.equal(
+        typeof point.lat,
+        'number',
+        `historyByHex.${hex} point must include numeric lat`
+      );
+      assert.equal(
+        typeof point.lon,
+        'number',
+        `historyByHex.${hex} point must include numeric lon`
+      );
+      assert.equal(
+        typeof point.timestampMs,
+        'number',
+        `historyByHex.${hex} point must include numeric timestampMs`
+      );
+    }
+  }
 });
 
 test('runtime MRMS meta and wire payload are structurally valid', async () => {

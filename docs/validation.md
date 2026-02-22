@@ -31,7 +31,7 @@ Runtime integration tests are intentionally excluded from CI (see below).
 
 Use this when validating deployed runtime service behavior end-to-end:
 
-1. `npm run test:integration:runtime` — verifies traffic (`/v1/traffic/adsbx`) and MRMS (`/v1/meta`, `/v1/weather/volume`) response structure against the configured runtime base URL.
+1. `npm run test:integration:runtime` — verifies traffic (`/v1/traffic/adsbx`, including `historyHexes`-scoped trail history behavior) and MRMS (`/v1/meta`, `/v1/weather/volume`) response structure against the configured runtime base URL.
 
 Notes:
 

@@ -25,6 +25,7 @@ export interface LiveTrafficHistoryPoint {
 
 export interface RenderTrafficTrack {
   hex: string;
+  isCurrentlyPresent: boolean;
   callsignLabel: string | null;
   isOnGround: boolean;
   headingDeg: number;
@@ -37,6 +38,7 @@ interface TrafficBaseRequest {
   nowMs: number;
   historyMinutes: number;
   hideGroundTargets: boolean;
+  showDepartedTrafficTrails: boolean;
   refLat: number;
   refLon: number;
   verticalScale: number;

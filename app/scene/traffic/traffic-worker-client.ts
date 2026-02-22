@@ -11,6 +11,7 @@ interface TrafficProcessOptions {
   nowMs: number;
   historyMinutes: number;
   hideGroundTargets: boolean;
+  showDepartedTrafficTrails: boolean;
   refLat: number;
   refLon: number;
   verticalScale: number;

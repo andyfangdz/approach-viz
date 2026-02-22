@@ -35,7 +35,9 @@ External data feeds and their ingestion paths.
 
 - Source: ADSB Exchange tar1090 `binCraft+zstd` feed (`/re-api/?binCraft&zstd&box=...`).
 - Fetched/decoded by the Rust runtime service (`services/runtime-rs`) endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is a thin proxy.
-- Optional initial trail backfill from tar1090 trace files (`/data/traces/<suffix>/trace_recent_<hex>.json`) when `historyMinutes` is requested.
+- Runtime continuously polls ADS-B Exchange at 1 Hz across four US regions (CONUS, Alaska, Hawaii, Puerto Rico/USVI), merges records into a global in-memory cache, and serves `/v1/traffic/adsbx` directly from that cache (no per-request upstream fetch path).
+- Cache history retention is one hour; `historyMinutes` (`0..60`) and optional `historyHexes` are resolved from cached per-aircraft points so departed traffic can continue to render within the selected time window.
+- The traffic cache snapshot is persisted to disk at `RUNTIME_STORAGE_DIR/traffic-cache.avtc.zst` and restored on startup so trail history survives runtime restarts.
 - Primary host override: `RUNTIME_ADSBX_TAR1090_BASE_URL` (legacy alias: `ADSBX_TAR1090_BASE_URL`); optional comma-separated fallback hosts: `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy alias: `ADSBX_TAR1090_FALLBACK_BASE_URLS`).
 
 ## MRMS 3D Volumetric Weather

@@ -28,6 +28,7 @@ import {
   DEFAULT_TERRAIN_RADIUS_NM,
   DEFAULT_VERTICAL_SCALE,
   DEFAULT_TRAFFIC_HISTORY_MINUTES,
+  DEFAULT_SHOW_DEPARTED_TRAFFIC_TRAILS,
   DEFAULT_NEXRAD_MIN_DBZ,
   DEFAULT_NEXRAD_OPACITY,
   DEFAULT_NEXRAD_DECLUTTER_MODE,
@@ -76,6 +77,7 @@ interface PersistedOptionsState {
   hideGroundTraffic?: boolean;
   showTrafficCallsigns?: boolean;
   hideGroundTrafficCallsigns?: boolean;
+  showDepartedTrafficTrails?: boolean;
   trafficHistoryMinutes?: number;
   nexradMinDbz?: number;
   nexradOpacity?: number;
@@ -279,6 +281,9 @@ export function AppClient({
   const [hideGroundTraffic, setHideGroundTraffic] = useState(false);
   const [showTrafficCallsigns, setShowTrafficCallsigns] = useState(false);
   const [hideGroundTrafficCallsigns, setHideGroundTrafficCallsigns] = useState(true);
+  const [showDepartedTrafficTrails, setShowDepartedTrafficTrails] = useState(
+    DEFAULT_SHOW_DEPARTED_TRAFFIC_TRAILS
+  );
   const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
     DEFAULT_TRAFFIC_HISTORY_MINUTES
   );
@@ -366,6 +371,9 @@ export function AppClient({
         }
         if (typeof persisted.hideGroundTrafficCallsigns === 'boolean') {
           setHideGroundTrafficCallsigns(persisted.hideGroundTrafficCallsigns);
+        }
+        if (typeof persisted.showDepartedTrafficTrails === 'boolean') {
+          setShowDepartedTrafficTrails(persisted.showDepartedTrafficTrails);
         }
         if (typeof persisted.trafficHistoryMinutes === 'number') {
           setTrafficHistoryMinutes(
@@ -502,6 +510,7 @@ export function AppClient({
       hideGroundTraffic,
       showTrafficCallsigns,
       hideGroundTrafficCallsigns,
+      showDepartedTrafficTrails,
       trafficHistoryMinutes,
       nexradMinDbz,
       nexradOpacity,
@@ -522,6 +531,7 @@ export function AppClient({
     hideGroundTraffic,
     showTrafficCallsigns,
     hideGroundTrafficCallsigns,
+    showDepartedTrafficTrails,
     trafficHistoryMinutes,
     nexradMinDbz,
     nexradOpacity,
@@ -857,6 +867,7 @@ export function AppClient({
             hideGroundTraffic={hideGroundTraffic}
             showTrafficCallsigns={showTrafficCallsigns}
             hideGroundTrafficCallsigns={hideGroundTrafficCallsigns}
+            showDepartedTrafficTrails={showDepartedTrafficTrails}
             trafficHistoryMinutes={trafficHistoryMinutes}
             nexradMinDbz={nexradMinDbz}
             nexradOpacity={nexradOpacity}
@@ -986,6 +997,8 @@ export function AppClient({
           onShowTrafficCallsignsChange={setShowTrafficCallsigns}
           hideGroundTrafficCallsigns={hideGroundTrafficCallsigns}
           onHideGroundTrafficCallsignsChange={setHideGroundTrafficCallsigns}
+          showDepartedTrafficTrails={showDepartedTrafficTrails}
+          onShowDepartedTrafficTrailsChange={setShowDepartedTrafficTrails}
           trafficHistoryMinutes={trafficHistoryMinutes}
           onTrafficHistoryMinutesChange={(minutes) =>
             setTrafficHistoryMinutes(

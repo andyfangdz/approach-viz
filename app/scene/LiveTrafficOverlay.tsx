@@ -15,6 +15,9 @@ export type { SceneAirport } from './traffic/traffic-worker-types';
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
 const MAX_HISTORY_MINUTES = 30;
+const MAX_HISTORY_BACKFILL_HEXES = 80;
+const MIN_FULL_BACKFILL_INTERVAL_MS = 60_000;
+const MAX_FULL_BACKFILL_INTERVAL_MS = 5 * 60_000;
 const POLL_INTERVAL_MS = 5000;
 const STALE_TRACK_GRACE_MS = 20000;
 const MIN_SAMPLE_DISTANCE_NM = 0.03;
@@ -61,6 +64,7 @@ function hashRenderTracks(renderTracks: RenderTrafficTrack[]): number {
   let hash = 2166136261;
   for (const track of renderTracks) {
     hash = hashString(hash, track.hex);
+    hash = hashInt(hash, track.isCurrentlyPresent ? 1 : 0);
     hash = hashString(hash, track.callsignLabel ?? '');
     hash = hashInt(hash, track.isOnGround ? 1 : 0);
     hash = hashFloat32(hash, track.headingDeg);
@@ -85,6 +89,7 @@ interface LiveTrafficOverlayProps {
   hideGroundTargets?: boolean;
   showCallsignLabels?: boolean;
   hideGroundCallsignLabels?: boolean;
+  showDepartedTrafficTrails?: boolean;
   historyMinutes: number;
   applyEarthCurvatureCompensation?: boolean;
   radiusNm?: number;
@@ -108,6 +113,24 @@ interface TrafficTrack {
   aircraft: LiveTrafficAircraft;
   history: TrafficHistoryPoint[];
   lastUpdateMs: number;
+  isCurrentlyPresent: boolean;
+}
+
+function buildSyntheticAircraft(
+  hex: string,
+  latestPoint: TrafficHistoryPoint
+): LiveTrafficAircraft {
+  return {
+    hex,
+    flight: null,
+    lat: latestPoint.lat,
+    lon: latestPoint.lon,
+    isOnGround: false,
+    altitudeFeet: latestPoint.altitudeFeet,
+    groundSpeedKt: null,
+    trackDeg: null,
+    lastSeenSeconds: null
+  };
 }
 
 function normalizeHistoryMinutes(historyMinutes: number): number {
@@ -268,18 +291,41 @@ function mergeTracks(
     nextTracks.set(aircraft.hex, {
       aircraft,
       history: trimHistory(nextHistory, historyCutoffMs),
-      lastUpdateMs: nowMs
+      lastUpdateMs: nowMs,
+      isCurrentlyPresent: true
     });
   }
 
   for (const [hex, track] of previousTracks.entries()) {
-    if (nextTracks.has(hex) || track.lastUpdateMs < staleCutoffMs) continue;
-    const trimmedHistory = trimHistory(track.history, historyCutoffMs);
+    if (nextTracks.has(hex)) continue;
+    const backfilledHistory = normalizeRemoteHistory(historyByHex?.[hex], historyCutoffMs);
+    const mergedHistory = mergeHistorySamples(track.history, backfilledHistory);
+    const trimmedHistory = trimHistory(mergedHistory, historyCutoffMs);
     if (trimmedHistory.length === 0) continue;
+    const latestHistoryPoint = trimmedHistory[trimmedHistory.length - 1];
+    const latestUpdateMs = Math.max(track.lastUpdateMs, latestHistoryPoint.timestampMs);
+    if (latestUpdateMs < staleCutoffMs) continue;
     nextTracks.set(hex, {
       ...track,
-      history: trimmedHistory
+      history: trimmedHistory,
+      lastUpdateMs: latestUpdateMs,
+      isCurrentlyPresent: false
     });
+  }
+
+  if (historyByHex) {
+    for (const [hex, remoteHistory] of Object.entries(historyByHex)) {
+      if (!hex || nextTracks.has(hex)) continue;
+      const normalizedHistory = normalizeRemoteHistory(remoteHistory, historyCutoffMs);
+      if (normalizedHistory.length === 0) continue;
+      const latestPoint = normalizedHistory[normalizedHistory.length - 1];
+      nextTracks.set(hex, {
+        aircraft: buildSyntheticAircraft(hex, latestPoint),
+        history: normalizedHistory,
+        lastUpdateMs: latestPoint.timestampMs,
+        isCurrentlyPresent: false
+      });
+    }
   }
 
   return nextTracks;
@@ -308,7 +354,8 @@ function tracksToRenderTracks(
   refLat: number,
   refLon: number,
   verticalScale: number,
-  applyEarthCurvatureCompensation: boolean
+  applyEarthCurvatureCompensation: boolean,
+  showDepartedTrafficTrails: boolean
 ): { renderTracks: RenderTrafficTrack[]; historyPointCount: number } {
   const resolveAltitude = (
     lat: number,
@@ -322,55 +369,59 @@ function tracksToRenderTracks(
     return altFeet;
   };
 
-  const renderTracks = Array.from(tracks.values())
-    .map((track) => {
-      const markerAltitudeFeet = resolveAltitude(
-        track.aircraft.lat,
-        track.aircraft.lon,
-        normalizeAltitudeFeet(track.aircraft),
-        track.aircraft.isOnGround
-      );
-      const markerPosition = toScenePoint(
-        track.aircraft.lat,
-        track.aircraft.lon,
-        markerAltitudeFeet,
+  const renderTracks: RenderTrafficTrack[] = [];
+  let historyPointCount = 0;
+  for (const track of tracks.values()) {
+    if (!showDepartedTrafficTrails && !track.isCurrentlyPresent) {
+      continue;
+    }
+    const markerAltitudeFeet = resolveAltitude(
+      track.aircraft.lat,
+      track.aircraft.lon,
+      normalizeAltitudeFeet(track.aircraft),
+      track.aircraft.isOnGround
+    );
+    const markerPosition = toScenePoint(
+      track.aircraft.lat,
+      track.aircraft.lon,
+      markerAltitudeFeet,
+      refLat,
+      refLon,
+      verticalScale,
+      applyEarthCurvatureCompensation
+    );
+    const trailPoints = track.history.map((point) =>
+      toScenePoint(
+        point.lat,
+        point.lon,
+        resolveAltitude(point.lat, point.lon, point.altitudeFeet),
         refLat,
         refLon,
         verticalScale,
         applyEarthCurvatureCompensation
-      );
-      const trailPoints = track.history.map((point) =>
-        toScenePoint(
-          point.lat,
-          point.lon,
-          resolveAltitude(point.lat, point.lon, point.altitudeFeet),
-          refLat,
-          refLon,
-          verticalScale,
-          applyEarthCurvatureCompensation
-        )
-      );
-      return {
-        hex: track.aircraft.hex,
-        callsignLabel: normalizeCallsignLabel(track.aircraft.flight),
-        isOnGround: Boolean(track.aircraft.isOnGround),
-        headingDeg: normalizeTrack(track.aircraft.trackDeg),
-        markerPosition,
-        trailPoints
-      };
-    })
-    .filter(
-      (track) =>
-        Number.isFinite(track.markerPosition[0]) && Number.isFinite(track.markerPosition[2])
+      )
     );
-  renderTracks.sort((left, right) => left.hex.localeCompare(right.hex));
-
-  let historyPointCount = 0;
-  for (const track of tracks.values()) {
-    historyPointCount += track.history.length;
+    historyPointCount += trailPoints.length;
+    renderTracks.push({
+      hex: track.aircraft.hex,
+      isCurrentlyPresent: track.isCurrentlyPresent,
+      callsignLabel: normalizeCallsignLabel(track.aircraft.flight),
+      isOnGround: Boolean(track.aircraft.isOnGround),
+      headingDeg: normalizeTrack(track.aircraft.trackDeg),
+      markerPosition,
+      trailPoints
+    });
   }
+  const finiteRenderTracks = renderTracks.filter(
+    (track) => Number.isFinite(track.markerPosition[0]) && Number.isFinite(track.markerPosition[2])
+  );
+  historyPointCount = 0;
+  for (const track of finiteRenderTracks) {
+    historyPointCount += track.trailPoints.length;
+  }
+  finiteRenderTracks.sort((left, right) => left.hex.localeCompare(right.hex));
 
-  return { renderTracks, historyPointCount };
+  return { renderTracks: finiteRenderTracks, historyPointCount };
 }
 
 function trimTracksForError(
@@ -381,10 +432,12 @@ function trimTracksForError(
   const staleCutoffMs = nowMs - historyMinutes * 60_000;
   const nextTracks = new Map<string, TrafficTrack>();
   for (const [hex, track] of previousTracks.entries()) {
-    if (track.lastUpdateMs < staleCutoffMs) continue;
     const trimmedHistory = trimHistory(track.history, staleCutoffMs);
     if (trimmedHistory.length === 0) continue;
-    nextTracks.set(hex, { ...track, history: trimmedHistory });
+    const latestHistoryPoint = trimmedHistory[trimmedHistory.length - 1];
+    const latestUpdateMs = Math.max(track.lastUpdateMs, latestHistoryPoint.timestampMs);
+    if (latestUpdateMs < staleCutoffMs) continue;
+    nextTracks.set(hex, { ...track, history: trimmedHistory, lastUpdateMs: latestUpdateMs });
   }
   return nextTracks;
 }
@@ -399,6 +452,7 @@ export function LiveTrafficOverlay({
   hideGroundTargets = false,
   showCallsignLabels = false,
   hideGroundCallsignLabels = false,
+  showDepartedTrafficTrails = true,
   historyMinutes,
   applyEarthCurvatureCompensation = false,
   radiusNm = DEFAULT_RADIUS_NM,
@@ -443,6 +497,10 @@ export function LiveTrafficOverlay({
   );
   const trafficWorkerRef = useRef<TrafficWorkerClient | null>(null);
   const lastRenderHashRef = useRef<number | null>(null);
+  const backfilledHexesRef = useRef<Map<string, number>>(new Map());
+  const pendingBackfillHexesRef = useRef<Set<string>>(new Set());
+  const pollContextKeyRef = useRef<string | null>(null);
+  const previousShowDepartedRef = useRef(showDepartedTrafficTrails);
   const [trafficMode, setTrafficMode] = useState<TrafficMode>(() =>
     typeof Worker !== 'undefined' ? 'worker' : 'fallback'
   );
@@ -508,21 +566,63 @@ export function LiveTrafficOverlay({
   }, [trafficMode]);
 
   useEffect(() => {
-    setTracks(new Map());
-    setRenderTracks([]);
-    setTrackCount(0);
-    setHistoryPointCount(0);
-    setIsLoading(true);
-    setLastError(null);
-    setLastPollAt(null);
-    setHistoryBackfillPending(true);
-    setTimingsMs(EMPTY_TIMINGS_MS);
-    lastRenderHashRef.current = null;
+    const sceneAirportsKey = sceneAirports
+      .map(
+        (airport) =>
+          `${airport.lat.toFixed(5)}:${airport.lon.toFixed(5)}:${Math.round(airport.elevation)}`
+      )
+      .join('|');
+    const pollContextKey = [
+      refLat.toFixed(6),
+      refLon.toFixed(6),
+      radiusNm,
+      limit,
+      normalizedHistoryMinutes,
+      hideGroundTargets ? 1 : 0,
+      verticalScale.toFixed(3),
+      applyEarthCurvatureCompensation ? 1 : 0,
+      trafficMode,
+      sceneAirportsKey
+    ].join(':');
+    const previousContextKey = pollContextKeyRef.current;
+    const contextChanged = previousContextKey !== null && previousContextKey !== pollContextKey;
+    const previousShowDeparted = previousShowDepartedRef.current;
+    const showDepartedChanged = previousShowDeparted !== showDepartedTrafficTrails;
+    const shouldHardReset = previousContextKey === null || contextChanged;
+    pollContextKeyRef.current = pollContextKey;
+    previousShowDepartedRef.current = showDepartedTrafficTrails;
+
+    if (shouldHardReset) {
+      setTracks(new Map());
+      setRenderTracks([]);
+      setTrackCount(0);
+      setHistoryPointCount(0);
+      setIsLoading(true);
+      setLastError(null);
+      setLastPollAt(null);
+      setHistoryBackfillPending(showDepartedTrafficTrails);
+      setTimingsMs(EMPTY_TIMINGS_MS);
+      lastRenderHashRef.current = null;
+      backfilledHexesRef.current = new Map();
+      pendingBackfillHexesRef.current = new Set();
+    } else if (showDepartedChanged) {
+      if (showDepartedTrafficTrails) {
+        setHistoryBackfillPending(true);
+        backfilledHexesRef.current = new Map();
+        pendingBackfillHexesRef.current = new Set();
+      } else {
+        setHistoryBackfillPending(false);
+        backfilledHexesRef.current.clear();
+        pendingBackfillHexesRef.current.clear();
+      }
+    }
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let activeAbortController: AbortController | null = null;
-    let shouldRequestHistoryBackfill = true;
+    let shouldRequestHistoryBackfill =
+      showDepartedTrafficTrails && (shouldHardReset || showDepartedChanged);
+    let lastFullBackfillAtMs: number | null = shouldRequestHistoryBackfill ? null : Date.now();
 
     const poll = async () => {
       const cycleStartedAt = performance.now();
@@ -530,6 +630,20 @@ export function LiveTrafficOverlay({
       let parseMs: number | null = null;
       let processMs: number | null = null;
       let pruneMs: number | null = null;
+      const pollNowMs = Date.now();
+      const historyWindowMs = normalizedHistoryMinutes * 60_000;
+      const fullBackfillIntervalMs = Math.min(
+        MAX_FULL_BACKFILL_INTERVAL_MS,
+        Math.max(MIN_FULL_BACKFILL_INTERVAL_MS, Math.round(historyWindowMs / 2))
+      );
+      if (
+        showDepartedTrafficTrails &&
+        !shouldRequestHistoryBackfill &&
+        typeof lastFullBackfillAtMs === 'number' &&
+        pollNowMs - lastFullBackfillAtMs >= fullBackfillIntervalMs
+      ) {
+        shouldRequestHistoryBackfill = true;
+      }
       if (!cancelled) {
         setIsLoading(true);
       }
@@ -540,8 +654,18 @@ export function LiveTrafficOverlay({
       params.set('radiusNm', String(radiusNm));
       params.set('limit', String(limit));
       params.set('hideGround', hideGroundTargets ? '1' : '0');
-      if (shouldRequestHistoryBackfill) {
-        params.set('historyMinutes', String(normalizedHistoryMinutes));
+      let requestedHistoryHexes: string[] = [];
+      if (showDepartedTrafficTrails) {
+        if (shouldRequestHistoryBackfill) {
+          params.set('historyMinutes', String(normalizedHistoryMinutes));
+        } else if (pendingBackfillHexesRef.current.size > 0) {
+          requestedHistoryHexes = Array.from(pendingBackfillHexesRef.current).slice(
+            0,
+            MAX_HISTORY_BACKFILL_HEXES
+          );
+          params.set('historyMinutes', String(normalizedHistoryMinutes));
+          params.set('historyHexes', requestedHistoryHexes.join(','));
+        }
       }
 
       try {
@@ -558,8 +682,42 @@ export function LiveTrafficOverlay({
         const payload = (await response.json()) as LiveTrafficFeed;
         parseMs = roundMs(performance.now() - parseStartedAt);
         const nextAircraft = Array.isArray(payload.aircraft) ? payload.aircraft : [];
-        const backfilledHistory = shouldRequestHistoryBackfill ? payload.historyByHex : undefined;
+        const requestedHistory =
+          showDepartedTrafficTrails &&
+          (shouldRequestHistoryBackfill || requestedHistoryHexes.length > 0);
+        const backfilledHistory = requestedHistory ? payload.historyByHex : undefined;
         const nowMs = Date.now();
+        if (showDepartedTrafficTrails) {
+          const knownBackfilledHexes = backfilledHexesRef.current;
+          const pendingBackfillHexes = pendingBackfillHexesRef.current;
+          for (const [hex, backfillAtMs] of knownBackfilledHexes.entries()) {
+            if (nowMs - backfillAtMs <= historyWindowMs * 2) continue;
+            knownBackfilledHexes.delete(hex);
+          }
+          for (const aircraft of nextAircraft) {
+            if (!aircraft.hex) continue;
+            const lastBackfillAtMs = knownBackfilledHexes.get(aircraft.hex);
+            const hasFreshBackfill =
+              typeof lastBackfillAtMs === 'number' && nowMs - lastBackfillAtMs <= historyWindowMs;
+            if (hasFreshBackfill) {
+              pendingBackfillHexes.delete(aircraft.hex);
+              continue;
+            }
+            pendingBackfillHexes.add(aircraft.hex);
+          }
+          if (requestedHistoryHexes.length > 0) {
+            for (const hex of requestedHistoryHexes) {
+              pendingBackfillHexes.delete(hex);
+              knownBackfilledHexes.set(hex, nowMs);
+            }
+          }
+          if (backfilledHistory) {
+            for (const hex of Object.keys(backfilledHistory)) {
+              pendingBackfillHexes.delete(hex);
+              knownBackfilledHexes.set(hex, nowMs);
+            }
+          }
+        }
 
         if (trafficMode === 'worker' && trafficWorkerRef.current) {
           try {
@@ -568,6 +726,7 @@ export function LiveTrafficOverlay({
               nowMs,
               historyMinutes: normalizedHistoryMinutes,
               hideGroundTargets,
+              showDepartedTrafficTrails,
               refLat,
               refLon,
               verticalScale,
@@ -610,7 +769,14 @@ export function LiveTrafficOverlay({
 
         setLastError(null);
         setLastPollAt(new Date(nowMs).toISOString());
-        if (shouldRequestHistoryBackfill) {
+        if (showDepartedTrafficTrails) {
+          if (shouldRequestHistoryBackfill) {
+            lastFullBackfillAtMs = nowMs;
+          }
+          setHistoryBackfillPending(pendingBackfillHexesRef.current.size > 0);
+        } else {
+          backfilledHexesRef.current.clear();
+          pendingBackfillHexesRef.current.clear();
           setHistoryBackfillPending(false);
         }
         shouldRequestHistoryBackfill = false;
@@ -626,6 +792,7 @@ export function LiveTrafficOverlay({
                 nowMs,
                 historyMinutes: normalizedHistoryMinutes,
                 hideGroundTargets,
+                showDepartedTrafficTrails,
                 refLat,
                 refLon,
                 verticalScale,
@@ -684,6 +851,7 @@ export function LiveTrafficOverlay({
     limit,
     normalizedHistoryMinutes,
     hideGroundTargets,
+    showDepartedTrafficTrails,
     verticalScale,
     applyEarthCurvatureCompensation,
     sceneAirports,
@@ -700,6 +868,7 @@ export function LiveTrafficOverlay({
           nowMs: Date.now(),
           historyMinutes: normalizedHistoryMinutes,
           hideGroundTargets,
+          showDepartedTrafficTrails,
           refLat,
           refLon,
           verticalScale,
@@ -733,6 +902,7 @@ export function LiveTrafficOverlay({
   }, [
     normalizedHistoryMinutes,
     hideGroundTargets,
+    showDepartedTrafficTrails,
     refLat,
     refLon,
     verticalScale,
@@ -752,7 +922,8 @@ export function LiveTrafficOverlay({
         refLat,
         refLon,
         verticalScale,
-        applyEarthCurvatureCompensation
+        applyEarthCurvatureCompensation,
+        showDepartedTrafficTrails
       );
     const nextRenderHash = hashRenderTracks(nextRenderTracks);
     if (
@@ -773,6 +944,7 @@ export function LiveTrafficOverlay({
     refLon,
     verticalScale,
     applyEarthCurvatureCompensation,
+    showDepartedTrafficTrails,
     trafficMode,
     trackCount,
     historyPointCount
@@ -821,11 +993,16 @@ export function LiveTrafficOverlay({
     return geometry;
   }, [renderTracks]);
 
+  const activeRenderTracks = useMemo(
+    () => renderTracks.filter((track) => track.isCurrentlyPresent),
+    [renderTracks]
+  );
+
   const headingLinesGeometry = useMemo(() => {
-    if (renderTracks.length === 0) return null;
-    const positions = new Float32Array(renderTracks.length * 6);
+    if (activeRenderTracks.length === 0) return null;
+    const positions = new Float32Array(activeRenderTracks.length * 6);
     let offset = 0;
-    for (const track of renderTracks) {
+    for (const track of activeRenderTracks) {
       const headingRad = (track.headingDeg * Math.PI) / 180;
       const headingTipX = track.markerPosition[0] + Math.sin(headingRad) * 0.2;
       const headingTipY = track.markerPosition[1];
@@ -840,7 +1017,7 @@ export function LiveTrafficOverlay({
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     return geometry;
-  }, [renderTracks]);
+  }, [activeRenderTracks]);
 
   useEffect(
     () => () => {
@@ -919,9 +1096,9 @@ export function LiveTrafficOverlay({
     const markerMesh = markerMeshRef.current;
     if (!markerMesh) return;
     const uploadStartedAt = performance.now();
-    const nextCount = Math.min(limit, renderTracks.length);
+    const nextCount = Math.min(limit, activeRenderTracks.length);
     for (let index = 0; index < nextCount; index += 1) {
-      const [x, y, z] = renderTracks[index].markerPosition;
+      const [x, y, z] = activeRenderTracks[index].markerPosition;
       markerDummy.position.set(x, y, z);
       markerDummy.updateMatrix();
       markerMesh.setMatrixAt(index, markerDummy.matrix);
@@ -929,7 +1106,7 @@ export function LiveTrafficOverlay({
     markerMesh.count = nextCount;
     markerMesh.instanceMatrix.needsUpdate = true;
     patchTimings({ markerUploadMs: roundMs(performance.now() - uploadStartedAt) });
-  }, [renderTracks, markerDummy, limit, patchTimings]);
+  }, [activeRenderTracks, markerDummy, limit, patchTimings]);
 
   return (
     <group>
@@ -950,7 +1127,7 @@ export function LiveTrafficOverlay({
         />
       )}
       {showCallsignLabels &&
-        renderTracks.map((track) => {
+        activeRenderTracks.map((track) => {
           if (hideGroundCallsignLabels && track.isOnGround) return null;
           if (!track.callsignLabel) return null;
           return (

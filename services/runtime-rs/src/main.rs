@@ -27,9 +27,9 @@ use tracing::{info, warn};
 use crate::api::{echo_tops, healthz, meta, volume};
 use crate::config::Config;
 use crate::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
-use crate::storage::load_latest_snapshot;
-use crate::traffic_api::traffic_adsbx;
-use crate::types::AppState;
+use crate::storage::{load_latest_snapshot, load_traffic_cache};
+use crate::traffic_api::{spawn_traffic_cache_worker, traffic_adsbx};
+use crate::types::{AppState, TrafficCacheState};
 use crate::utils::init_tracing;
 
 #[tokio::main]
@@ -48,12 +48,27 @@ async fn main() -> Result<()> {
         .context("Failed to build reqwest client")?;
 
     let latest = Arc::new(RwLock::new(load_latest_snapshot(&cfg).await?));
+    let initial_traffic_cache = match load_traffic_cache(&cfg).await {
+        Ok(Some(cache)) => {
+            info!(
+                "Loaded traffic cache snapshot from disk (tracks={})",
+                cache.tracks_by_hex.len()
+            );
+            cache
+        }
+        Ok(None) => TrafficCacheState::default(),
+        Err(error) => {
+            warn!("Failed loading traffic cache snapshot: {error:#}");
+            TrafficCacheState::default()
+        }
+    };
     let state = AppState {
         cfg: cfg.clone(),
         http: http.clone(),
         latest,
         pending: Arc::new(Mutex::new(HashMap::new())),
         recent_timestamps: Arc::new(Mutex::new(HashSet::new())),
+        traffic_cache: Arc::new(RwLock::new(initial_traffic_cache)),
         ingest_parse_limiter: Arc::new(Semaphore::new(cfg.ingest_parse_concurrency as usize)),
     };
 
@@ -69,6 +84,7 @@ async fn main() -> Result<()> {
     }
 
     spawn_background_workers(state.clone()).await?;
+    spawn_traffic_cache_worker(state.clone());
 
     let app = Router::new()
         .route("/healthz", get(healthz))

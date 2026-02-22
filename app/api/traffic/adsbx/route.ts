@@ -25,7 +25,15 @@ function noStoreHeaders(contentType = 'application/json'): Headers {
 function upstreamTrafficUrl(request: NextRequest): string {
   const baseUrl = DEFAULT_UPSTREAM_BASE_URL.replace(/\/$/, '');
   const upstreamUrl = new URL(`${baseUrl}/v1/traffic/adsbx`);
-  const passthroughParams = ['lat', 'lon', 'radiusNm', 'limit', 'historyMinutes', 'hideGround'];
+  const passthroughParams = [
+    'lat',
+    'lon',
+    'radiusNm',
+    'limit',
+    'historyMinutes',
+    'historyHexes',
+    'hideGround'
+  ];
   for (const key of passthroughParams) {
     const value = request.nextUrl.searchParams.get(key);
     if (value !== null && value.trim() !== '') {

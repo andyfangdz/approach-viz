@@ -4,6 +4,8 @@ set -euo pipefail
 HOST="${1:-ubuntu@100.86.128.122}"
 IDENTITY_AGENT="${SSH_AUTH_SOCK:-}"
 QUEUE_URL="${RUNTIME_MRMS_SQS_QUEUE_URL:-${MRMS_SQS_QUEUE_URL:-}}"
+REMOTE_SERVICE_DIR="\$HOME/services/approach-viz-runtime"
+REMOTE_STAGE_DIR="\$HOME/services/approach-viz-runtime.tmp"
 
 if [[ -z "$QUEUE_URL" ]]; then
   echo "RUNTIME_MRMS_SQS_QUEUE_URL (or MRMS_SQS_QUEUE_URL) is required in environment." >&2
@@ -23,13 +25,33 @@ if [[ ! -f "$SERVICE_DIR/Cargo.toml" ]]; then
   exit 1
 fi
 
-tar -C "$SERVICE_DIR" -czf - . | ssh "$HOST" \
-  'mkdir -p ~/services/approach-viz-runtime && tar -xzf - -C ~/services/approach-viz-runtime'
+# Avoid macOS metadata headers and skip local build/output artifacts.
+export COPYFILE_DISABLE=1
+export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
+
+TAR_ARGS=(
+  --disable-copyfile
+  --no-xattrs
+  -czf
+  -
+  --exclude='./target'
+  --exclude='./.git'
+  --exclude='./.DS_Store'
+)
+
+tar "${TAR_ARGS[@]}" -C "$SERVICE_DIR" . | ssh "$HOST" "
+set -euo pipefail
+rm -rf \"$REMOTE_STAGE_DIR\"
+mkdir -p \"$REMOTE_STAGE_DIR\"
+tar -xzf - -C \"$REMOTE_STAGE_DIR\"
+rm -rf \"$REMOTE_SERVICE_DIR\"
+mv \"$REMOTE_STAGE_DIR\" \"$REMOTE_SERVICE_DIR\"
+"
 
 ssh "$HOST" "
 set -euo pipefail
 source \"\$HOME/.cargo/env\"
-cd ~/services/approach-viz-runtime
+cd \"$REMOTE_SERVICE_DIR\"
 cargo build --release
 sudo install -D -m 0755 target/release/approach-viz-runtime /usr/local/bin/approach-viz-runtime
 sudo mkdir -p /var/lib/approach-viz-runtime
@@ -71,7 +93,7 @@ sudo systemctl restart approach-viz-runtime.service
 tailscale funnel --bg --https 8443 --set-path /runtime-v1 http://127.0.0.1:9191 >/dev/null
 
 ready=0
-for attempt in \$(seq 1 30); do
+for attempt in \$(seq 1 60); do
   if curl -fsS http://127.0.0.1:9191/healthz >/dev/null; then
     ready=1
     break

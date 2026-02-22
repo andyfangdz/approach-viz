@@ -15,10 +15,11 @@
 ## Live ADS-B Traffic
 
 - Polling is throttled to a fixed interval (`5s`) through a same-origin proxy to the Rust runtime endpoint (`/v1/traffic/adsbx`) and bounded by viewport-centric query radius/aircraft limit to avoid full-feed client downloads.
-- One-time initial trace backfill request (default `3 min`) when overlay context/history changes; merges trace backfill into existing tracks when history retention is increased; subsequent `5s` polls fetch current targets only.
+- Initial history request (default `3 min`) on overlay context/history changes, plus targeted incremental history refreshes for newly seen aircraft hexes on later polls (`historyHexes`) when `Show Departed Traffic Trails` is enabled; while enabled, the client also periodically re-runs full history refresh (interval derived from history window, clamped `60..300s`) to discover newly departed aircraft. Runtime serves these history windows directly from a 1 Hz global US ADS-B cache (1-hour retention, disk-backed snapshot restore), so history queries avoid per-request upstream trace fetches.
 - Track merge/prune/projection compute is offloaded to a dedicated traffic worker, with synchronous fallback when workers are unavailable.
 - Runtime debug telemetry exposes per-stage ADS-B timings (`poll cycle`, `fetch`, `json parse`, `worker process/recompute/prune`, `worker round-trip/CPU`, and marker instance upload) to validate main-thread offload impact.
-- Trail history is time-pruned by the user-selected retention window (`1..30 minutes`) to cap per-aircraft polyline growth.
+- Trail history is time-pruned by the user-selected retention window (`1..30 minutes`) to cap per-aircraft polyline growth (runtime cache keeps up to 60 minutes available for history queries).
+- Trail rendering can continue for aircraft that are no longer in the current live feed as long as retained history samples are still within the selected window, and this behavior is user-toggleable via `Show Departed Traffic Trails`.
 - Trail and heading vectors are batched into shared `lineSegments` geometries per frame update, replacing per-track line component trees and reducing draw-call/reconciliation overhead.
 - Worker responses include render hashes; unchanged hashes skip main-thread render-track state updates to avoid redundant line/instance uploads.
 - Callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled.

@@ -217,6 +217,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   hideGroundTraffic,
   showTrafficCallsigns,
   hideGroundTrafficCallsigns,
+  showDepartedTrafficTrails,
   trafficHistoryMinutes,
   nexradMinDbz,
   nexradOpacity,
@@ -376,6 +377,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             hideGroundTargets={hideGroundTraffic}
             showCallsignLabels={showTrafficCallsigns}
             hideGroundCallsignLabels={hideGroundTrafficCallsigns}
+            showDepartedTrafficTrails={showDepartedTrafficTrails}
             historyMinutes={trafficHistoryMinutes}
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'

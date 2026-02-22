@@ -66,6 +66,8 @@ export function OptionsPanel({
   onShowTrafficCallsignsChange,
   hideGroundTrafficCallsigns,
   onHideGroundTrafficCallsignsChange,
+  showDepartedTrafficTrails,
+  onShowDepartedTrafficTrailsChange,
   trafficHistoryMinutes,
   onTrafficHistoryMinutesChange
 }: OptionsPanelProps) {
@@ -259,6 +261,19 @@ export function OptionsPanel({
           disabled={!layers.adsb}
           onChange={(event) => onTrafficHistoryMinutesChange(Number(event.target.value))}
           aria-label="Traffic history minutes"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Show Departed Traffic Trails</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={showDepartedTrafficTrails}
+          disabled={!layers.adsb}
+          onChange={(event) => onShowDepartedTrafficTrailsChange(event.target.checked)}
+          aria-label="Show trails for departed traffic targets"
         />
       </label>
 

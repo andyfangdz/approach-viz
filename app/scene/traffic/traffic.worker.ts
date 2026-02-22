@@ -42,6 +42,7 @@ function hashRenderTracks(renderTracks: RenderTrafficTrack[]): number {
   let hash = 2166136261;
   for (const track of renderTracks) {
     hash = hashString(hash, track.hex);
+    hash = hashInt(hash, track.isCurrentlyPresent ? 1 : 0);
     hash = hashString(hash, track.callsignLabel ?? '');
     hash = hashInt(hash, track.isOnGround ? 1 : 0);
     hash = hashFloat32(hash, track.headingDeg);
@@ -69,9 +70,27 @@ interface TrafficTrack {
   aircraft: LiveTrafficAircraft;
   history: TrafficHistoryPoint[];
   lastUpdateMs: number;
+  isCurrentlyPresent: boolean;
 }
 
 const tracks = new Map<string, TrafficTrack>();
+
+function buildSyntheticAircraft(
+  hex: string,
+  latestPoint: TrafficHistoryPoint
+): LiveTrafficAircraft {
+  return {
+    hex,
+    flight: null,
+    lat: latestPoint.lat,
+    lon: latestPoint.lon,
+    isOnGround: false,
+    altitudeFeet: latestPoint.altitudeFeet,
+    groundSpeedKt: null,
+    trackDeg: null,
+    lastSeenSeconds: null
+  };
+}
 
 function normalizeTrack(trackDeg: number | null): number {
   if (trackDeg === null || !Number.isFinite(trackDeg)) return 0;
@@ -242,18 +261,41 @@ function mergeTracks(
     nextTracks.set(aircraft.hex, {
       aircraft,
       history: trimHistory(nextHistory, historyCutoffMs),
-      lastUpdateMs: nowMs
+      lastUpdateMs: nowMs,
+      isCurrentlyPresent: true
     });
   }
 
   for (const [hex, track] of tracks.entries()) {
-    if (nextTracks.has(hex) || track.lastUpdateMs < staleCutoffMs) continue;
-    const trimmedHistory = trimHistory(track.history, historyCutoffMs);
+    if (nextTracks.has(hex)) continue;
+    const backfilledHistory = normalizeRemoteHistory(historyByHex?.[hex], historyCutoffMs);
+    const mergedHistory = mergeHistorySamples(track.history, backfilledHistory);
+    const trimmedHistory = trimHistory(mergedHistory, historyCutoffMs);
     if (trimmedHistory.length === 0) continue;
+    const latestHistoryPoint = trimmedHistory[trimmedHistory.length - 1];
+    const latestUpdateMs = Math.max(track.lastUpdateMs, latestHistoryPoint.timestampMs);
+    if (latestUpdateMs < staleCutoffMs) continue;
     nextTracks.set(hex, {
       ...track,
-      history: trimmedHistory
+      history: trimmedHistory,
+      lastUpdateMs: latestUpdateMs,
+      isCurrentlyPresent: false
     });
+  }
+
+  if (historyByHex) {
+    for (const [hex, remoteHistory] of Object.entries(historyByHex)) {
+      if (!hex || nextTracks.has(hex)) continue;
+      const normalizedHistory = normalizeRemoteHistory(remoteHistory, historyCutoffMs);
+      if (normalizedHistory.length === 0) continue;
+      const latestPoint = normalizedHistory[normalizedHistory.length - 1];
+      nextTracks.set(hex, {
+        aircraft: buildSyntheticAircraft(hex, latestPoint),
+        history: normalizedHistory,
+        lastUpdateMs: latestPoint.timestampMs,
+        isCurrentlyPresent: false
+      });
+    }
   }
 
   tracks.clear();
@@ -265,16 +307,19 @@ function mergeTracks(
 function pruneForError(nowMs: number, historyMinutes: number) {
   const staleCutoffMs = nowMs - historyMinutes * 60_000;
   for (const [hex, track] of tracks.entries()) {
-    if (track.lastUpdateMs < staleCutoffMs) {
-      tracks.delete(hex);
-      continue;
-    }
     const trimmedHistory = trimHistory(track.history, staleCutoffMs);
     if (trimmedHistory.length === 0) {
       tracks.delete(hex);
       continue;
     }
+    const latestHistoryPoint = trimmedHistory[trimmedHistory.length - 1];
+    const latestUpdateMs = Math.max(track.lastUpdateMs, latestHistoryPoint.timestampMs);
+    if (latestUpdateMs < staleCutoffMs) {
+      tracks.delete(hex);
+      continue;
+    }
     track.history = trimmedHistory;
+    track.lastUpdateMs = latestUpdateMs;
   }
 }
 
@@ -291,6 +336,10 @@ function recomputeTracks(nowMs: number, historyMinutes: number, hideGroundTarget
       continue;
     }
     track.history = trimmedHistory;
+    track.lastUpdateMs = Math.max(
+      track.lastUpdateMs,
+      trimmedHistory[trimmedHistory.length - 1].timestampMs
+    );
   }
 }
 
@@ -299,7 +348,8 @@ function buildRenderTracks(
   refLon: number,
   sceneAirports: SceneAirport[],
   verticalScale: number,
-  applyEarthCurvatureCompensation: boolean
+  applyEarthCurvatureCompensation: boolean,
+  showDepartedTrafficTrails: boolean
 ): { renderTracks: RenderTrafficTrack[]; historyPointCount: number; renderHash: number } {
   const renderTracks: RenderTrafficTrack[] = [];
   let historyPointCount = 0;
@@ -317,6 +367,7 @@ function buildRenderTracks(
   };
 
   for (const track of tracks.values()) {
+    if (!showDepartedTrafficTrails && !track.isCurrentlyPresent) continue;
     const markerAltitudeFeet = resolveAltitude(
       track.aircraft.lat,
       track.aircraft.lon,
@@ -348,6 +399,7 @@ function buildRenderTracks(
     historyPointCount += trailPoints.length;
     renderTracks.push({
       hex: track.aircraft.hex,
+      isCurrentlyPresent: track.isCurrentlyPresent,
       callsignLabel: normalizeCallsignLabel(track.aircraft.flight),
       isOnGround: Boolean(track.aircraft.isOnGround),
       headingDeg: normalizeTrack(track.aircraft.trackDeg),
@@ -384,7 +436,8 @@ function handleMessage(message: TrafficWorkerRequestMessage): TrafficWorkerRespo
     message.refLon,
     message.sceneAirports,
     message.verticalScale,
-    message.applyEarthCurvatureCompensation
+    message.applyEarthCurvatureCompensation,
+    message.showDepartedTrafficTrails
   );
   return {
     type: 'result',

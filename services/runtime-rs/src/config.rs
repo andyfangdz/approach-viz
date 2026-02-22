@@ -141,6 +141,10 @@ impl Config {
         self.storage_dir.join("scans")
     }
 
+    pub fn traffic_cache_file(&self) -> PathBuf {
+        self.storage_dir.join("traffic-cache.avtc.zst")
+    }
+
     pub fn traffic_base_urls(&self) -> Vec<String> {
         let mut deduped = Vec::new();
         for candidate in std::iter::once(&self.adsbx_primary_base_url)

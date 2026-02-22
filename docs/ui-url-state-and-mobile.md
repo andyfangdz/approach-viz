@@ -35,7 +35,7 @@ The options (gear) panel contains per-layer configuration controls organized int
 
 - **General**: `Camera Controls` (`OrbitControls`, `ArcballControls`, `MapControls`), `Vertical Scale` (1.0–15.0×, step 0.5×), `Terrain Radius` (20–80 NM, step 5, default 50), `Flatten Bathymetry` toggle.
 - **Approach**: `Use Parsed Climb Gradient When Available` (toggles between parsed FAA missed-climb requirements and standard climb-gradient behavior; defaults to parsed when available).
-- **ADS-B Traffic**: `Hide Ground Traffic`, `Show Traffic Callsigns`, `Hide Ground Callsign Labels` (applies when callsigns are enabled), `Traffic History` (1–30 min, default 3).
+- **ADS-B Traffic**: `Hide Ground Traffic`, `Show Traffic Callsigns`, `Hide Ground Callsign Labels` (applies when callsigns are enabled), `Traffic History` (1–30 min, default 3), `Show Departed Traffic Trails` (controls whether non-current tracks remain rendered as trails inside the history window).
 - **MRMS Weather**: `MRMS Phase Detection` (Thermodynamic/Surface Precip Type, default Thermodynamic), `MRMS Declutter` (All/Low/Mid/High, also cycled with `V` key), `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (5–100%).
 - **Vertical Slice**: `Slice Heading` (0–359°), `Slice Range` (30–140 NM).
 
