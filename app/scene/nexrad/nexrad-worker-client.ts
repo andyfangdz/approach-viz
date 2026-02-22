@@ -1,14 +1,48 @@
-import type { EchoTopPayload, NexradVolumePayload } from './nexrad-types';
+import type { NexradDeclutterMode, NexradPhaseMode } from '@/app/app-client/types';
+import type {
+  CrossSectionData,
+  EchoTopPayload,
+  EchoTopSurfaceCell,
+  NexradPreparedVolumeData,
+  NexradVolumePayload
+} from './nexrad-types';
 import { applyPhaseDebugValues, decodeEchoTopPayload, decodePayload } from './nexrad-decode';
+import {
+  buildCrossSectionData,
+  prepareEchoTopSurfaces,
+  prepareVolumeData
+} from './nexrad-preprocess';
 import type {
   DecodeEchoTopResponseMessage,
   DecodeVolumeResponseMessage,
   NexradWorkerRequestMessage,
   NexradWorkerResponseMessage,
-  PhaseDebugHeaderValues
+  PhaseDebugHeaderValues,
+  PrepareEchoTopResponseMessage,
+  PrepareVolumeResponseMessage
 } from './nexrad-worker-types';
 
 const REQUEST_TIMEOUT_MS = 8000;
+
+type NexradWorkerRuntimeMode = 'shared-worker' | 'worker' | 'sync-fallback';
+
+export interface VolumePrepareOptions {
+  minDbz: number;
+  phaseMode: NexradPhaseMode;
+  declutterMode: NexradDeclutterMode;
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
+  includeCrossSection: boolean;
+  normalizedCrossSectionRange: number;
+  crossSectionHalfWidthNm: number;
+  sliceAxis: { x: number; z: number };
+  slicePerpAxis: { x: number; z: number };
+}
+
+export interface EchoTopPrepareOptions {
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
+}
 
 type PendingRequest =
   | {
@@ -20,6 +54,25 @@ type PendingRequest =
   | {
       type: 'decode-echo-top';
       resolve: (payload: EchoTopPayload) => void;
+      reject: (reason?: unknown) => void;
+      timeoutId: ReturnType<typeof setTimeout>;
+    }
+  | {
+      type: 'prepare-volume';
+      resolve: (payload: {
+        payload: NexradPreparedVolumeData;
+        crossSectionData: CrossSectionData | null;
+      }) => void;
+      reject: (reason?: unknown) => void;
+      timeoutId: ReturnType<typeof setTimeout>;
+    }
+  | {
+      type: 'prepare-echo-top';
+      resolve: (payload: {
+        echoTop18Cells: EchoTopSurfaceCell[];
+        echoTop30Cells: EchoTopSurfaceCell[];
+        echoTop50Cells: EchoTopSurfaceCell[];
+      }) => void;
       reject: (reason?: unknown) => void;
       timeoutId: ReturnType<typeof setTimeout>;
     };
@@ -116,6 +169,50 @@ class NexradDecodeWorkerClient {
     return payload;
   }
 
+  async prepareVolume(
+    payload: NexradVolumePayload,
+    options: VolumePrepareOptions
+  ): Promise<{ payload: NexradPreparedVolumeData; crossSectionData: CrossSectionData | null }> {
+    const requestId = this.nextRequestId++;
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error('Timed out while preparing MRMS volume data in worker.'));
+      }, REQUEST_TIMEOUT_MS);
+      this.pending.set(requestId, { type: 'prepare-volume', resolve, reject, timeoutId });
+      this.channel.postMessage({
+        type: 'prepare-volume',
+        requestId,
+        payload,
+        ...options
+      });
+    });
+  }
+
+  async prepareEchoTop(
+    payload: EchoTopPayload,
+    options: EchoTopPrepareOptions
+  ): Promise<{
+    echoTop18Cells: EchoTopSurfaceCell[];
+    echoTop30Cells: EchoTopSurfaceCell[];
+    echoTop50Cells: EchoTopSurfaceCell[];
+  }> {
+    const requestId = this.nextRequestId++;
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error('Timed out while preparing MRMS echo-top data in worker.'));
+      }, REQUEST_TIMEOUT_MS);
+      this.pending.set(requestId, { type: 'prepare-echo-top', resolve, reject, timeoutId });
+      this.channel.postMessage({
+        type: 'prepare-echo-top',
+        requestId,
+        payload,
+        ...options
+      });
+    });
+  }
+
   dispose(): void {
     this.channel.removeEventListener('message', this.onMessage);
     this.channel.removeEventListener('messageerror', this.onMessageError);
@@ -140,6 +237,14 @@ class NexradDecodeWorkerClient {
     }
     if (message.type === 'decode-echo-top-result' && pending.type === 'decode-echo-top') {
       this.resolveEchoTopRequest(message, pending);
+      return;
+    }
+    if (message.type === 'prepare-volume-result' && pending.type === 'prepare-volume') {
+      this.resolvePreparedVolumeRequest(message, pending);
+      return;
+    }
+    if (message.type === 'prepare-echo-top-result' && pending.type === 'prepare-echo-top') {
+      this.resolvePreparedEchoTopRequest(message, pending);
       return;
     }
     pending.reject(new Error('MRMS decode worker response type mismatch.'));
@@ -182,21 +287,72 @@ class NexradDecodeWorkerClient {
     }
     pending.resolve(message.payload);
   }
+
+  private resolvePreparedVolumeRequest(
+    message: PrepareVolumeResponseMessage,
+    pending: Extract<PendingRequest, { type: 'prepare-volume' }>
+  ): void {
+    if (message.error) {
+      pending.reject(new Error(message.error));
+      return;
+    }
+    if (!message.payload) {
+      pending.reject(new Error('MRMS worker returned no prepared volume payload.'));
+      return;
+    }
+    pending.resolve({
+      payload: message.payload,
+      crossSectionData: message.crossSectionData ?? null
+    });
+  }
+
+  private resolvePreparedEchoTopRequest(
+    message: PrepareEchoTopResponseMessage,
+    pending: Extract<PendingRequest, { type: 'prepare-echo-top' }>
+  ): void {
+    if (message.error) {
+      pending.reject(new Error(message.error));
+      return;
+    }
+    pending.resolve({
+      echoTop18Cells: message.echoTop18Cells ?? [],
+      echoTop30Cells: message.echoTop30Cells ?? [],
+      echoTop50Cells: message.echoTop50Cells ?? []
+    });
+  }
 }
 
 let sharedClient: NexradDecodeWorkerClient | null = null;
 let disableWorkerPath = false;
+let runtimeMode: NexradWorkerRuntimeMode = 'sync-fallback';
+
+function disposeClient() {
+  sharedClient?.dispose();
+  sharedClient = null;
+}
 
 function getDecodeWorkerClient(): NexradDecodeWorkerClient | null {
   if (!supportsWorkers() || disableWorkerPath) return null;
   if (sharedClient) return sharedClient;
   try {
+    runtimeMode = typeof SharedWorker !== 'undefined' ? 'shared-worker' : 'worker';
     sharedClient = new NexradDecodeWorkerClient();
     return sharedClient;
   } catch {
     disableWorkerPath = true;
+    runtimeMode = 'sync-fallback';
     return null;
   }
+}
+
+function disableWorkersAndFallback() {
+  disableWorkerPath = true;
+  runtimeMode = 'sync-fallback';
+  disposeClient();
+}
+
+export function getNexradWorkerRuntimeMode(): NexradWorkerRuntimeMode {
+  return runtimeMode;
 }
 
 export async function decodeVolumePayload(
@@ -210,9 +366,7 @@ export async function decodeVolumePayload(
   try {
     return await client.decodeVolume(buffer, phaseDebug);
   } catch {
-    disableWorkerPath = true;
-    sharedClient?.dispose();
-    sharedClient = null;
+    disableWorkersAndFallback();
     return applyPhaseDebugValues(decodePayload(buffer), phaseDebug);
   }
 }
@@ -225,9 +379,65 @@ export async function decodeEchoTopPayloadWithWorker(buffer: ArrayBuffer): Promi
   try {
     return await client.decodeEchoTop(buffer);
   } catch {
-    disableWorkerPath = true;
-    sharedClient?.dispose();
-    sharedClient = null;
+    disableWorkersAndFallback();
     return decodeEchoTopPayload(buffer);
+  }
+}
+
+export async function prepareVolumeWithWorker(
+  payload: NexradVolumePayload,
+  options: VolumePrepareOptions
+): Promise<{ payload: NexradPreparedVolumeData; crossSectionData: CrossSectionData | null }> {
+  const client = getDecodeWorkerClient();
+  if (!client) {
+    const prepared = prepareVolumeData({
+      payload,
+      minDbz: options.minDbz,
+      phaseMode: options.phaseMode,
+      declutterMode: options.declutterMode,
+      applyEarthCurvatureCompensation: options.applyEarthCurvatureCompensation,
+      refLat: options.refLat
+    });
+    const crossSectionData = options.includeCrossSection
+      ? buildCrossSectionData({
+          payload,
+          volumeData: prepared,
+          normalizedCrossSectionRange: options.normalizedCrossSectionRange,
+          crossSectionHalfWidthNm: options.crossSectionHalfWidthNm,
+          sliceAxis: options.sliceAxis,
+          slicePerpAxis: options.slicePerpAxis
+        })
+      : null;
+    return { payload: prepared, crossSectionData };
+  }
+  try {
+    return await client.prepareVolume(payload, options);
+  } catch {
+    disableWorkersAndFallback();
+    return prepareVolumeWithWorker(payload, options);
+  }
+}
+
+export async function prepareEchoTopWithWorker(
+  payload: EchoTopPayload,
+  options: EchoTopPrepareOptions
+): Promise<{
+  echoTop18Cells: EchoTopSurfaceCell[];
+  echoTop30Cells: EchoTopSurfaceCell[];
+  echoTop50Cells: EchoTopSurfaceCell[];
+}> {
+  const client = getDecodeWorkerClient();
+  if (!client) {
+    return prepareEchoTopSurfaces({
+      payload,
+      applyEarthCurvatureCompensation: options.applyEarthCurvatureCompensation,
+      refLat: options.refLat
+    });
+  }
+  try {
+    return await client.prepareEchoTop(payload, options);
+  } catch {
+    disableWorkersAndFallback();
+    return prepareEchoTopWithWorker(payload, options);
   }
 }

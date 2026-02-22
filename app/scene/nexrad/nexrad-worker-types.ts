@@ -1,4 +1,11 @@
-import type { EchoTopPayload, NexradVolumePayload } from './nexrad-types';
+import type {
+  CrossSectionData,
+  EchoTopPayload,
+  EchoTopSurfaceCell,
+  NexradPreparedVolumeData,
+  NexradVolumePayload
+} from './nexrad-types';
+import type { NexradDeclutterMode, NexradPhaseMode } from '@/app/app-client/types';
 
 export interface PhaseDebugHeaderValues {
   phaseMode: string | null;
@@ -24,7 +31,35 @@ export interface DecodeEchoTopRequestMessage {
   buffer: ArrayBuffer;
 }
 
-export type NexradWorkerRequestMessage = DecodeVolumeRequestMessage | DecodeEchoTopRequestMessage;
+export interface PrepareVolumeRequestMessage {
+  type: 'prepare-volume';
+  requestId: number;
+  payload: NexradVolumePayload;
+  minDbz: number;
+  phaseMode: NexradPhaseMode;
+  declutterMode: NexradDeclutterMode;
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
+  includeCrossSection: boolean;
+  normalizedCrossSectionRange: number;
+  crossSectionHalfWidthNm: number;
+  sliceAxis: { x: number; z: number };
+  slicePerpAxis: { x: number; z: number };
+}
+
+export interface PrepareEchoTopRequestMessage {
+  type: 'prepare-echo-top';
+  requestId: number;
+  payload: EchoTopPayload;
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
+}
+
+export type NexradWorkerRequestMessage =
+  | DecodeVolumeRequestMessage
+  | DecodeEchoTopRequestMessage
+  | PrepareVolumeRequestMessage
+  | PrepareEchoTopRequestMessage;
 
 export interface DecodeVolumeResponseMessage {
   type: 'decode-volume-result';
@@ -40,6 +75,25 @@ export interface DecodeEchoTopResponseMessage {
   error?: string;
 }
 
+export interface PrepareVolumeResponseMessage {
+  type: 'prepare-volume-result';
+  requestId: number;
+  payload?: NexradPreparedVolumeData;
+  crossSectionData?: CrossSectionData | null;
+  error?: string;
+}
+
+export interface PrepareEchoTopResponseMessage {
+  type: 'prepare-echo-top-result';
+  requestId: number;
+  echoTop18Cells?: EchoTopSurfaceCell[];
+  echoTop30Cells?: EchoTopSurfaceCell[];
+  echoTop50Cells?: EchoTopSurfaceCell[];
+  error?: string;
+}
+
 export type NexradWorkerResponseMessage =
   | DecodeVolumeResponseMessage
-  | DecodeEchoTopResponseMessage;
+  | DecodeEchoTopResponseMessage
+  | PrepareVolumeResponseMessage
+  | PrepareEchoTopResponseMessage;

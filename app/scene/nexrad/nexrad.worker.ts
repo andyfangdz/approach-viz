@@ -1,10 +1,21 @@
 import { applyPhaseDebugValues, decodeEchoTopPayload, decodePayload } from './nexrad-decode';
-import type { NexradVolumePayload } from './nexrad-types';
+import {
+  buildCrossSectionData,
+  prepareEchoTopSurfaces,
+  prepareVolumeData
+} from './nexrad-preprocess';
+import type {
+  CrossSectionData,
+  NexradPreparedVolumeData,
+  NexradVolumePayload
+} from './nexrad-types';
 import type {
   DecodeEchoTopRequestMessage,
   DecodeVolumeRequestMessage,
   NexradWorkerRequestMessage,
-  NexradWorkerResponseMessage
+  NexradWorkerResponseMessage,
+  PrepareEchoTopRequestMessage,
+  PrepareVolumeRequestMessage
 } from './nexrad-worker-types';
 
 type WorkerEndpoint = {
@@ -23,6 +34,23 @@ function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
     payload.phaseCode.buffer,
     payload.surfacePhaseCode.buffer
   ];
+}
+
+function preparedVolumeTransferables(payload: NexradPreparedVolumeData): Transferable[] {
+  return [
+    payload.validIndices.buffer,
+    payload.yBase.buffer,
+    payload.heightBase.buffer,
+    payload.correctedBottomFeet.buffer,
+    payload.correctedTopFeet.buffer,
+    payload.effectivePhaseCode.buffer,
+    payload.declutterIndices.buffer
+  ];
+}
+
+function crossSectionTransferables(data: CrossSectionData | null | undefined): Transferable[] {
+  if (!data) return [];
+  return [data.grid.buffer, data.phaseGrid.buffer, data.topEnvelopeFeet.buffer];
 }
 
 function handleDecodeVolume(endpoint: WorkerEndpoint, message: DecodeVolumeRequestMessage): void {
@@ -63,12 +91,81 @@ function handleDecodeEchoTop(endpoint: WorkerEndpoint, message: DecodeEchoTopReq
   }
 }
 
+function handlePrepareVolume(endpoint: WorkerEndpoint, message: PrepareVolumeRequestMessage): void {
+  try {
+    const payload = prepareVolumeData({
+      payload: message.payload,
+      minDbz: message.minDbz,
+      phaseMode: message.phaseMode,
+      declutterMode: message.declutterMode,
+      applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
+      refLat: message.refLat
+    });
+    const crossSectionData = message.includeCrossSection
+      ? buildCrossSectionData({
+          payload: message.payload,
+          volumeData: payload,
+          sliceAxis: message.sliceAxis,
+          slicePerpAxis: message.slicePerpAxis,
+          normalizedCrossSectionRange: message.normalizedCrossSectionRange,
+          crossSectionHalfWidthNm: message.crossSectionHalfWidthNm
+        })
+      : null;
+    endpoint.postMessage(
+      {
+        type: 'prepare-volume-result',
+        requestId: message.requestId,
+        payload,
+        crossSectionData
+      },
+      [...preparedVolumeTransferables(payload), ...crossSectionTransferables(crossSectionData)]
+    );
+  } catch (error) {
+    endpoint.postMessage({
+      type: 'prepare-volume-result',
+      requestId: message.requestId,
+      error: error instanceof Error ? error.message : 'Failed to prepare MRMS volume data.'
+    });
+  }
+}
+
+function handlePrepareEchoTop(
+  endpoint: WorkerEndpoint,
+  message: PrepareEchoTopRequestMessage
+): void {
+  try {
+    endpoint.postMessage({
+      type: 'prepare-echo-top-result',
+      requestId: message.requestId,
+      ...prepareEchoTopSurfaces({
+        payload: message.payload,
+        applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
+        refLat: message.refLat
+      })
+    });
+  } catch (error) {
+    endpoint.postMessage({
+      type: 'prepare-echo-top-result',
+      requestId: message.requestId,
+      error: error instanceof Error ? error.message : 'Failed to prepare MRMS echo-top surfaces.'
+    });
+  }
+}
+
 function handleMessage(endpoint: WorkerEndpoint, message: NexradWorkerRequestMessage): void {
   if (message.type === 'decode-volume') {
     handleDecodeVolume(endpoint, message);
     return;
   }
-  handleDecodeEchoTop(endpoint, message);
+  if (message.type === 'decode-echo-top') {
+    handleDecodeEchoTop(endpoint, message);
+    return;
+  }
+  if (message.type === 'prepare-volume') {
+    handlePrepareVolume(endpoint, message);
+    return;
+  }
+  handlePrepareEchoTop(endpoint, message);
 }
 
 const scope = self as unknown as {

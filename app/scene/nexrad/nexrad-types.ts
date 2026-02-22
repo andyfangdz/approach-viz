@@ -245,3 +245,15 @@ export interface CrossSectionData {
   topEnvelopeFeet: Float32Array;
   maxTopFeet: number;
 }
+
+export interface NexradPreparedVolumeData {
+  validCount: number;
+  validIndices: Int32Array;
+  yBase: Float32Array;
+  heightBase: Float32Array;
+  correctedBottomFeet: Float32Array;
+  correctedTopFeet: Float32Array;
+  effectivePhaseCode: Uint8Array;
+  declutterIndices: Int32Array;
+  declutterCount: number;
+}

@@ -2,6 +2,7 @@
 
 ## General Scene
 
+- Approach altitude-profile resolution and path-geometry assembly are computed through a worker-backed pipeline with synchronous fallback, reducing main-thread spikes during approach/option changes.
 - Vertical reference lines for path points are batched into a single `lineSegments` geometry per path segment (final/transition/missed) to reduce draw-call count.
 - Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized.
 - The top-level scene wrapper (`SceneCanvas`) is memoized so selector typing/collapse state updates in the header do not re-render the Three.js subtree.
@@ -15,6 +16,8 @@
 
 - Polling is throttled to a fixed interval (`5s`) through a same-origin proxy to the Rust runtime endpoint (`/v1/traffic/adsbx`) and bounded by viewport-centric query radius/aircraft limit to avoid full-feed client downloads.
 - One-time initial trace backfill request (default `3 min`) when overlay context/history changes; merges trace backfill into existing tracks when history retention is increased; subsequent `5s` polls fetch current targets only.
+- Track merge/prune/projection compute is offloaded to a dedicated traffic worker, with synchronous fallback when workers are unavailable.
+- Runtime debug telemetry exposes per-stage ADS-B timings (`poll cycle`, `fetch`, `json parse`, `worker process/recompute/prune`, `worker round-trip/CPU`, and marker instance upload) to validate main-thread offload impact.
 - Trail history is time-pruned by the user-selected retention window (`1..30 minutes`) to cap per-aircraft polyline growth.
 - Callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled.
 - Marker meshes reuse shared sphere geometry/material instances.
@@ -24,6 +27,8 @@
 
 - Decoded payloads use parallel flat `TypedArrays` (`xNm`, `zNm`, `bottomFeet`, etc.) instead of Javascript objects to eliminate `100k+` object allocations and GC pauses during the `120s` poll cycle.
 - Binary decode runs in a worker off the main thread (`SharedWorker` preferred, dedicated `Worker` fallback), reducing UI hitching during poll refreshes while preserving a synchronous fallback path for reliability.
+- MRMS volume preprocessing (threshold filter, phase selection, curvature correction, declutter index generation), echo-top surface shaping, and cross-section binning are computed off-main-thread through the same worker pipeline.
+- Runtime debug telemetry exposes per-stage MRMS timings (`poll cycle`, volume/echo-top `fetch`, volume/echo-top `decode`, volume/echo-top `prepare`, and voxel/echo-top instance upload) for regression checks.
 - Volumetric instanced meshes calculate transforms and scale by writing directly into the `Float32Array` of `InstancedMesh.instanceMatrix.array` (via 16-element offsets), avoiding the heavy `THREE.Object3D` quaternion scaling overhead completely.
 - MRMS base/glow dual-pass volume rendering shares populated instance buffers between passes, avoiding a second per-voxel transform/color upload each refresh.
 - MRMS instanced capacities grow in buckets instead of resizing every poll, reducing remount/reallocation churn for fluctuating voxel counts.

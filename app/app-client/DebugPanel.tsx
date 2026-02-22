@@ -51,6 +51,11 @@ function formatFeet(value: number | null): string {
   return `${Math.round(value).toLocaleString()} ft`;
 }
 
+function formatMs(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'n/a';
+  return `${value.toFixed(1)} ms`;
+}
+
 function formatAltConstraint(leg: ApproachLeg): string {
   if (leg.altitude == null) return '';
   const prefix =
@@ -107,8 +112,10 @@ export function DebugPanel({
   cycleInfo,
   currentApproach
 }: DebugPanelProps) {
+  const [contextExpanded, setContextExpanded] = useState(false);
   const [mrmsExpanded, setMrmsExpanded] = useState(false);
   const [procedureExpanded, setProcedureExpanded] = useState(false);
+  const [trafficExpanded, setTrafficExpanded] = useState(false);
 
   if (debugCollapsed) {
     return (
@@ -154,50 +161,80 @@ export function DebugPanel({
       </div>
 
       <div className="debug-section">
-        <div className="debug-title">Context</div>
-        <div className="debug-row">
-          <span>Airport</span>
-          <span>{airportId || 'n/a'}</span>
-        </div>
-        <div className="debug-row">
-          <span>Approach</span>
-          <span>{approachId || 'n/a'}</span>
-        </div>
-        <div className="debug-row">
-          <span>Surface</span>
-          <span>{surfaceMode}</span>
-        </div>
-        <div className="debug-row">
-          <span>Worker</span>
-          <span>{boolLabel(runtimeCapabilities.workerAvailable)}</span>
-        </div>
-        <div className="debug-row">
-          <span>SharedWorker</span>
-          <span>{boolLabel(runtimeCapabilities.sharedWorkerAvailable)}</span>
-        </div>
-        <div className="debug-row">
-          <span>SharedArrayBuffer</span>
-          <span>{boolLabel(runtimeCapabilities.sharedArrayBufferAvailable)}</span>
-        </div>
-        <div className="debug-row">
-          <span>Atomics</span>
-          <span>{boolLabel(runtimeCapabilities.atomicsAvailable)}</span>
-        </div>
-        <div className="debug-row">
-          <span>Cross-Origin Iso</span>
-          <span>{boolLabel(runtimeCapabilities.crossOriginIsolated)}</span>
-        </div>
-        {cycleInfo && (
-          <>
+        <button
+          type="button"
+          className="debug-section-toggle"
+          onClick={() => setContextExpanded((v) => !v)}
+          aria-expanded={contextExpanded}
+        >
+          <span className="debug-title">Context</span>
+          <span className="debug-summary">
+            {airportId || 'n/a'} &middot; {approachId || 'n/a'}
+          </span>
+          <svg
+            className={`debug-chevron${contextExpanded ? ' debug-chevron-open' : ''}`}
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            aria-hidden="true"
+          >
+            <path
+              d="M2.5 3.5L5 6.5L7.5 3.5"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        {contextExpanded && (
+          <div className="debug-section-body">
             <div className="debug-row">
-              <span>CIFP Cycle</span>
-              <span>{cycleInfo.cifpCycle || 'n/a'}</span>
+              <span>Airport</span>
+              <span>{airportId || 'n/a'}</span>
             </div>
             <div className="debug-row">
-              <span>d-TPP Cycle</span>
-              <span>{cycleInfo.dtppCycle || 'n/a'}</span>
+              <span>Approach</span>
+              <span>{approachId || 'n/a'}</span>
             </div>
-          </>
+            <div className="debug-row">
+              <span>Surface</span>
+              <span>{surfaceMode}</span>
+            </div>
+            <div className="debug-row">
+              <span>Worker</span>
+              <span>{boolLabel(runtimeCapabilities.workerAvailable)}</span>
+            </div>
+            <div className="debug-row">
+              <span>SharedWorker</span>
+              <span>{boolLabel(runtimeCapabilities.sharedWorkerAvailable)}</span>
+            </div>
+            <div className="debug-row">
+              <span>SharedArrayBuffer</span>
+              <span>{boolLabel(runtimeCapabilities.sharedArrayBufferAvailable)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Atomics</span>
+              <span>{boolLabel(runtimeCapabilities.atomicsAvailable)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Cross-Origin Iso</span>
+              <span>{boolLabel(runtimeCapabilities.crossOriginIsolated)}</span>
+            </div>
+            {cycleInfo && (
+              <>
+                <div className="debug-row">
+                  <span>CIFP Cycle</span>
+                  <span>{cycleInfo.cifpCycle || 'n/a'}</span>
+                </div>
+                <div className="debug-row">
+                  <span>d-TPP Cycle</span>
+                  <span>{cycleInfo.dtppCycle || 'n/a'}</span>
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
 
@@ -296,6 +333,39 @@ export function DebugPanel({
               <span>{boolLabel(nexradDebug.loading)}</span>
             </div>
             <div className="debug-row">
+              <span>Offload</span>
+              <span>{nexradDebug.offloadMode || 'n/a'}</span>
+            </div>
+            <div className="debug-row">
+              <span>Poll Cycle</span>
+              <span>{formatMs(nexradDebug.timingsMs.pollCycleMs)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Fetch V/E</span>
+              <span>
+                {formatMs(nexradDebug.timingsMs.volumeFetchMs)}/
+                {formatMs(nexradDebug.timingsMs.echoTopFetchMs)}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>Decode V/E</span>
+              <span>
+                {formatMs(nexradDebug.timingsMs.volumeDecodeMs)}/
+                {formatMs(nexradDebug.timingsMs.echoTopDecodeMs)}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>Prep V/E</span>
+              <span>
+                {formatMs(nexradDebug.timingsMs.volumePrepareMs)}/
+                {formatMs(nexradDebug.timingsMs.echoTopPrepareMs)}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>Upload</span>
+              <span>{formatMs(nexradDebug.timingsMs.instanceUploadMs)}</span>
+            </div>
+            <div className="debug-row">
               <span>Stale</span>
               <span>{boolLabel(nexradDebug.stale)}</span>
             </div>
@@ -391,42 +461,110 @@ export function DebugPanel({
       </div>
 
       <div className="debug-section">
-        <div className="debug-title">Traffic</div>
-        <div className="debug-row">
-          <span>Enabled</span>
-          <span>{boolLabel(trafficDebug.enabled)}</span>
-        </div>
-        <div className="debug-row">
-          <span>Loading</span>
-          <span>{boolLabel(trafficDebug.loading)}</span>
-        </div>
-        <div className="debug-row">
-          <span>Backfill</span>
-          <span>{boolLabel(trafficDebug.historyBackfillPending)}</span>
-        </div>
-        <div className="debug-row">
-          <span>Tracks</span>
-          <span>{trafficDebug.trackCount}</span>
-        </div>
-        <div className="debug-row">
-          <span>Rendered</span>
-          <span>{trafficDebug.renderedTrackCount}</span>
-        </div>
-        <div className="debug-row">
-          <span>History Pts</span>
-          <span>{trafficDebug.historyPointCount}</span>
-        </div>
-        <div className="debug-row">
-          <span>Radius/Limit</span>
-          <span>
-            {trafficDebug.radiusNm} / {trafficDebug.limit}
+        <button
+          type="button"
+          className="debug-section-toggle"
+          onClick={() => setTrafficExpanded((v) => !v)}
+          aria-expanded={trafficExpanded}
+        >
+          <span className="debug-title">Traffic</span>
+          <span className="debug-summary">
+            {boolLabel(trafficDebug.enabled)} &middot; {trafficDebug.renderedTrackCount} tracks
           </span>
-        </div>
-        <div className="debug-row">
-          <span>Poll</span>
-          <span>{formatTimestamp(trafficDebug.lastPollAt)}</span>
-        </div>
+          <svg
+            className={`debug-chevron${trafficExpanded ? ' debug-chevron-open' : ''}`}
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            aria-hidden="true"
+          >
+            <path
+              d="M2.5 3.5L5 6.5L7.5 3.5"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         {trafficDebug.error && <div className="debug-error">Traffic: {trafficDebug.error}</div>}
+        {trafficExpanded && (
+          <div className="debug-section-body">
+            <div className="debug-row">
+              <span>Enabled</span>
+              <span>{boolLabel(trafficDebug.enabled)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Loading</span>
+              <span>{boolLabel(trafficDebug.loading)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Offload</span>
+              <span>{trafficDebug.offloadMode || 'n/a'}</span>
+            </div>
+            <div className="debug-row">
+              <span>Poll Cycle</span>
+              <span>{formatMs(trafficDebug.timingsMs.pollCycleMs)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Fetch/Parse</span>
+              <span>
+                {formatMs(trafficDebug.timingsMs.fetchMs)}/
+                {formatMs(trafficDebug.timingsMs.parseMs)}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>Process</span>
+              <span>{formatMs(trafficDebug.timingsMs.processMs)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Recompute</span>
+              <span>{formatMs(trafficDebug.timingsMs.recomputeMs)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Prune</span>
+              <span>{formatMs(trafficDebug.timingsMs.pruneMs)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Worker RT/CPU</span>
+              <span>
+                {formatMs(trafficDebug.timingsMs.workerRoundTripMs)}/
+                {formatMs(trafficDebug.timingsMs.workerProcessingMs)}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>Upload</span>
+              <span>{formatMs(trafficDebug.timingsMs.markerUploadMs)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Backfill</span>
+              <span>{boolLabel(trafficDebug.historyBackfillPending)}</span>
+            </div>
+            <div className="debug-row">
+              <span>Tracks</span>
+              <span>{trafficDebug.trackCount}</span>
+            </div>
+            <div className="debug-row">
+              <span>Rendered</span>
+              <span>{trafficDebug.renderedTrackCount}</span>
+            </div>
+            <div className="debug-row">
+              <span>History Pts</span>
+              <span>{trafficDebug.historyPointCount}</span>
+            </div>
+            <div className="debug-row">
+              <span>Radius/Limit</span>
+              <span>
+                {trafficDebug.radiusNm} / {trafficDebug.limit}
+              </span>
+            </div>
+            <div className="debug-row">
+              <span>Poll</span>
+              <span>{formatTimestamp(trafficDebug.lastPollAt)}</span>
+            </div>
+          </div>
+        )}
       </div>
     </aside>
   );

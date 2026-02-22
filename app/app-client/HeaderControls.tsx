@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Select from 'react-select';
-import { filterOptions, selectStyles } from '@/app/app-client-utils';
+import { selectStyles } from '@/app/app-client-utils';
+import { filterOptionsWithWorker } from '@/app/app-client/filter-worker-client';
 import type { HeaderControlsProps } from './types';
 
 export function HeaderControls({
@@ -36,14 +37,30 @@ export function HeaderControls({
   }, [selectorsCollapsed, onControlsHeightChange]);
   const [airportQuery, setAirportQuery] = useState('');
   const [approachQuery, setApproachQuery] = useState('');
-  const filteredAirportOptions = useMemo(
-    () => filterOptions(effectiveAirportOptions, airportQuery),
-    [effectiveAirportOptions, airportQuery]
-  );
-  const filteredApproachOptions = useMemo(
-    () => filterOptions(approachOptions, approachQuery),
-    [approachOptions, approachQuery]
-  );
+  const [filteredAirportOptions, setFilteredAirportOptions] = useState(effectiveAirportOptions);
+  const [filteredApproachOptions, setFilteredApproachOptions] = useState(approachOptions);
+
+  useEffect(() => {
+    let cancelled = false;
+    void filterOptionsWithWorker(effectiveAirportOptions, airportQuery).then((filtered) => {
+      if (cancelled) return;
+      setFilteredAirportOptions(filtered);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveAirportOptions, airportQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void filterOptionsWithWorker(approachOptions, approachQuery).then((filtered) => {
+      if (cancelled) return;
+      setFilteredApproachOptions(filtered);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [approachOptions, approachQuery]);
   const selectorsToggleLabel = selectorsCollapsed ? 'Show selectors' : 'Hide selectors';
 
   return (

@@ -8,7 +8,19 @@ export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high';
 export type NexradPhaseMode = 'thermo' | 'surface';
 export type CameraControlMode = 'orbit' | 'arcball' | 'map';
 
+export interface NexradTimingDebugState {
+  pollCycleMs: number | null;
+  volumeFetchMs: number | null;
+  volumeDecodeMs: number | null;
+  volumePrepareMs: number | null;
+  echoTopFetchMs: number | null;
+  echoTopDecodeMs: number | null;
+  echoTopPrepareMs: number | null;
+  instanceUploadMs: number | null;
+}
+
 export interface NexradDebugState {
+  offloadMode: string | null;
   enabled: boolean;
   loading: boolean;
   stale: boolean;
@@ -41,9 +53,23 @@ export interface NexradDebugState {
   echoTop30Timestamp: string | null;
   echoTop50Timestamp: string | null;
   echoTop60Timestamp: string | null;
+  timingsMs: NexradTimingDebugState;
+}
+
+export interface TrafficTimingDebugState {
+  pollCycleMs: number | null;
+  fetchMs: number | null;
+  parseMs: number | null;
+  processMs: number | null;
+  recomputeMs: number | null;
+  pruneMs: number | null;
+  markerUploadMs: number | null;
+  workerRoundTripMs: number | null;
+  workerProcessingMs: number | null;
 }
 
 export interface TrafficDebugState {
+  offloadMode: string | null;
   enabled: boolean;
   loading: boolean;
   error: string | null;
@@ -55,6 +81,7 @@ export interface TrafficDebugState {
   radiusNm: number;
   limit: number;
   historyMinutes: number;
+  timingsMs: TrafficTimingDebugState;
 }
 
 export interface RuntimeCapabilities {

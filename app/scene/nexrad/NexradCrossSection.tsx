@@ -14,6 +14,7 @@ interface NexradCrossSectionProps {
     correctedTopFeet: Float32Array;
     effectivePhaseCode: Uint8Array;
   };
+  crossSectionData?: CrossSectionData | null;
   normalizedCrossSectionHeading: number;
   normalizedCrossSectionRange: number;
   sliceAxis: { x: number; z: number };
@@ -27,6 +28,7 @@ interface NexradCrossSectionProps {
 export function NexradCrossSection({
   payload,
   volumeData,
+  crossSectionData: precomputedCrossSectionData,
   normalizedCrossSectionHeading,
   normalizedCrossSectionRange,
   sliceAxis,
@@ -39,6 +41,9 @@ export function NexradCrossSection({
   const sliceCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const crossSectionData = useMemo<CrossSectionData | null>(() => {
+    if (precomputedCrossSectionData) {
+      return precomputedCrossSectionData;
+    }
     const { validCount, validIndices, correctedBottomFeet, correctedTopFeet, effectivePhaseCode } =
       volumeData;
     if (validCount === 0 || !payload) return null;
@@ -106,6 +111,7 @@ export function NexradCrossSection({
       maxTopFeet
     };
   }, [
+    precomputedCrossSectionData,
     payload,
     volumeData,
     sliceAxis,

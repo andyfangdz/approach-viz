@@ -3,7 +3,7 @@
  * Renders waypoints, approach segments, and vertical reference lines
  */
 
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import type { Approach, ApproachLeg, Airport, RunwayThreshold, Waypoint } from '@/lib/cifp/parser';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
 import {
@@ -11,6 +11,7 @@ import {
   resolveMissedApproachAltitudes,
   resolveSegmentAltitudes
 } from './approach-path/altitudes';
+import { resolveApproachAltitudesWithWorker } from './approach-path/approach-worker-client';
 import { AirportMarker } from './approach-path/AirportMarker';
 import { COLORS } from './approach-path/constants';
 import { altToY, isHoldLeg, resolveWaypoint } from './approach-path/coordinates';
@@ -61,35 +62,110 @@ export const ApproachPath = memo(function ApproachPath({
     return legs;
   }, [approach]);
 
-  const resolvedAltitudes = useMemo(() => {
-    const altitudes = new Map<ApproachLeg, number>();
-    const finalAltitudes = resolveSegmentAltitudes(approach.finalLegs, waypoints, refLat, refLon);
-    for (const [leg, altitude] of finalAltitudes.entries()) {
-      altitudes.set(leg, altitude);
-    }
+  const [resolvedAltitudes, setResolvedAltitudes] = useState<Map<ApproachLeg, number>>(new Map());
+  const [missedPathAltitudes, setMissedPathAltitudes] = useState<Map<ApproachLeg, number>>(
+    new Map()
+  );
 
-    for (const legs of approach.transitions.values()) {
-      const transitionAltitudes = resolveSegmentAltitudes(legs, waypoints, refLat, refLon);
-      for (const [leg, altitude] of transitionAltitudes.entries()) {
+  useEffect(() => {
+    let cancelled = false;
+    const transitionEntries = Array.from(approach.transitions.entries());
+    const setFallback = () => {
+      const altitudes = new Map<ApproachLeg, number>();
+      const finalAltitudes = resolveSegmentAltitudes(approach.finalLegs, waypoints, refLat, refLon);
+      for (const [leg, altitude] of finalAltitudes.entries()) {
         altitudes.set(leg, altitude);
       }
-    }
+      for (const [, legs] of transitionEntries) {
+        const transitionAltitudes = resolveSegmentAltitudes(legs, waypoints, refLat, refLon);
+        for (const [leg, altitude] of transitionAltitudes.entries()) {
+          altitudes.set(leg, altitude);
+        }
+      }
+      const missedAltitudes = resolveSegmentAltitudes(
+        approach.missedLegs,
+        waypoints,
+        refLat,
+        refLon
+      );
+      for (const [leg, altitude] of missedAltitudes.entries()) {
+        altitudes.set(leg, altitude);
+      }
+      const glideAdjusted = applyGlidepathInsideFaf(
+        approach.finalLegs,
+        approach.missedLegs,
+        altitudes,
+        waypoints,
+        refLat,
+        refLon,
+        airport.elevation
+      );
+      const missedAdjusted = resolveMissedApproachAltitudes(
+        approach.missedLegs,
+        glideAdjusted,
+        waypoints,
+        refLat,
+        refLon,
+        missedApproachStartAltitudeFeet,
+        missedApproachClimbRequirement
+      );
+      if (cancelled) return;
+      setResolvedAltitudes(glideAdjusted);
+      setMissedPathAltitudes(missedAdjusted);
+    };
 
-    const missedAltitudes = resolveSegmentAltitudes(approach.missedLegs, waypoints, refLat, refLon);
-    for (const [leg, altitude] of missedAltitudes.entries()) {
-      altitudes.set(leg, altitude);
-    }
-
-    return applyGlidepathInsideFaf(
-      approach.finalLegs,
-      approach.missedLegs,
-      altitudes,
-      waypoints,
+    void resolveApproachAltitudesWithWorker({
+      finalLegs: approach.finalLegs,
+      transitionEntries,
+      missedLegs: approach.missedLegs,
+      waypoints: Array.from(waypoints.entries()),
       refLat,
       refLon,
-      airport.elevation
-    );
-  }, [approach, airport.elevation, waypoints, refLat, refLon]);
+      airportElevation: airport.elevation,
+      missedApproachStartAltitudeFeet,
+      missedApproachClimbRequirement
+    })
+      .then((resolved) => {
+        if (cancelled) return;
+        const nextResolved = new Map<ApproachLeg, number>();
+        for (let i = 0; i < approach.finalLegs.length; i += 1) {
+          nextResolved.set(approach.finalLegs[i], resolved.finalAltitudes[i] ?? 0);
+        }
+        for (let t = 0; t < transitionEntries.length; t += 1) {
+          const [, legs] = transitionEntries[t];
+          const transition = resolved.transitionAltitudes[t]?.[1] ?? [];
+          for (let i = 0; i < legs.length; i += 1) {
+            nextResolved.set(legs[i], transition[i] ?? 0);
+          }
+        }
+        for (let i = 0; i < approach.missedLegs.length; i += 1) {
+          nextResolved.set(approach.missedLegs[i], resolved.missedAltitudes[i] ?? 0);
+        }
+        const nextMissed = new Map<ApproachLeg, number>();
+        for (let i = 0; i < approach.missedLegs.length; i += 1) {
+          nextMissed.set(approach.missedLegs[i], resolved.missedPathAltitudes[i] ?? 0);
+        }
+        setResolvedAltitudes(nextResolved);
+        setMissedPathAltitudes(nextMissed);
+      })
+      .catch(() => {
+        setFallback();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    approach.finalLegs,
+    approach.transitions,
+    approach.missedLegs,
+    waypoints,
+    refLat,
+    refLon,
+    airport.elevation,
+    missedApproachStartAltitudeFeet,
+    missedApproachClimbRequirement
+  ]);
 
   const finalPathLegs = useMemo(() => {
     if (approach.finalLegs.length === 0) {
@@ -122,28 +198,6 @@ export const ApproachPath = memo(function ApproachPath({
     }
     return altitudes;
   }, [holdLegs, resolvedAltitudes, airport.elevation]);
-
-  const missedPathAltitudes = useMemo(
-    () =>
-      resolveMissedApproachAltitudes(
-        approach.missedLegs,
-        resolvedAltitudes,
-        waypoints,
-        refLat,
-        refLon,
-        missedApproachStartAltitudeFeet,
-        missedApproachClimbRequirement
-      ),
-    [
-      approach.missedLegs,
-      missedApproachStartAltitudeFeet,
-      missedApproachClimbRequirement,
-      resolvedAltitudes,
-      waypoints,
-      refLat,
-      refLon
-    ]
-  );
 
   return (
     <group>

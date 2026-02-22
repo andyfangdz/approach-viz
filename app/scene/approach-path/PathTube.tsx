@@ -1,7 +1,8 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
+import { buildPathGeometryWithWorker } from './approach-worker-client';
 import { buildPathGeometry } from './path-builder';
 import { altToY } from './coordinates';
 import { VerticalLines } from './VerticalLines';
@@ -87,18 +88,59 @@ export function PathTube({
   dashedBelowAltitudeFeet?: number;
   dashedBelowLabel?: string;
 }) {
-  const { points, verticalLines, turnConstraintLabels } = useMemo(() => {
-    return buildPathGeometry({
+  const [points, setPoints] = useState<THREE.Vector3[]>([]);
+  const [verticalLines, setVerticalLines] = useState<{ x: number; y: number; z: number }[]>([]);
+  const [turnConstraintLabels, setTurnConstraintLabels] = useState<
+    Array<{ position: [number, number, number]; text: string }>
+  >([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolvedAltitudesByLeg = legs.map(
+      (leg) => resolvedAltitudes.get(leg) ?? leg.altitude ?? 0
+    );
+    const fallback = () => {
+      const next = buildPathGeometry({
+        legs,
+        waypoints,
+        resolvedAltitudes,
+        initialAltitudeFeet,
+        verticalScale,
+        refLat,
+        refLon,
+        magVar,
+        showTurnConstraintLabels
+      });
+      if (cancelled) return;
+      setPoints(next.points);
+      setVerticalLines(next.verticalLines);
+      setTurnConstraintLabels(next.turnConstraintLabels);
+    };
+
+    void buildPathGeometryWithWorker({
       legs,
-      waypoints,
-      resolvedAltitudes,
+      waypoints: Array.from(waypoints.entries()),
+      resolvedAltitudes: resolvedAltitudesByLeg,
       initialAltitudeFeet,
       verticalScale,
       refLat,
       refLon,
       magVar,
       showTurnConstraintLabels
-    });
+    })
+      .then((next) => {
+        if (cancelled) return;
+        setPoints(next.points.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+        setVerticalLines(next.verticalLines);
+        setTurnConstraintLabels(next.turnConstraintLabels);
+      })
+      .catch(() => {
+        fallback();
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     legs,
     waypoints,

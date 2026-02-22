@@ -1,23 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import type { NexradDebugState } from '@/app/app-client/types';
-import { earthCurvatureDropNm } from './approach-path/coordinates';
+import type { NexradDebugState, NexradTimingDebugState } from '@/app/app-client/types';
 import type {
+  CrossSectionData,
+  NexradPreparedVolumeData,
   NexradVolumeOverlayProps,
   NexradVolumePayload,
   EchoTopPayload,
-  RenderEchoTopCell,
   EchoTopSurfaceCell
 } from './nexrad/nexrad-types';
 import {
-  FEET_PER_NM,
-  ALTITUDE_SCALE,
   POLL_INTERVAL_MS,
   RETRY_INTERVAL_MS,
   DEFAULT_MAX_RANGE_NM,
-  MIN_VOXEL_HEIGHT_NM,
-  PHASE_RAIN,
   PHASE_MIXED,
   PHASE_SNOW,
   ALTITUDE_GUIDE_STEP_FEET,
@@ -29,19 +25,38 @@ import {
   buildEchoTopRequestUrl,
   extractPhaseDebugHeaderValues
 } from './nexrad/nexrad-decode';
-import { decodeEchoTopPayloadWithWorker, decodeVolumePayload } from './nexrad/nexrad-worker-client';
+import {
+  decodeEchoTopPayloadWithWorker,
+  decodeVolumePayload,
+  getNexradWorkerRuntimeMode,
+  prepareEchoTopWithWorker,
+  prepareVolumeWithWorker
+} from './nexrad/nexrad-worker-client';
 import {
   dbzToAlpha,
   patchMaterialForInstanceAlpha,
   applyVoxelInstances,
   feetToNm,
-  keepVoxelForDeclutter,
   applyConstantColorInstances,
   feetLabel
 } from './nexrad/nexrad-render';
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
 
 const MIN_INSTANCE_CAPACITY = 1;
+const EMPTY_TIMINGS_MS: NexradTimingDebugState = {
+  pollCycleMs: null,
+  volumeFetchMs: null,
+  volumeDecodeMs: null,
+  volumePrepareMs: null,
+  echoTopFetchMs: null,
+  echoTopDecodeMs: null,
+  echoTopPrepareMs: null,
+  instanceUploadMs: null
+};
+
+function roundMs(value: number): number {
+  return Math.round(value * 10) / 10;
+}
 
 function nextInstanceCapacity(currentCapacity: number, requiredCount: number): number {
   const safeRequiredCount = Math.max(MIN_INSTANCE_CAPACITY, requiredCount);
@@ -64,6 +79,20 @@ function useGrowingInstanceCapacity(requiredCount: number): number {
 function ensureInt32Capacity(array: Int32Array, requiredCount: number): Int32Array {
   if (array.length >= requiredCount) return array;
   return new Int32Array(nextInstanceCapacity(Math.max(1, array.length), requiredCount));
+}
+
+function emptyPreparedVolume(): NexradPreparedVolumeData {
+  return {
+    validCount: 0,
+    validIndices: new Int32Array(0),
+    yBase: new Float32Array(0),
+    heightBase: new Float32Array(0),
+    correctedBottomFeet: new Float32Array(0),
+    correctedTopFeet: new Float32Array(0),
+    effectivePhaseCode: new Uint8Array(0),
+    declutterIndices: new Int32Array(0),
+    declutterCount: 0
+  };
 }
 
 export function NexradVolumeOverlay({
@@ -122,211 +151,135 @@ export function NexradVolumeOverlay({
     MAX_CROSS_SECTION_HALF_WIDTH_NM,
     Math.max(0, Math.min(1, (normalizedCrossSectionRange - 30) / (140 - 30)))
   );
-
-  const applyEarthCurvatureCompensationRef = useRef(applyEarthCurvatureCompensation);
-  const refLatRef = useRef(refLat);
-  const minDbzRef = useRef(minDbz);
-  const phaseModeRef = useRef(phaseMode);
+  const [volumeData, setVolumeData] = useState<NexradPreparedVolumeData>(() =>
+    emptyPreparedVolume()
+  );
+  const [crossSectionData, setCrossSectionData] = useState<CrossSectionData | null>(null);
+  const [echoTop18Cells, setEchoTop18Cells] = useState<EchoTopSurfaceCell[]>([]);
+  const [echoTop30Cells, setEchoTop30Cells] = useState<EchoTopSurfaceCell[]>([]);
+  const [echoTop50Cells, setEchoTop50Cells] = useState<EchoTopSurfaceCell[]>([]);
+  const [timingsMs, setTimingsMs] = useState<NexradTimingDebugState>(EMPTY_TIMINGS_MS);
+  const volumePrepareSeqRef = useRef(0);
+  const echoTopPrepareSeqRef = useRef(0);
+  const patchTimings = useCallback((patch: Partial<NexradTimingDebugState>) => {
+    setTimingsMs((previous) => {
+      let changed = false;
+      const next: NexradTimingDebugState = { ...previous };
+      const entries = Object.entries(patch) as Array<[keyof NexradTimingDebugState, number | null]>;
+      for (const [key, value] of entries) {
+        if (previous[key] === value) continue;
+        changed = true;
+        next[key] = value;
+      }
+      return changed ? next : previous;
+    });
+  }, []);
 
   useEffect(() => {
-    applyEarthCurvatureCompensationRef.current = applyEarthCurvatureCompensation;
-    refLatRef.current = refLat;
-    minDbzRef.current = minDbz;
-    phaseModeRef.current = phaseMode;
-  }, [applyEarthCurvatureCompensation, refLat, minDbz, phaseMode]);
-
-  const volumeData = useMemo(() => {
-    if (!enabled || !payload || !payload.voxelCount) {
-      return {
-        validCount: 0,
-        validIndices: new Int32Array(0),
-        yBase: new Float32Array(0),
-        heightBase: new Float32Array(0),
-        correctedBottomFeet: new Float32Array(0),
-        correctedTopFeet: new Float32Array(0),
-        effectivePhaseCode: new Uint8Array(0)
-      };
+    if (!enabled || !payload) {
+      volumePrepareSeqRef.current += 1;
+      setVolumeData(emptyPreparedVolume());
+      setCrossSectionData(null);
+      patchTimings({ volumePrepareMs: null });
+      return;
     }
+    const sequence = volumePrepareSeqRef.current + 1;
+    volumePrepareSeqRef.current = sequence;
+    let cancelled = false;
+    const startedAt = performance.now();
 
-    const count = payload.voxelCount;
-    const {
-      xNm,
-      zNm,
-      bottomFeet,
-      topFeet,
-      dbz,
-      footprintXNm,
-      footprintYNm,
-      phaseCode,
-      surfacePhaseCode
-    } = payload;
-
-    const validIndices = new Int32Array(count);
-    const yBase = new Float32Array(count);
-    const heightBase = new Float32Array(count);
-    const correctedBottomFeet = new Float32Array(count);
-    const correctedTopFeet = new Float32Array(count);
-    const effectivePhaseCode = new Uint8Array(count);
-
-    let validCount = 0;
-
-    for (let i = 0; i < count; i += 1) {
-      const d = dbz[i];
-      if (d < minDbz) continue;
-
-      const x = xNm[i];
-      const z = zNm[i];
-      const fpX = footprintXNm[i];
-      const fpY = footprintYNm[i];
-
-      if (
-        !Number.isFinite(x) ||
-        !Number.isFinite(z) ||
-        !Number.isFinite(fpX) ||
-        !Number.isFinite(fpY) ||
-        fpX <= 0 ||
-        fpY <= 0
-      ) {
-        continue;
-      }
-
-      const curvatureDropFeet = applyEarthCurvatureCompensationRef.current
-        ? earthCurvatureDropNm(x, z, refLatRef.current) * FEET_PER_NM
-        : 0;
-      const cBottom = bottomFeet[i] - curvatureDropFeet;
-      const cTop = topFeet[i] - curvatureDropFeet;
-      const cCenter = (cBottom + cTop) / 2;
-      const yb = cCenter * ALTITUDE_SCALE;
-      const hb = Math.max((cTop - cBottom) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM);
-
-      if (!Number.isFinite(yb) || !Number.isFinite(cBottom) || !Number.isFinite(cTop)) {
-        continue;
-      }
-
-      validIndices[validCount] = i;
-      yBase[validCount] = yb;
-      heightBase[validCount] = hb;
-      correctedBottomFeet[validCount] = cBottom;
-      correctedTopFeet[validCount] = cTop;
-
-      const spc = surfacePhaseCode[i];
-      const pc = phaseCode[i];
-      let pCode = PHASE_RAIN;
-      if (phaseModeRef.current === 'surface') {
-        pCode = typeof spc === 'number' && Number.isFinite(spc) ? Math.round(spc) : PHASE_RAIN;
-      } else {
-        pCode = typeof pc === 'number' && Number.isFinite(pc) ? Math.round(pc) : PHASE_RAIN;
-      }
-      effectivePhaseCode[validCount] = pCode;
-
-      validCount += 1;
-    }
-
-    return {
-      validCount,
-      validIndices,
-      yBase,
-      heightBase,
-      correctedBottomFeet,
-      correctedTopFeet,
-      effectivePhaseCode
-    };
-  }, [enabled, payload]);
-
-  const declutterData = useMemo(() => {
-    const { validCount, validIndices, correctedBottomFeet, correctedTopFeet } = volumeData;
-    if (declutterMode === 'all') {
-      return { declutterIndices: validIndices, declutterCount: validCount };
-    }
-
-    const declutterIndices = new Int32Array(validCount);
-    let declutterCount = 0;
-
-    for (let i = 0; i < validCount; i += 1) {
-      if (keepVoxelForDeclutter(declutterMode, correctedBottomFeet[i], correctedTopFeet[i])) {
-        declutterIndices[declutterCount] = i;
-        declutterCount += 1;
-      }
-    }
-    return { declutterIndices, declutterCount };
-  }, [declutterMode, volumeData]);
-
-  const renderEchoTopCells = useMemo<RenderEchoTopCell[]>(() => {
-    if (!enabled || !showEchoTops || !echoTopPayload?.cells?.length) return [];
-
-    const footprintXNm =
-      typeof echoTopPayload.footprintXNm === 'number' &&
-      Number.isFinite(echoTopPayload.footprintXNm)
-        ? Math.max(0.03, echoTopPayload.footprintXNm)
-        : 0.05;
-    const footprintYNm =
-      typeof echoTopPayload.footprintYNm === 'number' &&
-      Number.isFinite(echoTopPayload.footprintYNm)
-        ? Math.max(0.03, echoTopPayload.footprintYNm)
-        : footprintXNm;
-    const next: RenderEchoTopCell[] = [];
-    for (const cell of echoTopPayload.cells) {
-      const [xNm, zNm, top18FeetRaw, top30FeetRaw, top50FeetRaw, top60FeetRaw] = cell;
-      if (!Number.isFinite(xNm) || !Number.isFinite(zNm)) continue;
-      const curvatureDropFeet = applyEarthCurvatureCompensation
-        ? earthCurvatureDropNm(xNm, zNm, refLat) * FEET_PER_NM
-        : 0;
-      const top18Feet = Math.max(0, top18FeetRaw - curvatureDropFeet);
-      const top30Feet = Math.max(0, top30FeetRaw - curvatureDropFeet);
-      const top50Feet = Math.max(0, top50FeetRaw - curvatureDropFeet);
-      const top60Feet = Math.max(0, top60FeetRaw - curvatureDropFeet);
-      if (top18Feet <= 0 && top30Feet <= 0 && top50Feet <= 0 && top60Feet <= 0) continue;
-      next.push({
-        x: xNm,
-        z: zNm,
-        footprintXNm,
-        footprintYNm,
-        top18Feet,
-        top30Feet,
-        top50Feet,
-        top60Feet
+    void prepareVolumeWithWorker(payload, {
+      minDbz,
+      phaseMode,
+      declutterMode,
+      applyEarthCurvatureCompensation,
+      refLat,
+      includeCrossSection: showCrossSection,
+      normalizedCrossSectionRange,
+      crossSectionHalfWidthNm,
+      sliceAxis,
+      slicePerpAxis
+    })
+      .then((prepared) => {
+        if (cancelled || sequence !== volumePrepareSeqRef.current) return;
+        setVolumeData(prepared.payload);
+        setCrossSectionData(prepared.crossSectionData);
+        patchTimings({ volumePrepareMs: roundMs(performance.now() - startedAt) });
+      })
+      .catch((error) => {
+        if (cancelled || sequence !== volumePrepareSeqRef.current) return;
+        setVolumeData(emptyPreparedVolume());
+        setCrossSectionData(null);
+        setLastError(error instanceof Error ? error.message : 'MRMS volume prep failed');
+        patchTimings({ volumePrepareMs: roundMs(performance.now() - startedAt) });
       });
-    }
-    return next;
-  }, [enabled, showEchoTops, echoTopPayload, applyEarthCurvatureCompensation, refLat]);
-  const echoTopSurfaces = useMemo(() => {
-    const echoTop18Cells: EchoTopSurfaceCell[] = [];
-    const echoTop30Cells: EchoTopSurfaceCell[] = [];
-    const echoTop50Cells: EchoTopSurfaceCell[] = [];
-    for (const cell of renderEchoTopCells) {
-      if (cell.top18Feet > 0) {
-        echoTop18Cells.push({
-          x: cell.x,
-          z: cell.z,
-          yBase: feetToNm(cell.top18Feet),
-          footprintXNm: cell.footprintXNm,
-          footprintYNm: cell.footprintYNm
-        });
-      }
-      if (cell.top30Feet > 0) {
-        echoTop30Cells.push({
-          x: cell.x,
-          z: cell.z,
-          yBase: feetToNm(cell.top30Feet),
-          footprintXNm: cell.footprintXNm,
-          footprintYNm: cell.footprintYNm
-        });
-      }
-      if (cell.top50Feet > 0) {
-        echoTop50Cells.push({
-          x: cell.x,
-          z: cell.z,
-          yBase: feetToNm(cell.top50Feet),
-          footprintXNm: cell.footprintXNm,
-          footprintYNm: cell.footprintYNm
-        });
-      }
-    }
-    return { echoTop18Cells, echoTop30Cells, echoTop50Cells };
-  }, [renderEchoTopCells]);
-  const { echoTop18Cells, echoTop30Cells, echoTop50Cells } = echoTopSurfaces;
 
-  const { declutterIndices, declutterCount } = declutterData;
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    enabled,
+    payload,
+    minDbz,
+    phaseMode,
+    declutterMode,
+    applyEarthCurvatureCompensation,
+    refLat,
+    showCrossSection,
+    normalizedCrossSectionRange,
+    crossSectionHalfWidthNm,
+    sliceAxis,
+    slicePerpAxis,
+    patchTimings
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !showEchoTops || !echoTopPayload) {
+      echoTopPrepareSeqRef.current += 1;
+      setEchoTop18Cells([]);
+      setEchoTop30Cells([]);
+      setEchoTop50Cells([]);
+      patchTimings({ echoTopPrepareMs: null });
+      return;
+    }
+    const sequence = echoTopPrepareSeqRef.current + 1;
+    echoTopPrepareSeqRef.current = sequence;
+    let cancelled = false;
+    const startedAt = performance.now();
+    void prepareEchoTopWithWorker(echoTopPayload, {
+      applyEarthCurvatureCompensation,
+      refLat
+    })
+      .then((prepared) => {
+        if (cancelled || sequence !== echoTopPrepareSeqRef.current) return;
+        setEchoTop18Cells(prepared.echoTop18Cells);
+        setEchoTop30Cells(prepared.echoTop30Cells);
+        setEchoTop50Cells(prepared.echoTop50Cells);
+        patchTimings({ echoTopPrepareMs: roundMs(performance.now() - startedAt) });
+      })
+      .catch((error) => {
+        if (cancelled || sequence !== echoTopPrepareSeqRef.current) return;
+        setEchoTop18Cells([]);
+        setEchoTop30Cells([]);
+        setEchoTop50Cells([]);
+        setLastError(error instanceof Error ? error.message : 'MRMS echo-top prep failed');
+        patchTimings({ echoTopPrepareMs: roundMs(performance.now() - startedAt) });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    enabled,
+    showEchoTops,
+    echoTopPayload,
+    applyEarthCurvatureCompensation,
+    refLat,
+    patchTimings
+  ]);
+
+  const declutterIndices = volumeData.declutterIndices;
+  const declutterCount = volumeData.declutterCount;
   const instanceCapacity = useGrowingInstanceCapacity(declutterCount);
   const instanceAlphaArray = useMemo(() => {
     const array = new Float32Array(instanceCapacity);
@@ -488,6 +441,7 @@ export function NexradVolumeOverlay({
       setIsLoading(false);
       setLastError(null);
       setLastPollAt(null);
+      setTimingsMs(EMPTY_TIMINGS_MS);
       return;
     }
 
@@ -496,12 +450,18 @@ export function NexradVolumeOverlay({
     setIsLoading(true);
     setLastError(null);
     setLastPollAt(null);
+    setTimingsMs(EMPTY_TIMINGS_MS);
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let activeAbortController: AbortController | null = null;
 
     const poll = async () => {
+      const cycleStartedAt = performance.now();
+      let volumeFetchMs: number | null = null;
+      let volumeDecodeMs: number | null = null;
+      let echoTopFetchMs: number | null = null;
+      let echoTopDecodeMs: number | null = null;
       if (!cancelled) {
         setIsLoading(true);
       }
@@ -522,16 +482,30 @@ export function NexradVolumeOverlay({
       try {
         const [response, echoTopResponse] = await Promise.all([
           shouldFetchVolume
-            ? fetch(buildNexradRequestUrl(volumeParams), {
-                cache: 'no-store',
-                signal: activeAbortController.signal
-              })
+            ? (async () => {
+                const startedAt = performance.now();
+                const result = await fetch(buildNexradRequestUrl(volumeParams), {
+                  cache: 'no-store',
+                  signal: activeAbortController.signal
+                });
+                volumeFetchMs = roundMs(performance.now() - startedAt);
+                return result;
+              })()
             : Promise.resolve(null),
           shouldFetchEchoTops
-            ? fetch(buildEchoTopRequestUrl(echoTopParams), {
-                cache: 'no-store',
-                signal: activeAbortController.signal
-              }).catch(() => null)
+            ? (async () => {
+                const startedAt = performance.now();
+                try {
+                  return await fetch(buildEchoTopRequestUrl(echoTopParams), {
+                    cache: 'no-store',
+                    signal: activeAbortController.signal
+                  });
+                } catch {
+                  return null;
+                } finally {
+                  echoTopFetchMs = roundMs(performance.now() - startedAt);
+                }
+              })()
             : Promise.resolve(null)
         ]);
         if (response && !response.ok) {
@@ -539,16 +513,23 @@ export function NexradVolumeOverlay({
         }
 
         const nextPayload = response
-          ? await decodeVolumePayload(
-              await response.arrayBuffer(),
-              extractPhaseDebugHeaderValues(response.headers)
-            )
+          ? await (async () => {
+              const decodeStartedAt = performance.now();
+              const decoded = await decodeVolumePayload(
+                await response.arrayBuffer(),
+                extractPhaseDebugHeaderValues(response.headers)
+              );
+              volumeDecodeMs = roundMs(performance.now() - decodeStartedAt);
+              return decoded;
+            })()
           : null;
         let nextEchoTopPayload: EchoTopPayload | null = null;
         if (echoTopResponse && echoTopResponse.ok) {
+          const decodeStartedAt = performance.now();
           nextEchoTopPayload = await decodeEchoTopPayloadWithWorker(
             await echoTopResponse.arrayBuffer()
           );
+          echoTopDecodeMs = roundMs(performance.now() - decodeStartedAt);
         }
         if (!cancelled) {
           const nextError = nextPayload?.error ?? nextEchoTopPayload?.error ?? null;
@@ -589,6 +570,13 @@ export function NexradVolumeOverlay({
         }
       } finally {
         if (!cancelled) {
+          patchTimings({
+            pollCycleMs: roundMs(performance.now() - cycleStartedAt),
+            volumeFetchMs: shouldFetchVolume ? volumeFetchMs : null,
+            volumeDecodeMs: shouldFetchVolume ? volumeDecodeMs : null,
+            echoTopFetchMs: shouldFetchEchoTops ? echoTopFetchMs : null,
+            echoTopDecodeMs: shouldFetchEchoTops ? echoTopDecodeMs : null
+          });
           setIsLoading(false);
         }
         activeAbortController = null;
@@ -617,7 +605,7 @@ export function NexradVolumeOverlay({
       if (timeoutId) clearTimeout(timeoutId);
       if (activeAbortController) activeAbortController.abort();
     };
-  }, [enabled, refLat, refLon, minDbz, maxRangeNm]);
+  }, [enabled, refLat, refLon, minDbz, maxRangeNm, patchTimings]);
 
   // When a sub-layer is toggled on and has no data yet, trigger an immediate
   // poll rather than waiting up to 120 s for the next scheduled one.
@@ -647,6 +635,7 @@ export function NexradVolumeOverlay({
   }, [payload]);
 
   const debugState: NexradDebugState = {
+    offloadMode: getNexradWorkerRuntimeMode(),
     enabled,
     loading: isLoading,
     stale: Boolean(payload?.stale),
@@ -674,7 +663,8 @@ export function NexradVolumeOverlay({
     echoTop18Timestamp: echoTopPayload?.top18Timestamp ?? null,
     echoTop30Timestamp: echoTopPayload?.top30Timestamp ?? null,
     echoTop50Timestamp: echoTopPayload?.top50Timestamp ?? null,
-    echoTop60Timestamp: echoTopPayload?.top60Timestamp ?? null
+    echoTop60Timestamp: echoTopPayload?.top60Timestamp ?? null,
+    timingsMs
   };
 
   useEffect(() => {
@@ -686,6 +676,7 @@ export function NexradVolumeOverlay({
     () => () => {
       if (!onDebugChange) return;
       onDebugChange({
+        offloadMode: null,
         enabled: false,
         loading: false,
         stale: false,
@@ -713,7 +704,8 @@ export function NexradVolumeOverlay({
         echoTop18Timestamp: null,
         echoTop30Timestamp: null,
         echoTop50Timestamp: null,
-        echoTop60Timestamp: null
+        echoTop60Timestamp: null,
+        timingsMs: EMPTY_TIMINGS_MS
       });
     },
     [onDebugChange]
@@ -736,6 +728,7 @@ export function NexradVolumeOverlay({
   }, [showVolume, showEchoTops]);
 
   useEffect(() => {
+    const uploadStartedAt = performance.now();
     // Compute per-instance alpha from dBZ intensity (shared by both passes).
     if (payload) {
       for (let i = 0; i < declutterCount; i += 1) {
@@ -792,6 +785,7 @@ export function NexradVolumeOverlay({
     applyConstantColorInstances(echo18MeshRef.current, echoTop18Cells, meshDummy);
     applyConstantColorInstances(echo30MeshRef.current, echoTop30Cells, meshDummy);
     applyConstantColorInstances(echo50MeshRef.current, echoTop50Cells, meshDummy);
+    patchTimings({ instanceUploadMs: roundMs(performance.now() - uploadStartedAt) });
     // showVolume/showEchoTops: re-run when sub-layer toggles so freshly
     // mounted meshes get count set to 0 (or the real count if data exists)
     // instead of rendering an uninitialized instance at origin.
@@ -808,7 +802,8 @@ export function NexradVolumeOverlay({
     instanceAlphaArray,
     voxelGeometry,
     showVolume,
-    showEchoTops
+    showEchoTops,
+    patchTimings
   ]);
 
   const guideData = useMemo(() => {
@@ -882,7 +877,7 @@ export function NexradVolumeOverlay({
   const hasEchoTops =
     showEchoTops &&
     (echoTop18Cells.length > 0 || echoTop30Cells.length > 0 || echoTop50Cells.length > 0);
-  const hasCrossSection = showCrossSection && volumeData.validCount > 0;
+  const hasCrossSection = showCrossSection && crossSectionData !== null;
   if (!hasVolume && !hasEchoTops && !hasCrossSection) {
     return null;
   }
@@ -965,6 +960,7 @@ export function NexradVolumeOverlay({
         <NexradCrossSection
           payload={payload}
           volumeData={volumeData}
+          crossSectionData={crossSectionData}
           normalizedCrossSectionHeading={normalizedCrossSectionHeading}
           normalizedCrossSectionRange={normalizedCrossSectionRange}
           sliceAxis={sliceAxis}

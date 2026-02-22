@@ -95,6 +95,7 @@ interface PersistedOptionsState {
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
 const SELECTION_STORAGE_KEY = 'approach-viz:last-selection';
 const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
+  offloadMode: null,
   enabled: false,
   loading: false,
   stale: false,
@@ -126,9 +127,20 @@ const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
   echoTop18Timestamp: null,
   echoTop30Timestamp: null,
   echoTop50Timestamp: null,
-  echoTop60Timestamp: null
+  echoTop60Timestamp: null,
+  timingsMs: {
+    pollCycleMs: null,
+    volumeFetchMs: null,
+    volumeDecodeMs: null,
+    volumePrepareMs: null,
+    echoTopFetchMs: null,
+    echoTopDecodeMs: null,
+    echoTopPrepareMs: null,
+    instanceUploadMs: null
+  }
 };
 const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
+  offloadMode: null,
   enabled: false,
   loading: false,
   error: null,
@@ -139,7 +151,18 @@ const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
   historyPointCount: 0,
   radiusNm: 80,
   limit: 250,
-  historyMinutes: DEFAULT_TRAFFIC_HISTORY_MINUTES
+  historyMinutes: DEFAULT_TRAFFIC_HISTORY_MINUTES,
+  timingsMs: {
+    pollCycleMs: null,
+    fetchMs: null,
+    parseMs: null,
+    processMs: null,
+    recomputeMs: null,
+    pruneMs: null,
+    markerUploadMs: null,
+    workerRoundTripMs: null,
+    workerProcessingMs: null
+  }
 };
 const EMPTY_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
   workerAvailable: false,

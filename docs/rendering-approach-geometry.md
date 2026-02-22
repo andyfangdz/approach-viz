@@ -3,6 +3,7 @@
 ## Final Approach Vertical Profile
 
 - Final approach glidepath is derived from VDA/TCH behavior and extended to MAP/threshold depiction when available.
+- Altitude-profile resolution (final/transition/missed) and path-geometry assembly run through a worker-backed compute path with synchronous fallback, keeping large procedure recomputes off the main render thread.
 - CIFP approach continuation records (`F` subsection continuation `2` / application type `W`) are parsed as level-of-service/RNP values and are not treated as VDA.
 - FAF vertical angle for glidepath rendering is sourced from matched approach metadata (`approaches.json` `vertical_profile.vda`) when available, preventing CIFP level-of-service codes (for example `A152`) from being misread as descent angle.
 - If runway-anchored glidepath math would cause an immediate climb after FAF (for example steep VDA with FAF at/above constraints), final-path altitude falls back to smooth FAF-to-MAP interpolation to prevent abrupt altitude spikes.
