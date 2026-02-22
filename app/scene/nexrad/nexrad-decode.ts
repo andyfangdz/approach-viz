@@ -274,7 +274,7 @@ export function decodeEchoTopPayload(buffer: ArrayBuffer): EchoTopPayload {
     timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : null,
     sourceCellCount:
       typeof parsed.sourceCellCount === 'number' &&
-        Number.isFinite(parsed.sourceCellCount as number)
+      Number.isFinite(parsed.sourceCellCount as number)
         ? Math.max(0, Math.round(parsed.sourceCellCount as number))
         : undefined,
     footprintXNm:

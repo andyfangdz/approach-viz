@@ -132,7 +132,17 @@ export function NexradVolumeOverlay({
     }
 
     const count = payload.voxelCount;
-    const { xNm, zNm, bottomFeet, topFeet, dbz, footprintXNm, footprintYNm, phaseCode, surfacePhaseCode } = payload;
+    const {
+      xNm,
+      zNm,
+      bottomFeet,
+      topFeet,
+      dbz,
+      footprintXNm,
+      footprintYNm,
+      phaseCode,
+      surfacePhaseCode
+    } = payload;
 
     const validIndices = new Int32Array(count);
     const yBase = new Float32Array(count);
@@ -163,7 +173,9 @@ export function NexradVolumeOverlay({
         continue;
       }
 
-      const curvatureDropFeet = applyEarthCurvatureCompensation ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM : 0;
+      const curvatureDropFeet = applyEarthCurvatureCompensation
+        ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM
+        : 0;
       const cBottom = bottomFeet[i] - curvatureDropFeet;
       const cTop = topFeet[i] - curvatureDropFeet;
       const cCenter = (cBottom + cTop) / 2;
@@ -227,12 +239,12 @@ export function NexradVolumeOverlay({
 
     const footprintXNm =
       typeof echoTopPayload.footprintXNm === 'number' &&
-        Number.isFinite(echoTopPayload.footprintXNm)
+      Number.isFinite(echoTopPayload.footprintXNm)
         ? Math.max(0.03, echoTopPayload.footprintXNm)
         : 0.05;
     const footprintYNm =
       typeof echoTopPayload.footprintYNm === 'number' &&
-        Number.isFinite(echoTopPayload.footprintYNm)
+      Number.isFinite(echoTopPayload.footprintYNm)
         ? Math.max(0.03, echoTopPayload.footprintYNm)
         : footprintXNm;
     const next: RenderEchoTopCell[] = [];
@@ -494,15 +506,15 @@ export function NexradVolumeOverlay({
         const [response, echoTopResponse] = await Promise.all([
           shouldFetchVolume
             ? fetch(buildNexradRequestUrl(volumeParams), {
-              cache: 'no-store',
-              signal: activeAbortController.signal
-            })
+                cache: 'no-store',
+                signal: activeAbortController.signal
+              })
             : Promise.resolve(null),
           shouldFetchEchoTops
             ? fetch(buildEchoTopRequestUrl(echoTopParams), {
-              cache: 'no-store',
-              signal: activeAbortController.signal
-            }).catch(() => null)
+                cache: 'no-store',
+                signal: activeAbortController.signal
+              }).catch(() => null)
             : Promise.resolve(null)
         ]);
         if (response && !response.ok) {
@@ -522,11 +534,7 @@ export function NexradVolumeOverlay({
           setLastPollAt(new Date().toISOString());
           if (shouldFetchVolume && nextPayload) {
             setPayload((previousPayload) => {
-              if (
-                nextPayload.error &&
-                previousPayload &&
-                previousPayload.voxelCount > 0
-              ) {
+              if (nextPayload.error && previousPayload && previousPayload.voxelCount > 0) {
                 return previousPayload;
               }
               return nextPayload;
@@ -731,7 +739,7 @@ export function NexradVolumeOverlay({
         payload.footprintXNm,
         payload.footprintYNm,
         volumeData.effectivePhaseCode,
-        declutterIndices.map(i => volumeData.validIndices[i]),
+        declutterIndices.map((i) => volumeData.validIndices[i]),
         declutterCount,
         colorScratch
       );
@@ -786,7 +794,11 @@ export function NexradVolumeOverlay({
     for (let i = 0; i < declutterCount; i += 1) {
       const volIdx = declutterIndices[i];
       const payloadIdx = volumeData.validIndices[volIdx];
-      extentNm = Math.max(extentNm, Math.abs(payload.xNm[payloadIdx]), Math.abs(payload.zNm[payloadIdx]));
+      extentNm = Math.max(
+        extentNm,
+        Math.abs(payload.xNm[payloadIdx]),
+        Math.abs(payload.zNm[payloadIdx])
+      );
       maxFeet = Math.max(maxFeet, volumeData.correctedTopFeet[volIdx]);
     }
     if (echoTopPayload) {
@@ -817,7 +829,15 @@ export function NexradVolumeOverlay({
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     return { geometry, labels };
-  }, [showAltitudeGuides, declutterCount, declutterIndices, payload, volumeData, echoTopPayload, maxRangeNm]);
+  }, [
+    showAltitudeGuides,
+    declutterCount,
+    declutterIndices,
+    payload,
+    volumeData,
+    echoTopPayload,
+    maxRangeNm
+  ]);
 
   useEffect(
     () => () => {

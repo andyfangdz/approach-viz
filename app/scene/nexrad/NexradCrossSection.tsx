@@ -39,7 +39,8 @@ export function NexradCrossSection({
   const sliceCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const crossSectionData = useMemo<CrossSectionData | null>(() => {
-    const { validCount, validIndices, correctedBottomFeet, correctedTopFeet, effectivePhaseCode } = volumeData;
+    const { validCount, validIndices, correctedBottomFeet, correctedTopFeet, effectivePhaseCode } =
+      volumeData;
     if (validCount === 0 || !payload) return null;
 
     let maxTopFeet = 0;
