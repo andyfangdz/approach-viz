@@ -118,6 +118,18 @@ export function NexradVolumeOverlay({
     Math.max(0, Math.min(1, (normalizedCrossSectionRange - 30) / (140 - 30)))
   );
 
+  const applyEarthCurvatureCompensationRef = useRef(applyEarthCurvatureCompensation);
+  const refLatRef = useRef(refLat);
+  const minDbzRef = useRef(minDbz);
+  const phaseModeRef = useRef(phaseMode);
+
+  useEffect(() => {
+    applyEarthCurvatureCompensationRef.current = applyEarthCurvatureCompensation;
+    refLatRef.current = refLat;
+    minDbzRef.current = minDbz;
+    phaseModeRef.current = phaseMode;
+  }, [applyEarthCurvatureCompensation, refLat, minDbz, phaseMode]);
+
   const volumeData = useMemo(() => {
     if (!enabled || !payload || !payload.voxelCount) {
       return {
@@ -173,8 +185,8 @@ export function NexradVolumeOverlay({
         continue;
       }
 
-      const curvatureDropFeet = applyEarthCurvatureCompensation
-        ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM
+      const curvatureDropFeet = applyEarthCurvatureCompensationRef.current
+        ? earthCurvatureDropNm(x, z, refLatRef.current) * FEET_PER_NM
         : 0;
       const cBottom = bottomFeet[i] - curvatureDropFeet;
       const cTop = topFeet[i] - curvatureDropFeet;
@@ -195,7 +207,7 @@ export function NexradVolumeOverlay({
       const spc = surfacePhaseCode[i];
       const pc = phaseCode[i];
       let pCode = PHASE_RAIN;
-      if (phaseMode === 'surface') {
+      if (phaseModeRef.current === 'surface') {
         pCode = typeof spc === 'number' && Number.isFinite(spc) ? Math.round(spc) : PHASE_RAIN;
       } else {
         pCode = typeof pc === 'number' && Number.isFinite(pc) ? Math.round(pc) : PHASE_RAIN;
@@ -214,7 +226,7 @@ export function NexradVolumeOverlay({
       correctedTopFeet: correctedTopFeet.slice(0, validCount),
       effectivePhaseCode: effectivePhaseCode.slice(0, validCount)
     };
-  }, [enabled, payload, applyEarthCurvatureCompensation, refLat, minDbz, phaseMode]);
+  }, [enabled, payload]);
 
   const declutterData = useMemo(() => {
     const { validCount, validIndices, correctedBottomFeet, correctedTopFeet } = volumeData;
@@ -239,12 +251,12 @@ export function NexradVolumeOverlay({
 
     const footprintXNm =
       typeof echoTopPayload.footprintXNm === 'number' &&
-      Number.isFinite(echoTopPayload.footprintXNm)
+        Number.isFinite(echoTopPayload.footprintXNm)
         ? Math.max(0.03, echoTopPayload.footprintXNm)
         : 0.05;
     const footprintYNm =
       typeof echoTopPayload.footprintYNm === 'number' &&
-      Number.isFinite(echoTopPayload.footprintYNm)
+        Number.isFinite(echoTopPayload.footprintYNm)
         ? Math.max(0.03, echoTopPayload.footprintYNm)
         : footprintXNm;
     const next: RenderEchoTopCell[] = [];
@@ -506,15 +518,15 @@ export function NexradVolumeOverlay({
         const [response, echoTopResponse] = await Promise.all([
           shouldFetchVolume
             ? fetch(buildNexradRequestUrl(volumeParams), {
-                cache: 'no-store',
-                signal: activeAbortController.signal
-              })
+              cache: 'no-store',
+              signal: activeAbortController.signal
+            })
             : Promise.resolve(null),
           shouldFetchEchoTops
             ? fetch(buildEchoTopRequestUrl(echoTopParams), {
-                cache: 'no-store',
-                signal: activeAbortController.signal
-              }).catch(() => null)
+              cache: 'no-store',
+              signal: activeAbortController.signal
+            }).catch(() => null)
             : Promise.resolve(null)
         ]);
         if (response && !response.ok) {
