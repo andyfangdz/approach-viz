@@ -3,8 +3,10 @@
  * Renders translucent Class B/C/D airspace boundaries
  */
 
+import { useThree } from '@react-three/fiber';
 import { memo, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
+import { LineSegments2, LineSegmentsGeometry, LineMaterial } from 'three-stdlib';
 
 const ALTITUDE_SCALE = 1 / 6076.12;
 const DEG_TO_RAD = Math.PI / 180;
@@ -166,10 +168,12 @@ function AirspaceVolume({
   refLon: number;
   airportElevationFeet: number;
 }) {
+  const dpr = useThree((s) => s.viewport.dpr);
+  const size = useThree((s) => s.size);
   const color = COLORS[feature.class];
   if (!color) return null;
 
-  const { geometry, edgesGeometry } = useMemo(() => {
+  const { geometry, edgesLineGeometry } = useMemo(() => {
     const meshes: THREE.BufferGeometry[] = [];
 
     for (const ring of feature.coordinates) {
@@ -214,7 +218,7 @@ function AirspaceVolume({
       meshes.push(geo);
     }
 
-    if (meshes.length === 0) return { geometry: null, edgesGeometry: null };
+    if (meshes.length === 0) return { geometry: null, edgesLineGeometry: null };
 
     // Keep current rendering behavior (first ring geometry) but dispose unused
     // ring geometries immediately to avoid GPU memory leaks.
@@ -223,24 +227,55 @@ function AirspaceVolume({
       meshes[i].dispose();
     }
 
-    const edgesGeometry = new THREE.EdgesGeometry(mergedGeo);
+    const edgesGeo = new THREE.EdgesGeometry(mergedGeo);
     if (shouldHideBottomCap(feature.lowerAlt)) {
       stripBottomEdgeSegments(
-        edgesGeometry,
+        edgesGeo,
         altToBaseY(resolveLowerAltitudeFeet(feature.lowerAlt, airportElevationFeet)),
         Math.max(altToBaseY(1), 1e-6)
       );
     }
+    const posAttr = edgesGeo.getAttribute('position');
+    const lineGeo = new LineSegmentsGeometry();
+    lineGeo.setPositions(new Float32Array(posAttr.array));
+    edgesGeo.dispose();
 
-    return { geometry: mergedGeo, edgesGeometry };
+    return { geometry: mergedGeo, edgesLineGeometry: lineGeo };
   }, [feature, refLat, refLon, airportElevationFeet]);
+
+  const edgesMaterial = useMemo(
+    () =>
+      new LineMaterial({
+        color: new THREE.Color(color).getHex(),
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        linewidth: 1
+      }),
+    [color]
+  );
+  useEffect(() => {
+    edgesMaterial.resolution.set(size.width * dpr, size.height * dpr);
+    edgesMaterial.linewidth = dpr;
+  }, [dpr, size, edgesMaterial]);
+
+  const edgesMesh = useMemo(
+    () => (edgesLineGeometry ? new LineSegments2(edgesLineGeometry, edgesMaterial) : null),
+    [edgesLineGeometry, edgesMaterial]
+  );
 
   useEffect(
     () => () => {
       geometry?.dispose();
-      edgesGeometry?.dispose();
+      edgesLineGeometry?.dispose();
     },
-    [geometry, edgesGeometry]
+    [geometry, edgesLineGeometry]
+  );
+  useEffect(
+    () => () => {
+      edgesMaterial.dispose();
+    },
+    [edgesMaterial]
   );
 
   if (!geometry) return null;
@@ -256,11 +291,7 @@ function AirspaceVolume({
           depthWrite={false}
         />
       </mesh>
-      {edgesGeometry && (
-        <lineSegments geometry={edgesGeometry}>
-          <lineBasicMaterial color={color} transparent opacity={0.4} />
-        </lineSegments>
-      )}
+      {edgesMesh && <primitive object={edgesMesh} />}
     </group>
   );
 }

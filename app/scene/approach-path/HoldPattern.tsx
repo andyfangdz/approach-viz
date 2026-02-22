@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Html, Line } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { buildHoldPoints, formatHoldDistance } from './curves';
 import {
@@ -29,6 +30,7 @@ export function HoldPattern({
   color: string;
   verticalScale: number;
 }) {
+  const dpr = useThree((s) => s.viewport.dpr);
   const wp = resolveWaypoint(waypoints, leg.waypointId);
   const altitude = altitudeOverride;
   const headingCandidate = leg.holdCourse ?? leg.course;
@@ -73,7 +75,7 @@ export function HoldPattern({
 
   return (
     <group>
-      <Line points={points} color={color} lineWidth={2} dashed dashSize={0.4} gapSize={0.2} />
+      <Line points={points} color={color} lineWidth={2 * dpr} dashed dashSize={0.4} gapSize={0.2} />
       <Html
         position={labelPosition}
         center

@@ -4,7 +4,7 @@
  */
 
 import { memo, useEffect, useMemo, useState } from 'react';
-import type { Approach, ApproachLeg, Airport, RunwayThreshold, Waypoint } from '@/lib/cifp/parser';
+import type { Approach, ApproachLeg, Airport, Waypoint } from '@/lib/cifp/parser';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
 import {
   applyGlidepathInsideFaf,
@@ -12,7 +12,6 @@ import {
   resolveSegmentAltitudes
 } from './approach-path/altitudes';
 import { resolveApproachAltitudesWithWorker } from './approach-path/approach-worker-client';
-import { AirportMarker } from './approach-path/AirportMarker';
 import { COLORS } from './approach-path/constants';
 import { altToY, isHoldLeg, resolveWaypoint } from './approach-path/coordinates';
 import { HoldPattern } from './approach-path/HoldPattern';
@@ -24,30 +23,20 @@ interface ApproachPathProps {
   approach: Approach;
   waypoints: Map<string, Waypoint>;
   airport: Airport;
-  runways: RunwayThreshold[];
   verticalScale: number;
   missedApproachStartAltitudeFeet?: number;
   minimumsLabel?: string;
   missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
-  applyEarthCurvatureCompensation?: boolean;
-  nearbyAirports: Array<{
-    airport: Airport;
-    runways: RunwayThreshold[];
-    distanceNm: number;
-  }>;
 }
 
 export const ApproachPath = memo(function ApproachPath({
   approach,
   waypoints,
   airport,
-  runways,
   verticalScale,
   missedApproachStartAltitudeFeet,
   minimumsLabel,
-  missedApproachClimbRequirement,
-  applyEarthCurvatureCompensation = false,
-  nearbyAirports
+  missedApproachClimbRequirement
 }: ApproachPathProps) {
   const refLat = airport.lat;
   const refLon = airport.lon;
@@ -201,33 +190,6 @@ export const ApproachPath = memo(function ApproachPath({
 
   return (
     <group>
-      <AirportMarker
-        airport={airport}
-        runways={runways}
-        verticalScale={verticalScale}
-        refLat={refLat}
-        refLon={refLon}
-        runwayColor={COLORS.runway}
-        airportLabelColor={COLORS.runway}
-        showRunwayLabels
-        applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
-      />
-
-      {nearbyAirports.map(({ airport: nearbyAirport, runways: nearbyRunways }) => (
-        <AirportMarker
-          key={`nearby-${nearbyAirport.id}`}
-          airport={nearbyAirport}
-          runways={nearbyRunways}
-          verticalScale={verticalScale}
-          refLat={refLat}
-          refLon={refLon}
-          runwayColor={COLORS.nearbyRunway}
-          airportLabelColor={COLORS.nearbyAirport}
-          showRunwayLabels={false}
-          applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
-        />
-      ))}
-
       {uniqueWaypoints.map((wp) => (
         <WaypointMarker
           key={wp.key}

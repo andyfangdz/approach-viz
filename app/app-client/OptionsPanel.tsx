@@ -69,7 +69,9 @@ export function OptionsPanel({
   showDepartedTrafficTrails,
   onShowDepartedTrafficTrailsChange,
   trafficHistoryMinutes,
-  onTrafficHistoryMinutesChange
+  onTrafficHistoryMinutesChange,
+  retinaRendering,
+  onRetinaRenderingChange
 }: OptionsPanelProps) {
   if (optionsCollapsed) {
     return (
@@ -176,6 +178,19 @@ export function OptionsPanel({
           checked={flattenBathymetry}
           onChange={(event) => onFlattenBathymetryChange(event.target.checked)}
           aria-label="Flatten bathymetry"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Retina Rendering (2x)</span>
+          <span className="options-toggle-note">Higher quality, may reduce performance</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={retinaRendering}
+          onChange={(event) => onRetinaRenderingChange(event.target.checked)}
+          aria-label="Enable retina rendering"
         />
       </label>
 

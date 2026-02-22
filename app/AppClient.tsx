@@ -86,6 +86,7 @@ interface PersistedOptionsState {
   cameraControlMode?: CameraControlMode;
   nexradCrossSectionHeadingDeg?: number;
   nexradCrossSectionRangeNm?: number;
+  retinaRendering?: boolean;
   layers?: LayerState;
   // Legacy fields kept for migration reading only
   liveTrafficEnabled?: boolean;
@@ -304,6 +305,7 @@ export function AppClient({
   const [nexradCrossSectionRangeNm, setNexradCrossSectionRangeNm] = useState(
     DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM
   );
+  const [retinaRendering, setRetinaRendering] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
@@ -409,6 +411,9 @@ export function AppClient({
           setNexradCrossSectionRangeNm(
             normalizeNexradCrossSectionRangeNm(persisted.nexradCrossSectionRangeNm)
           );
+        }
+        if (typeof persisted.retinaRendering === 'boolean') {
+          setRetinaRendering(persisted.retinaRendering);
         }
         if (persisted.layers) {
           const restored = { ...DEFAULT_LAYER_STATE };
@@ -519,6 +524,7 @@ export function AppClient({
       cameraControlMode,
       nexradCrossSectionHeadingDeg,
       nexradCrossSectionRangeNm,
+      retinaRendering,
       layers
     };
     window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
@@ -540,6 +546,7 @@ export function AppClient({
     cameraControlMode,
     nexradCrossSectionHeadingDeg,
     nexradCrossSectionRangeNm,
+    retinaRendering,
     layers
   ]);
 
@@ -881,6 +888,7 @@ export function AppClient({
             surfaceErrorMessage={surfaceErrorMessage}
             recenterNonce={recenterNonce}
             cameraControlMode={cameraControlMode}
+            retinaRendering={retinaRendering}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
             missedApproachClimbRequirement={effectiveMissedApproachClimbRequirement}
@@ -1010,6 +1018,8 @@ export function AppClient({
               )
             )
           }
+          retinaRendering={retinaRendering}
+          onRetinaRenderingChange={setRetinaRendering}
         />
 
         <HelpPanel errorMessage={activeErrorMessage} />

@@ -6,6 +6,8 @@ import type {
   MapControls as MapControlsImpl,
   OrbitControls as OrbitControlsImpl
 } from 'three-stdlib';
+import { AirportMarker } from '@/app/scene/approach-path/AirportMarker';
+import { COLORS } from '@/app/scene/approach-path/constants';
 import { AirspaceVolumes } from '@/app/scene/AirspaceVolumes';
 import { ApproachPath } from '@/app/scene/ApproachPath';
 import { ApproachPlateSurface } from '@/app/scene/ApproachPlateSurface';
@@ -38,9 +40,10 @@ const ORBIT_MIN_POLAR_ANGLE = 0.01;
 const ORBIT_MAX_POLAR_ANGLE = Math.PI - 0.01;
 const MAP_MIN_POLAR_ANGLE = 0.01;
 const MAP_MAX_POLAR_ANGLE = Math.PI / 2 - 0.01;
-const CANVAS_DPR_RANGE: [number, number] = [0.9, 1.5];
+const CANVAS_DPR_RANGE: [number, number] = [0.9, 2];
 const ADAPTIVE_DPR_MIN = 0.9;
 const ADAPTIVE_DPR_MAX = 1.5;
+const RETINA_DPR = 2;
 const ADAPTIVE_DPR_STEP = 0.1;
 const ADAPTIVE_DPR_HIGH_FRAME_MS = 22;
 const ADAPTIVE_DPR_LOW_FRAME_MS = 15;
@@ -154,7 +157,7 @@ function RecenterCamera({
   return null;
 }
 
-function AdaptiveDprController() {
+function AdaptiveDprController({ retinaRendering }: { retinaRendering: boolean }) {
   const setDpr = useThree((state) => state.setDpr);
   const currentDprRef = useRef(ADAPTIVE_DPR_MAX);
   const frameMsEmaRef = useRef(16);
@@ -162,15 +165,21 @@ function AdaptiveDprController() {
   const initializedRef = useRef(false);
 
   useEffect(() => {
+    if (retinaRendering) {
+      currentDprRef.current = RETINA_DPR;
+      setDpr(RETINA_DPR);
+      initializedRef.current = true;
+      return;
+    }
     const devicePixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
     const initialDpr = clamp(devicePixelRatio, ADAPTIVE_DPR_MIN, ADAPTIVE_DPR_MAX);
     currentDprRef.current = initialDpr;
     setDpr(initialDpr);
     initializedRef.current = true;
-  }, [setDpr]);
+  }, [setDpr, retinaRendering]);
 
   useFrame((_, deltaSeconds) => {
-    if (!initializedRef.current) return;
+    if (!initializedRef.current || retinaRendering) return;
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
 
     const frameMs = Math.max(1, deltaSeconds * 1000);
@@ -231,6 +240,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   surfaceErrorMessage,
   recenterNonce,
   cameraControlMode,
+  retinaRendering,
   missedApproachStartAltitudeFeet,
   minimumsLabel,
   missedApproachClimbRequirement,
@@ -286,7 +296,7 @@ export const SceneCanvas = memo(function SceneCanvas({
       <fog attach="fog" args={FOG_ARGS} />
 
       <Suspense fallback={<LoadingFallback />}>
-        <AdaptiveDprController />
+        <AdaptiveDprController retinaRendering={retinaRendering} />
         <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />
         <CameraStabilityGuard controlsRef={controlsRef} />
         <ambientLight intensity={0.4} />
@@ -341,20 +351,44 @@ export const SceneCanvas = memo(function SceneCanvas({
           </SceneErrorBoundary>
         )}
 
+        <AirportMarker
+          airport={airport}
+          runways={sceneData.runways}
+          verticalScale={verticalScale}
+          refLat={airport.lat}
+          refLon={airport.lon}
+          runwayColor={COLORS.runway}
+          airportLabelColor={COLORS.runway}
+          showRunwayLabels
+          applyEarthCurvatureCompensation={surfaceMode === 'satellite' || surfaceMode === '3dplate'}
+        />
+
+        {sceneData.nearbyAirports.map(({ airport: nearbyAirport, runways: nearbyRunways }) => (
+          <AirportMarker
+            key={`nearby-${nearbyAirport.id}`}
+            airport={nearbyAirport}
+            runways={nearbyRunways}
+            verticalScale={verticalScale}
+            refLat={airport.lat}
+            refLon={airport.lon}
+            runwayColor={COLORS.nearbyRunway}
+            airportLabelColor={COLORS.nearbyAirport}
+            showRunwayLabels={false}
+            applyEarthCurvatureCompensation={
+              surfaceMode === 'satellite' || surfaceMode === '3dplate'
+            }
+          />
+        ))}
+
         {approachVisible && contextApproach && (
           <ApproachPath
             approach={contextApproach}
             waypoints={waypoints}
             airport={airport}
-            runways={sceneData.runways}
             verticalScale={verticalScale}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
             missedApproachClimbRequirement={missedApproachClimbRequirement}
-            applyEarthCurvatureCompensation={
-              surfaceMode === 'satellite' || surfaceMode === '3dplate'
-            }
-            nearbyAirports={sceneData.nearbyAirports}
           />
         )}
 
