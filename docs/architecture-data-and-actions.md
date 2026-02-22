@@ -38,9 +38,9 @@
 
 - Live ADS-B traffic decode/query runs in the Rust runtime service endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is now a thin same-origin proxy.
 - The runtime endpoint targets ADSB Exchange tar1090 `binCraft+zstd` (`/re-api/?binCraft&zstd&box=...`), applies tar1090-compatible validity-bit parsing, and normalizes aircraft records before delivery.
-- Runtime traffic data is gathered continuously by a background poller (1s cadence) across four ADS-B Exchange US bounding boxes (CONUS, Alaska, Hawaii, Puerto Rico/USVI) and merged into a process-wide cache keyed by hex.
-- `/v1/traffic/adsbx` now serves from that cache only (no per-request upstream fetch), supports `hideGround` filtering, and supports history responses from cached points via `historyMinutes` (`0..60`) plus optional `historyHexes=<hex,hex,...>` scoping.
-- Cache retention is one hour in memory, and runtime persists snapshots to `RUNTIME_STORAGE_DIR/traffic-cache.avtc.zst` on a short interval so restarts can restore departed-trail history without waiting for a full warm-up cycle.
+- Runtime traffic data is gathered continuously by a background poller (1s cadence) across four ADS-B Exchange US bounding boxes (CONUS, Alaska, Hawaii, Puerto Rico/USVI) and ingested into a local SQLite store at `RUNTIME_STORAGE_DIR/traffic-store.db`.
+- The store keeps per-aircraft track state plus append-only point history with spatial (`R*Tree`) and time indexes so `/v1/traffic/adsbx` can serve both live targets and departed-trail history directly from disk.
+- The endpoint supports `hideGround` filtering and history responses via `historyMinutes` (`0..60`) plus optional `historyHexes=<hex,hex,...>` scoping; one-hour retention is enforced by periodic DB sweeps during ingest.
 - Runtime target host defaults to `https://globe.adsbexchange.com` and can be overridden with `RUNTIME_ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts can be supplied via `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy `ADSBX_*` env aliases still supported).
 - On upstream fetch failures, the runtime endpoint returns an empty `aircraft` array with an `error` field (HTTP 200) so client polling remains non-fatal.
 - Client traffic rendering is optional and independent from SQLite/server-action scene payload assembly.

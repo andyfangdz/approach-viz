@@ -28,8 +28,8 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - Snapshot storage path: `/var/lib/approach-viz-runtime/scans`
 - Retention cap: `RUNTIME_MRMS_RETENTION_BYTES=5368709120` (5 GB; legacy alias `MRMS_RETENTION_BYTES`)
 - Oldest snapshot files are pruned automatically after each successful ingest.
-- ADS-B traffic cache snapshot path: `RUNTIME_STORAGE_DIR/traffic-cache.avtc.zst`
-- ADS-B cache retention window: 1 hour of per-aircraft points (in-memory + persisted snapshot restore on restart).
+- ADS-B traffic store path: `RUNTIME_STORAGE_DIR/traffic-store.db`
+- ADS-B retention window: 1 hour of per-aircraft points retained in SQLite (periodic ingest-time sweep).
 
 ## Wire Format (`application/vnd.approach-viz.mrms.v2`)
 
@@ -91,7 +91,7 @@ This script:
 - `GET /v1/volume?...` -> legacy weather alias
 - `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> JSON echo-top cells (`EchoTop_18/30/50/60`)
 - `GET /v1/echo-tops?...` -> legacy echo-top alias
-- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>` -> JSON aircraft + optional trail history from the runtime’s 1-hour global ADS-B cache (with optional per-hex scoping). Runtime polls ADS-B Exchange in the background at 1 Hz across US regions and persists the cache snapshot to `RUNTIME_STORAGE_DIR/traffic-cache.avtc.zst` for restart recovery.
+- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>` -> JSON aircraft + optional trail history served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
 
 ## Next.js Configuration
 
