@@ -1,4 +1,4 @@
-import { Html, Line } from '@react-three/drei';
+import { Html } from '@react-three/drei';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { TrafficDebugState, TrafficTimingDebugState } from '@/app/app-client/types';
@@ -35,6 +35,48 @@ function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+function hashInt(hash: number, value: number): number {
+  const next = (hash ^ (value >>> 0)) >>> 0;
+  return Math.imul(next, 16777619) >>> 0;
+}
+
+const floatHashBuffer = new ArrayBuffer(4);
+const floatHashView = new DataView(floatHashBuffer);
+
+function hashFloat32(hash: number, value: number): number {
+  if (!Number.isFinite(value)) return hashInt(hash, 0);
+  floatHashView.setFloat32(0, value);
+  return hashInt(hash, floatHashView.getUint32(0));
+}
+
+function hashString(hash: number, value: string): number {
+  let next = hash >>> 0;
+  for (let i = 0; i < value.length; i += 1) {
+    next = Math.imul(next ^ value.charCodeAt(i), 16777619) >>> 0;
+  }
+  return next >>> 0;
+}
+
+function hashRenderTracks(renderTracks: RenderTrafficTrack[]): number {
+  let hash = 2166136261;
+  for (const track of renderTracks) {
+    hash = hashString(hash, track.hex);
+    hash = hashString(hash, track.callsignLabel ?? '');
+    hash = hashInt(hash, track.isOnGround ? 1 : 0);
+    hash = hashFloat32(hash, track.headingDeg);
+    hash = hashFloat32(hash, track.markerPosition[0]);
+    hash = hashFloat32(hash, track.markerPosition[1]);
+    hash = hashFloat32(hash, track.markerPosition[2]);
+    hash = hashInt(hash, track.trailPoints.length);
+    for (const point of track.trailPoints) {
+      hash = hashFloat32(hash, point[0]);
+      hash = hashFloat32(hash, point[1]);
+      hash = hashFloat32(hash, point[2]);
+    }
+  }
+  return hash >>> 0;
+}
+
 interface LiveTrafficOverlayProps {
   refLat: number;
   refLon: number;
@@ -42,6 +84,7 @@ interface LiveTrafficOverlayProps {
   verticalScale: number;
   hideGroundTargets?: boolean;
   showCallsignLabels?: boolean;
+  hideGroundCallsignLabels?: boolean;
   historyMinutes: number;
   applyEarthCurvatureCompensation?: boolean;
   radiusNm?: number;
@@ -310,6 +353,7 @@ function tracksToRenderTracks(
       return {
         hex: track.aircraft.hex,
         callsignLabel: normalizeCallsignLabel(track.aircraft.flight),
+        isOnGround: Boolean(track.aircraft.isOnGround),
         headingDeg: normalizeTrack(track.aircraft.trackDeg),
         markerPosition,
         trailPoints
@@ -319,6 +363,7 @@ function tracksToRenderTracks(
       (track) =>
         Number.isFinite(track.markerPosition[0]) && Number.isFinite(track.markerPosition[2])
     );
+  renderTracks.sort((left, right) => left.hex.localeCompare(right.hex));
 
   let historyPointCount = 0;
   for (const track of tracks.values()) {
@@ -353,6 +398,7 @@ export function LiveTrafficOverlay({
   verticalScale,
   hideGroundTargets = false,
   showCallsignLabels = false,
+  hideGroundCallsignLabels = false,
   historyMinutes,
   applyEarthCurvatureCompensation = false,
   radiusNm = DEFAULT_RADIUS_NM,
@@ -373,7 +419,30 @@ export function LiveTrafficOverlay({
       }),
     []
   );
+  const trailLineMaterial = useMemo(
+    () =>
+      new THREE.LineBasicMaterial({
+        color: '#15d0ff',
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        toneMapped: false
+      }),
+    []
+  );
+  const headingLineMaterial = useMemo(
+    () =>
+      new THREE.LineBasicMaterial({
+        color: '#9bf7ff',
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        toneMapped: false
+      }),
+    []
+  );
   const trafficWorkerRef = useRef<TrafficWorkerClient | null>(null);
+  const lastRenderHashRef = useRef<number | null>(null);
   const [trafficMode, setTrafficMode] = useState<TrafficMode>(() =>
     typeof Worker !== 'undefined' ? 'worker' : 'fallback'
   );
@@ -405,9 +474,17 @@ export function LiveTrafficOverlay({
 
   const applyWorkerResult = useCallback(
     (result: TrafficProcessResult) => {
-      setRenderTracks(result.renderTracks);
       setTrackCount(result.trackCount);
       setHistoryPointCount(result.historyPointCount);
+      if (result.renderHash !== null && lastRenderHashRef.current === result.renderHash) {
+        patchTimings({
+          workerRoundTripMs: result.workerRoundTripMs,
+          workerProcessingMs: result.workerProcessingMs
+        });
+        return;
+      }
+      lastRenderHashRef.current = result.renderHash;
+      setRenderTracks(result.renderTracks);
       patchTimings({
         workerRoundTripMs: result.workerRoundTripMs,
         workerProcessingMs: result.workerProcessingMs
@@ -440,6 +517,7 @@ export function LiveTrafficOverlay({
     setLastPollAt(null);
     setHistoryBackfillPending(true);
     setTimingsMs(EMPTY_TIMINGS_MS);
+    lastRenderHashRef.current = null;
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -676,6 +754,15 @@ export function LiveTrafficOverlay({
         verticalScale,
         applyEarthCurvatureCompensation
       );
+    const nextRenderHash = hashRenderTracks(nextRenderTracks);
+    if (
+      lastRenderHashRef.current === nextRenderHash &&
+      trackCount === tracks.size &&
+      historyPointCount === nextHistoryPointCount
+    ) {
+      return;
+    }
+    lastRenderHashRef.current = nextRenderHash;
     setRenderTracks(nextRenderTracks);
     setTrackCount(tracks.size);
     setHistoryPointCount(nextHistoryPointCount);
@@ -686,15 +773,19 @@ export function LiveTrafficOverlay({
     refLon,
     verticalScale,
     applyEarthCurvatureCompensation,
-    trafficMode
+    trafficMode,
+    trackCount,
+    historyPointCount
   ]);
 
   useEffect(
     () => () => {
       markerGeometry.dispose();
       markerMaterial.dispose();
+      trailLineMaterial.dispose();
+      headingLineMaterial.dispose();
     },
-    [markerGeometry, markerMaterial]
+    [markerGeometry, markerMaterial, trailLineMaterial, headingLineMaterial]
   );
 
   useEffect(() => {
@@ -702,6 +793,68 @@ export function LiveTrafficOverlay({
     if (!markerMesh) return;
     markerMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   }, []);
+
+  const trailLinesGeometry = useMemo(() => {
+    let segmentCount = 0;
+    for (const track of renderTracks) {
+      if (track.trailPoints.length > 1) {
+        segmentCount += track.trailPoints.length - 1;
+      }
+    }
+    if (segmentCount === 0) return null;
+    const positions = new Float32Array(segmentCount * 6);
+    let offset = 0;
+    for (const track of renderTracks) {
+      for (let i = 1; i < track.trailPoints.length; i += 1) {
+        const a = track.trailPoints[i - 1];
+        const b = track.trailPoints[i];
+        positions[offset++] = a[0];
+        positions[offset++] = a[1];
+        positions[offset++] = a[2];
+        positions[offset++] = b[0];
+        positions[offset++] = b[1];
+        positions[offset++] = b[2];
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return geometry;
+  }, [renderTracks]);
+
+  const headingLinesGeometry = useMemo(() => {
+    if (renderTracks.length === 0) return null;
+    const positions = new Float32Array(renderTracks.length * 6);
+    let offset = 0;
+    for (const track of renderTracks) {
+      const headingRad = (track.headingDeg * Math.PI) / 180;
+      const headingTipX = track.markerPosition[0] + Math.sin(headingRad) * 0.2;
+      const headingTipY = track.markerPosition[1];
+      const headingTipZ = track.markerPosition[2] - Math.cos(headingRad) * 0.2;
+      positions[offset++] = track.markerPosition[0];
+      positions[offset++] = track.markerPosition[1];
+      positions[offset++] = track.markerPosition[2];
+      positions[offset++] = headingTipX;
+      positions[offset++] = headingTipY;
+      positions[offset++] = headingTipZ;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return geometry;
+  }, [renderTracks]);
+
+  useEffect(
+    () => () => {
+      trailLinesGeometry?.dispose();
+    },
+    [trailLinesGeometry]
+  );
+
+  useEffect(
+    () => () => {
+      headingLinesGeometry?.dispose();
+    },
+    [headingLinesGeometry]
+  );
 
   const debugState = useMemo<TrafficDebugState>(
     () => ({
@@ -780,50 +933,44 @@ export function LiveTrafficOverlay({
 
   return (
     <group>
-      {renderTracks.map((track) => {
-        const headingRad = (track.headingDeg * Math.PI) / 180;
-        const headingTip: [number, number, number] = [
-          track.markerPosition[0] + Math.sin(headingRad) * 0.2,
-          track.markerPosition[1],
-          track.markerPosition[2] - Math.cos(headingRad) * 0.2
-        ];
-        return (
-          <group key={track.hex}>
-            {track.trailPoints.length > 1 && (
-              <Line
-                points={track.trailPoints}
-                color="#15d0ff"
-                transparent
-                opacity={0.5}
-                lineWidth={1.5}
-              />
-            )}
-            <Line
-              points={[track.markerPosition, headingTip]}
-              color="#9bf7ff"
-              transparent
-              opacity={0.9}
-              lineWidth={2}
-            />
-            {showCallsignLabels && track.callsignLabel && (
+      {trailLinesGeometry && (
+        <lineSegments
+          geometry={trailLinesGeometry}
+          material={trailLineMaterial}
+          frustumCulled={false}
+          renderOrder={82}
+        />
+      )}
+      {headingLinesGeometry && (
+        <lineSegments
+          geometry={headingLinesGeometry}
+          material={headingLineMaterial}
+          frustumCulled={false}
+          renderOrder={83}
+        />
+      )}
+      {showCallsignLabels &&
+        renderTracks.map((track) => {
+          if (hideGroundCallsignLabels && track.isOnGround) return null;
+          if (!track.callsignLabel) return null;
+          return (
+            <group
+              key={`label-${track.hex}`}
+              position={[track.markerPosition[0], track.markerPosition[1], track.markerPosition[2]]}
+            >
               <Html
-                position={[
-                  track.markerPosition[0],
-                  track.markerPosition[1] + 0.3,
-                  track.markerPosition[2]
-                ]}
+                position={[0, 0.3, 0]}
                 center
                 distanceFactor={14}
-                transform={false}
+                transform
                 sprite
                 zIndexRange={[9, 0]}
               >
                 <span className="traffic-callsign-label">{track.callsignLabel}</span>
               </Html>
-            )}
-          </group>
-        );
-      })}
+            </group>
+          );
+        })}
       <instancedMesh
         ref={markerMeshRef}
         args={[markerGeometry, markerMaterial, Math.max(1, limit)]}

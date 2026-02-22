@@ -58,6 +58,33 @@ function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+function volumePayloadSignature(payload: NexradVolumePayload | null): string | null {
+  if (!payload) return null;
+  const primaryScanTime = payload.layerSummaries?.[0]?.scanTime ?? '';
+  return [
+    payload.generatedAt ?? '',
+    primaryScanTime,
+    payload.voxelCount,
+    payload.phaseMode ?? '',
+    payload.phaseDetail ?? '',
+    payload.error ?? '',
+    payload.stale ? 1 : 0
+  ].join('|');
+}
+
+function echoTopPayloadSignature(payload: EchoTopPayload | null): string | null {
+  if (!payload) return null;
+  return [
+    payload.generatedAt ?? '',
+    payload.top18Timestamp ?? '',
+    payload.top30Timestamp ?? '',
+    payload.top50Timestamp ?? '',
+    payload.top60Timestamp ?? '',
+    payload.sourceCellCount ?? payload.cells?.length ?? 0,
+    payload.error ?? ''
+  ].join('|');
+}
+
 function nextInstanceCapacity(currentCapacity: number, requiredCount: number): number {
   const safeRequiredCount = Math.max(MIN_INSTANCE_CAPACITY, requiredCount);
   if (safeRequiredCount <= currentCapacity) return currentCapacity;
@@ -540,6 +567,12 @@ export function NexradVolumeOverlay({
               if (nextPayload.error && previousPayload && previousPayload.voxelCount > 0) {
                 return previousPayload;
               }
+              if (
+                previousPayload &&
+                volumePayloadSignature(previousPayload) === volumePayloadSignature(nextPayload)
+              ) {
+                return previousPayload;
+              }
               return nextPayload;
             });
           } else if (!showVolumeRef.current && !showCrossSectionRef.current) {
@@ -552,6 +585,14 @@ export function NexradVolumeOverlay({
                 previousPayload &&
                 Array.isArray(previousPayload.cells) &&
                 previousPayload.cells.length > 0
+              ) {
+                return previousPayload;
+              }
+              if (
+                previousPayload &&
+                nextEchoTopPayload &&
+                echoTopPayloadSignature(previousPayload) ===
+                  echoTopPayloadSignature(nextEchoTopPayload)
               ) {
                 return previousPayload;
               }

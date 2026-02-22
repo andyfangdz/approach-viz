@@ -38,9 +38,20 @@ const ORBIT_MIN_POLAR_ANGLE = 0.01;
 const ORBIT_MAX_POLAR_ANGLE = Math.PI - 0.01;
 const MAP_MIN_POLAR_ANGLE = 0.01;
 const MAP_MAX_POLAR_ANGLE = Math.PI / 2 - 0.01;
+const CANVAS_DPR_RANGE: [number, number] = [0.9, 1.5];
+const ADAPTIVE_DPR_MIN = 0.9;
+const ADAPTIVE_DPR_MAX = 1.5;
+const ADAPTIVE_DPR_STEP = 0.1;
+const ADAPTIVE_DPR_HIGH_FRAME_MS = 22;
+const ADAPTIVE_DPR_LOW_FRAME_MS = 15;
+const ADAPTIVE_DPR_ADJUST_INTERVAL_MS = 1200;
 
 function hasFiniteComponents(values: number[]): boolean {
   return values.every((value) => Number.isFinite(value));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function CameraStabilityGuard({
@@ -143,6 +154,57 @@ function RecenterCamera({
   return null;
 }
 
+function AdaptiveDprController() {
+  const setDpr = useThree((state) => state.setDpr);
+  const currentDprRef = useRef(ADAPTIVE_DPR_MAX);
+  const frameMsEmaRef = useRef(16);
+  const lastAdjustAtRef = useRef(0);
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    const devicePixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const initialDpr = clamp(devicePixelRatio, ADAPTIVE_DPR_MIN, ADAPTIVE_DPR_MAX);
+    currentDprRef.current = initialDpr;
+    setDpr(initialDpr);
+    initializedRef.current = true;
+  }, [setDpr]);
+
+  useFrame((_, deltaSeconds) => {
+    if (!initializedRef.current) return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
+    const frameMs = Math.max(1, deltaSeconds * 1000);
+    frameMsEmaRef.current = frameMsEmaRef.current * 0.9 + frameMs * 0.1;
+    const now = performance.now();
+    if (now - lastAdjustAtRef.current < ADAPTIVE_DPR_ADJUST_INTERVAL_MS) {
+      return;
+    }
+
+    let nextDpr = currentDprRef.current;
+    if (frameMsEmaRef.current > ADAPTIVE_DPR_HIGH_FRAME_MS) {
+      nextDpr = clamp(
+        currentDprRef.current - ADAPTIVE_DPR_STEP,
+        ADAPTIVE_DPR_MIN,
+        ADAPTIVE_DPR_MAX
+      );
+    } else if (frameMsEmaRef.current < ADAPTIVE_DPR_LOW_FRAME_MS) {
+      nextDpr = clamp(
+        currentDprRef.current + ADAPTIVE_DPR_STEP,
+        ADAPTIVE_DPR_MIN,
+        ADAPTIVE_DPR_MAX
+      );
+    }
+
+    if (Math.abs(nextDpr - currentDprRef.current) >= 0.01) {
+      currentDprRef.current = Number(nextDpr.toFixed(2));
+      setDpr(currentDprRef.current);
+    }
+    lastAdjustAtRef.current = now;
+  });
+
+  return null;
+}
+
 export const SceneCanvas = memo(function SceneCanvas({
   airport,
   sceneData,
@@ -154,6 +216,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   layers,
   hideGroundTraffic,
   showTrafficCallsigns,
+  hideGroundTrafficCallsigns,
   trafficHistoryMinutes,
   nexradMinDbz,
   nexradOpacity,
@@ -210,7 +273,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   return (
     <Canvas
       camera={{ position: CAMERA_POSITION, fov: 60, near: 0.1, far: 500 }}
-      dpr={[1, 1.5]}
+      dpr={CANVAS_DPR_RANGE}
       gl={{
         antialias: true,
         alpha: false,
@@ -222,6 +285,7 @@ export const SceneCanvas = memo(function SceneCanvas({
       <fog attach="fog" args={FOG_ARGS} />
 
       <Suspense fallback={<LoadingFallback />}>
+        <AdaptiveDprController />
         <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />
         <CameraStabilityGuard controlsRef={controlsRef} />
         <ambientLight intensity={0.4} />
@@ -311,6 +375,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             verticalScale={verticalScale}
             hideGroundTargets={hideGroundTraffic}
             showCallsignLabels={showTrafficCallsigns}
+            hideGroundCallsignLabels={hideGroundTrafficCallsigns}
             historyMinutes={trafficHistoryMinutes}
             applyEarthCurvatureCompensation={
               surfaceMode === 'satellite' || surfaceMode === '3dplate'

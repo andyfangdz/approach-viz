@@ -26,6 +26,7 @@ export interface LiveTrafficHistoryPoint {
 export interface RenderTrafficTrack {
   hex: string;
   callsignLabel: string | null;
+  isOnGround: boolean;
   headingDeg: number;
   markerPosition: [number, number, number];
   trailPoints: [number, number, number][];
@@ -73,6 +74,7 @@ export interface TrafficWorkerResponseMessage {
   renderTracks?: RenderTrafficTrack[];
   trackCount?: number;
   historyPointCount?: number;
+  renderHash?: number;
   operation?: TrafficWorkerRequestMessage['type'];
   workerProcessingMs?: number;
   error?: string;

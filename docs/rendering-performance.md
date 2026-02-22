@@ -7,7 +7,7 @@
 - Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized.
 - The top-level scene wrapper (`SceneCanvas`) is memoized so selector typing/collapse state updates in the header do not re-render the Three.js subtree.
 - Airport/approach combobox query text is managed inside `HeaderControls`, keeping high-frequency search keystrokes out of `AppClient` state and preventing avoidable scene updates.
-- The canvas uses capped DPR (`1..1.5`) and high-performance WebGL context hints.
+- The canvas uses adaptive DPR control (`0.9..1.5`) based on frame-time EMA, reducing pixel density under sustained frame pressure and restoring quality when frame budgets recover.
 - In-scene `Html` labels (waypoints/holds/runways/turn constraints/callsigns) use a capped `zIndexRange` so app UI overlays (selectors/options/legend) stay visually on top.
 - Three.js resources allocated imperatively in hooks (`TubeGeometry`, airspace extrusions/edges, traffic marker buffers, plate textures) are explicitly disposed in effect cleanup paths to prevent GPU memory growth across scene updates.
 - Airspace extrusions are built in base altitude units and Y-scaled at the group level, avoiding expensive airspace geometry rebuilds when only `verticalScale` changes.
@@ -19,6 +19,8 @@
 - Track merge/prune/projection compute is offloaded to a dedicated traffic worker, with synchronous fallback when workers are unavailable.
 - Runtime debug telemetry exposes per-stage ADS-B timings (`poll cycle`, `fetch`, `json parse`, `worker process/recompute/prune`, `worker round-trip/CPU`, and marker instance upload) to validate main-thread offload impact.
 - Trail history is time-pruned by the user-selected retention window (`1..30 minutes`) to cap per-aircraft polyline growth.
+- Trail and heading vectors are batched into shared `lineSegments` geometries per frame update, replacing per-track line component trees and reducing draw-call/reconciliation overhead.
+- Worker responses include render hashes; unchanged hashes skip main-thread render-track state updates to avoid redundant line/instance uploads.
 - Callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled.
 - Marker meshes reuse shared sphere geometry/material instances.
 - Aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead.
@@ -29,6 +31,7 @@
 - Binary decode runs in a worker off the main thread (`SharedWorker` preferred, dedicated `Worker` fallback), reducing UI hitching during poll refreshes while preserving a synchronous fallback path for reliability.
 - MRMS volume preprocessing (threshold filter, phase selection, curvature correction, declutter index generation), echo-top surface shaping, and cross-section binning are computed off-main-thread through the same worker pipeline.
 - Runtime debug telemetry exposes per-stage MRMS timings (`poll cycle`, volume/echo-top `fetch`, volume/echo-top `decode`, volume/echo-top `prepare`, and voxel/echo-top instance upload) for regression checks.
+- Volume and echo-top payloads use metadata signatures to suppress equivalent state replacements, reducing downstream prepare/upload churn when upstream poll responses are unchanged.
 - Volumetric instanced meshes calculate transforms and scale by writing directly into the `Float32Array` of `InstancedMesh.instanceMatrix.array` (via 16-element offsets), avoiding the heavy `THREE.Object3D` quaternion scaling overhead completely.
 - MRMS base/glow dual-pass volume rendering shares populated instance buffers between passes, avoiding a second per-voxel transform/color upload each refresh.
 - MRMS instanced capacities grow in buckets instead of resizing every poll, reducing remount/reallocation churn for fluctuating voxel counts.

@@ -16,6 +16,48 @@ function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+function hashInt(hash: number, value: number): number {
+  const next = (hash ^ (value >>> 0)) >>> 0;
+  return Math.imul(next, 16777619) >>> 0;
+}
+
+const floatHashBuffer = new ArrayBuffer(4);
+const floatHashView = new DataView(floatHashBuffer);
+
+function hashFloat32(hash: number, value: number): number {
+  if (!Number.isFinite(value)) return hashInt(hash, 0);
+  floatHashView.setFloat32(0, value);
+  return hashInt(hash, floatHashView.getUint32(0));
+}
+
+function hashString(hash: number, value: string): number {
+  let next = hash >>> 0;
+  for (let i = 0; i < value.length; i += 1) {
+    next = Math.imul(next ^ value.charCodeAt(i), 16777619) >>> 0;
+  }
+  return next >>> 0;
+}
+
+function hashRenderTracks(renderTracks: RenderTrafficTrack[]): number {
+  let hash = 2166136261;
+  for (const track of renderTracks) {
+    hash = hashString(hash, track.hex);
+    hash = hashString(hash, track.callsignLabel ?? '');
+    hash = hashInt(hash, track.isOnGround ? 1 : 0);
+    hash = hashFloat32(hash, track.headingDeg);
+    hash = hashFloat32(hash, track.markerPosition[0]);
+    hash = hashFloat32(hash, track.markerPosition[1]);
+    hash = hashFloat32(hash, track.markerPosition[2]);
+    hash = hashInt(hash, track.trailPoints.length);
+    for (const point of track.trailPoints) {
+      hash = hashFloat32(hash, point[0]);
+      hash = hashFloat32(hash, point[1]);
+      hash = hashFloat32(hash, point[2]);
+    }
+  }
+  return hash >>> 0;
+}
+
 interface TrafficHistoryPoint {
   lat: number;
   lon: number;
@@ -258,7 +300,7 @@ function buildRenderTracks(
   sceneAirports: SceneAirport[],
   verticalScale: number,
   applyEarthCurvatureCompensation: boolean
-): { renderTracks: RenderTrafficTrack[]; historyPointCount: number } {
+): { renderTracks: RenderTrafficTrack[]; historyPointCount: number; renderHash: number } {
   const renderTracks: RenderTrafficTrack[] = [];
   let historyPointCount = 0;
 
@@ -307,13 +349,16 @@ function buildRenderTracks(
     renderTracks.push({
       hex: track.aircraft.hex,
       callsignLabel: normalizeCallsignLabel(track.aircraft.flight),
+      isOnGround: Boolean(track.aircraft.isOnGround),
       headingDeg: normalizeTrack(track.aircraft.trackDeg),
       markerPosition,
       trailPoints
     });
   }
 
-  return { renderTracks, historyPointCount };
+  renderTracks.sort((left, right) => left.hex.localeCompare(right.hex));
+
+  return { renderTracks, historyPointCount, renderHash: hashRenderTracks(renderTracks) };
 }
 
 function handleMessage(message: TrafficWorkerRequestMessage): TrafficWorkerResponseMessage {
@@ -334,7 +379,7 @@ function handleMessage(message: TrafficWorkerRequestMessage): TrafficWorkerRespo
     recomputeTracks(message.nowMs, message.historyMinutes, message.hideGroundTargets);
   }
 
-  const { renderTracks, historyPointCount } = buildRenderTracks(
+  const { renderTracks, historyPointCount, renderHash } = buildRenderTracks(
     message.refLat,
     message.refLon,
     message.sceneAirports,
@@ -347,6 +392,7 @@ function handleMessage(message: TrafficWorkerRequestMessage): TrafficWorkerRespo
     renderTracks,
     trackCount: tracks.size,
     historyPointCount,
+    renderHash,
     operation: message.type,
     workerProcessingMs: roundMs(performance.now() - startedAt)
   };

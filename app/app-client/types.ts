@@ -121,6 +121,7 @@ export interface SceneCanvasProps {
   layers: LayerState;
   hideGroundTraffic: boolean;
   showTrafficCallsigns: boolean;
+  hideGroundTrafficCallsigns: boolean;
   trafficHistoryMinutes: number;
   nexradMinDbz: number;
   nexradOpacity: number;
@@ -186,6 +187,8 @@ export interface OptionsPanelProps {
   onHideGroundTrafficChange: (enabled: boolean) => void;
   showTrafficCallsigns: boolean;
   onShowTrafficCallsignsChange: (enabled: boolean) => void;
+  hideGroundTrafficCallsigns: boolean;
+  onHideGroundTrafficCallsignsChange: (enabled: boolean) => void;
   trafficHistoryMinutes: number;
   onTrafficHistoryMinutesChange: (minutes: number) => void;
 }

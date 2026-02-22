@@ -64,6 +64,8 @@ export function OptionsPanel({
   onHideGroundTrafficChange,
   showTrafficCallsigns,
   onShowTrafficCallsignsChange,
+  hideGroundTrafficCallsigns,
+  onHideGroundTrafficCallsignsChange,
   trafficHistoryMinutes,
   onTrafficHistoryMinutesChange
 }: OptionsPanelProps) {
@@ -226,6 +228,19 @@ export function OptionsPanel({
           disabled={!layers.adsb}
           onChange={(event) => onShowTrafficCallsignsChange(event.target.checked)}
           aria-label="Show traffic callsign labels"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Hide Ground Callsign Labels</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={hideGroundTrafficCallsigns}
+          disabled={!layers.adsb || !showTrafficCallsigns}
+          onChange={(event) => onHideGroundTrafficCallsignsChange(event.target.checked)}
+          aria-label="Hide callsign labels for traffic on the ground"
         />
       </label>
 

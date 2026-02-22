@@ -22,6 +22,7 @@ export interface TrafficProcessResult {
   renderTracks: RenderTrafficTrack[];
   trackCount: number;
   historyPointCount: number;
+  renderHash: number | null;
   operation: 'reset' | 'ingest' | 'recompute' | 'prune-error' | null;
   workerRoundTripMs: number | null;
   workerProcessingMs: number | null;
@@ -124,6 +125,7 @@ export class TrafficWorkerClient {
       renderTracks: response.renderTracks ?? [],
       trackCount: response.trackCount ?? 0,
       historyPointCount: response.historyPointCount ?? 0,
+      renderHash: typeof response.renderHash === 'number' ? response.renderHash : null,
       operation: response.operation ?? null,
       workerRoundTripMs: Number.isFinite(roundTripMs) ? roundTripMs : null,
       workerProcessingMs:
