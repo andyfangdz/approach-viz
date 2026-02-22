@@ -409,7 +409,7 @@ textarea,
   border-radius: 10px;
   color: var(--text-secondary);
   cursor: pointer;
-  z-index: 20;
+  z-index: 10;
   transition:
     border-color 0.2s,
     color 0.2s,
@@ -507,6 +507,9 @@ textarea,
   border-radius: 12px;
   padding: 10px 14px;
   min-width: 0;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 11;
 }
 

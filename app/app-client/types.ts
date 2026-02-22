@@ -136,6 +136,7 @@ export interface SceneCanvasProps {
   surfaceErrorMessage: string;
   recenterNonce: number;
   cameraControlMode: CameraControlMode;
+  retinaRendering: boolean;
   missedApproachStartAltitudeFeet?: number;
   minimumsLabel?: string;
   missedApproachClimbRequirement: SceneData['missedApproachClimbRequirement'];
@@ -194,6 +195,8 @@ export interface OptionsPanelProps {
   onShowDepartedTrafficTrailsChange: (enabled: boolean) => void;
   trafficHistoryMinutes: number;
   onTrafficHistoryMinutesChange: (minutes: number) => void;
+  retinaRendering: boolean;
+  onRetinaRenderingChange: (enabled: boolean) => void;
 }
 
 export type LayerId =
