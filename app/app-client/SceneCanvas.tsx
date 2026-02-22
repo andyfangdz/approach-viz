@@ -6,6 +6,8 @@ import type {
   MapControls as MapControlsImpl,
   OrbitControls as OrbitControlsImpl
 } from 'three-stdlib';
+import { AirportMarker } from '@/app/scene/approach-path/AirportMarker';
+import { COLORS } from '@/app/scene/approach-path/constants';
 import { AirspaceVolumes } from '@/app/scene/AirspaceVolumes';
 import { ApproachPath } from '@/app/scene/ApproachPath';
 import { ApproachPlateSurface } from '@/app/scene/ApproachPlateSurface';
@@ -341,20 +343,46 @@ export const SceneCanvas = memo(function SceneCanvas({
           </SceneErrorBoundary>
         )}
 
+        <AirportMarker
+          airport={airport}
+          runways={sceneData.runways}
+          verticalScale={verticalScale}
+          refLat={airport.lat}
+          refLon={airport.lon}
+          runwayColor={COLORS.runway}
+          airportLabelColor={COLORS.runway}
+          showRunwayLabels
+          applyEarthCurvatureCompensation={
+            surfaceMode === 'satellite' || surfaceMode === '3dplate'
+          }
+        />
+
+        {sceneData.nearbyAirports.map(({ airport: nearbyAirport, runways: nearbyRunways }) => (
+          <AirportMarker
+            key={`nearby-${nearbyAirport.id}`}
+            airport={nearbyAirport}
+            runways={nearbyRunways}
+            verticalScale={verticalScale}
+            refLat={airport.lat}
+            refLon={airport.lon}
+            runwayColor={COLORS.nearbyRunway}
+            airportLabelColor={COLORS.nearbyAirport}
+            showRunwayLabels={false}
+            applyEarthCurvatureCompensation={
+              surfaceMode === 'satellite' || surfaceMode === '3dplate'
+            }
+          />
+        ))}
+
         {approachVisible && contextApproach && (
           <ApproachPath
             approach={contextApproach}
             waypoints={waypoints}
             airport={airport}
-            runways={sceneData.runways}
             verticalScale={verticalScale}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
             missedApproachClimbRequirement={missedApproachClimbRequirement}
-            applyEarthCurvatureCompensation={
-              surfaceMode === 'satellite' || surfaceMode === '3dplate'
-            }
-            nearbyAirports={sceneData.nearbyAirports}
           />
         )}
 
