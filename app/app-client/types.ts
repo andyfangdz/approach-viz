@@ -57,6 +57,14 @@ export interface TrafficDebugState {
   historyMinutes: number;
 }
 
+export interface RuntimeCapabilities {
+  workerAvailable: boolean;
+  sharedWorkerAvailable: boolean;
+  sharedArrayBufferAvailable: boolean;
+  atomicsAvailable: boolean;
+  crossOriginIsolated: boolean;
+}
+
 export interface HeaderControlsProps {
   selectorsCollapsed: boolean;
   onToggleSelectors: () => void;

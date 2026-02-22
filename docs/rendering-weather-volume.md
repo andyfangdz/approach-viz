@@ -61,6 +61,8 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 ## Transport and Polling
 
 - Client decodes compact binary payloads (`application/vnd.approach-viz.mrms.v3`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays. The v3 format adds a `surface_phase` byte at record offset 18 (formerly reserved). The client also accepts v2 payloads for backward compatibility.
+- Decode work is offloaded from the React render thread into a worker path (`SharedWorker` when available, dedicated `Worker` fallback). If worker startup/communication fails, decode falls back to synchronous in-thread decoding to preserve correctness.
+- App responses include cross-origin isolation headers (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: credentialless`) so browser features needed for SharedWorker/SAB are available; this can be disabled with `DISABLE_CROSS_ORIGIN_ISOLATION=1` if a deployment requires looser embedding compatibility.
 - v2 transport merges contiguous same-phase / similar-dBZ cells into larger brick records server-side, reducing client instance count while preserving full coverage.
 - Wire format details: [`docs/mrms-rust-pipeline.md`](mrms-rust-pipeline.md).
 - Polling cadence: ~120 seconds.

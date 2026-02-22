@@ -54,6 +54,7 @@ import type {
   NexradPhaseMode,
   CameraControlMode,
   SurfaceMode,
+  RuntimeCapabilities,
   TrafficDebugState,
   NexradDeclutterMode
 } from '@/app/app-client/types';
@@ -139,6 +140,13 @@ const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
   radiusNm: 80,
   limit: 250,
   historyMinutes: DEFAULT_TRAFFIC_HISTORY_MINUTES
+};
+const EMPTY_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
+  workerAvailable: false,
+  sharedWorkerAvailable: false,
+  sharedArrayBufferAvailable: false,
+  atomicsAvailable: false,
+  crossOriginIsolated: false
 };
 
 function clampValue(value: number, min: number, max: number, fallback = min): number {
@@ -274,6 +282,9 @@ export function AppClient({
   const [recenterNonce, setRecenterNonce] = useState(0);
   const [nexradDebug, setNexradDebug] = useState<NexradDebugState>(EMPTY_NEXRAD_DEBUG_STATE);
   const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
+  const [runtimeCapabilities, setRuntimeCapabilities] = useState<RuntimeCapabilities>(
+    EMPTY_RUNTIME_CAPABILITIES
+  );
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
@@ -291,6 +302,13 @@ export function AppClient({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    setRuntimeCapabilities({
+      workerAvailable: typeof Worker !== 'undefined',
+      sharedWorkerAvailable: typeof SharedWorker !== 'undefined',
+      sharedArrayBufferAvailable: typeof SharedArrayBuffer !== 'undefined',
+      atomicsAvailable: typeof Atomics !== 'undefined',
+      crossOriginIsolated: window.crossOriginIsolated === true
+    });
     if (isMobileViewport()) {
       setSelectorsCollapsed(true);
       setLegendCollapsed(true);
@@ -869,6 +887,7 @@ export function AppClient({
           airportId={selectedAirport}
           approachId={selectedApproach}
           surfaceMode={surfaceMode}
+          runtimeCapabilities={runtimeCapabilities}
           nexradDebug={nexradDebug}
           trafficDebug={trafficDebug}
           cycleInfo={sceneData.cycleInfo}

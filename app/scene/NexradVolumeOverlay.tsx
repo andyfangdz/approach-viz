@@ -27,10 +27,9 @@ import {
 import {
   buildNexradRequestUrl,
   buildEchoTopRequestUrl,
-  decodePayload,
-  decodeEchoTopPayload,
-  applyPhaseDebugHeaders
+  extractPhaseDebugHeaderValues
 } from './nexrad/nexrad-decode';
+import { decodeEchoTopPayloadWithWorker, decodeVolumePayload } from './nexrad/nexrad-worker-client';
 import {
   dbzToAlpha,
   patchMaterialForInstanceAlpha,
@@ -60,6 +59,11 @@ function useGrowingInstanceCapacity(requiredCount: number): number {
     capacityRef.current = nextInstanceCapacity(capacityRef.current, requiredCount);
   }
   return capacityRef.current;
+}
+
+function ensureInt32Capacity(array: Int32Array, requiredCount: number): Int32Array {
+  if (array.length >= requiredCount) return array;
+  return new Int32Array(nextInstanceCapacity(Math.max(1, array.length), requiredCount));
 }
 
 export function NexradVolumeOverlay({
@@ -104,6 +108,7 @@ export function NexradVolumeOverlay({
   const pollNowRef = useRef<(() => void) | null>(null);
   const meshDummy = useMemo(() => new THREE.Object3D(), []);
   const colorScratch = useMemo(() => new THREE.Color(), []);
+  const payloadIndexScratchRef = useRef<Int32Array>(new Int32Array(0));
   const normalizedCrossSectionHeading = ((Math.round(crossSectionHeadingDeg) % 360) + 360) % 360;
   const normalizedCrossSectionRange = Math.max(30, Math.min(140, Math.round(crossSectionRangeNm)));
   const headingRad = (normalizedCrossSectionHeading * Math.PI) / 180;
@@ -219,12 +224,12 @@ export function NexradVolumeOverlay({
 
     return {
       validCount,
-      validIndices: validIndices.slice(0, validCount),
-      yBase: yBase.slice(0, validCount),
-      heightBase: heightBase.slice(0, validCount),
-      correctedBottomFeet: correctedBottomFeet.slice(0, validCount),
-      correctedTopFeet: correctedTopFeet.slice(0, validCount),
-      effectivePhaseCode: effectivePhaseCode.slice(0, validCount)
+      validIndices,
+      yBase,
+      heightBase,
+      correctedBottomFeet,
+      correctedTopFeet,
+      effectivePhaseCode
     };
   }, [enabled, payload]);
 
@@ -243,7 +248,7 @@ export function NexradVolumeOverlay({
         declutterCount += 1;
       }
     }
-    return { declutterIndices: declutterIndices.slice(0, declutterCount), declutterCount };
+    return { declutterIndices, declutterCount };
   }, [declutterMode, volumeData]);
 
   const renderEchoTopCells = useMemo<RenderEchoTopCell[]>(() => {
@@ -534,11 +539,16 @@ export function NexradVolumeOverlay({
         }
 
         const nextPayload = response
-          ? applyPhaseDebugHeaders(decodePayload(await response.arrayBuffer()), response.headers)
+          ? await decodeVolumePayload(
+              await response.arrayBuffer(),
+              extractPhaseDebugHeaderValues(response.headers)
+            )
           : null;
         let nextEchoTopPayload: EchoTopPayload | null = null;
         if (echoTopResponse && echoTopResponse.ok) {
-          nextEchoTopPayload = decodeEchoTopPayload(await echoTopResponse.arrayBuffer());
+          nextEchoTopPayload = await decodeEchoTopPayloadWithWorker(
+            await echoTopResponse.arrayBuffer()
+          );
         }
         if (!cancelled) {
           const nextError = nextPayload?.error ?? nextEchoTopPayload?.error ?? null;
@@ -740,6 +750,13 @@ export function NexradVolumeOverlay({
 
     const baseMesh = baseMeshRef.current;
     if (payload) {
+      let payloadIndices = ensureInt32Capacity(payloadIndexScratchRef.current, declutterCount);
+      if (payloadIndices !== payloadIndexScratchRef.current) {
+        payloadIndexScratchRef.current = payloadIndices;
+      }
+      for (let i = 0; i < declutterCount; i += 1) {
+        payloadIndices[i] = volumeData.validIndices[declutterIndices[i]];
+      }
       applyVoxelInstances(
         baseMesh,
         payload.voxelCount,
@@ -751,7 +768,7 @@ export function NexradVolumeOverlay({
         payload.footprintXNm,
         payload.footprintYNm,
         volumeData.effectivePhaseCode,
-        declutterIndices.map((i) => volumeData.validIndices[i]),
+        payloadIndices,
         declutterCount,
         colorScratch
       );

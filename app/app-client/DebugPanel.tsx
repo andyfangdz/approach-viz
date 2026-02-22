@@ -1,5 +1,10 @@
 import { useState } from 'react';
-import type { NexradDebugState, SurfaceMode, TrafficDebugState } from './types';
+import type {
+  NexradDebugState,
+  RuntimeCapabilities,
+  SurfaceMode,
+  TrafficDebugState
+} from './types';
 import type { CycleInfo, SerializedApproach } from '@/lib/types';
 import type { ApproachLeg } from '@/lib/cifp/parser';
 
@@ -9,6 +14,7 @@ interface DebugPanelProps {
   airportId: string;
   approachId: string;
   surfaceMode: SurfaceMode;
+  runtimeCapabilities: RuntimeCapabilities;
   nexradDebug: NexradDebugState;
   trafficDebug: TrafficDebugState;
   cycleInfo: CycleInfo | null;
@@ -95,6 +101,7 @@ export function DebugPanel({
   airportId,
   approachId,
   surfaceMode,
+  runtimeCapabilities,
   nexradDebug,
   trafficDebug,
   cycleInfo,
@@ -159,6 +166,26 @@ export function DebugPanel({
         <div className="debug-row">
           <span>Surface</span>
           <span>{surfaceMode}</span>
+        </div>
+        <div className="debug-row">
+          <span>Worker</span>
+          <span>{boolLabel(runtimeCapabilities.workerAvailable)}</span>
+        </div>
+        <div className="debug-row">
+          <span>SharedWorker</span>
+          <span>{boolLabel(runtimeCapabilities.sharedWorkerAvailable)}</span>
+        </div>
+        <div className="debug-row">
+          <span>SharedArrayBuffer</span>
+          <span>{boolLabel(runtimeCapabilities.sharedArrayBufferAvailable)}</span>
+        </div>
+        <div className="debug-row">
+          <span>Atomics</span>
+          <span>{boolLabel(runtimeCapabilities.atomicsAvailable)}</span>
+        </div>
+        <div className="debug-row">
+          <span>Cross-Origin Iso</span>
+          <span>{boolLabel(runtimeCapabilities.crossOriginIsolated)}</span>
         </div>
         {cycleInfo && (
           <>

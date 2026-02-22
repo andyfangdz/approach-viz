@@ -12,6 +12,7 @@ import {
   MRMS_BINARY_BASE_URL,
   MRMS_LEVEL_TAGS
 } from './nexrad-types';
+import type { PhaseDebugHeaderValues } from './nexrad-worker-types';
 
 export function buildNexradRequestUrl(params: URLSearchParams): string {
   if (!MRMS_BINARY_BASE_URL) {
@@ -310,12 +311,8 @@ function parseNumberHeader(headers: Headers, name: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function applyPhaseDebugHeaders(
-  payload: NexradVolumePayload,
-  headers: Headers
-): NexradVolumePayload {
+export function extractPhaseDebugHeaderValues(headers: Headers): PhaseDebugHeaderValues {
   return {
-    ...payload,
     phaseMode: headers.get('x-av-phase-mode'),
     phaseDetail: headers.get('x-av-phase-detail'),
     zdrAgeSeconds: parseNumberHeader(headers, 'x-av-zdr-age-seconds'),
@@ -325,4 +322,28 @@ export function applyPhaseDebugHeaders(
     precipFlagTimestamp: headers.get('x-av-precip-timestamp'),
     freezingLevelTimestamp: headers.get('x-av-freezing-timestamp')
   };
+}
+
+export function applyPhaseDebugValues(
+  payload: NexradVolumePayload,
+  values: PhaseDebugHeaderValues
+): NexradVolumePayload {
+  return {
+    ...payload,
+    phaseMode: values.phaseMode,
+    phaseDetail: values.phaseDetail,
+    zdrAgeSeconds: values.zdrAgeSeconds,
+    rhohvAgeSeconds: values.rhohvAgeSeconds,
+    zdrTimestamp: values.zdrTimestamp,
+    rhohvTimestamp: values.rhohvTimestamp,
+    precipFlagTimestamp: values.precipFlagTimestamp,
+    freezingLevelTimestamp: values.freezingLevelTimestamp
+  };
+}
+
+export function applyPhaseDebugHeaders(
+  payload: NexradVolumePayload,
+  headers: Headers
+): NexradVolumePayload {
+  return applyPhaseDebugValues(payload, extractPhaseDebugHeaderValues(headers));
 }
