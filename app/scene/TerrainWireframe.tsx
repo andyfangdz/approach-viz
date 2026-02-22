@@ -1,7 +1,6 @@
 import { useThree } from '@react-three/fiber';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import * as THREE from 'three';
-import { LineSegments2, LineSegmentsGeometry, LineMaterial } from 'three-stdlib';
 
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 
@@ -141,7 +140,6 @@ export const TerrainWireframe = memo(function TerrainWireframe({
   verticalScale
 }: TerrainWireframeProps) {
   const dpr = useThree((s) => s.viewport.dpr);
-  const size = useThree((s) => s.size);
   const [terrainGeometry, setTerrainGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [wireGeometry, setWireGeometry] = useState<THREE.WireframeGeometry | null>(null);
 
@@ -252,55 +250,14 @@ export const TerrainWireframe = memo(function TerrainWireframe({
     [terrainGeometry]
   );
 
-  const wireLineGeometry = useMemo(() => {
-    if (!wireGeometry) return null;
-    const posAttr = wireGeometry.getAttribute('position');
-    const geo = new LineSegmentsGeometry();
-    geo.setPositions(new Float32Array(posAttr.array));
-    return geo;
-  }, [wireGeometry]);
-
   useEffect(
     () => () => {
       wireGeometry?.dispose();
     },
     [wireGeometry]
   );
-  useEffect(
-    () => () => {
-      wireLineGeometry?.dispose();
-    },
-    [wireLineGeometry]
-  );
 
-  const wireLineMaterial = useMemo(
-    () =>
-      new LineMaterial({
-        color: 0x4ea0db,
-        transparent: true,
-        opacity: 0.58,
-        depthWrite: false,
-        linewidth: 1
-      }),
-    []
-  );
-  useEffect(() => {
-    wireLineMaterial.resolution.set(size.width * dpr, size.height * dpr);
-    wireLineMaterial.linewidth = dpr;
-  }, [dpr, size, wireLineMaterial]);
-  useEffect(
-    () => () => {
-      wireLineMaterial.dispose();
-    },
-    [wireLineMaterial]
-  );
-
-  const wireLinesMesh = useMemo(
-    () => (wireLineGeometry ? new LineSegments2(wireLineGeometry, wireLineMaterial) : null),
-    [wireLineGeometry, wireLineMaterial]
-  );
-
-  if (!terrainGeometry || !wireLinesMesh) {
+  if (!terrainGeometry || !wireGeometry) {
     return null;
   }
 
@@ -320,9 +277,9 @@ export const TerrainWireframe = memo(function TerrainWireframe({
           polygonOffsetUnits={1}
         />
       </mesh>
-      <group position={[0, -0.005, 0]} scale={[1, verticalScale, 1]}>
-        <primitive object={wireLinesMesh} />
-      </group>
+      <lineSegments geometry={wireGeometry} position={[0, -0.005, 0]} scale={[1, verticalScale, 1]}>
+        <lineBasicMaterial color="#4ea0db" transparent opacity={0.58} linewidth={Math.round(dpr)} />
+      </lineSegments>
     </group>
   );
 });

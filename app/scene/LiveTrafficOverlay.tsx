@@ -2,7 +2,6 @@ import { Html } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { LineSegments2, LineSegmentsGeometry, LineMaterial } from 'three-stdlib';
 import type { TrafficDebugState, TrafficTimingDebugState } from '@/app/app-client/types';
 import { altToY, earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
 import { TrafficWorkerClient, type TrafficProcessResult } from './traffic/traffic-worker-client';
@@ -476,39 +475,31 @@ export function LiveTrafficOverlay({
     []
   );
   const dpr = useThree((s) => s.viewport.dpr);
-  const size = useThree((s) => s.size);
+  const dprLineWidth = Math.round(dpr);
   const trailLineMaterial = useMemo(
     () =>
-      new LineMaterial({
-        color: 0x15d0ff,
+      new THREE.LineBasicMaterial({
+        color: '#15d0ff',
         transparent: true,
         opacity: 0.5,
         depthWrite: false,
         toneMapped: false,
-        linewidth: 1
+        linewidth: dprLineWidth
       }),
-    []
+    [dprLineWidth]
   );
   const headingLineMaterial = useMemo(
     () =>
-      new LineMaterial({
-        color: 0x9bf7ff,
+      new THREE.LineBasicMaterial({
+        color: '#9bf7ff',
         transparent: true,
         opacity: 0.9,
         depthWrite: false,
         toneMapped: false,
-        linewidth: 1
+        linewidth: dprLineWidth
       }),
-    []
+    [dprLineWidth]
   );
-  useEffect(() => {
-    const w = size.width * dpr;
-    const h = size.height * dpr;
-    trailLineMaterial.resolution.set(w, h);
-    headingLineMaterial.resolution.set(w, h);
-    trailLineMaterial.linewidth = dpr;
-    headingLineMaterial.linewidth = dpr;
-  }, [dpr, size, trailLineMaterial, headingLineMaterial]);
   const trafficWorkerRef = useRef<TrafficWorkerClient | null>(null);
   const lastRenderHashRef = useRef<number | null>(null);
   const backfilledHexesRef = useRef<Map<string, number>>(new Map());
@@ -1002,8 +993,8 @@ export function LiveTrafficOverlay({
         positions[offset++] = b[2];
       }
     }
-    const geometry = new LineSegmentsGeometry();
-    geometry.setPositions(positions);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     return geometry;
   }, [renderTracks]);
 
@@ -1028,8 +1019,8 @@ export function LiveTrafficOverlay({
       positions[offset++] = headingTipY;
       positions[offset++] = headingTipZ;
     }
-    const geometry = new LineSegmentsGeometry();
-    geometry.setPositions(positions);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     return geometry;
   }, [activeRenderTracks]);
 
@@ -1045,16 +1036,6 @@ export function LiveTrafficOverlay({
       headingLinesGeometry?.dispose();
     },
     [headingLinesGeometry]
-  );
-
-  const trailLinesMesh = useMemo(
-    () => (trailLinesGeometry ? new LineSegments2(trailLinesGeometry, trailLineMaterial) : null),
-    [trailLinesGeometry, trailLineMaterial]
-  );
-  const headingLinesMesh = useMemo(
-    () =>
-      headingLinesGeometry ? new LineSegments2(headingLinesGeometry, headingLineMaterial) : null,
-    [headingLinesGeometry, headingLineMaterial]
   );
 
   const debugState = useMemo<TrafficDebugState>(
@@ -1134,11 +1115,21 @@ export function LiveTrafficOverlay({
 
   return (
     <group>
-      {trailLinesMesh && (
-        <primitive object={trailLinesMesh} frustumCulled={false} renderOrder={82} />
+      {trailLinesGeometry && (
+        <lineSegments
+          geometry={trailLinesGeometry}
+          material={trailLineMaterial}
+          frustumCulled={false}
+          renderOrder={82}
+        />
       )}
-      {headingLinesMesh && (
-        <primitive object={headingLinesMesh} frustumCulled={false} renderOrder={83} />
+      {headingLinesGeometry && (
+        <lineSegments
+          geometry={headingLinesGeometry}
+          material={headingLineMaterial}
+          frustumCulled={false}
+          renderOrder={83}
+        />
       )}
       {showCallsignLabels &&
         activeRenderTracks.map((track) => {
