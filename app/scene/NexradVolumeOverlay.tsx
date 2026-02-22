@@ -251,12 +251,12 @@ export function NexradVolumeOverlay({
 
     const footprintXNm =
       typeof echoTopPayload.footprintXNm === 'number' &&
-        Number.isFinite(echoTopPayload.footprintXNm)
+      Number.isFinite(echoTopPayload.footprintXNm)
         ? Math.max(0.03, echoTopPayload.footprintXNm)
         : 0.05;
     const footprintYNm =
       typeof echoTopPayload.footprintYNm === 'number' &&
-        Number.isFinite(echoTopPayload.footprintYNm)
+      Number.isFinite(echoTopPayload.footprintYNm)
         ? Math.max(0.03, echoTopPayload.footprintYNm)
         : footprintXNm;
     const next: RenderEchoTopCell[] = [];
@@ -518,15 +518,15 @@ export function NexradVolumeOverlay({
         const [response, echoTopResponse] = await Promise.all([
           shouldFetchVolume
             ? fetch(buildNexradRequestUrl(volumeParams), {
-              cache: 'no-store',
-              signal: activeAbortController.signal
-            })
+                cache: 'no-store',
+                signal: activeAbortController.signal
+              })
             : Promise.resolve(null),
           shouldFetchEchoTops
             ? fetch(buildEchoTopRequestUrl(echoTopParams), {
-              cache: 'no-store',
-              signal: activeAbortController.signal
-            }).catch(() => null)
+                cache: 'no-store',
+                signal: activeAbortController.signal
+              }).catch(() => null)
             : Promise.resolve(null)
         ]);
         if (response && !response.ok) {
