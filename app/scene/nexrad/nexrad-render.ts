@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { NexradDeclutterMode } from '@/app/app-client/types';
-import type { DbzColorBand, RenderVoxel, EchoTopSurfaceCell } from './nexrad-types';
+import type { DbzColorBand, EchoTopSurfaceCell } from './nexrad-types';
 import {
   NEXRAD_COLOR_GAIN,
   MIN_VISIBLE_LUMINANCE,
@@ -104,24 +104,53 @@ export function patchMaterialForInstanceAlpha(
 
 export function applyVoxelInstances(
   mesh: THREE.InstancedMesh | null,
-  voxels: RenderVoxel[],
-  meshDummy: THREE.Object3D,
+  voxelCount: number,
+  xNm: Float32Array,
+  yBase: Float32Array,
+  zNm: Float32Array,
+  heightBase: Float32Array,
+  dbz: Float32Array,
+  footprintXNm: Float32Array,
+  footprintYNm: Float32Array,
+  phaseCode: Uint8Array,
+  validIndices: Int32Array,
+  validCount: number,
   colorScratch: THREE.Color
 ) {
   if (!mesh) return;
-  const count = voxels.length;
-  for (let index = 0; index < count; index += 1) {
-    const voxel = voxels[index];
-    meshDummy.position.set(voxel.x, voxel.yBase, voxel.z);
-    meshDummy.scale.set(voxel.footprintXNm, voxel.heightBase, voxel.footprintYNm);
-    meshDummy.updateMatrix();
-    mesh.setMatrixAt(index, meshDummy.matrix);
+  const matrixArray = mesh.instanceMatrix.array as Float32Array;
 
-    colorScratch.setHex(dbzToHex(voxel.dbz, voxel.phaseCode));
-    mesh.setColorAt(index, colorScratch);
+  for (let i = 0; i < validCount; i += 1) {
+    const dataIndex = validIndices[i];
+    const offset = i * 16;
+
+    // Direct matrix manipulation: only scale and translate are needed.
+    // Matrix format is column-major.
+    matrixArray[offset + 0] = footprintXNm[dataIndex]; // scale X
+    matrixArray[offset + 1] = 0;
+    matrixArray[offset + 2] = 0;
+    matrixArray[offset + 3] = 0;
+
+    matrixArray[offset + 4] = 0;
+    matrixArray[offset + 5] = heightBase[dataIndex]; // scale Y
+    matrixArray[offset + 6] = 0;
+    matrixArray[offset + 7] = 0;
+
+    matrixArray[offset + 8] = 0;
+    matrixArray[offset + 9] = 0;
+    matrixArray[offset + 10] = footprintYNm[dataIndex]; // scale Z
+    matrixArray[offset + 11] = 0;
+
+    matrixArray[offset + 12] = xNm[dataIndex]; // translate X
+    matrixArray[offset + 13] = yBase[dataIndex]; // translate Y
+    matrixArray[offset + 14] = zNm[dataIndex]; // translate Z
+    matrixArray[offset + 15] = 1;
+
+    colorScratch.setHex(dbzToHex(dbz[dataIndex], phaseCode[dataIndex]));
+    mesh.setColorAt(i, colorScratch);
   }
 
-  mesh.count = count;
+  mesh.count = validCount;
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) {
     mesh.instanceColor.needsUpdate = true;

@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import type { CrossSectionData, RenderVoxel } from './nexrad-types';
+import type { CrossSectionData, NexradVolumePayload } from './nexrad-types';
 import { CROSS_SECTION_BINS_X, CROSS_SECTION_BINS_Y, PHASE_RAIN } from './nexrad-types';
 import { dbzToHex, feetToNm, altitudeTickLabel } from './nexrad-render';
 
 interface NexradCrossSectionProps {
-  rawRenderVoxels: RenderVoxel[];
+  payload: NexradVolumePayload;
+  volumeData: {
+    validCount: number;
+    validIndices: Int32Array;
+    correctedBottomFeet: Float32Array;
+    correctedTopFeet: Float32Array;
+    effectivePhaseCode: Uint8Array;
+  };
   normalizedCrossSectionHeading: number;
   normalizedCrossSectionRange: number;
   sliceAxis: { x: number; z: number };
@@ -18,7 +25,8 @@ interface NexradCrossSectionProps {
 }
 
 export function NexradCrossSection({
-  rawRenderVoxels,
+  payload,
+  volumeData,
   normalizedCrossSectionHeading,
   normalizedCrossSectionRange,
   sliceAxis,
@@ -31,11 +39,12 @@ export function NexradCrossSection({
   const sliceCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const crossSectionData = useMemo<CrossSectionData | null>(() => {
-    if (rawRenderVoxels.length === 0) return null;
+    const { validCount, validIndices, correctedBottomFeet, correctedTopFeet, effectivePhaseCode } = volumeData;
+    if (validCount === 0 || !payload) return null;
 
     let maxTopFeet = 0;
-    for (const voxel of rawRenderVoxels) {
-      maxTopFeet = Math.max(maxTopFeet, voxel.topFeet);
+    for (let i = 0; i < validCount; i += 1) {
+      maxTopFeet = Math.max(maxTopFeet, correctedTopFeet[i]);
     }
     if (!Number.isFinite(maxTopFeet) || maxTopFeet <= 0) return null;
     maxTopFeet = Math.max(10_000, Math.ceil(maxTopFeet / 1000) * 1000);
@@ -46,12 +55,16 @@ export function NexradCrossSection({
     const topEnvelopeFeet = new Float32Array(CROSS_SECTION_BINS_X);
     for (let i = 0; i < topEnvelopeFeet.length; i += 1) topEnvelopeFeet[i] = 0;
 
-    for (const voxel of rawRenderVoxels) {
-      const alongNm = voxel.x * sliceAxis.x + voxel.z * sliceAxis.z;
+    for (let i = 0; i < validCount; i += 1) {
+      const idx = validIndices[i];
+      const vx = payload.xNm[idx];
+      const vz = payload.zNm[idx];
+
+      const alongNm = vx * sliceAxis.x + vz * sliceAxis.z;
       if (alongNm < -normalizedCrossSectionRange || alongNm > normalizedCrossSectionRange) {
         continue;
       }
-      const crossNm = Math.abs(voxel.x * slicePerpAxis.x + voxel.z * slicePerpAxis.z);
+      const crossNm = Math.abs(vx * slicePerpAxis.x + vz * slicePerpAxis.z);
       if (crossNm > crossSectionHalfWidthNm) continue;
 
       const x01 = (alongNm + normalizedCrossSectionRange) / (normalizedCrossSectionRange * 2);
@@ -59,8 +72,8 @@ export function NexradCrossSection({
         0,
         Math.min(CROSS_SECTION_BINS_X - 1, Math.floor(x01 * CROSS_SECTION_BINS_X))
       );
-      const bottomFeet = Math.max(0, voxel.bottomFeet);
-      const topFeet = Math.max(0, voxel.topFeet);
+      const bottomFeet = Math.max(0, correctedBottomFeet[i]);
+      const topFeet = Math.max(0, correctedTopFeet[i]);
       const y0 = Math.max(
         0,
         Math.min(
@@ -74,10 +87,11 @@ export function NexradCrossSection({
       );
       topEnvelopeFeet[binX] = Math.max(topEnvelopeFeet[binX], topFeet);
       for (let y = y0; y <= y1; y += 1) {
-        const idx = y * CROSS_SECTION_BINS_X + binX;
-        if (voxel.dbz > grid[idx]) {
-          grid[idx] = voxel.dbz;
-          phaseGrid[idx] = voxel.phaseCode;
+        const gridIdx = y * CROSS_SECTION_BINS_X + binX;
+        const vDbz = payload.dbz[idx];
+        if (vDbz > grid[gridIdx]) {
+          grid[gridIdx] = vDbz;
+          phaseGrid[gridIdx] = effectivePhaseCode[i];
         }
       }
     }
@@ -91,7 +105,8 @@ export function NexradCrossSection({
       maxTopFeet
     };
   }, [
-    rawRenderVoxels,
+    payload,
+    volumeData,
     sliceAxis,
     slicePerpAxis,
     normalizedCrossSectionRange,

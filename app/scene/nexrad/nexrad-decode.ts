@@ -1,6 +1,5 @@
 import type {
   NexradVolumePayload,
-  NexradVoxelTuple,
   NexradLayerSummary,
   EchoTopPayload,
   EchoTopCellTuple
@@ -83,30 +82,33 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
     layerCounts.push(view.getUint32(layerCountsOffset + index * 4, true));
   }
 
-  const voxels: NexradVoxelTuple[] = [];
+  const xNm = new Float32Array(voxelCount);
+  const zNm = new Float32Array(voxelCount);
+  const bottomFeet = new Float32Array(voxelCount);
+  const topFeet = new Float32Array(voxelCount);
+  const dbz = new Float32Array(voxelCount);
+  const outFootprintXNm = new Float32Array(voxelCount);
+  const outFootprintYNm = new Float32Array(voxelCount);
+  const phaseCode = new Uint8Array(voxelCount);
+  const surfacePhaseCode = new Uint8Array(voxelCount);
+
   for (let index = 0; index < voxelCount; index += 1) {
     const offset = recordsOffset + index * recordBytes;
-    const xNm = view.getInt16(offset, true) / 100;
-    const zNm = view.getInt16(offset + 2, true) / 100;
-    const bottomFeet = view.getUint16(offset + 4, true);
-    const topFeet = view.getUint16(offset + 6, true);
-    const dbz = view.getInt16(offset + 8, true) / 10;
-    const phaseCode = view.getUint8(offset + 10);
-    const surfacePhaseCode =
-      version >= MRMS_BINARY_V3_VERSION ? view.getUint8(offset + 18) : phaseCode;
+    xNm[index] = view.getInt16(offset, true) / 100;
+    zNm[index] = view.getInt16(offset + 2, true) / 100;
+    bottomFeet[index] = view.getUint16(offset + 4, true);
+    topFeet[index] = view.getUint16(offset + 6, true);
+    dbz[index] = view.getInt16(offset + 8, true) / 10;
+
+    const pCode = view.getUint8(offset + 10);
+    phaseCode[index] = pCode;
+    surfacePhaseCode[index] =
+      version >= MRMS_BINARY_V3_VERSION ? view.getUint8(offset + 18) : pCode;
+
     const spanX = Math.max(1, view.getUint16(offset + 12, true));
     const spanY = Math.max(1, view.getUint16(offset + 14, true));
-    voxels.push([
-      xNm,
-      zNm,
-      bottomFeet,
-      topFeet,
-      dbz,
-      footprintXNm * spanX,
-      footprintYNm * spanY,
-      phaseCode,
-      surfacePhaseCode
-    ]);
+    outFootprintXNm[index] = footprintXNm * spanX;
+    outFootprintYNm[index] = footprintYNm * spanY;
   }
 
   const generatedAt =
@@ -134,7 +136,16 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
     generatedAt,
     radar: null,
     layerSummaries,
-    voxels
+    voxelCount,
+    xNm,
+    zNm,
+    bottomFeet,
+    topFeet,
+    dbz,
+    footprintXNm: outFootprintXNm,
+    footprintYNm: outFootprintYNm,
+    phaseCode,
+    surfacePhaseCode
   };
 }
 
@@ -153,11 +164,64 @@ export function decodePayload(buffer: ArrayBuffer): NexradVolumePayload {
   }
 
   const text = new TextDecoder().decode(buffer);
-  const parsed = JSON.parse(text) as NexradVolumePayload;
+
+  // Cast intermediate to any because JSON shape is old tuple format
+  const parsed = JSON.parse(text) as any;
   if (!parsed || !Array.isArray(parsed.voxels)) {
     throw new Error('Unexpected MRMS JSON payload.');
   }
-  return parsed;
+
+  const rawVoxels = parsed.voxels as any[];
+  const voxelCount = rawVoxels.length;
+
+  const xNm = new Float32Array(voxelCount);
+  const zNm = new Float32Array(voxelCount);
+  const bottomFeet = new Float32Array(voxelCount);
+  const topFeet = new Float32Array(voxelCount);
+  const dbz = new Float32Array(voxelCount);
+  const footprintXNm = new Float32Array(voxelCount);
+  const footprintYNm = new Float32Array(voxelCount);
+  const phaseCode = new Uint8Array(voxelCount);
+  const surfacePhaseCode = new Uint8Array(voxelCount);
+
+  for (let i = 0; i < voxelCount; i++) {
+    const v = rawVoxels[i];
+    xNm[i] = v[0] || 0;
+    zNm[i] = v[1] || 0;
+    bottomFeet[i] = v[2] || 0;
+    topFeet[i] = v[3] || 0;
+    dbz[i] = v[4] || 0;
+    footprintXNm[i] = v[5] || 0;
+    footprintYNm[i] = v[6] ?? v[5] ?? 0;
+    phaseCode[i] = v[7] || 0;
+    surfacePhaseCode[i] = v[8] ?? v[7] ?? 0;
+  }
+
+  return {
+    generatedAt: parsed.generatedAt || new Date().toISOString(),
+    radar: parsed.radar || null,
+    layerSummaries: parsed.layerSummaries || [],
+    voxelCount,
+    xNm,
+    zNm,
+    bottomFeet,
+    topFeet,
+    dbz,
+    footprintXNm,
+    footprintYNm,
+    phaseCode,
+    surfacePhaseCode,
+    phaseMode: parsed.phaseMode,
+    phaseDetail: parsed.phaseDetail,
+    zdrAgeSeconds: parsed.zdrAgeSeconds,
+    rhohvAgeSeconds: parsed.rhohvAgeSeconds,
+    zdrTimestamp: parsed.zdrTimestamp,
+    rhohvTimestamp: parsed.rhohvTimestamp,
+    precipFlagTimestamp: parsed.precipFlagTimestamp,
+    freezingLevelTimestamp: parsed.freezingLevelTimestamp,
+    stale: parsed.stale,
+    error: parsed.error
+  };
 }
 
 export function decodeEchoTopPayload(buffer: ArrayBuffer): EchoTopPayload {
@@ -210,7 +274,7 @@ export function decodeEchoTopPayload(buffer: ArrayBuffer): EchoTopPayload {
     timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : null,
     sourceCellCount:
       typeof parsed.sourceCellCount === 'number' &&
-      Number.isFinite(parsed.sourceCellCount as number)
+        Number.isFinite(parsed.sourceCellCount as number)
         ? Math.max(0, Math.round(parsed.sourceCellCount as number))
         : undefined,
     footprintXNm:

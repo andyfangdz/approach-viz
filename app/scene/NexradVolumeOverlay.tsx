@@ -7,7 +7,6 @@ import type {
   NexradVolumeOverlayProps,
   NexradVolumePayload,
   EchoTopPayload,
-  RenderVoxel,
   RenderEchoTopCell,
   EchoTopSurfaceCell
 } from './nexrad/nexrad-types';
@@ -119,99 +118,121 @@ export function NexradVolumeOverlay({
     Math.max(0, Math.min(1, (normalizedCrossSectionRange - 30) / (140 - 30)))
   );
 
-  const rawRenderVoxels = useMemo<RenderVoxel[]>(() => {
-    if (!enabled || !payload?.voxels) return [];
+  const volumeData = useMemo(() => {
+    if (!enabled || !payload || !payload.voxelCount) {
+      return {
+        validCount: 0,
+        validIndices: new Int32Array(0),
+        yBase: new Float32Array(0),
+        heightBase: new Float32Array(0),
+        correctedBottomFeet: new Float32Array(0),
+        correctedTopFeet: new Float32Array(0),
+        effectivePhaseCode: new Uint8Array(0)
+      };
+    }
 
-    const next: RenderVoxel[] = [];
-    for (const voxel of payload.voxels) {
-      const [
-        offsetXNm,
-        offsetZNm,
-        bottomFeet,
-        topFeet,
-        dbz,
-        footprintXNm,
-        footprintYNm,
-        phaseCode,
-        surfacePhaseCode
-      ] = voxel;
-      if (dbz < minDbz) continue;
-      const x = offsetXNm;
-      const z = offsetZNm;
-      const curvatureDropFeet = applyEarthCurvatureCompensation
-        ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM
-        : 0;
-      const correctedBottomFeet = bottomFeet - curvatureDropFeet;
-      const correctedTopFeet = topFeet - curvatureDropFeet;
-      const correctedCenterFeet = (correctedBottomFeet + correctedTopFeet) / 2;
-      const yBase = correctedCenterFeet * ALTITUDE_SCALE;
-      const heightBase = Math.max((topFeet - bottomFeet) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM);
-      const footprintXNmSafe = Number.isFinite(footprintXNm) ? footprintXNm : NaN;
-      const footprintYNmSafe =
-        typeof footprintYNm === 'number' && Number.isFinite(footprintYNm)
-          ? footprintYNm
-          : footprintXNmSafe;
+    const count = payload.voxelCount;
+    const { xNm, zNm, bottomFeet, topFeet, dbz, footprintXNm, footprintYNm, phaseCode, surfacePhaseCode } = payload;
+
+    const validIndices = new Int32Array(count);
+    const yBase = new Float32Array(count);
+    const heightBase = new Float32Array(count);
+    const correctedBottomFeet = new Float32Array(count);
+    const correctedTopFeet = new Float32Array(count);
+    const effectivePhaseCode = new Uint8Array(count);
+
+    let validCount = 0;
+
+    for (let i = 0; i < count; i += 1) {
+      const d = dbz[i];
+      if (d < minDbz) continue;
+
+      const x = xNm[i];
+      const z = zNm[i];
+      const fpX = footprintXNm[i];
+      const fpY = footprintYNm[i];
+
       if (
         !Number.isFinite(x) ||
-        !Number.isFinite(yBase) ||
         !Number.isFinite(z) ||
-        !Number.isFinite(footprintXNmSafe) ||
-        !Number.isFinite(footprintYNmSafe) ||
-        !Number.isFinite(correctedBottomFeet) ||
-        !Number.isFinite(correctedTopFeet) ||
-        footprintXNmSafe <= 0 ||
-        footprintYNmSafe <= 0
+        !Number.isFinite(fpX) ||
+        !Number.isFinite(fpY) ||
+        fpX <= 0 ||
+        fpY <= 0
       ) {
         continue;
       }
 
-      next.push({
-        x,
-        yBase,
-        z,
-        heightBase,
-        bottomFeet: correctedBottomFeet,
-        topFeet: correctedTopFeet,
-        footprintXNm: footprintXNmSafe,
-        footprintYNm: footprintYNmSafe,
-        dbz,
-        phaseCode:
-          phaseMode === 'surface'
-            ? typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
-              ? Math.round(surfacePhaseCode)
-              : PHASE_RAIN
-            : typeof phaseCode === 'number' && Number.isFinite(phaseCode)
-              ? Math.round(phaseCode)
-              : PHASE_RAIN,
-        surfacePhaseCode:
-          typeof surfacePhaseCode === 'number' && Number.isFinite(surfacePhaseCode)
-            ? Math.round(surfacePhaseCode)
-            : PHASE_RAIN
-      });
+      const curvatureDropFeet = applyEarthCurvatureCompensation ? earthCurvatureDropNm(x, z, refLat) * FEET_PER_NM : 0;
+      const cBottom = bottomFeet[i] - curvatureDropFeet;
+      const cTop = topFeet[i] - curvatureDropFeet;
+      const cCenter = (cBottom + cTop) / 2;
+      const yb = cCenter * ALTITUDE_SCALE;
+      const hb = Math.max((cTop - cBottom) * ALTITUDE_SCALE, MIN_VOXEL_HEIGHT_NM);
+
+      if (!Number.isFinite(yb) || !Number.isFinite(cBottom) || !Number.isFinite(cTop)) {
+        continue;
+      }
+
+      validIndices[validCount] = i;
+      yBase[validCount] = yb;
+      heightBase[validCount] = hb;
+      correctedBottomFeet[validCount] = cBottom;
+      correctedTopFeet[validCount] = cTop;
+
+      const spc = surfacePhaseCode[i];
+      const pc = phaseCode[i];
+      let pCode = PHASE_RAIN;
+      if (phaseMode === 'surface') {
+        pCode = typeof spc === 'number' && Number.isFinite(spc) ? Math.round(spc) : PHASE_RAIN;
+      } else {
+        pCode = typeof pc === 'number' && Number.isFinite(pc) ? Math.round(pc) : PHASE_RAIN;
+      }
+      effectivePhaseCode[validCount] = pCode;
+
+      validCount += 1;
     }
 
-    return next;
-  }, [enabled, payload?.voxels, applyEarthCurvatureCompensation, refLat, minDbz, phaseMode]);
+    return {
+      validCount,
+      validIndices: validIndices.slice(0, validCount),
+      yBase: yBase.slice(0, validCount),
+      heightBase: heightBase.slice(0, validCount),
+      correctedBottomFeet: correctedBottomFeet.slice(0, validCount),
+      correctedTopFeet: correctedTopFeet.slice(0, validCount),
+      effectivePhaseCode: effectivePhaseCode.slice(0, validCount)
+    };
+  }, [enabled, payload, applyEarthCurvatureCompensation, refLat, minDbz, phaseMode]);
 
-  const renderVoxels = useMemo(
-    () =>
-      rawRenderVoxels.filter((voxel) =>
-        keepVoxelForDeclutter(declutterMode, voxel.bottomFeet, voxel.topFeet)
-      ),
-    [declutterMode, rawRenderVoxels]
-  );
+  const declutterData = useMemo(() => {
+    const { validCount, validIndices, correctedBottomFeet, correctedTopFeet } = volumeData;
+    if (declutterMode === 'all') {
+      return { declutterIndices: validIndices, declutterCount: validCount };
+    }
+
+    const declutterIndices = new Int32Array(validCount);
+    let declutterCount = 0;
+
+    for (let i = 0; i < validCount; i += 1) {
+      if (keepVoxelForDeclutter(declutterMode, correctedBottomFeet[i], correctedTopFeet[i])) {
+        declutterIndices[declutterCount] = i;
+        declutterCount += 1;
+      }
+    }
+    return { declutterIndices: declutterIndices.slice(0, declutterCount), declutterCount };
+  }, [declutterMode, volumeData]);
 
   const renderEchoTopCells = useMemo<RenderEchoTopCell[]>(() => {
     if (!enabled || !showEchoTops || !echoTopPayload?.cells?.length) return [];
 
     const footprintXNm =
       typeof echoTopPayload.footprintXNm === 'number' &&
-      Number.isFinite(echoTopPayload.footprintXNm)
+        Number.isFinite(echoTopPayload.footprintXNm)
         ? Math.max(0.03, echoTopPayload.footprintXNm)
         : 0.05;
     const footprintYNm =
       typeof echoTopPayload.footprintYNm === 'number' &&
-      Number.isFinite(echoTopPayload.footprintYNm)
+        Number.isFinite(echoTopPayload.footprintYNm)
         ? Math.max(0.03, echoTopPayload.footprintYNm)
         : footprintXNm;
     const next: RenderEchoTopCell[] = [];
@@ -276,7 +297,8 @@ export function NexradVolumeOverlay({
   }, [renderEchoTopCells]);
   const { echoTop18Cells, echoTop30Cells, echoTop50Cells } = echoTopSurfaces;
 
-  const instanceCapacity = useGrowingInstanceCapacity(renderVoxels.length);
+  const { declutterIndices, declutterCount } = declutterData;
+  const instanceCapacity = useGrowingInstanceCapacity(declutterCount);
   const instanceAlphaArray = useMemo(() => {
     const array = new Float32Array(instanceCapacity);
     array.fill(1);
@@ -472,15 +494,15 @@ export function NexradVolumeOverlay({
         const [response, echoTopResponse] = await Promise.all([
           shouldFetchVolume
             ? fetch(buildNexradRequestUrl(volumeParams), {
-                cache: 'no-store',
-                signal: activeAbortController.signal
-              })
+              cache: 'no-store',
+              signal: activeAbortController.signal
+            })
             : Promise.resolve(null),
           shouldFetchEchoTops
             ? fetch(buildEchoTopRequestUrl(echoTopParams), {
-                cache: 'no-store',
-                signal: activeAbortController.signal
-              }).catch(() => null)
+              cache: 'no-store',
+              signal: activeAbortController.signal
+            }).catch(() => null)
             : Promise.resolve(null)
         ]);
         if (response && !response.ok) {
@@ -503,8 +525,7 @@ export function NexradVolumeOverlay({
               if (
                 nextPayload.error &&
                 previousPayload &&
-                Array.isArray(previousPayload.voxels) &&
-                previousPayload.voxels.length > 0
+                previousPayload.voxelCount > 0
               ) {
                 return previousPayload;
               }
@@ -580,19 +601,20 @@ export function NexradVolumeOverlay({
 
   const phaseCounts = useMemo(() => {
     const counts = { rain: 0, mixed: 0, snow: 0 };
-    const voxels = payload?.voxels ?? [];
-    for (const voxel of voxels) {
-      const phaseCode = voxel[7];
-      if (phaseCode === PHASE_SNOW) {
+    if (!payload) return counts;
+    const { phaseCode, voxelCount } = payload;
+    for (let i = 0; i < voxelCount; i += 1) {
+      const p = phaseCode[i];
+      if (p === PHASE_SNOW) {
         counts.snow += 1;
-      } else if (phaseCode === PHASE_MIXED) {
+      } else if (p === PHASE_MIXED) {
         counts.mixed += 1;
       } else {
         counts.rain += 1;
       }
     }
     return counts;
-  }, [payload?.voxels]);
+  }, [payload]);
 
   const debugState: NexradDebugState = {
     enabled,
@@ -603,8 +625,8 @@ export function NexradVolumeOverlay({
     scanTime: payload?.layerSummaries?.[0]?.scanTime ?? null,
     lastPollAt,
     layerCount: payload?.layerSummaries?.length ?? 0,
-    voxelCount: payload?.voxels?.length ?? 0,
-    renderedVoxelCount: renderVoxels.length,
+    voxelCount: payload?.voxelCount ?? 0,
+    renderedVoxelCount: declutterCount,
     phaseMode: payload?.phaseMode ?? null,
     phaseDetail: payload?.phaseDetail ?? null,
     zdrAgeSeconds: payload?.zdrAgeSeconds ?? null,
@@ -685,8 +707,11 @@ export function NexradVolumeOverlay({
 
   useEffect(() => {
     // Compute per-instance alpha from dBZ intensity (shared by both passes).
-    for (let index = 0; index < renderVoxels.length; index += 1) {
-      instanceAlphaArray[index] = dbzToAlpha(renderVoxels[index].dbz);
+    if (payload) {
+      for (let i = 0; i < declutterCount; i += 1) {
+        const payloadIndex = volumeData.validIndices[declutterIndices[i]];
+        instanceAlphaArray[i] = dbzToAlpha(payload.dbz[payloadIndex]);
+      }
     }
     const alphaAttribute = voxelGeometry.getAttribute('instanceAlpha');
     if (alphaAttribute) {
@@ -694,7 +719,23 @@ export function NexradVolumeOverlay({
     }
 
     const baseMesh = baseMeshRef.current;
-    applyVoxelInstances(baseMesh, renderVoxels, meshDummy, colorScratch);
+    if (payload) {
+      applyVoxelInstances(
+        baseMesh,
+        payload.voxelCount,
+        payload.xNm,
+        volumeData.yBase,
+        payload.zNm,
+        volumeData.heightBase,
+        payload.dbz,
+        payload.footprintXNm,
+        payload.footprintYNm,
+        volumeData.effectivePhaseCode,
+        declutterIndices.map(i => volumeData.validIndices[i]),
+        declutterCount,
+        colorScratch
+      );
+    }
     const glowMesh = glowMeshRef.current;
     if (baseMesh && glowMesh) {
       // Share the populated instance buffers so the glow pass avoids a second
@@ -718,7 +759,10 @@ export function NexradVolumeOverlay({
     // mounted meshes get count set to 0 (or the real count if data exists)
     // instead of rendering an uninitialized instance at origin.
   }, [
-    renderVoxels,
+    payload,
+    volumeData,
+    declutterIndices,
+    declutterCount,
     echoTop18Cells,
     echoTop30Cells,
     echoTop50Cells,
@@ -731,7 +775,7 @@ export function NexradVolumeOverlay({
   ]);
 
   const guideData = useMemo(() => {
-    if (!showAltitudeGuides || renderVoxels.length === 0) {
+    if (!showAltitudeGuides || declutterCount === 0 || !payload) {
       return {
         geometry: null as THREE.BufferGeometry | null,
         labels: [] as Array<{ feet: number; yNm: number; extentNm: number }>
@@ -739,9 +783,11 @@ export function NexradVolumeOverlay({
     }
     let extentNm = 0;
     let maxFeet = 0;
-    for (const voxel of renderVoxels) {
-      extentNm = Math.max(extentNm, Math.abs(voxel.x), Math.abs(voxel.z));
-      maxFeet = Math.max(maxFeet, voxel.topFeet);
+    for (let i = 0; i < declutterCount; i += 1) {
+      const volIdx = declutterIndices[i];
+      const payloadIdx = volumeData.validIndices[volIdx];
+      extentNm = Math.max(extentNm, Math.abs(payload.xNm[payloadIdx]), Math.abs(payload.zNm[payloadIdx]));
+      maxFeet = Math.max(maxFeet, volumeData.correctedTopFeet[volIdx]);
     }
     if (echoTopPayload) {
       maxFeet = Math.max(
@@ -771,7 +817,7 @@ export function NexradVolumeOverlay({
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     return { geometry, labels };
-  }, [showAltitudeGuides, renderVoxels, echoTopPayload, maxRangeNm]);
+  }, [showAltitudeGuides, declutterCount, declutterIndices, payload, volumeData, echoTopPayload, maxRangeNm]);
 
   useEffect(
     () => () => {
@@ -783,11 +829,11 @@ export function NexradVolumeOverlay({
   if (!enabled) {
     return null;
   }
-  const hasVolume = showVolume && renderVoxels.length > 0;
+  const hasVolume = showVolume && declutterCount > 0;
   const hasEchoTops =
     showEchoTops &&
     (echoTop18Cells.length > 0 || echoTop30Cells.length > 0 || echoTop50Cells.length > 0);
-  const hasCrossSection = showCrossSection && rawRenderVoxels.length > 0;
+  const hasCrossSection = showCrossSection && volumeData.validCount > 0;
   if (!hasVolume && !hasEchoTops && !hasCrossSection) {
     return null;
   }
@@ -866,9 +912,10 @@ export function NexradVolumeOverlay({
             <div className="mrms-altitude-guide-label">{Math.round(label.feet / 1000)}k</div>
           </Html>
         ))}
-      {hasCrossSection && (
+      {hasCrossSection && payload && (
         <NexradCrossSection
-          rawRenderVoxels={rawRenderVoxels}
+          payload={payload}
+          volumeData={volumeData}
           normalizedCrossSectionHeading={normalizedCrossSectionHeading}
           normalizedCrossSectionRange={normalizedCrossSectionRange}
           sliceAxis={sliceAxis}

@@ -71,18 +71,6 @@ export interface NexradVolumeOverlayProps {
   onDebugChange?: (debug: NexradDebugState) => void;
 }
 
-export type NexradVoxelTuple = [
-  xNm: number,
-  zNm: number,
-  bottomFeet: number,
-  topFeet: number,
-  dbz: number,
-  footprintXNm: number,
-  footprintYNm?: number,
-  phaseCode?: number,
-  surfacePhaseCode?: number
-];
-
 export interface NexradRadarPayload {
   id: string;
   name: string;
@@ -103,7 +91,16 @@ export interface NexradVolumePayload {
   generatedAt: string;
   radar: NexradRadarPayload | null;
   layerSummaries: NexradLayerSummary[];
-  voxels: NexradVoxelTuple[];
+  voxelCount: number;
+  xNm: Float32Array;
+  zNm: Float32Array;
+  bottomFeet: Float32Array;
+  topFeet: Float32Array;
+  dbz: Float32Array;
+  footprintXNm: Float32Array;
+  footprintYNm: Float32Array;
+  phaseCode: Uint8Array;
+  surfacePhaseCode: Uint8Array;
   phaseMode?: string | null;
   phaseDetail?: string | null;
   zdrAgeSeconds?: number | null;
@@ -142,20 +139,6 @@ export interface EchoTopPayload {
   top60Timestamp?: string | null;
   cells: EchoTopCellTuple[];
   error?: string;
-}
-
-export interface RenderVoxel {
-  x: number;
-  yBase: number;
-  z: number;
-  heightBase: number;
-  bottomFeet: number;
-  topFeet: number;
-  footprintXNm: number;
-  footprintYNm: number;
-  dbz: number;
-  phaseCode: number;
-  surfacePhaseCode: number;
 }
 
 export interface RenderEchoTopCell {
