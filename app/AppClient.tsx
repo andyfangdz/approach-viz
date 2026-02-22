@@ -10,7 +10,9 @@ import {
   parseLayersParam,
   readDeclutterModeFromSearch,
   readPhaseModeFromSearch,
+  readShowCallsignsFromSearch,
   readSurfaceModeFromSearch,
+  readTrafficHistoryMinutesFromSearch,
   sceneApproachToRuntimeApproach,
   sceneWaypointsToMap,
   serializeLayersParam,
@@ -457,6 +459,14 @@ export function AppClient({
     if (declutterFromUrl) {
       setNexradDeclutterMode(normalizeNexradDeclutterMode(declutterFromUrl));
     }
+    const historyMinFromUrl = readTrafficHistoryMinutesFromSearch(window.location.search);
+    if (historyMinFromUrl != null) {
+      setTrafficHistoryMinutes(historyMinFromUrl);
+    }
+    const callsignsFromUrl = readShowCallsignsFromSearch(window.location.search);
+    if (callsignsFromUrl != null) {
+      setShowTrafficCallsigns(callsignsFromUrl);
+    }
     setDidInitFromLocation(true);
 
     // Restore last-selected airport/approach on the default route
@@ -593,6 +603,16 @@ export function AppClient({
     } else {
       params.delete('declutter');
     }
+    if (trafficHistoryMinutes !== DEFAULT_TRAFFIC_HISTORY_MINUTES) {
+      params.set('historyMin', String(trafficHistoryMinutes));
+    } else {
+      params.delete('historyMin');
+    }
+    if (showTrafficCallsigns) {
+      params.set('callsigns', '1');
+    } else {
+      params.delete('callsigns');
+    }
     const nextSearch = params.toString();
     const nextUrl = `${nextPath}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
@@ -613,6 +633,8 @@ export function AppClient({
     layers,
     nexradPhaseMode,
     nexradDeclutterMode,
+    trafficHistoryMinutes,
+    showTrafficCallsigns,
     didInitFromLocation
   ]);
 

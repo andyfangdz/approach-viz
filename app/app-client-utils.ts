@@ -212,3 +212,20 @@ export function readDeclutterModeFromSearch(search: string): 'all' | 'low' | 'mi
   if (value === 'all' || value === 'low' || value === 'mid' || value === 'high') return value;
   return null;
 }
+
+export function readTrafficHistoryMinutesFromSearch(search: string): number | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('historyMin');
+  if (value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1 || n > 30) return null;
+  return Math.round(n);
+}
+
+export function readShowCallsignsFromSearch(search: string): boolean | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('callsigns');
+  if (value === '1') return true;
+  if (value === '0') return false;
+  return null;
+}
