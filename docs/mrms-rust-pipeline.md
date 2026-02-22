@@ -29,7 +29,9 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - Retention cap: `RUNTIME_MRMS_RETENTION_BYTES=5368709120` (5 GB; legacy alias `MRMS_RETENTION_BYTES`)
 - Oldest snapshot files are pruned automatically after each successful ingest.
 - ADS-B traffic store path: `RUNTIME_STORAGE_DIR/traffic-store.db`
-- ADS-B retention window: 1 hour of per-aircraft points retained in SQLite (periodic ingest-time sweep).
+- ADS-B retention window: 1 hour retained in SQLite via 5-minute history partitions (`traffic_points_p<bucket_ms>` + partition-local R*Tree tables) and ingest-time partition drops for expired buckets.
+- ADS-B SQLite access pattern: one persistent writer worker for ingest and a small persistent reader pool for request-time `/v1/traffic/adsbx` queries.
+- ADS-B WAL maintenance: periodic retention sweeps run thresholded `wal_checkpoint(TRUNCATE)` to bound WAL file growth on long-running hosts.
 
 ## Wire Format (`application/vnd.approach-viz.mrms.v2`)
 

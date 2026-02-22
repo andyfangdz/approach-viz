@@ -36,8 +36,11 @@ External data feeds and their ingestion paths.
 - Source: ADSB Exchange tar1090 `binCraft+zstd` feed (`/re-api/?binCraft&zstd&box=...`).
 - Fetched/decoded by the Rust runtime service (`services/runtime-rs`) endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is a thin proxy.
 - Runtime continuously polls ADS-B Exchange at 1 Hz across four US regions (CONUS, Alaska, Hawaii, Puerto Rico/USVI), and writes decoded aircraft updates into a disk-backed SQLite traffic store (`RUNTIME_STORAGE_DIR/traffic-store.db`).
-- The store maintains live per-aircraft state and one-hour historical points with spatial (`R*Tree`) and time indexes so `historyMinutes` (`0..60`) plus optional `historyHexes` can be served from disk without building a large in-memory history cache.
-- Retention is enforced in the ingest loop by deleting point/track rows older than one hour.
+- The store maintains live per-aircraft state in `traffic_tracks` and one-hour historical points in 5-minute partition tables, with per-partition spatial (`R*Tree`) and time indexes so `historyMinutes` (`0..60`) plus optional `historyHexes` can be served from disk without building a large in-memory history cache.
+- SQLite access uses one persistent writer connection for ingest plus a small persistent read-connection pool for request-time history/live queries.
+- Runtime startup reconciles known partitions to ensure expected per-partition indexes exist and backfills any missing R-tree rows for persisted point data.
+- Retention is enforced in the ingest loop by dropping expired partition tables and pruning stale live-track rows.
+- WAL maintenance runs thresholded `wal_checkpoint(TRUNCATE)` during retention sweeps to keep WAL growth bounded.
 - Primary host override: `RUNTIME_ADSBX_TAR1090_BASE_URL` (legacy alias: `ADSBX_TAR1090_BASE_URL`); optional comma-separated fallback hosts: `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy alias: `ADSBX_TAR1090_FALLBACK_BASE_URLS`).
 
 ## MRMS 3D Volumetric Weather
