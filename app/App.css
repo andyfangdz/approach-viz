@@ -507,7 +507,7 @@ textarea,
   border-radius: 12px;
   padding: 10px 14px;
   min-width: 0;
-  max-height: calc(100vh - 120px);
+  max-height: calc(100vh - 200px);
   overflow-y: auto;
   overscroll-behavior: contain;
   z-index: 11;
