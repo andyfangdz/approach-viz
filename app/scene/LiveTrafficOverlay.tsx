@@ -1,5 +1,4 @@
 import { Html } from '@react-three/drei';
-import { useThree } from '@react-three/fiber';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { TrafficDebugState, TrafficTimingDebugState } from '@/app/app-client/types';
@@ -474,8 +473,6 @@ export function LiveTrafficOverlay({
       }),
     []
   );
-  const dpr = useThree((s) => s.viewport.dpr);
-  const dprLineWidth = Math.round(dpr);
   const trailLineMaterial = useMemo(
     () =>
       new THREE.LineBasicMaterial({
@@ -483,10 +480,9 @@ export function LiveTrafficOverlay({
         transparent: true,
         opacity: 0.5,
         depthWrite: false,
-        toneMapped: false,
-        linewidth: dprLineWidth
+        toneMapped: false
       }),
-    [dprLineWidth]
+    []
   );
   const headingLineMaterial = useMemo(
     () =>
@@ -495,10 +491,9 @@ export function LiveTrafficOverlay({
         transparent: true,
         opacity: 0.9,
         depthWrite: false,
-        toneMapped: false,
-        linewidth: dprLineWidth
+        toneMapped: false
       }),
-    [dprLineWidth]
+    []
   );
   const trafficWorkerRef = useRef<TrafficWorkerClient | null>(null);
   const lastRenderHashRef = useRef<number | null>(null);
