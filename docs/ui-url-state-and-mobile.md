@@ -10,7 +10,9 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 - Layer visibility is a query parameter: `?layers=-mrms,+echotops` (delta-from-defaults format). `+layerId` turns a default-off layer on; `-layerId` turns a default-on layer off. Omitting `?layers=` means use all defaults. URL layer state takes precedence over localStorage on page load.
 - MRMS phase detection mode is a query parameter: `?phaseMode=surface`. Default (`thermo`) is omitted from URL. Values: `thermo` (thermodynamic per-altitude), `surface` (surface precip type for entire column).
 - MRMS declutter mode is a query parameter: `?declutter=low`. Default (`all`) is omitted from URL. Values: `all`, `low`, `mid`, `high`.
-- Both `?phaseMode` and `?declutter` override localStorage on page load (same precedence as `?layers=`).
+- ADS-B traffic history duration is a query parameter: `?historyMin=10`. Default (`3`) is omitted from URL. Values: integer 1–30.
+- ADS-B callsign label visibility is a query parameter: `?callsigns=1`. Default (`0` / off) is omitted from URL. Values: `0`, `1`.
+- `?phaseMode`, `?declutter`, `?historyMin`, and `?callsigns` all override localStorage on page load (same precedence as `?layers=`).
 
 ## Layers Panel
 
