@@ -18,7 +18,7 @@ MRMS 3D volumetric weather is a surface-independent overlay (not a surface mode)
 - FAA plate surface texture/geometry is fetched and rasterized per selected plate/airport reference; vertical-scale changes apply via mesh Y-scale transform (no plate re-fetch/re-render on slider changes).
 - 3D plate texture projection data is fetched/rasterized per selected plate/airport reference; vertical-scale changes reuse the shared 3D-tile transform (no plate re-fetch/re-render on slider changes).
 - FAA plate PDF rasterization uses 4x render scale (retina-quality) for both flat FAA Plate surface rendering and 3D Plate texture projection.
-- A client-registered service worker caches FAA plate PDFs, Google 3D tiles, and Terrarium elevation tiles; plate caches are cycle-scoped and old D-TPP cycle caches are purged when the active cycle changes.
+- A client-registered service worker caches FAA plate PDFs and Terrarium elevation tiles; plate caches are cycle-scoped and old D-TPP cycle caches are purged when the active cycle changes.
 
 ## FAA Plate Specifics
 
@@ -34,7 +34,7 @@ MRMS 3D volumetric weather is a surface-independent overlay (not a surface mode)
 - Satellite mode applies EGM96 geoid separation per airport when converting MSL airport elevation to WGS84 ellipsoid height for the tile anchor transform.
 - Satellite and 3D plate modes support a `Flatten Bathymetry` option (gear/options panel, enabled by default) that clamps Google 3D Tiles bathymetry using curvature-compensated, vertical-scale-neutral local altitude (`worldY / verticalScale + curvatureDrop`) so true negative-elevation seabed is flattened without over-flattening distant above-sea terrain.
 - In satellite mode, airport/runway context markers apply WGS84 curvature-drop compensation from the selected-airport tangent origin so nearby runways stay grounded.
-- Satellite mode uses progressive tile quality targeting (coarser initial screen-space error, then refined to `~12` shortly after initial settle) plus optimized tile traversal to improve first visible render time, with sibling-overfetch disabled and bounded tile download/parse concurrency to keep zoom-in recovery responsive after broad zoom-outs.
+- Satellite mode keeps a tight tile error target (`~12`) with `optimizedLoadStrategy` enabled for traversal.
 - Satellite/3D plate tile renderers are keyed by airport (not selected approach) so switching procedures does not remount the tileset or churn tile sessions.
 - 3D plate mode applies georeferenced plate texturing directly to Google 3D Tiles terrain materials (shader projection in local scene coordinates).
 - 3D plate mode does not fall back to Terrarium wireframe terrain; it keeps the Google 3D Tiles surface active and omits only the plate texture overlay when no plate metadata is available.

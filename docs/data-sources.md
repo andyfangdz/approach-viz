@@ -37,7 +37,7 @@ External data feeds and their ingestion paths.
 
 - Source: Google Maps 3D Tiles API `https://tile.googleapis.com/v1/3dtiles/*`.
 - Used by `Satellite` and `3D Plate` surface modes for curved photoreal terrain.
-- Client service worker applies cache-first caching with non-blocking writes and bounded cache size for Google tile requests.
+- Google 3D tile requests rely on browser-native HTTP caching (no custom service-worker tile caching).
 
 ## Live ADS-B Traffic
 

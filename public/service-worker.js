@@ -1,11 +1,8 @@
 const SW_VERSION = 'v1';
-const GOOGLE_TILES_CACHE = `approach-viz-google-3dtiles-${SW_VERSION}`;
 const ELEVATION_TILES_CACHE = `approach-viz-elevation-tiles-${SW_VERSION}`;
 const GOOGLE_TILES_CACHE_PREFIX = 'approach-viz-google-3dtiles-';
 const ELEVATION_TILES_CACHE_PREFIX = 'approach-viz-elevation-tiles-';
 const PLATE_CACHE_PREFIX = 'approach-viz-faa-plates-cycle-';
-// Keep a larger tile budget to reduce churn while panning/zooming around Google 3D tiles.
-const GOOGLE_TILES_MAX_ENTRIES = 6000;
 const ELEVATION_TILES_MAX_ENTRIES = 800;
 const TILE_CACHE_TRIM_EVERY_WRITES = 128;
 const SET_DTPP_CYCLE_MESSAGE = 'approach-viz:set-dtpp-cycle';
@@ -25,10 +22,6 @@ function isCacheableResponse(response) {
 
 function isPlateRequest(url) {
   return url.origin === self.location.origin && url.pathname === '/api/faa-plate';
-}
-
-function isGoogleTilesRequest(url) {
-  return url.hostname === 'tile.googleapis.com' && url.pathname.startsWith('/v1/3dtiles/');
 }
 
 function isElevationTilesRequest(url) {
@@ -53,7 +46,8 @@ async function cleanupOldVersionedCaches() {
   const names = await caches.keys();
   const deletes = [];
   for (const name of names) {
-    if (name.startsWith(GOOGLE_TILES_CACHE_PREFIX) && name !== GOOGLE_TILES_CACHE) {
+    // Purge all prior Google tiles caches: Google 3D tiles now rely on browser-native caching only.
+    if (name.startsWith(GOOGLE_TILES_CACHE_PREFIX)) {
       deletes.push(caches.delete(name));
       continue;
     }
@@ -178,11 +172,6 @@ self.addEventListener('fetch', (event) => {
 
   if (isPlateRequest(url)) {
     event.respondWith(cacheFirstPlateRequest(event, request, url));
-    return;
-  }
-
-  if (isGoogleTilesRequest(url)) {
-    event.respondWith(cacheFirstTileRequest(event, request, GOOGLE_TILES_CACHE, GOOGLE_TILES_MAX_ENTRIES));
     return;
   }
 
