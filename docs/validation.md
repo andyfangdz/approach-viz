@@ -38,6 +38,7 @@ Notes:
 - This suite is intentionally separate from `npm run test` and CI because it requires live internet and upstream data availability.
 - Override target host with `RUNTIME_INTEGRATION_BASE_URL` if needed.
 - The `.agents/skills/runtime-validate-live` runbook provides an agent-assisted smoke-check workflow for post-deploy validation.
+- The `.agents/skills/runtime-stress-traffic-live` runbook provides a reusable high-concurrency stress profile for `/v1/traffic/adsbx` with percentile and error-rate artifacts.
 
 ## Manual Spot-Checks
 

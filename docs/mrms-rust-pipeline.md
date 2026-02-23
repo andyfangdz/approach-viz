@@ -29,9 +29,11 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - Retention cap: `RUNTIME_MRMS_RETENTION_BYTES=5368709120` (5 GB; legacy alias `MRMS_RETENTION_BYTES`)
 - Oldest snapshot files are pruned automatically after each successful ingest.
 - ADS-B traffic store path: `RUNTIME_STORAGE_DIR/traffic-store.db`
-- ADS-B retention window: 1 hour retained in SQLite via 5-minute history partitions (`traffic_points_p<bucket_ms>` + partition-local R*Tree tables) and ingest-time partition drops for expired buckets.
+- ADS-B retention window: 1 hour retained in SQLite via a fixed 12-slot ring of 5-minute history tables (`traffic_points_ring_s<slot>` + slot-local `R*Tree` tables).
 - ADS-B SQLite access pattern: one persistent writer worker for ingest and a small persistent reader pool for request-time `/v1/traffic/adsbx` queries.
-- ADS-B WAL maintenance: periodic retention sweeps run thresholded `wal_checkpoint(TRUNCATE)` to bound WAL file growth on long-running hosts.
+- ADS-B lock handling: store bootstrap is serialized to avoid concurrent first-hit migration races, and both reader queries and writer ingest path retry transient SQLite lock errors before surfacing failures.
+- ADS-B spatial indexing path: ring-slot and live-track `R*Tree` tables are trigger-maintained (`INSERT`/`UPDATE`/`DELETE`), startup reconciliation backfills any missing index rows, and `/v1/traffic/adsbx` uses `R*Tree` joins for live candidate and history-target discovery.
+- ADS-B WAL maintenance: low-priority writer maintenance runs periodic `wal_checkpoint(PASSIVE)` and only attempts `wal_checkpoint(TRUNCATE)` when WAL size is above threshold and truncate cooldown has elapsed.
 
 ## Wire Format (`application/vnd.approach-viz.mrms.v2`)
 
@@ -77,10 +79,22 @@ export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>
 scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
 ```
 
+Optional faster deploy path (skip OCI compile by cross-compiling locally for Linux ARM64):
+
+```bash
+export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
+export RUNTIME_DEPLOY_BUILD_MODE=local-cross
+# Optional: RUNTIME_LOCAL_CROSS_TOOL=zigbuild|cross (default: auto-detect)
+# Optional: RUNTIME_LOCAL_CROSS_TARGET=aarch64-unknown-linux-gnu
+scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
+```
+
+Prerequisite for local cross mode: install either `cargo-zigbuild` (`cargo install cargo-zigbuild`) or `cross` (`cargo install cross`).
+
 This script:
 
 - syncs `services/runtime-rs/` through a staged remote directory replacement (prevents stale file collisions from prior layouts) and excludes local `target/` build artifacts from upload
-- builds `cargo build --release`
+- builds `cargo build --release` on host (default `RUNTIME_DEPLOY_BUILD_MODE=remote`) or uploads a local cross-compiled `aarch64-unknown-linux-gnu` binary (`RUNTIME_DEPLOY_BUILD_MODE=local-cross`)
 - installs `/usr/local/bin/approach-viz-runtime`
 - installs/enables `approach-viz-runtime.service`
 - configures Tailscale Funnel path `/runtime-v1`

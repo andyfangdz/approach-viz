@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Runtime Stress Traffic Live'
+  short_description: 'Stress test live runtime traffic endpoint'
+  default_prompt: 'Run a high-concurrency stress test against the runtime traffic endpoint, report latency percentiles, transport failures, and lock/warming error counts, and share artifact paths.'

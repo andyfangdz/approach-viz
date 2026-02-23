@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::Mutex;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -26,12 +27,10 @@ const MAX_RADIUS_NM: f64 = 220.0;
 const DEFAULT_LIMIT: usize = 250;
 const MAX_LIMIT: usize = 800;
 const MAX_HISTORY_MINUTES: f64 = 60.0;
-const HISTORY_MAX_AIRCRAFT: usize = 800;
 const HISTORY_MAX_POINTS_PER_AIRCRAFT: usize = 3_800;
-const HISTORY_TARGET_SCAN_LIMIT_PER_PARTITION: usize = 40_000;
 const REQUEST_TIMEOUT_MS: u64 = 5500;
 const CACHE_POLL_INTERVAL_MS: u64 = 1000;
-const RETENTION_SWEEP_INTERVAL_MS: i64 = 15_000;
+const RETENTION_SWEEP_INTERVAL_MS: i64 = 5 * 60_000;
 const CACHE_RETENTION_MS: i64 = 60 * 60_000;
 const CACHE_CURRENT_STALE_MS: i64 = 15_000;
 const TRACE_HISTORY_DISCOVERY_MAX_SPEED_KT: f64 = 620.0;
@@ -41,15 +40,25 @@ const BINCRAFT_S32_SEEN_VERSION: u32 = 20240218;
 const DEFAULT_HIDE_GROUND_TRAFFIC: bool = false;
 const EARTH_RADIUS_NM: f64 = 3440.065;
 const PARTITION_BUCKET_MS: i64 = 5 * 60_000;
+const RING_SLOT_COUNT: i64 = CACHE_RETENTION_MS / PARTITION_BUCKET_MS;
 const WRITE_QUEUE_CAPACITY: usize = 256;
 const READ_QUEUE_CAPACITY: usize = 128;
 const READ_POOL_SIZE: usize = 3;
+const READ_BUSY_TIMEOUT_MS: u64 = 500;
+const READ_QUERY_LOCK_RETRIES: usize = 18;
+const READ_QUERY_LOCK_RETRY_DELAY_MS: u64 = 25;
+const WRITE_QUERY_LOCK_RETRIES: usize = 18;
+const WRITE_QUERY_LOCK_RETRY_DELAY_MS: u64 = 50;
+const WAL_MAINTENANCE_INTERVAL_MS: i64 = 60_000;
+const WAL_CHECKPOINT_PASSIVE_BYTES: u64 = 8 * 1024 * 1024;
 const WAL_CHECKPOINT_TRUNCATE_BYTES: u64 = 64 * 1024 * 1024;
+const WAL_TRUNCATE_COOLDOWN_MS: i64 = 10 * 60_000;
 
 const META_KEY_SOURCE: &str = "source";
 const META_KEY_UPDATED_AT_MS: &str = "updated_at_ms";
 
 static TRAFFIC_STORE: OnceLock<Arc<TrafficStore>> = OnceLock::new();
+static TRAFFIC_STORE_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 const US_FETCH_BOXES: [BoundingBox; 4] = [
     // CONUS
@@ -201,9 +210,16 @@ struct HistoryTargetCandidate {
 
 #[derive(Debug, Clone)]
 struct PartitionInfo {
+    slot: i64,
     bucket_start_ms: i64,
     points_table: String,
     rtree_table: String,
+}
+
+#[derive(Debug, Default)]
+struct RingPartitionCache {
+    by_bucket_start_ms: HashMap<i64, PartitionInfo>,
+    by_slot: HashMap<i64, PartitionInfo>,
 }
 
 struct TrafficStore {
@@ -253,6 +269,21 @@ impl TrafficStore {
             .await
             .map_err(|_| "Traffic store reader dropped response".to_string())?
     }
+
+    async fn write_wal_maintenance(&self, now_ms: i64) -> Result<(), String> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriteCommand::WalMaintenance {
+                now_ms,
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| "Traffic store writer is unavailable".to_string())?;
+
+        response_rx
+            .await
+            .map_err(|_| "Traffic store writer dropped response".to_string())?
+    }
 }
 
 enum WriteCommand {
@@ -261,6 +292,10 @@ enum WriteCommand {
         aircraft: Vec<TrafficAircraft>,
         polled_at_ms: i64,
         run_retention_sweep: bool,
+        response: oneshot::Sender<Result<(), String>>,
+    },
+    WalMaintenance {
+        now_ms: i64,
         response: oneshot::Sender<Result<(), String>>,
     },
 }
@@ -282,6 +317,7 @@ pub fn spawn_traffic_cache_worker(state: AppState) {
         let mut ticker = interval(Duration::from_millis(CACHE_POLL_INTERVAL_MS));
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut next_retention_sweep_at_ms = now_ms() + RETENTION_SWEEP_INTERVAL_MS;
+        let mut next_wal_maintenance_at_ms = now_ms() + WAL_MAINTENANCE_INTERVAL_MS;
 
         loop {
             ticker.tick().await;
@@ -306,6 +342,13 @@ pub fn spawn_traffic_cache_worker(state: AppState) {
                 }
                 Err(error) => {
                     warn!("Traffic cache poll failed: {error}");
+                }
+            }
+
+            if polled_at_ms >= next_wal_maintenance_at_ms {
+                next_wal_maintenance_at_ms = polled_at_ms + WAL_MAINTENANCE_INTERVAL_MS;
+                if let Err(error) = run_wal_maintenance_to_store(&state, polled_at_ms).await {
+                    warn!("Traffic WAL maintenance failed: {error}");
                 }
             }
         }
@@ -423,6 +466,14 @@ fn traffic_store(db_path: PathBuf) -> Result<Arc<TrafficStore>, String> {
         return Ok(existing.clone());
     }
 
+    let init_lock = TRAFFIC_STORE_INIT_LOCK.get_or_init(|| Mutex::new(()));
+    let _init_guard = init_lock
+        .lock()
+        .map_err(|_| "Traffic store init lock is poisoned".to_string())?;
+    if let Some(existing) = TRAFFIC_STORE.get() {
+        return Ok(existing.clone());
+    }
+
     let store = Arc::new(create_traffic_store(db_path)?);
     if TRAFFIC_STORE.set(store.clone()).is_err() {
         if let Some(existing) = TRAFFIC_STORE.get() {
@@ -436,6 +487,7 @@ fn traffic_store(db_path: PathBuf) -> Result<Arc<TrafficStore>, String> {
 fn create_traffic_store(db_path: PathBuf) -> Result<TrafficStore, String> {
     // Bootstrap schema/migration up-front.
     let bootstrap_connection = open_traffic_db(&db_path)?;
+    reconcile_tracks_rtree(&bootstrap_connection)?;
     reconcile_partition_tables(&bootstrap_connection)?;
     drop(bootstrap_connection);
 
@@ -457,71 +509,234 @@ fn create_traffic_store(db_path: PathBuf) -> Result<TrafficStore, String> {
 }
 
 fn reconcile_partition_tables(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare(
-            "SELECT bucket_start_ms, points_table, rtree_table
-             FROM traffic_partitions",
+    if RING_SLOT_COUNT <= 0 {
+        return Err("RING_SLOT_COUNT must be positive".to_string());
+    }
+
+    connection
+        .execute(
+            "DELETE FROM traffic_ring_slots WHERE slot < 0 OR slot >= ?",
+            params![RING_SLOT_COUNT],
         )
         .map_err(|error| error.to_string())?;
 
-    let rows = statement
-        .query_map([], |row| {
-            Ok(PartitionInfo {
-                bucket_start_ms: row.get(0)?,
-                points_table: row.get(1)?,
-                rtree_table: row.get(2)?,
-            })
-        })
-        .map_err(|error| error.to_string())?;
+    for slot in 0..RING_SLOT_COUNT {
+        let points_table = partition_points_table_name(slot);
+        let rtree_table = partition_rtree_table_name(slot);
+        let partition = PartitionInfo {
+            slot,
+            bucket_start_ms: -1,
+            points_table: points_table.clone(),
+            rtree_table: rtree_table.clone(),
+        };
+        reconcile_partition_schema(connection, &partition)?;
 
-    let partitions = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    drop(statement);
-
-    for partition in partitions {
-        let create_sql = format!(
-            "CREATE TABLE IF NOT EXISTS \"{points_table}\" (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                hex TEXT NOT NULL,
-                timestamp_ms INTEGER NOT NULL,
-                lat REAL NOT NULL,
-                lon REAL NOT NULL,
-                altitude_feet REAL NOT NULL,
-                is_on_ground INTEGER NOT NULL
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS \"{rtree_table}\" USING rtree(
-                id,
-                min_lat,
-                max_lat,
-                min_lon,
-                max_lon
-            );
-            CREATE INDEX IF NOT EXISTS \"idx_{points_table}_ts\" ON \"{points_table}\"(timestamp_ms);
-            CREATE INDEX IF NOT EXISTS \"idx_{points_table}_hex_ts\" ON \"{points_table}\"(hex, timestamp_ms);",
-            points_table = partition.points_table,
-            rtree_table = partition.rtree_table,
-        );
         connection
-            .execute_batch(&create_sql)
-            .map_err(|error| error.to_string())?;
-
-        let backfill_rtree_sql = format!(
-            "INSERT OR REPLACE INTO \"{rtree_table}\" (id, min_lat, max_lat, min_lon, max_lon)
-             SELECT p.id, p.lat, p.lat, p.lon, p.lon
-             FROM \"{points_table}\" p
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM \"{rtree_table}\" r WHERE r.id = p.id
-             )",
-            points_table = partition.points_table,
-            rtree_table = partition.rtree_table,
-        );
-        connection
-            .execute_batch(&backfill_rtree_sql)
+            .execute(
+                "INSERT INTO traffic_ring_slots (slot, bucket_start_ms, points_table, rtree_table)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(slot) DO UPDATE SET
+                     points_table = excluded.points_table,
+                     rtree_table = excluded.rtree_table",
+                params![slot, -1_i64, points_table, rtree_table],
+            )
             .map_err(|error| error.to_string())?;
     }
 
+    migrate_legacy_partitions_to_ring(connection)?;
+
     Ok(())
+}
+
+fn reconcile_tracks_rtree(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "INSERT OR IGNORE INTO traffic_tracks_rtree (id, min_lat, max_lat, min_lon, max_lon)
+             SELECT t.rowid, t.last_lat, t.last_lat, t.last_lon, t.last_lon
+             FROM traffic_tracks t
+             LEFT JOIN traffic_tracks_rtree r ON r.id = t.rowid
+             WHERE r.id IS NULL;",
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn migrate_legacy_partitions_to_ring(connection: &Connection) -> Result<(), String> {
+    let ring_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(1) FROM traffic_ring_slots WHERE bucket_start_ms >= 0",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if ring_rows > 0 {
+        return Ok(());
+    }
+
+    let retention_cutoff_ms = now_ms() - CACHE_RETENTION_MS;
+    let min_bucket_start_ms = bucket_start_ms(retention_cutoff_ms);
+
+    let mut statement = connection
+        .prepare(
+            "SELECT bucket_start_ms, points_table
+             FROM traffic_partitions
+             WHERE bucket_start_ms >= ?
+             ORDER BY bucket_start_ms ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![min_bucket_start_ms], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| error.to_string())?;
+
+    let legacy_rows = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if legacy_rows.is_empty() {
+        return Ok(());
+    }
+
+    let mut newest_by_slot: HashMap<i64, (i64, String)> = HashMap::new();
+    for (bucket_start_ms, points_table) in legacy_rows {
+        if !points_table.starts_with("traffic_points_p") {
+            continue;
+        }
+        let slot = ring_slot_for_bucket(bucket_start_ms);
+        match newest_by_slot.get(&slot) {
+            Some((existing_bucket_start_ms, _)) if *existing_bucket_start_ms >= bucket_start_ms => {
+            }
+            _ => {
+                newest_by_slot.insert(slot, (bucket_start_ms, points_table));
+            }
+        }
+    }
+
+    let mut migrated_slots = 0usize;
+    for (slot, (bucket_start_ms, legacy_points_table)) in newest_by_slot {
+        let ring_points_table = partition_points_table_name(slot);
+        let ring_rtree_table = partition_rtree_table_name(slot);
+
+        let clear_sql =
+            format!("DELETE FROM \"{ring_rtree_table}\"; DELETE FROM \"{ring_points_table}\";",);
+        if let Err(error) = connection.execute_batch(&clear_sql) {
+            warn!(
+                "Failed clearing ring slot {} before legacy migration: {}",
+                slot, error
+            );
+            continue;
+        }
+
+        let copy_sql = format!(
+            "INSERT INTO \"{ring_points_table}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
+             SELECT hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground
+             FROM \"{legacy_points_table}\"
+             WHERE timestamp_ms >= ?",
+        );
+        if let Err(error) = connection.execute(&copy_sql, params![retention_cutoff_ms]) {
+            warn!(
+                "Failed migrating legacy table {} into ring slot {}: {}",
+                legacy_points_table, slot, error
+            );
+            continue;
+        }
+
+        if let Err(error) = connection.execute(
+            "UPDATE traffic_ring_slots
+             SET bucket_start_ms = ?, points_table = ?, rtree_table = ?
+             WHERE slot = ?",
+            params![bucket_start_ms, ring_points_table, ring_rtree_table, slot,],
+        ) {
+            warn!(
+                "Failed updating ring slot {} metadata during legacy migration: {}",
+                slot, error
+            );
+            continue;
+        }
+
+        migrated_slots += 1;
+    }
+
+    if migrated_slots > 0 {
+        info!(
+            "Migrated {} legacy traffic partition(s) into fixed ring slots.",
+            migrated_slots
+        );
+    }
+
+    Ok(())
+}
+
+fn reconcile_partition_schema(
+    connection: &Connection,
+    partition: &PartitionInfo,
+) -> Result<(), String> {
+    let create_sql = partition_schema_sql(&partition.points_table, &partition.rtree_table);
+    connection
+        .execute_batch(&create_sql)
+        .map_err(|error| error.to_string())?;
+
+    let backfill_sql = format!(
+        "INSERT OR IGNORE INTO \"{rtree_table}\" (id, min_lat, max_lat, min_lon, max_lon)
+         SELECT p.id, p.lat, p.lat, p.lon, p.lon
+         FROM \"{points_table}\" p
+         LEFT JOIN \"{rtree_table}\" r ON r.id = p.id
+         WHERE r.id IS NULL;",
+        points_table = partition.points_table,
+        rtree_table = partition.rtree_table,
+    );
+    connection
+        .execute_batch(&backfill_sql)
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn partition_schema_sql(points_table: &str, rtree_table: &str) -> String {
+    let trigger_insert = format!("trg_{points_table}_rtree_insert");
+    let trigger_update = format!("trg_{points_table}_rtree_update");
+    let trigger_delete = format!("trg_{points_table}_rtree_delete");
+
+    format!(
+        "CREATE TABLE IF NOT EXISTS \"{points_table}\" (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hex TEXT NOT NULL,
+            timestamp_ms INTEGER NOT NULL,
+            lat REAL NOT NULL,
+            lon REAL NOT NULL,
+            altitude_feet REAL NOT NULL,
+            is_on_ground INTEGER NOT NULL
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS \"{rtree_table}\" USING rtree(
+            id,
+            min_lat,
+            max_lat,
+            min_lon,
+            max_lon
+        );
+        CREATE INDEX IF NOT EXISTS \"idx_{points_table}_ts\" ON \"{points_table}\"(timestamp_ms);
+        CREATE INDEX IF NOT EXISTS \"idx_{points_table}_hex_ts\" ON \"{points_table}\"(hex, timestamp_ms);
+        CREATE TRIGGER IF NOT EXISTS \"{trigger_insert}\" AFTER INSERT ON \"{points_table}\"
+        BEGIN
+            DELETE FROM \"{rtree_table}\" WHERE id = new.id;
+            INSERT INTO \"{rtree_table}\" (id, min_lat, max_lat, min_lon, max_lon)
+            VALUES (new.id, new.lat, new.lat, new.lon, new.lon);
+        END;
+        CREATE TRIGGER IF NOT EXISTS \"{trigger_update}\" AFTER UPDATE OF lat, lon ON \"{points_table}\"
+        BEGIN
+            DELETE FROM \"{rtree_table}\" WHERE id = new.id;
+            INSERT INTO \"{rtree_table}\" (id, min_lat, max_lat, min_lon, max_lon)
+            VALUES (new.id, new.lat, new.lat, new.lon, new.lon);
+        END;
+        CREATE TRIGGER IF NOT EXISTS \"{trigger_delete}\" AFTER DELETE ON \"{points_table}\"
+        BEGIN
+            DELETE FROM \"{rtree_table}\" WHERE id = old.id;
+        END;",
+        points_table = points_table,
+        rtree_table = rtree_table,
+        trigger_insert = trigger_insert,
+        trigger_update = trigger_update,
+        trigger_delete = trigger_delete,
+    )
 }
 
 fn spawn_writer_worker(db_path: PathBuf, mut receiver: mpsc::Receiver<WriteCommand>) {
@@ -530,15 +745,25 @@ fn spawn_writer_worker(db_path: PathBuf, mut receiver: mpsc::Receiver<WriteComma
             Ok(connection) => connection,
             Err(error) => {
                 while let Some(command) = receiver.blocking_recv() {
-                    let WriteCommand::Ingest { response, .. } = command;
-                    let _ = response.send(Err(format!(
-                        "Traffic writer failed to open DB {}: {error}",
-                        db_path.display()
-                    )));
+                    match command {
+                        WriteCommand::Ingest { response, .. } => {
+                            let _ = response.send(Err(format!(
+                                "Traffic writer failed to open DB {}: {error}",
+                                db_path.display()
+                            )));
+                        }
+                        WriteCommand::WalMaintenance { response, .. } => {
+                            let _ = response.send(Err(format!(
+                                "Traffic writer failed to open DB {}: {error}",
+                                db_path.display()
+                            )));
+                        }
+                    }
                 }
                 return;
             }
         };
+        let mut last_wal_truncate_at_ms = 0_i64;
 
         while let Some(command) = receiver.blocking_recv() {
             match command {
@@ -549,13 +774,35 @@ fn spawn_writer_worker(db_path: PathBuf, mut receiver: mpsc::Receiver<WriteComma
                     run_retention_sweep,
                     response,
                 } => {
-                    let result = ingest_snapshot_with_connection(
-                        &mut connection,
+                    let mut attempts = 0usize;
+                    let result = loop {
+                        let result = ingest_snapshot_with_connection(
+                            &mut connection,
+                            source.clone(),
+                            aircraft.clone(),
+                            polled_at_ms,
+                            run_retention_sweep,
+                        );
+                        if let Err(error) = &result {
+                            if is_sqlite_locked_error(error) && attempts < WRITE_QUERY_LOCK_RETRIES
+                            {
+                                attempts += 1;
+                                std::thread::sleep(Duration::from_millis(
+                                    WRITE_QUERY_LOCK_RETRY_DELAY_MS,
+                                ));
+                                continue;
+                            }
+                        }
+                        break result;
+                    };
+                    let _ = response.send(result);
+                }
+                WriteCommand::WalMaintenance { now_ms, response } => {
+                    let result = run_wal_maintenance_with_connection(
+                        &connection,
                         &db_path,
-                        source,
-                        aircraft,
-                        polled_at_ms,
-                        run_retention_sweep,
+                        now_ms,
+                        &mut last_wal_truncate_at_ms,
                     );
                     let _ = response.send(result);
                 }
@@ -583,11 +830,33 @@ fn spawn_reader_worker(
                 return;
             }
         };
+        if let Err(error) = connection.busy_timeout(Duration::from_millis(READ_BUSY_TIMEOUT_MS)) {
+            while let Some(command) = receiver.blocking_recv() {
+                let ReadCommand::Query { response, .. } = command;
+                let _ = response.send(Err(format!(
+                    "Traffic reader #{worker_idx} failed to set busy timeout: {error}"
+                )));
+            }
+            return;
+        }
 
         while let Some(command) = receiver.blocking_recv() {
             match command {
                 ReadCommand::Query { request, response } => {
-                    let result = query_store_snapshot_blocking(&connection, request);
+                    let mut attempts = 0usize;
+                    let result = loop {
+                        let result = query_store_snapshot_blocking(&connection, request.clone());
+                        if let Err(error) = &result {
+                            if is_sqlite_locked_error(error) && attempts < READ_QUERY_LOCK_RETRIES {
+                                attempts += 1;
+                                std::thread::sleep(Duration::from_millis(
+                                    READ_QUERY_LOCK_RETRY_DELAY_MS,
+                                ));
+                                continue;
+                            }
+                        }
+                        break result;
+                    };
                     let _ = response.send(result);
                 }
             }
@@ -608,9 +877,13 @@ async fn ingest_snapshot_to_store(
         .await
 }
 
+async fn run_wal_maintenance_to_store(state: &AppState, now_ms: i64) -> Result<(), String> {
+    let store = traffic_store(state.cfg.traffic_db_file())?;
+    store.write_wal_maintenance(now_ms).await
+}
+
 fn ingest_snapshot_with_connection(
     connection: &mut Connection,
-    db_path: &Path,
     source: String,
     aircraft: Vec<TrafficAircraft>,
     polled_at_ms: i64,
@@ -725,24 +998,6 @@ fn ingest_snapshot_with_connection(
                 )
                 .map_err(|error| error.to_string())?;
 
-            let point_id = transaction.last_insert_rowid();
-            let insert_rtree_sql = format!(
-                "INSERT INTO \"{}\" (id, min_lat, max_lat, min_lon, max_lon) VALUES (?, ?, ?, ?, ?)",
-                partition.rtree_table
-            );
-            transaction
-                .execute(
-                    &insert_rtree_sql,
-                    params![
-                        point_id,
-                        candidate.lat,
-                        candidate.lat,
-                        candidate.lon,
-                        candidate.lon
-                    ],
-                )
-                .map_err(|error| error.to_string())?;
-
             track.last_point_ts_ms = Some(point_timestamp_ms);
             track.last_point_lat = Some(candidate.lat);
             track.last_point_lon = Some(candidate.lon);
@@ -812,25 +1067,44 @@ fn ingest_snapshot_with_connection(
 
     transaction.commit().map_err(|error| error.to_string())?;
 
-    if run_retention_sweep {
-        maybe_checkpoint_wal(connection, db_path)?;
-    }
-
     Ok(())
 }
 
-fn maybe_checkpoint_wal(connection: &Connection, db_path: &Path) -> Result<(), String> {
+fn run_wal_maintenance_with_connection(
+    connection: &Connection,
+    db_path: &Path,
+    now_ms: i64,
+    last_truncate_at_ms: &mut i64,
+) -> Result<(), String> {
     let wal_path = db_path.with_extension("db-wal");
     let wal_size = std::fs::metadata(&wal_path)
         .ok()
         .map(|metadata| metadata.len())
         .unwrap_or(0);
 
-    if wal_size < WAL_CHECKPOINT_TRUNCATE_BYTES {
+    if wal_size < WAL_CHECKPOINT_PASSIVE_BYTES {
         return Ok(());
     }
 
-    let (busy, frames, checkpointed): (i64, i64, i64) = connection
+    let (passive_busy, passive_frames, passive_checkpointed): (i64, i64, i64) = connection
+        .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|error| error.to_string())?;
+
+    info!(
+        "Traffic WAL checkpoint(PASSIVE): busy={}, frames={}, checkpointed={}, wal_bytes_before={}",
+        passive_busy, passive_frames, passive_checkpointed, wal_size
+    );
+
+    if wal_size < WAL_CHECKPOINT_TRUNCATE_BYTES {
+        return Ok(());
+    }
+    if now_ms.saturating_sub(*last_truncate_at_ms) < WAL_TRUNCATE_COOLDOWN_MS {
+        return Ok(());
+    }
+
+    let (truncate_busy, truncate_frames, truncate_checkpointed): (i64, i64, i64) = connection
         .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
@@ -838,8 +1112,12 @@ fn maybe_checkpoint_wal(connection: &Connection, db_path: &Path) -> Result<(), S
 
     info!(
         "Traffic WAL checkpoint(TRUNCATE): busy={}, frames={}, checkpointed={}, wal_bytes_before={}",
-        busy, frames, checkpointed, wal_size
+        truncate_busy, truncate_frames, truncate_checkpointed, wal_size
     );
+
+    if truncate_busy == 0 {
+        *last_truncate_at_ms = now_ms;
+    }
 
     Ok(())
 }
@@ -905,28 +1183,33 @@ fn load_existing_tracks(
     Ok(tracks)
 }
 
-fn load_partition_cache(connection: &Connection) -> Result<HashMap<i64, PartitionInfo>, String> {
-    let mut cache = HashMap::new();
+fn load_partition_cache(connection: &Connection) -> Result<RingPartitionCache, String> {
+    let mut cache = RingPartitionCache::default();
     let mut statement = connection
         .prepare(
-            "SELECT bucket_start_ms, points_table, rtree_table
-             FROM traffic_partitions",
+            "SELECT slot, bucket_start_ms, points_table, rtree_table
+             FROM traffic_ring_slots
+             WHERE bucket_start_ms >= 0",
         )
         .map_err(|error| error.to_string())?;
 
     let rows = statement
         .query_map([], |row| {
             Ok(PartitionInfo {
-                bucket_start_ms: row.get(0)?,
-                points_table: row.get(1)?,
-                rtree_table: row.get(2)?,
+                slot: row.get(0)?,
+                bucket_start_ms: row.get(1)?,
+                points_table: row.get(2)?,
+                rtree_table: row.get(3)?,
             })
         })
         .map_err(|error| error.to_string())?;
 
     for row in rows {
         let partition = row.map_err(|error| error.to_string())?;
-        cache.insert(partition.bucket_start_ms, partition);
+        cache
+            .by_bucket_start_ms
+            .insert(partition.bucket_start_ms, partition.clone());
+        cache.by_slot.insert(partition.slot, partition);
     }
 
     Ok(cache)
@@ -934,54 +1217,51 @@ fn load_partition_cache(connection: &Connection) -> Result<HashMap<i64, Partitio
 
 fn ensure_partition_for_bucket(
     connection: &Connection,
-    cache: &mut HashMap<i64, PartitionInfo>,
+    cache: &mut RingPartitionCache,
     bucket_start_ms: i64,
 ) -> Result<PartitionInfo, String> {
-    if let Some(existing) = cache.get(&bucket_start_ms) {
+    if let Some(existing) = cache.by_bucket_start_ms.get(&bucket_start_ms) {
         return Ok(existing.clone());
     }
 
-    let points_table = partition_points_table_name(bucket_start_ms);
-    let rtree_table = partition_rtree_table_name(bucket_start_ms);
-
-    let create_sql = format!(
-        "CREATE TABLE IF NOT EXISTS \"{points_table}\" (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hex TEXT NOT NULL,
-            timestamp_ms INTEGER NOT NULL,
-            lat REAL NOT NULL,
-            lon REAL NOT NULL,
-            altitude_feet REAL NOT NULL,
-            is_on_ground INTEGER NOT NULL
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS \"{rtree_table}\" USING rtree(
-            id,
-            min_lat,
-            max_lat,
-            min_lon,
-            max_lon
-        );
-        CREATE INDEX IF NOT EXISTS \"idx_{points_table}_ts\" ON \"{points_table}\"(timestamp_ms);
-        CREATE INDEX IF NOT EXISTS \"idx_{points_table}_hex_ts\" ON \"{points_table}\"(hex, timestamp_ms);"
-    );
-    connection
-        .execute_batch(&create_sql)
-        .map_err(|error| error.to_string())?;
-
-    connection
-        .execute(
-            "INSERT OR IGNORE INTO traffic_partitions (bucket_start_ms, points_table, rtree_table)
-             VALUES (?, ?, ?)",
-            params![bucket_start_ms, points_table, rtree_table],
-        )
-        .map_err(|error| error.to_string())?;
+    let slot = ring_slot_for_bucket(bucket_start_ms);
+    let points_table = partition_points_table_name(slot);
+    let rtree_table = partition_rtree_table_name(slot);
 
     let partition = PartitionInfo {
+        slot,
         bucket_start_ms,
         points_table,
         rtree_table,
     };
-    cache.insert(bucket_start_ms, partition.clone());
+
+    if let Some(existing_slot) = cache.by_slot.get(&slot).cloned() {
+        if existing_slot.bucket_start_ms != bucket_start_ms {
+            clear_ring_slot(connection, &existing_slot)?;
+            cache
+                .by_bucket_start_ms
+                .remove(&existing_slot.bucket_start_ms);
+        }
+    }
+
+    connection
+        .execute(
+            "UPDATE traffic_ring_slots
+             SET bucket_start_ms = ?, points_table = ?, rtree_table = ?
+             WHERE slot = ?",
+            params![
+                partition.bucket_start_ms,
+                partition.points_table,
+                partition.rtree_table,
+                partition.slot
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    cache
+        .by_bucket_start_ms
+        .insert(bucket_start_ms, partition.clone());
+    cache.by_slot.insert(slot, partition.clone());
     Ok(partition)
 }
 
@@ -993,17 +1273,19 @@ fn sweep_expired_partitions(
 
     let mut statement = connection
         .prepare(
-            "SELECT bucket_start_ms, points_table, rtree_table
-             FROM traffic_partitions
-             WHERE bucket_start_ms < ?",
+            "SELECT slot, bucket_start_ms, points_table, rtree_table
+             FROM traffic_ring_slots
+             WHERE bucket_start_ms >= 0
+               AND bucket_start_ms < ?",
         )
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map(params![keep_from_bucket_ms], |row| {
             Ok(PartitionInfo {
-                bucket_start_ms: row.get(0)?,
-                points_table: row.get(1)?,
-                rtree_table: row.get(2)?,
+                slot: row.get(0)?,
+                bucket_start_ms: row.get(1)?,
+                points_table: row.get(2)?,
+                rtree_table: row.get(3)?,
             })
         })
         .map_err(|error| error.to_string())?;
@@ -1013,33 +1295,41 @@ fn sweep_expired_partitions(
         .map_err(|error| error.to_string())?;
 
     for partition in expired {
-        let drop_points_sql = format!("DROP TABLE IF EXISTS \"{}\"", partition.points_table);
+        clear_ring_slot(connection, &partition)?;
         connection
-            .execute_batch(&drop_points_sql)
-            .map_err(|error| error.to_string())?;
-
-        let drop_rtree_sql = format!("DROP TABLE IF EXISTS \"{}\"", partition.rtree_table);
-        connection
-            .execute_batch(&drop_rtree_sql)
+            .execute(
+                "UPDATE traffic_ring_slots
+                 SET bucket_start_ms = -1
+                 WHERE slot = ?",
+                params![partition.slot],
+            )
             .map_err(|error| error.to_string())?;
     }
-
-    connection
-        .execute(
-            "DELETE FROM traffic_partitions WHERE bucket_start_ms < ?",
-            params![keep_from_bucket_ms],
-        )
-        .map_err(|error| error.to_string())?;
 
     Ok(())
 }
 
-fn partition_points_table_name(bucket_start_ms: i64) -> String {
-    format!("traffic_points_p{bucket_start_ms}")
+fn clear_ring_slot(connection: &Connection, partition: &PartitionInfo) -> Result<(), String> {
+    let clear_sql = format!(
+        "DELETE FROM \"{rtree_table}\"; DELETE FROM \"{points_table}\";",
+        points_table = partition.points_table,
+        rtree_table = partition.rtree_table,
+    );
+    connection
+        .execute_batch(&clear_sql)
+        .map_err(|error| error.to_string())
 }
 
-fn partition_rtree_table_name(bucket_start_ms: i64) -> String {
-    format!("traffic_points_p{bucket_start_ms}_rtree")
+fn partition_points_table_name(slot: i64) -> String {
+    format!("traffic_points_ring_s{slot}")
+}
+
+fn partition_rtree_table_name(slot: i64) -> String {
+    format!("traffic_points_ring_s{slot}_rtree")
+}
+
+fn ring_slot_for_bucket(bucket_start_ms: i64) -> i64 {
+    (bucket_start_ms / PARTITION_BUCKET_MS).rem_euclid(RING_SLOT_COUNT)
 }
 
 fn bucket_start_ms(timestamp_ms: i64) -> i64 {
@@ -1172,9 +1462,10 @@ fn history_partitions(
     let min_bucket_start_ms = bucket_start_ms(history_cutoff_ms);
     let mut statement = connection
         .prepare(
-            "SELECT bucket_start_ms, points_table, rtree_table
-             FROM traffic_partitions
-             WHERE bucket_start_ms >= ?
+            "SELECT slot, bucket_start_ms, points_table, rtree_table
+             FROM traffic_ring_slots
+             WHERE bucket_start_ms >= 0
+               AND bucket_start_ms >= ?
              ORDER BY bucket_start_ms ASC",
         )
         .map_err(|error| error.to_string())?;
@@ -1182,9 +1473,10 @@ fn history_partitions(
     let rows = statement
         .query_map(params![min_bucket_start_ms], |row| {
             Ok(PartitionInfo {
-                bucket_start_ms: row.get(0)?,
-                points_table: row.get(1)?,
-                rtree_table: row.get(2)?,
+                slot: row.get(0)?,
+                bucket_start_ms: row.get(1)?,
+                points_table: row.get(2)?,
+                rtree_table: row.get(3)?,
             })
         })
         .map_err(|error| error.to_string())?;
@@ -1210,17 +1502,27 @@ fn query_current_aircraft_candidates(
         let mut statement = connection
             .prepare(
                 "SELECT
-                    hex, flight, is_on_ground, altitude_feet, ground_speed_kt, track_deg,
-                    last_observed_at_ms, last_lat, last_lon
-                 FROM traffic_tracks
-                 WHERE last_observed_at_ms >= ?
-                   AND last_lat BETWEEN ? AND ?",
+                    t.hex, t.flight, t.is_on_ground, t.altitude_feet, t.ground_speed_kt, t.track_deg,
+                    t.last_observed_at_ms, t.last_lat, t.last_lon
+                 FROM traffic_tracks t
+                 JOIN traffic_tracks_rtree r ON r.id = t.rowid
+                 WHERE t.last_observed_at_ms >= ?
+                   AND r.min_lat <= ?
+                   AND r.max_lat >= ?
+                   AND ((r.min_lon <= 180.0 AND r.max_lon >= ?)
+                     OR (r.min_lon <= ? AND r.max_lon >= -180.0))",
             )
             .map_err(|error| error.to_string())?;
 
         let rows = statement
             .query_map(
-                params![stale_cutoff_ms, bounds.south, bounds.north],
+                params![
+                    stale_cutoff_ms,
+                    bounds.north,
+                    bounds.south,
+                    bounds.west,
+                    bounds.east,
+                ],
                 |row| {
                     let is_on_ground: i64 = row.get(2)?;
                     Ok((
@@ -1253,9 +1555,6 @@ fn query_current_aircraft_candidates(
             if hide_ground_traffic && is_on_ground {
                 continue;
             }
-            if !((lon >= bounds.west && lon <= 180.0) || (lon >= -180.0 && lon <= bounds.east)) {
-                continue;
-            }
 
             let distance = distance_nm(center_lat, center_lon, lat, lon);
             if distance > discovery_radius_nm {
@@ -1279,12 +1578,15 @@ fn query_current_aircraft_candidates(
         let mut statement = connection
             .prepare(
                 "SELECT
-                    hex, flight, is_on_ground, altitude_feet, ground_speed_kt, track_deg,
-                    last_observed_at_ms, last_lat, last_lon
-                 FROM traffic_tracks
-                 WHERE last_observed_at_ms >= ?
-                   AND last_lat BETWEEN ? AND ?
-                   AND last_lon BETWEEN ? AND ?",
+                    t.hex, t.flight, t.is_on_ground, t.altitude_feet, t.ground_speed_kt, t.track_deg,
+                    t.last_observed_at_ms, t.last_lat, t.last_lon
+                 FROM traffic_tracks t
+                 JOIN traffic_tracks_rtree r ON r.id = t.rowid
+                 WHERE t.last_observed_at_ms >= ?
+                   AND r.min_lat <= ?
+                   AND r.max_lat >= ?
+                   AND r.min_lon <= ?
+                   AND r.max_lon >= ?",
             )
             .map_err(|error| error.to_string())?;
 
@@ -1292,10 +1594,10 @@ fn query_current_aircraft_candidates(
             .query_map(
                 params![
                     stale_cutoff_ms,
-                    bounds.south,
                     bounds.north,
-                    bounds.west,
+                    bounds.south,
                     bounds.east,
+                    bounds.west,
                 ],
                 |row| {
                     let is_on_ground: i64 = row.get(2)?;
@@ -1417,28 +1719,30 @@ fn collect_history_target_hexes(
         let sql = if bounds.crosses_dateline {
             format!(
                 "SELECT p.hex, p.lat, p.lon, p.timestamp_ms, p.is_on_ground
-                 FROM \"{}\" p
-                 JOIN \"{}\" r ON r.id = p.id
+                 FROM \"{points_table}\" p
+                 JOIN \"{rtree_table}\" r ON r.id = p.id
                  WHERE p.timestamp_ms >= ?
                    AND r.min_lat <= ?
                    AND r.max_lat >= ?
-                 ORDER BY p.timestamp_ms DESC
-                 LIMIT ?",
-                partition.points_table, partition.rtree_table
+                   AND ((r.min_lon <= 180.0 AND r.max_lon >= ?)
+                     OR (r.min_lon <= ? AND r.max_lon >= -180.0))
+                 ORDER BY p.timestamp_ms DESC",
+                points_table = partition.points_table,
+                rtree_table = partition.rtree_table,
             )
         } else {
             format!(
                 "SELECT p.hex, p.lat, p.lon, p.timestamp_ms, p.is_on_ground
-                 FROM \"{}\" p
-                 JOIN \"{}\" r ON r.id = p.id
+                 FROM \"{points_table}\" p
+                 JOIN \"{rtree_table}\" r ON r.id = p.id
                  WHERE p.timestamp_ms >= ?
                    AND r.min_lat <= ?
                    AND r.max_lat >= ?
                    AND r.min_lon <= ?
                    AND r.max_lon >= ?
-                 ORDER BY p.timestamp_ms DESC
-                 LIMIT ?",
-                partition.points_table, partition.rtree_table
+                 ORDER BY p.timestamp_ms DESC",
+                points_table = partition.points_table,
+                rtree_table = partition.rtree_table,
             )
         };
 
@@ -1452,7 +1756,8 @@ fn collect_history_target_hexes(
                         history_cutoff_ms,
                         bounds.north,
                         bounds.south,
-                        HISTORY_TARGET_SCAN_LIMIT_PER_PARTITION as i64,
+                        bounds.west,
+                        bounds.east,
                     ],
                     |row| {
                         Ok((
@@ -1480,7 +1785,6 @@ fn collect_history_target_hexes(
                         bounds.south,
                         bounds.east,
                         bounds.west,
-                        HISTORY_TARGET_SCAN_LIMIT_PER_PARTITION as i64,
                     ],
                     |row| {
                         Ok((
@@ -1511,11 +1815,7 @@ fn collect_history_target_hexes(
             .then_with(|| right.1.latest_timestamp_ms.cmp(&left.1.latest_timestamp_ms))
     });
 
-    Ok(ranked
-        .into_iter()
-        .take(HISTORY_MAX_AIRCRAFT)
-        .map(|(hex, _)| hex)
-        .collect())
+    Ok(ranked.into_iter().map(|(hex, _)| hex).collect())
 }
 
 fn load_history_points_for_hexes(
@@ -1653,8 +1953,38 @@ fn open_traffic_db(path: &Path) -> Result<Connection, String> {
                 points_table TEXT NOT NULL,
                 rtree_table TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS traffic_ring_slots (
+                slot INTEGER PRIMARY KEY,
+                bucket_start_ms INTEGER NOT NULL,
+                points_table TEXT NOT NULL,
+                rtree_table TEXT NOT NULL
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS traffic_tracks_rtree USING rtree(
+                id,
+                min_lat,
+                max_lat,
+                min_lon,
+                max_lon
+            );
+            CREATE TRIGGER IF NOT EXISTS trg_traffic_tracks_rtree_insert AFTER INSERT ON traffic_tracks
+            BEGIN
+                DELETE FROM traffic_tracks_rtree WHERE id = new.rowid;
+                INSERT INTO traffic_tracks_rtree (id, min_lat, max_lat, min_lon, max_lon)
+                VALUES (new.rowid, new.last_lat, new.last_lat, new.last_lon, new.last_lon);
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_traffic_tracks_rtree_update AFTER UPDATE OF last_lat, last_lon ON traffic_tracks
+            BEGIN
+                DELETE FROM traffic_tracks_rtree WHERE id = new.rowid;
+                INSERT INTO traffic_tracks_rtree (id, min_lat, max_lat, min_lon, max_lon)
+                VALUES (new.rowid, new.last_lat, new.last_lat, new.last_lon, new.last_lon);
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_traffic_tracks_rtree_delete AFTER DELETE ON traffic_tracks
+            BEGIN
+                DELETE FROM traffic_tracks_rtree WHERE id = old.rowid;
+            END;
             CREATE INDEX IF NOT EXISTS idx_traffic_tracks_last_seen ON traffic_tracks(last_observed_at_ms);
             CREATE INDEX IF NOT EXISTS idx_traffic_tracks_live ON traffic_tracks(last_observed_at_ms, last_lat, last_lon);
+            CREATE INDEX IF NOT EXISTS idx_traffic_ring_slots_bucket ON traffic_ring_slots(bucket_start_ms);
             DROP TABLE IF EXISTS traffic_points;
             DROP TABLE IF EXISTS traffic_points_rtree;",
         )
@@ -2016,9 +2346,6 @@ fn parse_history_hexes(value: Option<&str>) -> Vec<String> {
             continue;
         }
         parsed.push(normalized);
-        if parsed.len() >= HISTORY_MAX_AIRCRAFT {
-            break;
-        }
     }
     parsed
 }
@@ -2186,6 +2513,11 @@ fn box_param(bounds: BoundingBox) -> String {
     )
 }
 
+fn is_sqlite_locked_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("database is locked") || normalized.contains("database schema is locked")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2231,7 +2563,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_history_hexes_dedupes_and_caps() {
+    fn parse_history_hexes_dedupes() {
         let parsed = parse_history_hexes(Some("ABC123,abc123,def456"));
         assert_eq!(parsed, vec!["abc123".to_string(), "def456".to_string()]);
     }

@@ -36,11 +36,14 @@ External data feeds and their ingestion paths.
 - Source: ADSB Exchange tar1090 `binCraft+zstd` feed (`/re-api/?binCraft&zstd&box=...`).
 - Fetched/decoded by the Rust runtime service (`services/runtime-rs`) endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is a thin proxy.
 - Runtime continuously polls ADS-B Exchange at 1 Hz across four US regions (CONUS, Alaska, Hawaii, Puerto Rico/USVI), and writes decoded aircraft updates into a disk-backed SQLite traffic store (`RUNTIME_STORAGE_DIR/traffic-store.db`).
-- The store maintains live per-aircraft state in `traffic_tracks` and one-hour historical points in 5-minute partition tables, with per-partition spatial (`R*Tree`) and time indexes so `historyMinutes` (`0..60`) plus optional `historyHexes` can be served from disk without building a large in-memory history cache.
-- SQLite access uses one persistent writer connection for ingest plus a small persistent read-connection pool for request-time history/live queries.
-- Runtime startup reconciles known partitions to ensure expected per-partition indexes exist and backfills any missing R-tree rows for persisted point data.
-- Retention is enforced in the ingest loop by dropping expired partition tables and pruning stale live-track rows.
-- WAL maintenance runs thresholded `wal_checkpoint(TRUNCATE)` during retention sweeps to keep WAL growth bounded.
+- The store maintains live per-aircraft state in `traffic_tracks` and one-hour historical points in a fixed 12-slot ring (5-minute buckets) with per-slot time/hex indexes plus slot-local `R*Tree` spatial indexes.
+- Runtime startup reconciles ring-slot schemas, installs trigger-based `R*Tree` maintenance (`INSERT`/`UPDATE`/`DELETE`), backfills missing `R*Tree` rows for pre-existing point data, and can migrate legacy dynamic partition data into the ring when the ring is empty.
+- When `historyHexes` is not specified, scene-history target discovery runs through `R*Tree` bounding-box joins (then precise radius filtering) instead of broad lat/lon table scans.
+- SQLite access uses one persistent writer connection for ingest plus a small persistent read-connection pool for request-time history/live queries; store bootstrap is serialized so concurrent first-hit requests do not race multi-connection schema/migration work.
+- Reader workers and the writer ingest path both retry transient SQLite lock errors (`database is locked` / `database schema is locked`) before surfacing endpoint/ingest failures.
+- Live candidate selection for current traffic also uses a trigger-maintained `traffic_tracks_rtree` index keyed by `traffic_tracks.rowid`.
+- Retention is enforced in the ingest loop by reassigning expired ring slots as buckets roll forward and pruning stale live-track rows.
+- WAL maintenance runs in a low-priority background writer task: periodic `wal_checkpoint(PASSIVE)` plus cooldown-gated `wal_checkpoint(TRUNCATE)` only when WAL size is above threshold.
 - Primary host override: `RUNTIME_ADSBX_TAR1090_BASE_URL` (legacy alias: `ADSBX_TAR1090_BASE_URL`); optional comma-separated fallback hosts: `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy alias: `ADSBX_TAR1090_FALLBACK_BASE_URLS`).
 
 ## MRMS 3D Volumetric Weather

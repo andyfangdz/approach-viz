@@ -46,7 +46,24 @@ echo "Resolved queue URL from ${host}: ${queue_url}"
 echo "Running local preflight: cargo check"
 cargo check --manifest-path services/runtime-rs/Cargo.toml
 
-deploy_cmd=(env "RUNTIME_MRMS_SQS_QUEUE_URL=${queue_url}" scripts/runtime/deploy_oci.sh "${host}")
+deploy_cmd=(
+  env
+  "RUNTIME_MRMS_SQS_QUEUE_URL=${queue_url}"
+)
+
+if [[ -n "${RUNTIME_DEPLOY_BUILD_MODE:-}" ]]; then
+  deploy_cmd+=("RUNTIME_DEPLOY_BUILD_MODE=${RUNTIME_DEPLOY_BUILD_MODE}")
+fi
+if [[ -n "${RUNTIME_LOCAL_CROSS_TOOL:-}" ]]; then
+  deploy_cmd+=("RUNTIME_LOCAL_CROSS_TOOL=${RUNTIME_LOCAL_CROSS_TOOL}")
+fi
+if [[ -n "${RUNTIME_LOCAL_CROSS_TARGET:-}" ]]; then
+  deploy_cmd+=("RUNTIME_LOCAL_CROSS_TARGET=${RUNTIME_LOCAL_CROSS_TARGET}")
+fi
+if [[ -n "${RUNTIME_LOCAL_CROSS_BINARY_PATH:-}" ]]; then
+  deploy_cmd+=("RUNTIME_LOCAL_CROSS_BINARY_PATH=${RUNTIME_LOCAL_CROSS_BINARY_PATH}")
+fi
+deploy_cmd+=(scripts/runtime/deploy_oci.sh "${host}")
 echo "Deploy command: ${deploy_cmd[*]}"
 if [[ "${dry_run}" -eq 1 ]]; then
   echo "Dry run mode: skipping deploy and smoke checks."

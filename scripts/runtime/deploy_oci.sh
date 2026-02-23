@@ -4,6 +4,10 @@ set -euo pipefail
 HOST="${1:-ubuntu@100.86.128.122}"
 IDENTITY_AGENT="${SSH_AUTH_SOCK:-}"
 QUEUE_URL="${RUNTIME_MRMS_SQS_QUEUE_URL:-${MRMS_SQS_QUEUE_URL:-}}"
+BUILD_MODE="${RUNTIME_DEPLOY_BUILD_MODE:-remote}"
+LOCAL_CROSS_TOOL="${RUNTIME_LOCAL_CROSS_TOOL:-auto}"
+LOCAL_CROSS_TARGET="${RUNTIME_LOCAL_CROSS_TARGET:-aarch64-unknown-linux-gnu}"
+LOCAL_CROSS_BINARY_PATH="${RUNTIME_LOCAL_CROSS_BINARY_PATH:-}"
 REMOTE_SERVICE_DIR="\$HOME/services/approach-viz-runtime"
 REMOTE_STAGE_DIR="\$HOME/services/approach-viz-runtime.tmp"
 
@@ -17,6 +21,14 @@ if [[ -z "$IDENTITY_AGENT" ]]; then
   exit 1
 fi
 
+case "$BUILD_MODE" in
+  remote|local-cross) ;;
+  *)
+    echo "Unsupported RUNTIME_DEPLOY_BUILD_MODE='$BUILD_MODE' (expected 'remote' or 'local-cross')." >&2
+    exit 1
+    ;;
+esac
+
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SERVICE_DIR="$ROOT_DIR/services/runtime-rs"
 
@@ -25,21 +37,73 @@ if [[ ! -f "$SERVICE_DIR/Cargo.toml" ]]; then
   exit 1
 fi
 
-# Avoid macOS metadata headers and skip local build/output artifacts.
-export COPYFILE_DISABLE=1
-export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
+build_local_cross_binary() {
+  if [[ -n "$LOCAL_CROSS_BINARY_PATH" ]]; then
+    if [[ ! -x "$LOCAL_CROSS_BINARY_PATH" ]]; then
+      echo "RUNTIME_LOCAL_CROSS_BINARY_PATH is not executable: $LOCAL_CROSS_BINARY_PATH" >&2
+      exit 1
+    fi
+    echo "$LOCAL_CROSS_BINARY_PATH"
+    return
+  fi
 
-TAR_ARGS=(
-  --disable-copyfile
-  --no-xattrs
-  -czf
-  -
-  --exclude='./target'
-  --exclude='./.git'
-  --exclude='./.DS_Store'
-)
+  local tool="$LOCAL_CROSS_TOOL"
+  if [[ "$tool" == "auto" ]]; then
+    if command -v cargo-zigbuild >/dev/null 2>&1; then
+      tool="zigbuild"
+    elif cross --version >/dev/null 2>&1; then
+      tool="cross"
+    else
+      echo "local-cross mode requires either cargo-zigbuild ('cargo zigbuild') or 'cross'." >&2
+      echo "Set RUNTIME_DEPLOY_BUILD_MODE=remote to keep remote builds." >&2
+      exit 1
+    fi
+  fi
 
-tar "${TAR_ARGS[@]}" -C "$SERVICE_DIR" . | ssh "$HOST" "
+  case "$tool" in
+    zigbuild)
+      cargo zigbuild \
+        --manifest-path "$SERVICE_DIR/Cargo.toml" \
+        --release \
+        --target "$LOCAL_CROSS_TARGET"
+      ;;
+    cross)
+      cross build \
+        --manifest-path "$SERVICE_DIR/Cargo.toml" \
+        --release \
+        --target "$LOCAL_CROSS_TARGET"
+      ;;
+    *)
+      echo "Unsupported RUNTIME_LOCAL_CROSS_TOOL='$tool' (expected auto|zigbuild|cross)." >&2
+      exit 1
+      ;;
+  esac
+
+  local built_binary="$SERVICE_DIR/target/$LOCAL_CROSS_TARGET/release/approach-viz-runtime"
+  if [[ ! -x "$built_binary" ]]; then
+    echo "Local cross-compiled binary not found at $built_binary" >&2
+    exit 1
+  fi
+
+  echo "$built_binary"
+}
+
+sync_source_tree() {
+  # Avoid macOS metadata headers and skip local build/output artifacts.
+  export COPYFILE_DISABLE=1
+  export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
+
+  local tar_args=(
+    --disable-copyfile
+    --no-xattrs
+    -czf
+    -
+    --exclude='./target'
+    --exclude='./.git'
+    --exclude='./.DS_Store'
+  )
+
+  tar "${tar_args[@]}" -C "$SERVICE_DIR" . | ssh "$HOST" "
 set -euo pipefail
 rm -rf \"$REMOTE_STAGE_DIR\"
 mkdir -p \"$REMOTE_STAGE_DIR\"
@@ -47,13 +111,33 @@ tar -xzf - -C \"$REMOTE_STAGE_DIR\"
 rm -rf \"$REMOTE_SERVICE_DIR\"
 mv \"$REMOTE_STAGE_DIR\" \"$REMOTE_SERVICE_DIR\"
 "
+}
 
-ssh "$HOST" "
+install_binary_remote_build() {
+  ssh "$HOST" "
 set -euo pipefail
 source \"\$HOME/.cargo/env\"
 cd \"$REMOTE_SERVICE_DIR\"
 cargo build --release
 sudo install -D -m 0755 target/release/approach-viz-runtime /usr/local/bin/approach-viz-runtime
+"
+}
+
+install_binary_local_cross() {
+  local local_binary_path
+  local_binary_path="$(build_local_cross_binary)"
+  echo "Using local cross-compiled binary: $local_binary_path"
+  scp "$local_binary_path" "$HOST:/tmp/approach-viz-runtime.new"
+  ssh "$HOST" "
+set -euo pipefail
+sudo install -D -m 0755 /tmp/approach-viz-runtime.new /usr/local/bin/approach-viz-runtime
+rm -f /tmp/approach-viz-runtime.new
+"
+}
+
+configure_and_restart_remote_service() {
+  ssh "$HOST" "
+set -euo pipefail
 sudo mkdir -p /var/lib/approach-viz-runtime
 sudo chown ubuntu:ubuntu /var/lib/approach-viz-runtime
 cat > /tmp/approach-viz-runtime.service <<'UNIT'
@@ -102,7 +186,7 @@ for attempt in \$(seq 1 60); do
 done
 
 if [[ \$ready -ne 1 ]]; then
-  echo "Runtime service did not become ready after restart." >&2
+  echo \"Runtime service did not become ready after restart.\" >&2
   sudo journalctl -u approach-viz-runtime.service -n 80 --no-pager >&2
   exit 1
 fi
@@ -110,3 +194,14 @@ fi
 sudo systemctl --no-pager --full status approach-viz-runtime.service | sed -n '1,40p'
 curl -fsS http://127.0.0.1:9191/v1/meta
 "
+}
+
+sync_source_tree
+
+if [[ "$BUILD_MODE" == "local-cross" ]]; then
+  install_binary_local_cross
+else
+  install_binary_remote_build
+fi
+
+configure_and_restart_remote_service
