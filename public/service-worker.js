@@ -7,9 +7,11 @@ const PLATE_CACHE_PREFIX = 'approach-viz-faa-plates-cycle-';
 // Keep a larger tile budget to reduce churn while panning/zooming around Google 3D tiles.
 const GOOGLE_TILES_MAX_ENTRIES = 6000;
 const ELEVATION_TILES_MAX_ENTRIES = 800;
+const TILE_CACHE_TRIM_EVERY_WRITES = 128;
 const SET_DTPP_CYCLE_MESSAGE = 'approach-viz:set-dtpp-cycle';
 
 let currentDtppCycle = null;
+const cacheWriteCounts = Object.create(null);
 
 function normalizeCycle(rawCycle) {
   const digits = String(rawCycle || '').replace(/[^\d]/g, '');
@@ -76,41 +78,41 @@ async function cleanupPlateCaches(activeCycle) {
   await Promise.all(deletes);
 }
 
-async function putInCache(cacheName, request, response) {
-  try {
-    const cache = await caches.open(cacheName);
-    await cache.put(request, response.clone());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function staleWhileRevalidate(event, request, cacheName, maxEntries) {
-  const cache = await caches.open(cacheName);
-  const cachedResponse = await cache.match(request);
-  const networkPromise = fetch(request)
-    .then(async (networkResponse) => {
-      if (isCacheableResponse(networkResponse)) {
-        const stored = await putInCache(cacheName, request, networkResponse);
-        if (stored) {
+function scheduleCacheWrite(event, cacheName, request, response, maxEntries) {
+  const responseClone = response.clone();
+  event.waitUntil(
+    (async () => {
+      try {
+        const cache = await caches.open(cacheName);
+        await cache.put(request, responseClone);
+        const nextWriteCount = (cacheWriteCounts[cacheName] || 0) + 1;
+        cacheWriteCounts[cacheName] = nextWriteCount;
+        if (
+          Number.isFinite(maxEntries) &&
+          maxEntries > 0 &&
+          nextWriteCount % TILE_CACHE_TRIM_EVERY_WRITES === 0
+        ) {
           await trimCache(cacheName, maxEntries);
         }
+      } catch {
+        // Ignore write errors to avoid impacting fetch response timing.
       }
-      return networkResponse;
-    })
-    .catch(() => null);
+    })()
+  );
+}
 
+async function cacheFirstTileRequest(event, request, cacheName, maxEntries) {
+  const cache = await caches.open(cacheName);
+  const cachedResponse = await cache.match(request);
   if (cachedResponse) {
-    event.waitUntil(networkPromise);
     return cachedResponse;
   }
 
-  const networkResponse = await networkPromise;
-  if (networkResponse) {
-    return networkResponse;
+  const networkResponse = await fetch(request);
+  if (isCacheableResponse(networkResponse)) {
+    scheduleCacheWrite(event, cacheName, request, networkResponse, maxEntries);
   }
-  return fetch(request);
+  return networkResponse;
 }
 
 async function cacheFirstPlateRequest(event, request, url) {
@@ -125,12 +127,10 @@ async function cacheFirstPlateRequest(event, request, url) {
 
   const networkResponse = await fetch(request);
   if (isCacheableResponse(networkResponse)) {
-    const stored = await putInCache(cacheName, request, networkResponse);
-    if (stored) {
-      const cleanupCycle = cycleFromRequest || currentDtppCycle;
-      if (cleanupCycle) {
-        event.waitUntil(cleanupPlateCaches(cleanupCycle));
-      }
+    scheduleCacheWrite(event, cacheName, request, networkResponse, 0);
+    const cleanupCycle = cycleFromRequest || currentDtppCycle;
+    if (cleanupCycle) {
+      event.waitUntil(cleanupPlateCaches(cleanupCycle));
     }
   }
   return networkResponse;
@@ -182,15 +182,13 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (isGoogleTilesRequest(url)) {
-    event.respondWith(
-      staleWhileRevalidate(event, request, GOOGLE_TILES_CACHE, GOOGLE_TILES_MAX_ENTRIES)
-    );
+    event.respondWith(cacheFirstTileRequest(event, request, GOOGLE_TILES_CACHE, GOOGLE_TILES_MAX_ENTRIES));
     return;
   }
 
   if (isElevationTilesRequest(url)) {
     event.respondWith(
-      staleWhileRevalidate(event, request, ELEVATION_TILES_CACHE, ELEVATION_TILES_MAX_ENTRIES)
+      cacheFirstTileRequest(event, request, ELEVATION_TILES_CACHE, ELEVATION_TILES_MAX_ENTRIES)
     );
   }
 });

@@ -31,13 +31,13 @@ External data feeds and their ingestion paths.
 
 - Source: Terrarium PNG tiles from `https://elevation-tiles-prod.s3.amazonaws.com/terrarium`.
 - Used by Terrain wireframe surface mode (default 50 NM radius, adjustable 20–80 NM).
-- Client service worker applies stale-while-revalidate caching with bounded cache size for Terrarium tile requests.
+- Client service worker applies cache-first caching with non-blocking writes and bounded cache size for Terrarium tile requests.
 
 ## Google 3D Tiles (Satellite/3D Plate Surfaces)
 
 - Source: Google Maps 3D Tiles API `https://tile.googleapis.com/v1/3dtiles/*`.
 - Used by `Satellite` and `3D Plate` surface modes for curved photoreal terrain.
-- Client service worker applies stale-while-revalidate caching with bounded cache size for Google tile requests.
+- Client service worker applies cache-first caching with non-blocking writes and bounded cache size for Google tile requests.
 
 ## Live ADS-B Traffic
 
