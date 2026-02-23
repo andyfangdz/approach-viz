@@ -19,7 +19,13 @@ const FEET_TO_METERS = 0.3048;
 const FEET_TO_NM = 1 / 6076.12;
 const SEA_LEVEL_Y = 0;
 const EARTH_RADIUS_NM = 3440.065;
-const SATELLITE_TILES_ERROR_TARGET = 12;
+const SATELLITE_TILES_INITIAL_ERROR_TARGET = 36;
+const SATELLITE_TILES_REFINED_ERROR_TARGET = 12;
+const SATELLITE_TILES_REFINE_DELAY_MS = 450;
+const SATELLITE_TILES_DOWNLOAD_QUEUE_MAX_JOBS = 8;
+const SATELLITE_TILES_PARSE_QUEUE_MAX_JOBS = 5;
+const SATELLITE_TILES_MAX_PROCESSED = 260;
+const SATELLITE_TILE_FADE_DURATION_MS = 120;
 const PLATE_RENDER_SCALE = 4;
 const DEG_TO_RAD = Math.PI / 180;
 const WGS84_SEMI_MAJOR_METERS = 6378137;
@@ -404,6 +410,8 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   const tilesRendererRef = useRef<TilesRendererImpl | null>(null);
   const loadErrorCountRef = useRef(0);
   const fatalErrorReportedRef = useRef(false);
+  const hasRefinedErrorTargetRef = useRef(false);
+  const refineErrorTargetTimerRef = useRef<number | null>(null);
   const patchedMaterialsRef = useRef<Set<THREE.Material>>(new Set());
   const patchedStateRef = useRef<WeakMap<THREE.Material, PatchedMaterialState>>(new WeakMap());
   const disposeListenerRef = useRef<WeakMap<THREE.Material, (event: THREE.Event) => void>>(
@@ -413,6 +421,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   const [plateHomography, setPlateHomography] = useState<THREE.Matrix3 | null>(null);
   const [plateLoading, setPlateLoading] = useState(false);
   const [plateError, setPlateError] = useState('');
+  const [tilesErrorTarget, setTilesErrorTarget] = useState(SATELLITE_TILES_INITIAL_ERROR_TARGET);
   const safeLat = Number.isFinite(refLat) ? refLat : 0;
   const safeLon = Number.isFinite(refLon) ? refLon : 0;
   const safeAirportElevationFeet = Number.isFinite(airportElevationFeet) ? airportElevationFeet : 0;
@@ -490,6 +499,15 @@ export const SatelliteSurface = memo(function SatelliteSurface({
     };
   }, [plateOverlay?.cycle, plateOverlay?.plateFile, safeLat, safeLon]);
 
+  useEffect(() => {
+    hasRefinedErrorTargetRef.current = false;
+    setTilesErrorTarget(SATELLITE_TILES_INITIAL_ERROR_TARGET);
+    if (refineErrorTargetTimerRef.current !== null) {
+      window.clearTimeout(refineErrorTargetTimerRef.current);
+      refineErrorTargetTimerRef.current = null;
+    }
+  }, [rendererKey]);
+
   useEffect(
     () => () => {
       plateTexture?.dispose();
@@ -499,6 +517,10 @@ export const SatelliteSurface = memo(function SatelliteSurface({
 
   useEffect(
     () => () => {
+      if (refineErrorTargetTimerRef.current !== null) {
+        window.clearTimeout(refineErrorTargetTimerRef.current);
+        refineErrorTargetTimerRef.current = null;
+      }
       for (const material of patchedMaterialsRef.current) {
         const disposeListener = disposeListenerRef.current.get(material);
         if (disposeListener) {
@@ -707,7 +729,21 @@ if (uPlateEnabled > 0.5) {
   const handleTilesLoadEnd = useCallback(() => {
     loadErrorCountRef.current = 0;
     patchLoadedModels();
-  }, [patchLoadedModels]);
+    if (
+      hasRefinedErrorTargetRef.current ||
+      tilesErrorTarget === SATELLITE_TILES_REFINED_ERROR_TARGET
+    ) {
+      return;
+    }
+    hasRefinedErrorTargetRef.current = true;
+    if (refineErrorTargetTimerRef.current !== null) {
+      window.clearTimeout(refineErrorTargetTimerRef.current);
+    }
+    refineErrorTargetTimerRef.current = window.setTimeout(() => {
+      setTilesErrorTarget(SATELLITE_TILES_REFINED_ERROR_TARGET);
+      refineErrorTargetTimerRef.current = null;
+    }, SATELLITE_TILES_REFINE_DELAY_MS);
+  }, [patchLoadedModels, tilesErrorTarget]);
 
   if (!apiKey) {
     return (
@@ -730,7 +766,12 @@ if (uPlateEnabled > 0.5) {
             ref={tilesRendererRef}
             key={rendererKey}
             url={`https://tile.googleapis.com/v1/3dtiles/root.json?key=${apiKey}`}
-            errorTarget={SATELLITE_TILES_ERROR_TARGET}
+            errorTarget={tilesErrorTarget}
+            optimizedLoadStrategy
+            loadSiblings={false}
+            maxTilesProcessed={SATELLITE_TILES_MAX_PROCESSED}
+            downloadQueue-maxJobs={SATELLITE_TILES_DOWNLOAD_QUEUE_MAX_JOBS}
+            parseQueue-maxJobs={SATELLITE_TILES_PARSE_QUEUE_MAX_JOBS}
             onLoadError={handleLoadError}
             onLoadModel={handleLoadModel}
             onTilesLoadEnd={handleTilesLoadEnd}
@@ -740,14 +781,22 @@ if (uPlateEnabled > 0.5) {
               args={[
                 {
                   apiToken: apiKey,
-                  autoRefreshToken: true
+                  autoRefreshToken: true,
+                  useRecommendedSettings: false
                 }
               ]}
             />
             <TilesPlugin plugin={GLTFExtensionsPlugin} dracoLoader={dracoLoader} />
             <TilesPlugin plugin={TileCompressionPlugin} />
             <TilesPlugin plugin={UpdateOnChangePlugin} />
-            <TilesPlugin plugin={TilesFadePlugin} />
+            <TilesPlugin
+              plugin={TilesFadePlugin}
+              args={[
+                {
+                  fadeDuration: SATELLITE_TILE_FADE_DURATION_MS
+                }
+              ]}
+            />
             <TilesAttributionOverlay />
           </TilesRenderer>
         </group>
