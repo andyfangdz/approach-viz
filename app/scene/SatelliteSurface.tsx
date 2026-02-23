@@ -731,7 +731,6 @@ if (uPlateEnabled > 0.5) {
             key={rendererKey}
             url={`https://tile.googleapis.com/v1/3dtiles/root.json?key=${apiKey}`}
             errorTarget={SATELLITE_TILES_ERROR_TARGET}
-            optimizedLoadStrategy
             onLoadError={handleLoadError}
             onLoadModel={handleLoadModel}
             onTilesLoadEnd={handleTilesLoadEnd}
