@@ -12,7 +12,8 @@ const RUM_APPLICATION_ID = process.env.NEXT_PUBLIC_DD_RUM_APPLICATION_ID;
 const RUM_CLIENT_TOKEN = process.env.NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN;
 const RUM_SERVICE = process.env.NEXT_PUBLIC_DD_RUM_SERVICE || 'approach-viz-web';
 const RUM_ENV = process.env.NEXT_PUBLIC_DD_RUM_ENV || process.env.NODE_ENV || 'development';
-const RUM_VERSION = process.env.NEXT_PUBLIC_DD_RUM_VERSION || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA;
+const RUM_VERSION =
+  process.env.NEXT_PUBLIC_DD_RUM_VERSION || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA;
 const RUM_SESSION_SAMPLE_RATE = parseFloat(
   process.env.NEXT_PUBLIC_DD_RUM_SESSION_SAMPLE_RATE || '100'
 );

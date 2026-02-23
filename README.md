@@ -164,33 +164,33 @@ Legacy aliases `/v1/volume` and `/v1/echo-tops` are still supported.
 
 ## Environment Variables
 
-| Variable                                   | Purpose                                                      |
-| ------------------------------------------ | ------------------------------------------------------------ |
-| `RUNTIME_UPSTREAM_BASE_URL`                | Rust runtime service base URL (used by Next.js proxy routes) |
-| `MRMS_BINARY_UPSTREAM_BASE_URL`            | Legacy alias for above                                       |
-| `NEXT_PUBLIC_MRMS_BINARY_BASE_URL`         | Optional: client-side direct fetch (skips Next.js proxy)     |
-| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`          | Google 3D Tiles (Satellite / 3D Plate modes)                 |
-| `RUNTIME_ADSBX_TAR1090_BASE_URL`           | tar1090 host (default: `globe.adsbexchange.com`)             |
-| `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` | Comma-separated fallback tar1090 hosts                       |
-| `RUNTIME_MRMS_SQS_QUEUE_URL`               | SNS/SQS queue URL for MRMS ingest (runtime service)          |
-| `RUNTIME_MRMS_RETENTION_BYTES`             | Snapshot retention cap (default: 5 GB)                       |
-| `RUNTIME_INTEGRATION_BASE_URL`             | Override runtime base URL for integration tests              |
-| `DD_API_KEY`                               | Datadog API key (used by local Datadog agent)                |
-| `RUNTIME_DD_TRACE_ENABLED`                 | Enable Rust runtime OTLP trace export (`true`/`false`)       |
-| `RUNTIME_DD_TRACE_OTLP_ENDPOINT`           | Optional explicit OTLP gRPC endpoint for runtime trace export |
-| `RUNTIME_DD_AGENT_HOST`                    | Runtime Datadog agent host (default: `127.0.0.1`)            |
-| `RUNTIME_DD_TRACE_OTLP_PORT`               | Runtime Datadog OTLP gRPC port (default: `4317`)             |
-| `RUNTIME_DD_SERVICE`                       | Runtime trace service name (default: `approach-viz-runtime-rs`) |
-| `RUNTIME_DD_ENV`                           | Runtime trace environment tag (fallback: `DD_ENV`)           |
-| `RUNTIME_DD_VERSION`                       | Runtime trace version tag (fallback: `DD_VERSION`)           |
-| `NEXT_PUBLIC_DD_RUM_APPLICATION_ID`        | Datadog RUM app ID (enables browser RUM when set)            |
-| `NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN`          | Datadog RUM client token                                     |
-| `NEXT_PUBLIC_DD_SITE`                      | Datadog site for browser RUM (default: `datadoghq.com`)      |
-| `NEXT_PUBLIC_DD_RUM_SERVICE`               | Browser RUM service name (default: `approach-viz-web`)       |
-| `NEXT_PUBLIC_DD_RUM_ENV`                   | Browser RUM environment tag                                  |
-| `NEXT_PUBLIC_DD_RUM_VERSION`               | Browser RUM version tag (commit SHA fallback)                |
-| `NEXT_PUBLIC_DD_RUM_SESSION_SAMPLE_RATE`   | Browser RUM session sample rate `0..100` (default: `100`)    |
-| `NEXT_PUBLIC_DD_RUM_SESSION_REPLAY_SAMPLE_RATE` | Browser RUM replay sample rate `0..100` (default: `0`) |
+| Variable                                        | Purpose                                                         |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| `RUNTIME_UPSTREAM_BASE_URL`                     | Rust runtime service base URL (used by Next.js proxy routes)    |
+| `MRMS_BINARY_UPSTREAM_BASE_URL`                 | Legacy alias for above                                          |
+| `NEXT_PUBLIC_MRMS_BINARY_BASE_URL`              | Optional: client-side direct fetch (skips Next.js proxy)        |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`               | Google 3D Tiles (Satellite / 3D Plate modes)                    |
+| `RUNTIME_ADSBX_TAR1090_BASE_URL`                | tar1090 host (default: `globe.adsbexchange.com`)                |
+| `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS`      | Comma-separated fallback tar1090 hosts                          |
+| `RUNTIME_MRMS_SQS_QUEUE_URL`                    | SNS/SQS queue URL for MRMS ingest (runtime service)             |
+| `RUNTIME_MRMS_RETENTION_BYTES`                  | Snapshot retention cap (default: 5 GB)                          |
+| `RUNTIME_INTEGRATION_BASE_URL`                  | Override runtime base URL for integration tests                 |
+| `DD_API_KEY`                                    | Datadog API key (used by local Datadog agent)                   |
+| `RUNTIME_DD_TRACE_ENABLED`                      | Enable Rust runtime OTLP trace export (`true`/`false`)          |
+| `RUNTIME_DD_TRACE_OTLP_ENDPOINT`                | Optional explicit OTLP gRPC endpoint for runtime trace export   |
+| `RUNTIME_DD_AGENT_HOST`                         | Runtime Datadog agent host (default: `127.0.0.1`)               |
+| `RUNTIME_DD_TRACE_OTLP_PORT`                    | Runtime Datadog OTLP gRPC port (default: `4317`)                |
+| `RUNTIME_DD_SERVICE`                            | Runtime trace service name (default: `approach-viz-runtime-rs`) |
+| `RUNTIME_DD_ENV`                                | Runtime trace environment tag (fallback: `DD_ENV`)              |
+| `RUNTIME_DD_VERSION`                            | Runtime trace version tag (fallback: `DD_VERSION`)              |
+| `NEXT_PUBLIC_DD_RUM_APPLICATION_ID`             | Datadog RUM app ID (enables browser RUM when set)               |
+| `NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN`               | Datadog RUM client token                                        |
+| `NEXT_PUBLIC_DD_SITE`                           | Datadog site for browser RUM (default: `datadoghq.com`)         |
+| `NEXT_PUBLIC_DD_RUM_SERVICE`                    | Browser RUM service name (default: `approach-viz-web`)          |
+| `NEXT_PUBLIC_DD_RUM_ENV`                        | Browser RUM environment tag                                     |
+| `NEXT_PUBLIC_DD_RUM_VERSION`                    | Browser RUM version tag (commit SHA fallback)                   |
+| `NEXT_PUBLIC_DD_RUM_SESSION_SAMPLE_RATE`        | Browser RUM session sample rate `0..100` (default: `100`)       |
+| `NEXT_PUBLIC_DD_RUM_SESSION_REPLAY_SAMPLE_RATE` | Browser RUM replay sample rate `0..100` (default: `0`)          |
 
 ## Data Sources
 
