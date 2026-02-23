@@ -4,6 +4,7 @@ set -euo pipefail
 HOST="${1:-ubuntu@100.86.128.122}"
 IDENTITY_AGENT="${SSH_AUTH_SOCK:-}"
 QUEUE_URL="${RUNTIME_MRMS_SQS_QUEUE_URL:-${MRMS_SQS_QUEUE_URL:-}}"
+PARSE_CONCURRENCY="${RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY:-${MRMS_INGEST_PARSE_CONCURRENCY:-}}"
 BUILD_MODE="${RUNTIME_DEPLOY_BUILD_MODE:-local-cross}"
 LOCAL_CROSS_TOOL="${RUNTIME_LOCAL_CROSS_TOOL:-auto}"
 LOCAL_CROSS_TARGET="${RUNTIME_LOCAL_CROSS_TARGET:-aarch64-unknown-linux-gnu}"
@@ -12,8 +13,15 @@ REMOTE_SERVICE_DIR="\$HOME/services/approach-viz-runtime"
 REMOTE_STAGE_DIR="\$HOME/services/approach-viz-runtime.tmp"
 
 if [[ -z "$QUEUE_URL" ]]; then
-  echo "RUNTIME_MRMS_SQS_QUEUE_URL (or MRMS_SQS_QUEUE_URL) is required in environment." >&2
-  exit 1
+    echo "RUNTIME_MRMS_SQS_QUEUE_URL (or MRMS_SQS_QUEUE_URL) is required in environment." >&2
+    exit 1
+fi
+
+if [[ -n "$PARSE_CONCURRENCY" ]]; then
+  if ! [[ "$PARSE_CONCURRENCY" =~ ^[0-9]+$ ]] || [[ "$PARSE_CONCURRENCY" -lt 1 ]]; then
+    echo "RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY must be a positive integer when set." >&2
+    exit 1
+  fi
 fi
 
 if [[ -z "$IDENTITY_AGENT" ]]; then
@@ -147,6 +155,11 @@ rm -f /tmp/approach-viz-runtime.new
 }
 
 configure_and_restart_remote_service() {
+  local parse_concurrency_line=""
+  if [[ -n "$PARSE_CONCURRENCY" ]]; then
+    parse_concurrency_line="Environment=RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY=$PARSE_CONCURRENCY"
+  fi
+
   ssh "$HOST" "
 set -euo pipefail
 sudo mkdir -p /var/lib/approach-viz-runtime
@@ -170,6 +183,7 @@ Environment=RUNTIME_MRMS_RETENTION_BYTES=5368709120
 Environment=RUNTIME_MRMS_BOOTSTRAP_INTERVAL_SECONDS=300
 Environment=RUNTIME_MRMS_PENDING_RETRY_SECONDS=30
 Environment=RUNTIME_MRMS_SQS_QUEUE_URL=$QUEUE_URL
+${parse_concurrency_line}
 ExecStart=/usr/local/bin/approach-viz-runtime
 Restart=always
 RestartSec=5

@@ -365,37 +365,14 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
         .next()
         .ok_or_else(|| anyhow!("Invalid timestamp format: {timestamp}"))?;
 
-    let mut futures = FuturesUnordered::new();
-    for (level_idx, level_tag) in LEVEL_TAGS.iter().enumerate() {
-        let state = state.clone();
-        let level_tag = level_tag.to_string();
-        let timestamp = timestamp.to_string();
-        let date_part = date_part.to_string();
-        futures.push(async move {
-            let reflectivity_key =
-                build_level_key(MRMS_PRODUCT_PREFIX, &level_tag, &date_part, &timestamp);
-            let reflectivity_zipped = fetch_mrms_key_bytes(&state, &reflectivity_key).await?;
-            let reflectivity =
-                parse_reflectivity_grib_with_limit(&state, reflectivity_zipped).await?;
-            Ok::<_, anyhow::Error>((level_idx, level_tag, reflectivity))
-        });
-    }
-
-    let mut parsed_levels: Vec<Option<(String, ParsedReflectivityField)>> =
-        vec![None; LEVEL_TAGS.len()];
-    while let Some(result) = futures.next().await {
-        let (level_idx, level_tag, reflectivity) = result?;
-        parsed_levels[level_idx] = Some((level_tag, reflectivity));
-    }
-
-    let mut levels = Vec::with_capacity(parsed_levels.len());
-    for (idx, item) in parsed_levels.into_iter().enumerate() {
-        let (level_tag, reflectivity) =
-            item.ok_or_else(|| anyhow!("Missing parsed level {}", LEVEL_TAGS[idx]))?;
-        levels.push((idx as u8, level_tag, reflectivity));
-    }
-
-    levels.sort_by_key(|(idx, _, _)| *idx);
+    let (levels_result, mut zdr_bundle, mut rhohv_bundle, thermo_aux_bundle, echo_top_bundle) = tokio::join!(
+        parse_reflectivity_levels(state, timestamp, date_part),
+        fetch_dual_pol_bundle(state, MRMS_ZDR_PRODUCT_PREFIX, timestamp),
+        fetch_dual_pol_bundle(state, MRMS_RHOHV_PRODUCT_PREFIX, timestamp),
+        fetch_thermo_aux_bundle(state, timestamp),
+        fetch_echo_top_bundle(state, timestamp),
+    );
+    let levels = levels_result?;
 
     let base_grid = levels
         .first()
@@ -407,9 +384,6 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
             bail!("MRMS grid mismatch for level {tag}");
         }
     }
-
-    let mut zdr_bundle = fetch_dual_pol_bundle(state, MRMS_ZDR_PRODUCT_PREFIX, timestamp).await;
-    let mut rhohv_bundle = fetch_dual_pol_bundle(state, MRMS_RHOHV_PRODUCT_PREFIX, timestamp).await;
 
     if zdr_bundle.fields_by_level.len() != LEVEL_TAGS.len() {
         zdr_bundle
@@ -431,9 +405,6 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
     let dual_pol_incomplete = zdr_bundle.available_level_count() < LEVEL_TAGS.len()
         || rhohv_bundle.available_level_count() < LEVEL_TAGS.len();
     let use_aux_fallback = dual_pol_stale || dual_pol_incomplete;
-
-    let thermo_aux_bundle = fetch_thermo_aux_bundle(state, timestamp).await;
-    let echo_top_bundle = fetch_echo_top_bundle(state, timestamp).await;
 
     let level_km: Vec<f64> = LEVEL_TAGS
         .iter()
@@ -891,6 +862,44 @@ async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanS
     }))
 }
 
+async fn parse_reflectivity_levels(
+    state: &AppState,
+    timestamp: &str,
+    date_part: &str,
+) -> Result<Vec<(u8, String, ParsedReflectivityField)>> {
+    let mut futures = FuturesUnordered::new();
+    for (level_idx, level_tag) in LEVEL_TAGS.iter().enumerate() {
+        let state = state.clone();
+        let level_tag = level_tag.to_string();
+        let timestamp = timestamp.to_string();
+        let date_part = date_part.to_string();
+        futures.push(async move {
+            let reflectivity_key =
+                build_level_key(MRMS_PRODUCT_PREFIX, &level_tag, &date_part, &timestamp);
+            let reflectivity_zipped = fetch_mrms_key_bytes(&state, &reflectivity_key).await?;
+            let reflectivity =
+                parse_reflectivity_grib_with_limit(&state, reflectivity_zipped).await?;
+            Ok::<_, anyhow::Error>((level_idx, level_tag, reflectivity))
+        });
+    }
+
+    let mut parsed_levels: Vec<Option<(String, ParsedReflectivityField)>> =
+        vec![None; LEVEL_TAGS.len()];
+    while let Some(result) = futures.next().await {
+        let (level_idx, level_tag, reflectivity) = result?;
+        parsed_levels[level_idx] = Some((level_tag, reflectivity));
+    }
+
+    let mut levels = Vec::with_capacity(parsed_levels.len());
+    for (idx, item) in parsed_levels.into_iter().enumerate() {
+        let (level_tag, reflectivity) =
+            item.ok_or_else(|| anyhow!("Missing parsed level {}", LEVEL_TAGS[idx]))?;
+        levels.push((idx as u8, level_tag, reflectivity));
+    }
+    levels.sort_by_key(|(idx, _, _)| *idx);
+    Ok(levels)
+}
+
 #[derive(Default)]
 struct ThermoAuxBundle {
     precip_flag: Option<(String, ParsedAuxField)>,
@@ -1159,38 +1168,39 @@ async fn fetch_dual_pol_bundle(
 }
 
 async fn fetch_thermo_aux_bundle(state: &AppState, target_timestamp: &str) -> ThermoAuxBundle {
-    let precip_flag =
-        fetch_latest_aux_field_at_or_before(state, MRMS_PRECIP_FLAG_PRODUCT, target_timestamp)
-            .await;
-    let freezing_level = fetch_latest_aux_field_at_or_before(
-        state,
-        MRMS_MODEL_FREEZING_HEIGHT_PRODUCT,
-        target_timestamp,
-    )
-    .await;
-    let wet_bulb_temp = fetch_latest_aux_field_at_or_before(
-        state,
-        MRMS_MODEL_WET_BULB_TEMP_PRODUCT,
-        target_timestamp,
-    )
-    .await;
-    let surface_temp = fetch_latest_aux_field_at_or_before(
-        state,
-        MRMS_MODEL_SURFACE_TEMP_PRODUCT,
-        target_timestamp,
-    )
-    .await;
-    let bright_band_top =
-        fetch_latest_aux_field_at_or_before(state, MRMS_BRIGHT_BAND_TOP_PRODUCT, target_timestamp)
-            .await;
-    let bright_band_bottom = fetch_latest_aux_field_at_or_before(
-        state,
-        MRMS_BRIGHT_BAND_BOTTOM_PRODUCT,
-        target_timestamp,
-    )
-    .await;
-    let radar_quality_index =
-        fetch_latest_aux_field_at_or_before(state, MRMS_RQI_PRODUCT, target_timestamp).await;
+    let (
+        precip_flag,
+        freezing_level,
+        wet_bulb_temp,
+        surface_temp,
+        bright_band_top,
+        bright_band_bottom,
+        radar_quality_index,
+    ) = tokio::join!(
+        fetch_latest_aux_field_at_or_before(state, MRMS_PRECIP_FLAG_PRODUCT, target_timestamp),
+        fetch_latest_aux_field_at_or_before(
+            state,
+            MRMS_MODEL_FREEZING_HEIGHT_PRODUCT,
+            target_timestamp
+        ),
+        fetch_latest_aux_field_at_or_before(
+            state,
+            MRMS_MODEL_WET_BULB_TEMP_PRODUCT,
+            target_timestamp
+        ),
+        fetch_latest_aux_field_at_or_before(
+            state,
+            MRMS_MODEL_SURFACE_TEMP_PRODUCT,
+            target_timestamp
+        ),
+        fetch_latest_aux_field_at_or_before(state, MRMS_BRIGHT_BAND_TOP_PRODUCT, target_timestamp),
+        fetch_latest_aux_field_at_or_before(
+            state,
+            MRMS_BRIGHT_BAND_BOTTOM_PRODUCT,
+            target_timestamp
+        ),
+        fetch_latest_aux_field_at_or_before(state, MRMS_RQI_PRODUCT, target_timestamp),
+    );
 
     ThermoAuxBundle {
         precip_flag,
@@ -1204,18 +1214,12 @@ async fn fetch_thermo_aux_bundle(state: &AppState, target_timestamp: &str) -> Th
 }
 
 async fn fetch_echo_top_bundle(state: &AppState, target_timestamp: &str) -> EchoTopBundle {
-    let top18 =
-        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_18_PRODUCT, target_timestamp)
-            .await;
-    let top30 =
-        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_30_PRODUCT, target_timestamp)
-            .await;
-    let top50 =
-        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_50_PRODUCT, target_timestamp)
-            .await;
-    let top60 =
-        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_60_PRODUCT, target_timestamp)
-            .await;
+    let (top18, top30, top50, top60) = tokio::join!(
+        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_18_PRODUCT, target_timestamp),
+        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_30_PRODUCT, target_timestamp),
+        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_50_PRODUCT, target_timestamp),
+        fetch_latest_aux_field_at_or_before(state, MRMS_ECHO_TOP_60_PRODUCT, target_timestamp),
+    );
 
     EchoTopBundle {
         top18,

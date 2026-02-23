@@ -13,7 +13,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 
 1. NOAA publishes `ObjectCreated` events to SNS topic `arn:aws:sns:us-east-1:123901341784:NewMRMSObject`.
 2. SQS queue receives those messages (`RawMessageDelivery=true`).
-3. Rust runtime service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, decodes GRIB2 fields through `grib`, and stores compressed snapshots (reflectivity voxels + direct echo-top fields).
+3. Rust runtime service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, and ingests GRIB2 fields through `grib` with a shared parse-concurrency limiter while overlapping independent bundles (reflectivity, dual-pol, thermo aux, echo tops). Reflectivity decode maps values directly into `dbz_tenths` in one pass, and gzip payload buffers are pre-sized from the trailer ISIZE hint to reduce allocation churn before snapshot assembly/storage.
 4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the runtime service `v1/weather/volume` endpoint (legacy alias `v1/volume`), and `app/api/weather/nexrad/echo-tops/route.ts` proxies `v1/weather/echo-tops` (legacy alias `v1/echo-tops`).
 5. Client decodes compact binary reflectivity payloads and JSON echo-top payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 
@@ -76,6 +76,14 @@ Copy the printed `RUNTIME_MRMS_SQS_QUEUE_URL` value.
 
 ```bash
 export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
+scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
+```
+
+Optional override for ingest parse workers (persisted in deployed systemd unit):
+
+```bash
+export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
+export RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY=5
 scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
 ```
 

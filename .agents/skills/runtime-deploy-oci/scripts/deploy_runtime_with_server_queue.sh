@@ -63,6 +63,9 @@ fi
 if [[ -n "${RUNTIME_LOCAL_CROSS_BINARY_PATH:-}" ]]; then
   deploy_cmd+=("RUNTIME_LOCAL_CROSS_BINARY_PATH=${RUNTIME_LOCAL_CROSS_BINARY_PATH}")
 fi
+if [[ -n "${RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY:-}" ]]; then
+  deploy_cmd+=("RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY=${RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY}")
+fi
 deploy_cmd+=(scripts/runtime/deploy_oci.sh "${host}")
 echo "Deploy command: ${deploy_cmd[*]}"
 if [[ "${dry_run}" -eq 1 ]]; then

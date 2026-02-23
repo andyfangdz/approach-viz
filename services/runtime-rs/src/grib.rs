@@ -7,27 +7,86 @@ use grib::{Grib2SubmessageDecoder, GridDefinitionTemplateValues};
 use crate::types::{GridDef, ParsedAuxField, ParsedReflectivityField};
 use crate::utils::to_lon360;
 
+const MAX_GZIP_ISIZE_HINT_BYTES: usize = 64 * 1024 * 1024;
+
 pub fn parse_reflectivity_grib_gzipped(zipped: &[u8]) -> Result<ParsedReflectivityField> {
-    let (grid, values) = parse_grib_gzipped_values(zipped)?;
-    let dbz_tenths = values.into_iter().map(float_to_tenths).collect();
-    Ok(ParsedReflectivityField { grid, dbz_tenths })
+    let grib = gunzip_grib_payload(zipped)?;
+    parse_reflectivity_grib_values(&grib)
 }
 
 pub fn parse_aux_grib_gzipped(zipped: &[u8]) -> Result<ParsedAuxField> {
-    let (grid, values) = parse_grib_gzipped_values(zipped)?;
-    Ok(ParsedAuxField { grid, values })
+    let grib = gunzip_grib_payload(zipped)?;
+    parse_aux_grib_values(&grib)
 }
 
-fn parse_grib_gzipped_values(zipped: &[u8]) -> Result<(GridDef, Vec<f32>)> {
+fn gunzip_grib_payload(zipped: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = GzDecoder::new(Cursor::new(zipped));
-    let mut grib = Vec::new();
+    let mut grib = Vec::with_capacity(gzip_isize_hint(zipped));
     decoder
         .read_to_end(&mut grib)
         .context("Failed to gunzip GRIB payload")?;
-    parse_grib_values(&grib)
+    Ok(grib)
 }
 
-fn parse_grib_values(buffer: &[u8]) -> Result<(GridDef, Vec<f32>)> {
+fn gzip_isize_hint(zipped: &[u8]) -> usize {
+    if zipped.len() < 4 {
+        return 0;
+    }
+    let trailer_offset = zipped.len() - 4;
+    let isize = u32::from_le_bytes([
+        zipped[trailer_offset],
+        zipped[trailer_offset + 1],
+        zipped[trailer_offset + 2],
+        zipped[trailer_offset + 3],
+    ]) as usize;
+    if isize == 0 || isize > MAX_GZIP_ISIZE_HINT_BYTES {
+        0
+    } else {
+        isize
+    }
+}
+
+fn parse_reflectivity_grib_values(buffer: &[u8]) -> Result<ParsedReflectivityField> {
+    let (grid, expected_count, decoder) = prepare_grib_decoder(buffer)?;
+    let decoded = decoder
+        .dispatch()
+        .map_err(|error| anyhow!("Failed to decode GRIB2 values: {error}"))?;
+
+    let mut dbz_tenths = Vec::with_capacity(expected_count);
+    dbz_tenths.extend(decoded.map(float_to_tenths));
+
+    if dbz_tenths.len() != expected_count {
+        bail!(
+            "Decoded point-count mismatch: expected {}, got {}",
+            expected_count,
+            dbz_tenths.len()
+        );
+    }
+
+    Ok(ParsedReflectivityField { grid, dbz_tenths })
+}
+
+fn parse_aux_grib_values(buffer: &[u8]) -> Result<ParsedAuxField> {
+    let (grid, expected_count, decoder) = prepare_grib_decoder(buffer)?;
+    let decoded = decoder
+        .dispatch()
+        .map_err(|error| anyhow!("Failed to decode GRIB2 values: {error}"))?;
+
+    let mut values = Vec::with_capacity(expected_count);
+    values.extend(decoded);
+
+    if values.len() != expected_count {
+        bail!(
+            "Decoded point-count mismatch: expected {}, got {}",
+            expected_count,
+            values.len()
+        );
+    }
+
+    Ok(ParsedAuxField { grid, values })
+}
+
+fn prepare_grib_decoder(buffer: &[u8]) -> Result<(GridDef, usize, Grib2SubmessageDecoder)> {
     if buffer.len() < 20 {
         bail!("MRMS GRIB payload is too small");
     }
@@ -48,21 +107,8 @@ fn parse_grib_values(buffer: &[u8]) -> Result<(GridDef, Vec<f32>)> {
 
     let decoder = Grib2SubmessageDecoder::from(first_submessage)
         .map_err(|error| anyhow!("Failed to initialize GRIB2 submessage decoder: {error}"))?;
-    let decoded = decoder
-        .dispatch()
-        .map_err(|error| anyhow!("Failed to decode GRIB2 values: {error}"))?;
-    let mut values = Vec::with_capacity(expected_count);
-    values.extend(decoded);
 
-    if values.len() != expected_count {
-        bail!(
-            "Decoded point-count mismatch: expected {}, got {}",
-            expected_count,
-            values.len()
-        );
-    }
-
-    Ok((grid, values))
+    Ok((grid, expected_count, decoder))
 }
 
 fn grid_from_submessage<R>(submessage: &grib::SubMessage<'_, R>) -> Result<GridDef> {
