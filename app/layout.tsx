@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Analytics } from '@vercel/analytics/next';
 import '@/app/App.css';
+import DatadogRumInit from '@/app/DatadogRumInit';
 
 export const metadata: Metadata = {
   title: 'ApproachViz',
@@ -25,6 +26,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body suppressHydrationWarning>
+        <DatadogRumInit />
         {children}
         <Analytics />
       </body>

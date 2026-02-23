@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::extract::MatchedPath;
 use axum::routing::get;
 use axum::Router;
 use reqwest::Client;
@@ -30,7 +31,7 @@ use crate::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background
 use crate::storage::load_latest_snapshot;
 use crate::traffic_api::{spawn_traffic_cache_worker, traffic_adsbx};
 use crate::types::AppState;
-use crate::utils::init_tracing;
+use crate::utils::{init_tracing, shutdown_tracing};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -59,6 +60,7 @@ async fn main() -> Result<()> {
 
     if let Some(timestamp) = state.cfg.ingest_profile_timestamp.clone() {
         run_ingest_profile(&state, &timestamp, state.cfg.ingest_profile_repeats).await?;
+        shutdown_tracing();
         return Ok(());
     }
 
@@ -80,7 +82,53 @@ async fn main() -> Result<()> {
         .route("/v1/echo-tops", get(echo_tops))
         .route("/v1/traffic/adsbx", get(traffic_adsbx))
         .layer(CompressionLayer::new())
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::http::Request<_>| {
+                    let matched_path = request
+                        .extensions()
+                        .get::<MatchedPath>()
+                        .map(MatchedPath::as_str)
+                        .unwrap_or(request.uri().path());
+                    tracing::info_span!(
+                        "http.server.request",
+                        otel.name = "http.server.request",
+                        otel.kind = "server",
+                        "operation.name" = "http.server.request",
+                        "resource.name" = matched_path,
+                        method = %request.method(),
+                        path = %request.uri().path(),
+                        matched_path = %matched_path,
+                        query = %request.uri().query().unwrap_or(""),
+                        "http.request.method" = %request.method(),
+                        "http.route" = %matched_path,
+                        "url.path" = %request.uri().path(),
+                        "url.query" = %request.uri().query().unwrap_or(""),
+                        version = ?request.version(),
+                        status_code = tracing::field::Empty,
+                        "http.response.status_code" = tracing::field::Empty
+                    )
+                })
+                .on_response(
+                    |response: &axum::http::Response<_>,
+                     latency: std::time::Duration,
+                     span: &tracing::Span| {
+                        span.record(
+                            "status_code",
+                            tracing::field::display(response.status().as_u16()),
+                        );
+                        span.record(
+                            "http.response.status_code",
+                            tracing::field::display(response.status().as_u16()),
+                        );
+                        tracing::info!(
+                            parent: span,
+                            latency_ms = latency.as_millis() as u64,
+                            "http.response"
+                        );
+                    },
+                ),
+        )
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -94,8 +142,10 @@ async fn main() -> Result<()> {
         .with_context(|| format!("Failed to bind {}", cfg.listen_addr))?;
 
     info!("Runtime rust service listening on {}", cfg.listen_addr);
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .await
-        .context("HTTP server failed")?;
+        .context("HTTP server failed");
+    shutdown_tracing();
+    serve_result?;
     Ok(())
 }

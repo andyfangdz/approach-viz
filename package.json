@@ -30,6 +30,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@datadog/browser-rum": "^6.25.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@takram/three-geospatial": "^0.6.0",

@@ -73,6 +73,8 @@
 - Runtime integration tests (`npm run test:integration:runtime`) are intentionally excluded from CI because they require live internet and upstream data availability. They are run manually or as part of deployment validation (see [`docs/validation.md`](validation.md)).
 - Vercel Analytics is enabled globally in `app/layout.tsx` via `@vercel/analytics/next`.
 - Local server tracing uses Datadog `dd-trace`: `npm run dev` runs `scripts/dev-with-ddtrace.mjs`, which loads `.env.local` and launches Next with `NODE_OPTIONS=--import dd-trace/initialize.mjs` so tracing initializes before Next server modules.
+- Browser telemetry uses Datadog RUM via `app/DatadogRumInit.tsx` (mounted in `app/layout.tsx`); initialization is client-only and gated by `NEXT_PUBLIC_DD_RUM_APPLICATION_ID` + `NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN`, with same-origin trace header injection enabled for fetch/XHR correlation.
+- Rust runtime tracing keeps stdout `tracing` logs by default and can additionally export OTLP spans to Datadog when `RUNTIME_DD_TRACE_ENABLED=true` (endpoint from `RUNTIME_DD_TRACE_OTLP_ENDPOINT` or `RUNTIME_DD_AGENT_HOST` + `RUNTIME_DD_TRACE_OTLP_PORT`; service/env/version from `RUNTIME_DD_SERVICE`/`RUNTIME_DD_ENV`/`RUNTIME_DD_VERSION` with `DD_*` fallbacks). HTTP root spans are emitted with `otel.kind=server`, `operation.name=http.server.request`, and `resource.name=<matched_path>` to preserve Datadog operation/resource grouping.
 
 ## Agent Skills
 

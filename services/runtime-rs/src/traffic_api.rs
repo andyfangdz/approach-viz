@@ -17,7 +17,7 @@ use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
-use tracing::{info, warn};
+use tracing::{field, info, info_span, instrument, warn, Instrument, Span};
 
 use crate::types::AppState;
 
@@ -257,9 +257,11 @@ impl TrafficStore {
         let (response_tx, response_rx) = oneshot::channel();
         let reader_idx =
             self.next_reader.fetch_add(1, AtomicOrdering::Relaxed) % self.reader_txs.len();
+        let parent_span = Span::current();
         self.reader_txs[reader_idx]
             .send(ReadCommand::Query {
                 request,
+                parent_span,
                 response: response_tx,
             })
             .await
@@ -303,6 +305,7 @@ enum WriteCommand {
 enum ReadCommand {
     Query {
         request: QueryRequest,
+        parent_span: Span,
         response: oneshot::Sender<Result<QueryResult, String>>,
     },
 }
@@ -355,6 +358,22 @@ pub fn spawn_traffic_cache_worker(state: AppState) {
     });
 }
 
+#[instrument(
+    name = "runtime.traffic.adsbx",
+    skip(state, query),
+    fields(
+        lat = field::Empty,
+        lon = field::Empty,
+        radius_nm = field::Empty,
+        limit = field::Empty,
+        history_minutes = field::Empty,
+        hide_ground_traffic = field::Empty,
+        history_hex_count = field::Empty,
+        result_aircraft_count = field::Empty,
+        result_history_hex_count = field::Empty,
+        warming = field::Empty
+    )
+)]
 pub async fn traffic_adsbx(
     State(state): State<AppState>,
     Query(query): Query<TrafficQuery>,
@@ -396,6 +415,14 @@ pub async fn traffic_adsbx(
         parse_boolean_query_param(query.hide_ground.as_deref(), DEFAULT_HIDE_GROUND_TRAFFIC);
     let history_hexes = parse_history_hexes(query.history_hexes.as_deref());
     let now_ms = now_ms();
+    let span = Span::current();
+    span.record("lat", lat);
+    span.record("lon", lon);
+    span.record("radius_nm", radius_nm);
+    span.record("limit", limit as i64);
+    span.record("history_minutes", history_minutes);
+    span.record("hide_ground_traffic", hide_ground_traffic);
+    span.record("history_hex_count", history_hexes.len() as i64);
 
     let request = QueryRequest {
         lat,
@@ -413,9 +440,17 @@ pub async fn traffic_adsbx(
         now_ms,
     };
 
-    let query_result = query_store_snapshot(&state, request).await;
+    let query_result = query_store_snapshot(&state, request)
+        .instrument(info_span!("runtime.traffic.adsbx.query_store"))
+        .await;
     match query_result {
         Ok(result) => {
+            span.record("result_aircraft_count", result.aircraft.len() as i64);
+            span.record(
+                "result_history_hex_count",
+                result.history_by_hex.len() as i64,
+            );
+            span.record("warming", result.warming);
             if result.warming {
                 return (
                     StatusCode::OK,
@@ -842,10 +877,16 @@ fn spawn_reader_worker(
 
         while let Some(command) = receiver.blocking_recv() {
             match command {
-                ReadCommand::Query { request, response } => {
+                ReadCommand::Query {
+                    request,
+                    parent_span,
+                    response,
+                } => {
                     let mut attempts = 0usize;
                     let result = loop {
-                        let result = query_store_snapshot_blocking(&connection, request.clone());
+                        let result = parent_span.clone().in_scope(|| {
+                            query_store_snapshot_blocking(&connection, request.clone())
+                        });
                         if let Err(error) = &result {
                             if is_sqlite_locked_error(error) && attempts < READ_QUERY_LOCK_RETRIES {
                                 attempts += 1;
@@ -1349,18 +1390,54 @@ fn upsert_meta_value(connection: &Connection, key: &str, value: &str) -> Result<
     Ok(())
 }
 
+#[instrument(
+    name = "runtime.traffic.store.query",
+    skip(state, request),
+    fields(
+        lat = request.lat,
+        lon = request.lon,
+        radius_nm = request.radius_nm,
+        discovery_radius_nm = request.discovery_radius_nm,
+        limit = request.limit,
+        history_minutes = request.history_minutes,
+        history_hex_count = request.history_hexes.len(),
+        hide_ground_traffic = request.hide_ground_traffic
+    )
+)]
 async fn query_store_snapshot(
     state: &AppState,
     request: QueryRequest,
 ) -> Result<QueryResult, String> {
     let store = traffic_store(state.cfg.traffic_db_file())?;
-    store.read_query(request).await
+    store
+        .read_query(request)
+        .instrument(info_span!("runtime.traffic.store.read_queue"))
+        .await
 }
 
+#[instrument(
+    name = "runtime.traffic.store.query_blocking",
+    skip(connection, request),
+    fields(
+        lat = request.lat,
+        lon = request.lon,
+        radius_nm = request.radius_nm,
+        discovery_radius_nm = request.discovery_radius_nm,
+        limit = request.limit,
+        history_minutes = request.history_minutes,
+        history_hex_count = request.history_hexes.len(),
+        hide_ground_traffic = request.hide_ground_traffic,
+        track_count = field::Empty,
+        aircraft_count = field::Empty,
+        history_hex_count_result = field::Empty,
+        warming = field::Empty
+    )
+)]
 fn query_store_snapshot_blocking(
     connection: &Connection,
     request: QueryRequest,
 ) -> Result<QueryResult, String> {
+    let span = Span::current();
     let source = read_meta_value(connection, META_KEY_SOURCE)?;
     let fetched_at_ms = read_meta_value(connection, META_KEY_UPDATED_AT_MS)?
         .and_then(|value| value.parse::<i64>().ok())
@@ -1369,7 +1446,11 @@ fn query_store_snapshot_blocking(
     let track_count: i64 = connection
         .query_row("SELECT COUNT(1) FROM traffic_tracks", [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
+    span.record("track_count", track_count);
     if track_count == 0 {
+        span.record("aircraft_count", 0);
+        span.record("history_hex_count_result", 0);
+        span.record("warming", true);
         return Ok(QueryResult {
             source,
             fetched_at_ms,
@@ -1406,6 +1487,7 @@ fn query_store_snapshot_blocking(
             })
     });
     aircraft.truncate(request.limit);
+    span.record("aircraft_count", aircraft.len() as i64);
 
     let mut history_by_hex = HashMap::new();
     if request.history_minutes > 0.0 {
@@ -1445,6 +1527,8 @@ fn query_store_snapshot_blocking(
             history_points_intersect_scene(points, request.lat, request.lon, request.radius_nm)
         });
     }
+    span.record("history_hex_count_result", history_by_hex.len() as i64);
+    span.record("warming", false);
 
     Ok(QueryResult {
         source,

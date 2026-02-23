@@ -1,18 +1,158 @@
 use std::cmp::{max, min};
 use std::f64::consts::PI;
+use std::sync::OnceLock;
 
+use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use opentelemetry::global;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::Resource;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::constants::{DEG_TO_RAD, METERS_TO_NM, WGS84_E2, WGS84_SEMI_MAJOR_METERS};
+
+static DATADOG_TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
 
 pub fn init_tracing() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_target(false)
-        .without_time()
+
+    if datadog_tracing_enabled() {
+        match init_datadog_tracing(env_filter.clone()) {
+            Ok(()) => {
+                tracing::info!(
+                    endpoint = %datadog_otlp_endpoint(),
+                    "Datadog runtime tracing enabled via OTLP export."
+                );
+                return;
+            }
+            Err(error) => {
+                eprintln!(
+                    "Failed to initialize Datadog runtime tracing (falling back to stdout-only tracing): {error:#}"
+                );
+            }
+        }
+    }
+
+    init_stdout_tracing(env_filter);
+}
+
+pub fn shutdown_tracing() {
+    if let Some(provider) = DATADOG_TRACER_PROVIDER.get() {
+        if let Err(error) = provider.force_flush() {
+            eprintln!("Datadog tracer force-flush failed: {error}");
+        }
+        if let Err(error) = provider.shutdown() {
+            eprintln!("Datadog tracer shutdown failed: {error}");
+        }
+    }
+}
+
+fn init_stdout_tracing(env_filter: tracing_subscriber::EnvFilter) {
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .without_time(),
+        )
         .init();
+}
+
+fn init_datadog_tracing(env_filter: tracing_subscriber::EnvFilter) -> Result<()> {
+    let tracer_provider = build_datadog_tracer_provider()?;
+    let tracer = tracer_provider.tracer("approach-viz-runtime-rs");
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .without_time(),
+        )
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .try_init()
+        .context("Failed to install tracing subscriber with Datadog OTLP layer")?;
+
+    let _ = global::set_tracer_provider(tracer_provider.clone());
+    let _ = DATADOG_TRACER_PROVIDER.set(tracer_provider);
+    Ok(())
+}
+
+fn build_datadog_tracer_provider() -> Result<SdkTracerProvider> {
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(datadog_otlp_endpoint())
+        .build()
+        .context("Failed to build OTLP span exporter for Datadog")?;
+
+    let service_name = env_optional("RUNTIME_DD_SERVICE")
+        .or_else(|| env_optional("DD_SERVICE"))
+        .unwrap_or_else(|| "approach-viz-runtime-rs".to_string());
+    let service_env = env_optional("RUNTIME_DD_ENV").or_else(|| env_optional("DD_ENV"));
+    let service_version = env_optional("RUNTIME_DD_VERSION").or_else(|| env_optional("DD_VERSION"));
+
+    let mut attributes = vec![KeyValue::new("service.name", service_name)];
+    if let Some(env) = service_env {
+        attributes.push(KeyValue::new("env", env.clone()));
+        attributes.push(KeyValue::new("deployment.environment.name", env));
+    }
+    if let Some(version) = service_version {
+        attributes.push(KeyValue::new("service.version", version));
+    }
+
+    Ok(SdkTracerProvider::builder()
+        .with_resource(
+            Resource::builder_empty()
+                .with_attributes(attributes)
+                .build(),
+        )
+        .with_batch_exporter(exporter)
+        .build())
+}
+
+fn datadog_tracing_enabled() -> bool {
+    env_bool("RUNTIME_DD_TRACE_ENABLED")
+        .or_else(|| env_bool("DD_TRACE_ENABLED"))
+        .unwrap_or(false)
+}
+
+fn datadog_otlp_endpoint() -> String {
+    if let Some(endpoint) = env_optional("RUNTIME_DD_TRACE_OTLP_ENDPOINT")
+        .or_else(|| env_optional("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"))
+        .or_else(|| env_optional("OTEL_EXPORTER_OTLP_ENDPOINT"))
+    {
+        return endpoint;
+    }
+
+    let host = env_optional("RUNTIME_DD_AGENT_HOST")
+        .or_else(|| env_optional("DD_AGENT_HOST"))
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = env_optional("RUNTIME_DD_TRACE_OTLP_PORT")
+        .or_else(|| env_optional("DD_OTLP_GRPC_PORT"))
+        .unwrap_or_else(|| "4317".to_string());
+
+    format!("http://{host}:{port}")
+}
+
+fn env_optional(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_bool(name: &str) -> Option<bool> {
+    let raw = std::env::var(name).ok()?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 pub fn clamp(value: f64, min_value: f64, max_value: f64) -> f64 {

@@ -30,8 +30,9 @@ Deploy `services/runtime-rs` to OCI with consistent queue wiring and determinist
 2. Read queue URL from server systemd config.
    - Prefer `RUNTIME_MRMS_SQS_QUEUE_URL`; fallback to legacy `MRMS_SQS_QUEUE_URL`.
 3. Execute repo deploy script with resolved queue URL.
-   - Default remote build: `RUNTIME_MRMS_SQS_QUEUE_URL=<queue> scripts/runtime/deploy_oci.sh <host>`
-   - Optional local cross-compile deploy (faster OCI rollout): `RUNTIME_MRMS_SQS_QUEUE_URL=<queue> RUNTIME_DEPLOY_BUILD_MODE=local-cross scripts/runtime/deploy_oci.sh <host>`
+   - Default behavior prefers local cross-compile and auto-falls back to remote when no cross tool is detected: `RUNTIME_MRMS_SQS_QUEUE_URL=<queue> scripts/runtime/deploy_oci.sh <host>`
+   - Explicit local cross-compile deploy: `RUNTIME_MRMS_SQS_QUEUE_URL=<queue> RUNTIME_DEPLOY_BUILD_MODE=local-cross scripts/runtime/deploy_oci.sh <host>`
+   - Explicit remote build deploy: `RUNTIME_MRMS_SQS_QUEUE_URL=<queue> RUNTIME_DEPLOY_BUILD_MODE=remote scripts/runtime/deploy_oci.sh <host>`
 4. Confirm runtime service health on host and funnel URL.
    - `/healthz` returns `ok`
    - `/v1/meta` returns `ready: true` and `sqsEnabled: true`

@@ -79,7 +79,9 @@ export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>
 scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
 ```
 
-Optional faster deploy path (skip OCI compile by cross-compiling locally for Linux ARM64):
+Default behavior prefers local cross-compile (skip OCI compile by cross-compiling locally for Linux ARM64), then falls back to remote build if no local cross tool is detected and `RUNTIME_DEPLOY_BUILD_MODE` is unset.
+
+Optional explicit local cross mode:
 
 ```bash
 export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
@@ -89,12 +91,20 @@ export RUNTIME_DEPLOY_BUILD_MODE=local-cross
 scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
 ```
 
+Optional explicit remote mode:
+
+```bash
+export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
+export RUNTIME_DEPLOY_BUILD_MODE=remote
+scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
+```
+
 Prerequisite for local cross mode: install either `cargo-zigbuild` (`cargo install cargo-zigbuild`) or `cross` (`cargo install cross`).
 
 This script:
 
 - syncs `services/runtime-rs/` through a staged remote directory replacement (prevents stale file collisions from prior layouts) and excludes local `target/` build artifacts from upload
-- builds `cargo build --release` on host (default `RUNTIME_DEPLOY_BUILD_MODE=remote`) or uploads a local cross-compiled `aarch64-unknown-linux-gnu` binary (`RUNTIME_DEPLOY_BUILD_MODE=local-cross`)
+- uploads a local cross-compiled `aarch64-unknown-linux-gnu` binary (`RUNTIME_DEPLOY_BUILD_MODE=local-cross`, default preference with auto-fallback) or builds `cargo build --release` on host (`RUNTIME_DEPLOY_BUILD_MODE=remote`)
 - installs `/usr/local/bin/approach-viz-runtime`
 - installs/enables `approach-viz-runtime.service`
 - configures Tailscale Funnel path `/runtime-v1`

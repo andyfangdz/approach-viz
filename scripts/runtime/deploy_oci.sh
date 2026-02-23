@@ -4,7 +4,7 @@ set -euo pipefail
 HOST="${1:-ubuntu@100.86.128.122}"
 IDENTITY_AGENT="${SSH_AUTH_SOCK:-}"
 QUEUE_URL="${RUNTIME_MRMS_SQS_QUEUE_URL:-${MRMS_SQS_QUEUE_URL:-}}"
-BUILD_MODE="${RUNTIME_DEPLOY_BUILD_MODE:-remote}"
+BUILD_MODE="${RUNTIME_DEPLOY_BUILD_MODE:-local-cross}"
 LOCAL_CROSS_TOOL="${RUNTIME_LOCAL_CROSS_TOOL:-auto}"
 LOCAL_CROSS_TARGET="${RUNTIME_LOCAL_CROSS_TARGET:-aarch64-unknown-linux-gnu}"
 LOCAL_CROSS_BINARY_PATH="${RUNTIME_LOCAL_CROSS_BINARY_PATH:-}"
@@ -28,6 +28,17 @@ case "$BUILD_MODE" in
     exit 1
     ;;
 esac
+
+if [[ -z "${RUNTIME_DEPLOY_BUILD_MODE:-}" && "$BUILD_MODE" == "local-cross" ]]; then
+  if [[ -z "$LOCAL_CROSS_BINARY_PATH" && "$LOCAL_CROSS_TOOL" == "auto" ]]; then
+    if ! command -v cargo-zigbuild >/dev/null 2>&1 && ! command -v cross >/dev/null 2>&1; then
+      echo "No local cross tool detected (cargo-zigbuild/cross); falling back to remote build mode." >&2
+      BUILD_MODE="remote"
+    fi
+  fi
+fi
+
+echo "Deploy build mode: $BUILD_MODE"
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SERVICE_DIR="$ROOT_DIR/services/runtime-rs"

@@ -5,7 +5,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::{field, instrument, warn};
 
 use self::wire::{build_echo_top_cells, build_query_window, build_volume_wire};
 use crate::constants::{
@@ -120,10 +120,12 @@ pub(crate) struct EchoTopCellRecord {
     top60_feet: u16,
 }
 
+#[instrument(name = "runtime.healthz", skip_all)]
 pub async fn healthz() -> &'static str {
     "ok"
 }
 
+#[instrument(name = "runtime.meta", skip(state))]
 pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
     let latest = state.latest.read().await;
     let (
@@ -216,6 +218,16 @@ pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
     })
 }
 
+#[instrument(
+    name = "runtime.volume",
+    skip(state, query),
+    fields(
+        lat = field::Empty,
+        lon = field::Empty,
+        min_dbz = field::Empty,
+        max_range_nm = field::Empty
+    )
+)]
 pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQuery>) -> Response {
     if query.lat < -90.0 || query.lat > 90.0 || query.lon < -180.0 || query.lon > 180.0 {
         return (
@@ -237,6 +249,11 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
         MIN_ALLOWED_RANGE_NM,
         MAX_ALLOWED_RANGE_NM,
     );
+    let span = tracing::Span::current();
+    span.record("lat", &query.lat);
+    span.record("lon", &query.lon);
+    span.record("min_dbz", &min_dbz);
+    span.record("max_range_nm", &max_range_nm);
 
     let latest = state.latest.read().await;
     let Some(scan) = latest.as_ref() else {
@@ -249,7 +266,10 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
             .into_response();
     };
 
-    match build_volume_wire(scan, query.lat, query.lon, min_dbz, max_range_nm) {
+    let build_span = tracing::info_span!("runtime.volume.build_wire_payload");
+    match build_span
+        .in_scope(|| build_volume_wire(scan, query.lat, query.lon, min_dbz, max_range_nm))
+    {
         Ok(body) => {
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -346,6 +366,14 @@ pub async fn echo_tops(
     State(state): State<AppState>,
     Query(query): Query<EchoTopsQuery>,
 ) -> Response {
+    let span = tracing::info_span!(
+        "runtime.echo_tops",
+        lat = query.lat,
+        lon = query.lon,
+        max_range_nm = field::Empty
+    );
+    let _guard = span.enter();
+
     if query.lat < -90.0 || query.lat > 90.0 || query.lon < -180.0 || query.lon > 180.0 {
         return (
             StatusCode::BAD_REQUEST,
@@ -361,6 +389,7 @@ pub async fn echo_tops(
         MIN_ALLOWED_RANGE_NM,
         MAX_ALLOWED_RANGE_NM,
     );
+    tracing::Span::current().record("max_range_nm", &max_range_nm);
 
     let latest = state.latest.read().await;
     let Some(scan) = latest.as_ref() else {
@@ -374,7 +403,8 @@ pub async fn echo_tops(
     };
 
     let window = build_query_window(scan, query.lat, query.lon, DEFAULT_MIN_DBZ, max_range_nm);
-    let cells = build_echo_top_cells(scan, &window);
+    let build_cells_span = tracing::info_span!("runtime.echo_tops.build_cells");
+    let cells = build_cells_span.in_scope(|| build_echo_top_cells(scan, &window));
     let body = EchoTopsResponse {
         generated_at: iso_from_ms(scan.generated_at_ms),
         scan_time: iso_from_ms(scan.scan_time_ms),
