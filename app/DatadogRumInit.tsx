@@ -21,10 +21,7 @@ const RUM_SESSION_SAMPLE_RATE = parseFloat(
 const RUM_SESSION_REPLAY_SAMPLE_RATE = parseFloat(
   process.env.NEXT_PUBLIC_DD_RUM_SESSION_REPLAY_SAMPLE_RATE || '0'
 );
-const NORMALIZED_RUM_PROXY_PATH = (RUM_PROXY_PATH.trim() || '/api/datadog/rum').replace(
-  /\/+$/,
-  ''
-);
+const NORMALIZED_RUM_PROXY_PATH = (RUM_PROXY_PATH.trim() || '/api/datadog/rum').replace(/\/+$/, '');
 
 function sampleRateOrDefault(value: number, fallback: number): number {
   if (!Number.isFinite(value)) {
