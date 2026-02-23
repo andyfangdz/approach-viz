@@ -109,6 +109,24 @@ This script:
 - installs/enables `approach-viz-runtime.service`
 - configures Tailscale Funnel path `/runtime-v1`
 
+### Continuous Profiling (OCI host)
+
+The OCI runtime host uses Datadog `ddprof` for continuous profiling of the Rust process via a systemd drop-in:
+
+- `approach-viz-runtime.service.d/ddprof.conf`
+  - resets `ExecStart` and wraps runtime as `/usr/local/bin/ddprof /usr/local/bin/approach-viz-runtime`
+  - sets profile tags (`DD_SERVICE`, `DD_ENV`, `DD_VERSION`)
+- kernel requirement: `kernel.perf_event_paranoid<=2` (configured via `/etc/sysctl.d/99-ddprof.conf`)
+
+Validate on host:
+
+```bash
+cat /proc/sys/kernel/perf_event_paranoid
+/usr/local/bin/ddprof --version
+sudo systemctl cat approach-viz-runtime.service
+ps -ef | grep '[d]dprof'
+```
+
 ## Service Endpoints
 
 - `GET /healthz` -> `ok`
