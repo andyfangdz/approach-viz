@@ -114,9 +114,10 @@ This script:
 The OCI runtime host uses Datadog `ddprof` for continuous profiling of the Rust process via a systemd drop-in:
 
 - `approach-viz-runtime.service.d/ddprof.conf`
-  - resets `ExecStart` and wraps runtime as `/usr/local/bin/ddprof /usr/local/bin/approach-viz-runtime`
+  - resets `ExecStart` and wraps runtime as `/usr/local/bin/ddprof --preset cpu_live_heap /usr/local/bin/approach-viz-runtime`
   - sets profile tags (`DD_SERVICE`, `DD_ENV`, `DD_VERSION`)
 - kernel requirement: `kernel.perf_event_paranoid<=2` (configured via `/etc/sysctl.d/99-ddprof.conf`)
+- runtime build requirement: preserve symbols and stack frames (`services/runtime-rs/Cargo.toml` release profile uses `debug=1`, `strip=false`; `services/runtime-rs/.cargo/config.toml` sets `-C force-frame-pointers=yes`)
 
 Validate on host:
 
