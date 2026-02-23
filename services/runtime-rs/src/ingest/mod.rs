@@ -877,8 +877,10 @@ async fn parse_reflectivity_levels(
             let reflectivity_key =
                 build_level_key(MRMS_PRODUCT_PREFIX, &level_tag, &date_part, &timestamp);
             let reflectivity_zipped = fetch_mrms_key_bytes(&state, &reflectivity_key).await?;
+            let decode_label = format!("reflectivity:{level_tag}");
             let reflectivity =
-                parse_reflectivity_grib_with_limit(&state, reflectivity_zipped).await?;
+                parse_reflectivity_grib_with_limit(&state, reflectivity_zipped, &decode_label)
+                    .await?;
             Ok::<_, anyhow::Error>((level_idx, level_tag, reflectivity))
         });
     }

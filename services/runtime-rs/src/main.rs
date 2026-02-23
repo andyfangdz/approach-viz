@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
         latest,
         pending: Arc::new(Mutex::new(HashMap::new())),
         recent_timestamps: Arc::new(Mutex::new(HashSet::new())),
+        aux_timestamp_cache: Arc::new(Mutex::new(HashMap::new())),
         ingest_parse_limiter: Arc::new(Semaphore::new(cfg.ingest_parse_concurrency as usize)),
     };
 

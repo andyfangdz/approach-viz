@@ -15,6 +15,7 @@ pub struct AppState {
     pub latest: Arc<RwLock<Option<Arc<ScanSnapshot>>>>,
     pub pending: Arc<Mutex<HashMap<String, PendingIngest>>>,
     pub recent_timestamps: Arc<Mutex<HashSet<String>>>,
+    pub aux_timestamp_cache: Arc<Mutex<HashMap<String, AuxTimestampCacheEntry>>>,
     pub ingest_parse_limiter: Arc<Semaphore>,
 }
 
@@ -81,6 +82,12 @@ pub struct ScanSnapshot {
 pub struct PendingIngest {
     pub attempts: u32,
     pub next_attempt_at: Instant,
+}
+
+#[derive(Clone, Debug)]
+pub struct AuxTimestampCacheEntry {
+    pub value: Option<String>,
+    pub cached_at: Instant,
 }
 
 #[derive(Clone, Debug)]

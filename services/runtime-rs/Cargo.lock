@@ -1089,8 +1089,6 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 [[package]]
 name = "grib"
 version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3d3232a58c3b688b22a5866ca8367b5028104615f370b2d55a2645ac8413c70"
 dependencies = [
  "grib-build",
  "grib-template-derive",

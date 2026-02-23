@@ -30,6 +30,9 @@ tower-http = { version = "0.6", features = ["compression-gzip", "cors", "trace"]
 urlencoding = "2.1"
 zstd = "0.13"
 
+[patch.crates-io]
+grib = { path = "vendor/grib" }
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

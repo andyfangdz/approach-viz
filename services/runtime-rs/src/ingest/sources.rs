@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::constants::{
     AUX_TIMESTAMP_LOOKBACK_DAYS, MAX_BASE_DAY_LOOKBACK, MRMS_BUCKET_URL, MRMS_CONUS_PREFIX,
@@ -9,8 +10,11 @@ use crate::constants::{
 use crate::discovery::extract_timestamp_from_key;
 use crate::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
 use crate::http_client::{fetch_bytes, fetch_text};
-use crate::types::{AppState, ParsedAuxField, ParsedReflectivityField};
+use crate::types::{AppState, AuxTimestampCacheEntry, ParsedAuxField, ParsedReflectivityField};
 use crate::utils::parse_timestamp_utc;
+
+const AUX_TIMESTAMP_CACHE_TTL: Duration = Duration::from_secs(45);
+const AUX_TIMESTAMP_CACHE_MAX_ENTRIES: usize = 4096;
 
 pub(super) fn build_level_key(
     product_prefix: &str,
@@ -26,30 +30,61 @@ pub(super) fn build_level_key(
 pub(super) async fn parse_reflectivity_grib_with_limit(
     state: &AppState,
     zipped: Vec<u8>,
+    decode_label: &str,
 ) -> Result<ParsedReflectivityField> {
+    let queued_at = Instant::now();
     let permit = state
         .ingest_parse_limiter
         .clone()
         .acquire_owned()
         .await
         .context("Failed to acquire ingest parse limiter permit")?;
+    let queue_wait_ms = queued_at.elapsed().as_millis() as u64;
+    let payload_bytes = zipped.len() as u64;
+    let decode_started = Instant::now();
     let parsed = tokio::task::spawn_blocking(move || parse_reflectivity_grib_gzipped(&zipped))
         .await
         .context("Join error while parsing level GRIB")??;
+    let decode_ms = decode_started.elapsed().as_millis() as u64;
+    debug!(
+        target: "mrms_decode_timing",
+        label = decode_label,
+        payload_bytes,
+        queue_wait_ms,
+        decode_ms,
+        "MRMS reflectivity decode complete"
+    );
     drop(permit);
     Ok(parsed)
 }
 
-async fn parse_aux_grib_with_limit(state: &AppState, zipped: Vec<u8>) -> Result<ParsedAuxField> {
+async fn parse_aux_grib_with_limit(
+    state: &AppState,
+    zipped: Vec<u8>,
+    decode_label: &str,
+) -> Result<ParsedAuxField> {
+    let queued_at = Instant::now();
     let permit = state
         .ingest_parse_limiter
         .clone()
         .acquire_owned()
         .await
         .context("Failed to acquire ingest parse limiter permit")?;
+    let queue_wait_ms = queued_at.elapsed().as_millis() as u64;
+    let payload_bytes = zipped.len() as u64;
+    let decode_started = Instant::now();
     let parsed = tokio::task::spawn_blocking(move || parse_aux_grib_gzipped(&zipped))
         .await
         .context("Join error while parsing aux GRIB")??;
+    let decode_ms = decode_started.elapsed().as_millis() as u64;
+    debug!(
+        target: "mrms_decode_timing",
+        label = decode_label,
+        payload_bytes,
+        queue_wait_ms,
+        decode_ms,
+        "MRMS aux decode complete"
+    );
     drop(permit);
     Ok(parsed)
 }
@@ -63,7 +98,8 @@ pub(super) async fn fetch_level_aux_field_at_timestamp(
 ) -> Result<ParsedAuxField> {
     let key = build_level_key(product_prefix, level_tag, date_part, timestamp);
     let zipped = fetch_mrms_key_bytes(state, &key).await?;
-    let parsed = parse_aux_grib_with_limit(state, zipped).await?;
+    let decode_label = format!("aux_level:{product_prefix}:{level_tag}");
+    let parsed = parse_aux_grib_with_limit(state, zipped, &decode_label).await?;
     Ok(parsed)
 }
 
@@ -79,7 +115,8 @@ pub(super) async fn fetch_aux_field_at_timestamp(
 ) -> Result<ParsedAuxField> {
     let key = build_aux_key(product, date_part, timestamp);
     let zipped = fetch_mrms_key_bytes(state, &key).await?;
-    let parsed = parse_aux_grib_with_limit(state, zipped).await?;
+    let decode_label = format!("aux:{product}");
+    let parsed = parse_aux_grib_with_limit(state, zipped, &decode_label).await?;
     Ok(parsed)
 }
 
@@ -89,12 +126,19 @@ pub(super) async fn find_latest_level_timestamp_at_or_before(
     level_tag: &str,
     target_timestamp: &str,
 ) -> Option<String> {
-    find_latest_timestamp_at_or_before(
+    let cache_key = format!("level:{product_prefix}:{level_tag}:{target_timestamp}");
+    if let Some(cached) = aux_timestamp_cache_get(state, &cache_key).await {
+        return cached;
+    }
+
+    let resolved = find_latest_timestamp_at_or_before(
         state,
         |day| format!("{MRMS_CONUS_PREFIX}/{product_prefix}_{level_tag}/{day}/"),
         target_timestamp,
     )
-    .await
+    .await;
+    aux_timestamp_cache_insert(state, &cache_key, resolved.clone()).await;
+    resolved
 }
 
 pub(super) async fn find_latest_aux_timestamp_at_or_before(
@@ -102,12 +146,19 @@ pub(super) async fn find_latest_aux_timestamp_at_or_before(
     product: &str,
     target_timestamp: &str,
 ) -> Option<String> {
-    find_latest_timestamp_at_or_before(
+    let cache_key = format!("aux:{product}:{target_timestamp}");
+    if let Some(cached) = aux_timestamp_cache_get(state, &cache_key).await {
+        return cached;
+    }
+
+    let resolved = find_latest_timestamp_at_or_before(
         state,
         |day| format!("{MRMS_CONUS_PREFIX}/{product}/{day}/"),
         target_timestamp,
     )
-    .await
+    .await;
+    aux_timestamp_cache_insert(state, &cache_key, resolved.clone()).await;
+    resolved
 }
 
 async fn find_latest_timestamp_at_or_before<F>(
@@ -321,6 +372,51 @@ pub(super) fn timestamp_age_seconds(newer_timestamp: &str, older_timestamp: &str
     let newer = parse_timestamp_utc(newer_timestamp)?;
     let older = parse_timestamp_utc(older_timestamp)?;
     Some((newer - older).num_seconds().max(0))
+}
+
+async fn aux_timestamp_cache_get(state: &AppState, key: &str) -> Option<Option<String>> {
+    let now = Instant::now();
+    let mut cache = state.aux_timestamp_cache.lock().await;
+    prune_aux_timestamp_cache(&mut cache, now);
+    let value = cache.get(key).map(|entry| entry.value.clone());
+    if let Some(ref cached_value) = value {
+        debug!(
+            target: "mrms_aux_timestamp_cache",
+            key,
+            has_value = cached_value.is_some(),
+            "Aux timestamp cache hit"
+        );
+    }
+    value
+}
+
+async fn aux_timestamp_cache_insert(state: &AppState, key: &str, value: Option<String>) {
+    let now = Instant::now();
+    let mut cache = state.aux_timestamp_cache.lock().await;
+    prune_aux_timestamp_cache(&mut cache, now);
+    if cache.len() >= AUX_TIMESTAMP_CACHE_MAX_ENTRIES {
+        let oldest_key = cache
+            .iter()
+            .min_by_key(|(_key, entry)| entry.cached_at)
+            .map(|(entry_key, _entry)| entry_key.clone());
+        if let Some(entry_key) = oldest_key {
+            cache.remove(&entry_key);
+        }
+    }
+    cache.insert(
+        key.to_string(),
+        AuxTimestampCacheEntry {
+            value,
+            cached_at: now,
+        },
+    );
+}
+
+fn prune_aux_timestamp_cache(
+    cache: &mut std::collections::HashMap<String, AuxTimestampCacheEntry>,
+    now: Instant,
+) {
+    cache.retain(|_key, entry| now.duration_since(entry.cached_at) <= AUX_TIMESTAMP_CACHE_TTL);
 }
 
 #[cfg(test)]
