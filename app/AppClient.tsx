@@ -108,6 +108,9 @@ const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
 const SELECTION_STORAGE_KEY = 'approach-viz:last-selection';
 const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
   offloadMode: null,
+  workerFailureStage: null,
+  workerFailureMessage: null,
+  workerFailureAt: null,
   enabled: false,
   loading: false,
   stale: false,
@@ -178,7 +181,6 @@ const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
 };
 const EMPTY_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
   workerAvailable: false,
-  sharedWorkerAvailable: false,
   sharedArrayBufferAvailable: false,
   atomicsAvailable: false,
   crossOriginIsolated: false
@@ -367,7 +369,6 @@ export function AppClient({
     refreshServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
     setRuntimeCapabilities({
       workerAvailable: typeof Worker !== 'undefined',
-      sharedWorkerAvailable: typeof SharedWorker !== 'undefined',
       sharedArrayBufferAvailable: typeof SharedArrayBuffer !== 'undefined',
       atomicsAvailable: typeof Atomics !== 'undefined',
       crossOriginIsolated: window.crossOriginIsolated === true

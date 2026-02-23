@@ -23,8 +23,22 @@ import type {
 } from './nexrad-worker-types';
 
 const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_DECODE_VOLUME_MS_FLOOR = 20_000;
+const REQUEST_TIMEOUT_DECODE_VOLUME_MS_CEIL = 45_000;
+const REQUEST_TIMEOUT_DECODE_VOLUME_MS_PER_MB = 2000;
+const REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_FLOOR = 12_000;
+const REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_CEIL = 30_000;
+const REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_PER_MB = 1000;
 
-type NexradWorkerRuntimeMode = 'shared-worker' | 'worker' | 'sync-fallback';
+type NexradWorkerRuntimeMode = 'worker' | 'sync-fallback';
+type NexradWorkerMode = 'worker';
+type NexradWorkerFailureStage = 'worker-init' | 'worker-request';
+
+export interface NexradWorkerDiagnostics {
+  lastFailureStage: NexradWorkerFailureStage | null;
+  lastFailureMessage: string | null;
+  lastFailureAt: string | null;
+}
 
 export interface VolumePrepareOptions {
   minDbz: number;
@@ -94,20 +108,45 @@ function supportsWorkers(): boolean {
   return typeof window !== 'undefined' && typeof Worker !== 'undefined';
 }
 
-function createSharedWorkerChannel(): WorkerChannel | null {
-  if (typeof SharedWorker === 'undefined') return null;
-  const sharedWorker = new SharedWorker(new URL('./nexrad.worker.ts', import.meta.url), {
-    name: 'approach-viz-nexrad',
-    type: 'module'
-  });
-  const port = sharedWorker.port;
-  port.start();
-  return {
-    postMessage: (message) => port.postMessage(message),
-    addEventListener: (type, listener) => port.addEventListener(type, listener),
-    removeEventListener: (type, listener) => port.removeEventListener(type, listener),
-    close: () => port.close()
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return String(error);
+}
+
+function timeoutForEchoTopDecode(bufferByteLength: number): number {
+  const perMbMs =
+    Math.ceil(Math.max(0, bufferByteLength) / 1_000_000) *
+    REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_PER_MB;
+  return Math.max(
+    REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_FLOOR,
+    Math.min(REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_CEIL, REQUEST_TIMEOUT_MS + perMbMs)
+  );
+}
+
+function timeoutForVolumeDecode(bufferByteLength: number): number {
+  const perMbMs =
+    Math.ceil(Math.max(0, bufferByteLength) / 1_000_000) * REQUEST_TIMEOUT_DECODE_VOLUME_MS_PER_MB;
+  return Math.max(
+    REQUEST_TIMEOUT_DECODE_VOLUME_MS_FLOOR,
+    Math.min(REQUEST_TIMEOUT_DECODE_VOLUME_MS_CEIL, REQUEST_TIMEOUT_MS + perMbMs)
+  );
+}
+
+let workerDiagnostics: NexradWorkerDiagnostics = {
+  lastFailureStage: null,
+  lastFailureMessage: null,
+  lastFailureAt: null
+};
+
+function recordWorkerFailure(stage: NexradWorkerFailureStage, error: unknown): void {
+  const message = describeError(error);
+  workerDiagnostics = {
+    lastFailureStage: stage,
+    lastFailureMessage: message,
+    lastFailureAt: new Date().toISOString()
   };
+  console.warn(`[MRMS worker] ${stage}: ${message}`);
 }
 
 function createDedicatedWorkerChannel(): WorkerChannel {
@@ -121,12 +160,14 @@ function createDedicatedWorkerChannel(): WorkerChannel {
 }
 
 class NexradDecodeWorkerClient {
+  readonly mode: NexradWorkerMode;
   private readonly channel: WorkerChannel;
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
 
   constructor() {
-    this.channel = createSharedWorkerChannel() ?? createDedicatedWorkerChannel();
+    this.mode = 'worker';
+    this.channel = createDedicatedWorkerChannel();
     this.channel.addEventListener('message', this.onMessage);
     this.channel.addEventListener('messageerror', this.onMessageError);
   }
@@ -136,11 +177,16 @@ class NexradDecodeWorkerClient {
     phaseDebug: PhaseDebugHeaderValues
   ): Promise<NexradVolumePayload> {
     const requestId = this.nextRequestId++;
+    const timeoutMs = timeoutForVolumeDecode(buffer.byteLength);
     const payload = await new Promise<NexradVolumePayload>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error('Timed out while decoding MRMS payload in worker.'));
-      }, REQUEST_TIMEOUT_MS);
+        reject(
+          new Error(
+            `Timed out (${timeoutMs} ms) while decoding MRMS payload in ${this.mode} (bytes=${buffer.byteLength}).`
+          )
+        );
+      }, timeoutMs);
       this.pending.set(requestId, { type: 'decode-volume', resolve, reject, timeoutId });
       this.channel.postMessage({
         type: 'decode-volume',
@@ -154,11 +200,16 @@ class NexradDecodeWorkerClient {
 
   async decodeEchoTop(buffer: ArrayBuffer): Promise<EchoTopPayload> {
     const requestId = this.nextRequestId++;
+    const timeoutMs = timeoutForEchoTopDecode(buffer.byteLength);
     const payload = await new Promise<EchoTopPayload>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error('Timed out while decoding MRMS echo-top payload in worker.'));
-      }, REQUEST_TIMEOUT_MS);
+        reject(
+          new Error(
+            `Timed out (${timeoutMs} ms) while decoding MRMS echo-top payload in ${this.mode} (bytes=${buffer.byteLength}).`
+          )
+        );
+      }, timeoutMs);
       this.pending.set(requestId, { type: 'decode-echo-top', resolve, reject, timeoutId });
       this.channel.postMessage({
         type: 'decode-echo-top',
@@ -323,7 +374,9 @@ class NexradDecodeWorkerClient {
 }
 
 let sharedClient: NexradDecodeWorkerClient | null = null;
+let prepareClient: NexradDecodeWorkerClient | null = null;
 let disableWorkerPath = false;
+let disablePrepareWorkerPath = false;
 let runtimeMode: NexradWorkerRuntimeMode = 'sync-fallback';
 
 function disposeClient() {
@@ -331,14 +384,20 @@ function disposeClient() {
   sharedClient = null;
 }
 
+function disposePrepareClient() {
+  prepareClient?.dispose();
+  prepareClient = null;
+}
+
 function getDecodeWorkerClient(): NexradDecodeWorkerClient | null {
   if (!supportsWorkers() || disableWorkerPath) return null;
   if (sharedClient) return sharedClient;
   try {
-    runtimeMode = typeof SharedWorker !== 'undefined' ? 'shared-worker' : 'worker';
     sharedClient = new NexradDecodeWorkerClient();
+    runtimeMode = sharedClient.mode;
     return sharedClient;
-  } catch {
+  } catch (error) {
+    recordWorkerFailure('worker-init', error);
     disableWorkerPath = true;
     runtimeMode = 'sync-fallback';
     return null;
@@ -347,75 +406,123 @@ function getDecodeWorkerClient(): NexradDecodeWorkerClient | null {
 
 function disableWorkersAndFallback() {
   disableWorkerPath = true;
+  disablePrepareWorkerPath = true;
   runtimeMode = 'sync-fallback';
   disposeClient();
+  disposePrepareClient();
+}
+
+function getPrepareWorkerClient(): NexradDecodeWorkerClient | null {
+  if (!supportsWorkers() || disableWorkerPath || disablePrepareWorkerPath) return null;
+  if (prepareClient) return prepareClient;
+  try {
+    // Isolate heavier prepare jobs from decode requests.
+    prepareClient = new NexradDecodeWorkerClient();
+    return prepareClient;
+  } catch (error) {
+    recordWorkerFailure('worker-init', error);
+    disablePrepareWorkerPath = true;
+    return null;
+  }
 }
 
 export function getNexradWorkerRuntimeMode(): NexradWorkerRuntimeMode {
   return runtimeMode;
 }
 
+export function getNexradWorkerDiagnostics(): NexradWorkerDiagnostics {
+  return workerDiagnostics;
+}
+
 export async function decodeVolumePayload(
   buffer: ArrayBuffer,
   phaseDebug: PhaseDebugHeaderValues
 ): Promise<NexradVolumePayload> {
+  const decodeSync = () => applyPhaseDebugValues(decodePayload(buffer), phaseDebug);
   const client = getDecodeWorkerClient();
   if (!client) {
-    return applyPhaseDebugValues(decodePayload(buffer), phaseDebug);
+    return decodeSync();
   }
   try {
     return await client.decodeVolume(buffer, phaseDebug);
-  } catch {
+  } catch (error) {
+    recordWorkerFailure('worker-request', error);
     disableWorkersAndFallback();
-    return applyPhaseDebugValues(decodePayload(buffer), phaseDebug);
+    return decodeSync();
   }
 }
 
 export async function decodeEchoTopPayloadWithWorker(buffer: ArrayBuffer): Promise<EchoTopPayload> {
+  const decodeSync = () => decodeEchoTopPayload(buffer);
   const client = getDecodeWorkerClient();
   if (!client) {
-    return decodeEchoTopPayload(buffer);
+    return decodeSync();
   }
   try {
     return await client.decodeEchoTop(buffer);
-  } catch {
+  } catch (error) {
+    recordWorkerFailure('worker-request', error);
     disableWorkersAndFallback();
-    return decodeEchoTopPayload(buffer);
+    return decodeSync();
   }
+}
+
+function prepareVolumeSync(
+  payload: NexradVolumePayload,
+  options: VolumePrepareOptions
+): { payload: NexradPreparedVolumeData; crossSectionData: CrossSectionData | null } {
+  const prepared = prepareVolumeData({
+    payload,
+    minDbz: options.minDbz,
+    phaseMode: options.phaseMode,
+    declutterMode: options.declutterMode,
+    applyEarthCurvatureCompensation: options.applyEarthCurvatureCompensation,
+    refLat: options.refLat
+  });
+  const crossSectionData = options.includeCrossSection
+    ? buildCrossSectionData({
+        payload,
+        volumeData: prepared,
+        normalizedCrossSectionRange: options.normalizedCrossSectionRange,
+        crossSectionHalfWidthNm: options.crossSectionHalfWidthNm,
+        sliceAxis: options.sliceAxis,
+        slicePerpAxis: options.slicePerpAxis
+      })
+    : null;
+  return { payload: prepared, crossSectionData };
 }
 
 export async function prepareVolumeWithWorker(
   payload: NexradVolumePayload,
   options: VolumePrepareOptions
 ): Promise<{ payload: NexradPreparedVolumeData; crossSectionData: CrossSectionData | null }> {
-  const client = getDecodeWorkerClient();
+  const client = getPrepareWorkerClient();
   if (!client) {
-    const prepared = prepareVolumeData({
-      payload,
-      minDbz: options.minDbz,
-      phaseMode: options.phaseMode,
-      declutterMode: options.declutterMode,
-      applyEarthCurvatureCompensation: options.applyEarthCurvatureCompensation,
-      refLat: options.refLat
-    });
-    const crossSectionData = options.includeCrossSection
-      ? buildCrossSectionData({
-          payload,
-          volumeData: prepared,
-          normalizedCrossSectionRange: options.normalizedCrossSectionRange,
-          crossSectionHalfWidthNm: options.crossSectionHalfWidthNm,
-          sliceAxis: options.sliceAxis,
-          slicePerpAxis: options.slicePerpAxis
-        })
-      : null;
-    return { payload: prepared, crossSectionData };
+    return prepareVolumeSync(payload, options);
   }
   try {
     return await client.prepareVolume(payload, options);
-  } catch {
-    disableWorkersAndFallback();
-    return prepareVolumeWithWorker(payload, options);
+  } catch (error) {
+    recordWorkerFailure('worker-request', error);
+    disablePrepareWorkerPath = true;
+    disposePrepareClient();
+    return prepareVolumeSync(payload, options);
   }
+}
+
+function prepareEchoTopSync(
+  payload: EchoTopPayload,
+  options: EchoTopPrepareOptions
+): {
+  echoTop18Cells: EchoTopSurfaceCell[];
+  echoTop30Cells: EchoTopSurfaceCell[];
+  echoTop50Cells: EchoTopSurfaceCell[];
+} {
+  return prepareEchoTopSurfaces({
+    payload,
+    applyEarthCurvatureCompensation: options.applyEarthCurvatureCompensation,
+    refLat: options.refLat
+  });
 }
 
 export async function prepareEchoTopWithWorker(
@@ -426,18 +533,16 @@ export async function prepareEchoTopWithWorker(
   echoTop30Cells: EchoTopSurfaceCell[];
   echoTop50Cells: EchoTopSurfaceCell[];
 }> {
-  const client = getDecodeWorkerClient();
+  const client = getPrepareWorkerClient();
   if (!client) {
-    return prepareEchoTopSurfaces({
-      payload,
-      applyEarthCurvatureCompensation: options.applyEarthCurvatureCompensation,
-      refLat: options.refLat
-    });
+    return prepareEchoTopSync(payload, options);
   }
   try {
     return await client.prepareEchoTop(payload, options);
-  } catch {
-    disableWorkersAndFallback();
-    return prepareEchoTopWithWorker(payload, options);
+  } catch (error) {
+    recordWorkerFailure('worker-request', error);
+    disablePrepareWorkerPath = true;
+    disposePrepareClient();
+    return prepareEchoTopSync(payload, options);
   }
 }

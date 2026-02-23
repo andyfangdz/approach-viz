@@ -134,3 +134,149 @@ test('MRMS Decoder - Binary flat array allocation logic (v3 format)', () => {
   assert.ok(Math.abs(decoded.footprintXNm[0] - 1.2) < 0.001);
   assert.ok(Math.abs(decoded.footprintXNm[1] - 2.4) < 0.001); // 1.2 base * 2 span
 });
+
+const TEST_PHASE_DEBUG = {
+  phaseMode: null,
+  phaseDetail: null,
+  zdrAgeSeconds: null,
+  rhohvAgeSeconds: null,
+  zdrTimestamp: null,
+  rhohvTimestamp: null,
+  precipFlagTimestamp: null,
+  freezingLevelTimestamp: null
+} as const;
+
+function buildTestVolumeBuffer(): ArrayBuffer {
+  const payloadStr = JSON.stringify({
+    generatedAt: '2026-02-21T12:00:00Z',
+    voxels: [[10.5, -5.2, 1000, 2000, 35.5, 1.2, 1.5, 1, 2]]
+  });
+  return new TextEncoder().encode(payloadStr).buffer;
+}
+
+function uniqueImportSuffix(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+test('MRMS worker client uses dedicated Worker decode path', { concurrency: false }, async () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  const originalWorker = (globalThis as { Worker?: unknown }).Worker;
+  let dedicatedWorkerConstructCount = 0;
+
+  class DedicatedWorkerMock {
+    private readonly listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+
+    constructor() {
+      dedicatedWorkerConstructCount += 1;
+    }
+
+    addEventListener(type: string, listener: (event: MessageEvent) => void) {
+      if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+      this.listeners.get(type)?.add(listener);
+    }
+
+    removeEventListener(type: string, listener: (event: MessageEvent) => void) {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    postMessage(message: { type: string; requestId: number; buffer: ArrayBuffer }) {
+      if (message.type !== 'decode-volume') return;
+      const payload = decodePayload(message.buffer);
+      this.dispatch('message', {
+        data: { type: 'decode-volume-result', requestId: message.requestId, payload }
+      } as MessageEvent);
+    }
+
+    terminate() {
+      return undefined;
+    }
+
+    private dispatch(type: string, event: MessageEvent) {
+      for (const listener of this.listeners.get(type) ?? []) {
+        listener(event);
+      }
+    }
+  }
+
+  (globalThis as { window?: unknown }).window = {};
+  (globalThis as { Worker?: unknown }).Worker = DedicatedWorkerMock as unknown;
+
+  try {
+    const workerClientModule = await import(
+      new URL(`./nexrad-worker-client.ts?test=${uniqueImportSuffix()}`, import.meta.url).href
+    );
+    const decoded = await workerClientModule.decodeVolumePayload(
+      buildTestVolumeBuffer(),
+      TEST_PHASE_DEBUG
+    );
+
+    assert.strictEqual(decoded.voxelCount, 1);
+    assert.strictEqual(dedicatedWorkerConstructCount, 1);
+    assert.strictEqual(workerClientModule.getNexradWorkerRuntimeMode(), 'worker');
+    const diagnostics = workerClientModule.getNexradWorkerDiagnostics();
+    assert.strictEqual(diagnostics.lastFailureStage, null);
+    assert.strictEqual(diagnostics.lastFailureMessage, null);
+  } finally {
+    (globalThis as { window?: unknown }).window = originalWindow;
+    (globalThis as { Worker?: unknown }).Worker = originalWorker;
+  }
+});
+
+test(
+  'MRMS worker client falls back to sync decode when dedicated Worker request fails',
+  { concurrency: false },
+  async () => {
+    const originalWindow = (globalThis as { window?: unknown }).window;
+    const originalWorker = (globalThis as { Worker?: unknown }).Worker;
+
+    class DedicatedWorkerMock {
+      private readonly listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+
+      addEventListener(type: string, listener: (event: MessageEvent) => void) {
+        if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+        this.listeners.get(type)?.add(listener);
+      }
+
+      removeEventListener(type: string, listener: (event: MessageEvent) => void) {
+        this.listeners.get(type)?.delete(listener);
+      }
+
+      postMessage(message: { type: string; requestId: number; buffer: ArrayBuffer }) {
+        if (message.type !== 'decode-volume') return;
+        this.dispatch('messageerror', {} as MessageEvent);
+      }
+
+      terminate() {
+        return undefined;
+      }
+
+      private dispatch(type: string, event: MessageEvent) {
+        for (const listener of this.listeners.get(type) ?? []) {
+          listener(event);
+        }
+      }
+    }
+
+    (globalThis as { window?: unknown }).window = {};
+    (globalThis as { Worker?: unknown }).Worker = DedicatedWorkerMock as unknown;
+
+    try {
+      const workerClientModule = await import(
+        new URL(`./nexrad-worker-client.ts?test=${uniqueImportSuffix()}`, import.meta.url).href
+      );
+      const decoded = await workerClientModule.decodeVolumePayload(
+        buildTestVolumeBuffer(),
+        TEST_PHASE_DEBUG
+      );
+
+      assert.strictEqual(decoded.voxelCount, 1);
+      assert.strictEqual(workerClientModule.getNexradWorkerRuntimeMode(), 'sync-fallback');
+      const diagnostics = workerClientModule.getNexradWorkerDiagnostics();
+      assert.strictEqual(diagnostics.lastFailureStage, 'worker-request');
+      assert.match(diagnostics.lastFailureMessage || '', /message error/);
+    } finally {
+      (globalThis as { window?: unknown }).window = originalWindow;
+      (globalThis as { Worker?: unknown }).Worker = originalWorker;
+    }
+  }
+);

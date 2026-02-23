@@ -210,10 +210,6 @@ export function DebugPanel({
               <span>{boolLabel(runtimeCapabilities.workerAvailable)}</span>
             </div>
             <div className="debug-row">
-              <span>SharedWorker</span>
-              <span>{boolLabel(runtimeCapabilities.sharedWorkerAvailable)}</span>
-            </div>
-            <div className="debug-row">
               <span>SharedArrayBuffer</span>
               <span>{boolLabel(runtimeCapabilities.sharedArrayBufferAvailable)}</span>
             </div>
@@ -363,6 +359,17 @@ export function DebugPanel({
               <span>Offload</span>
               <span>{nexradDebug.offloadMode || 'n/a'}</span>
             </div>
+            <div className="debug-row">
+              <span>Worker Fail</span>
+              <span>{nexradDebug.workerFailureStage || 'n/a'}</span>
+            </div>
+            <div className="debug-row">
+              <span>Worker Fail At</span>
+              <span>{formatTimestamp(nexradDebug.workerFailureAt)}</span>
+            </div>
+            {nexradDebug.workerFailureMessage && (
+              <div className="debug-row debug-row-wrap">{nexradDebug.workerFailureMessage}</div>
+            )}
             <div className="debug-row">
               <span>Poll Cycle</span>
               <span>{formatMs(nexradDebug.timingsMs.pollCycleMs)}</span>

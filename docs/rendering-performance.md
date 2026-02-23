@@ -29,7 +29,7 @@
 ## MRMS Weather Volume
 
 - Decoded payloads use parallel flat `TypedArrays` (`xNm`, `zNm`, `bottomFeet`, etc.) instead of Javascript objects to eliminate `100k+` object allocations and GC pauses during the `120s` poll cycle.
-- Binary decode runs in a worker off the main thread (`SharedWorker` preferred, dedicated `Worker` fallback), reducing UI hitching during poll refreshes while preserving a synchronous fallback path for reliability.
+- Binary decode runs in dedicated workers off the main thread, reducing UI hitching during poll refreshes while preserving a synchronous fallback path for reliability.
 - MRMS volume preprocessing (threshold filter, phase selection, curvature correction, declutter index generation), echo-top surface shaping, and cross-section binning are computed off-main-thread through the same worker pipeline.
 - Runtime debug telemetry exposes per-stage MRMS timings (`poll cycle`, volume/echo-top `fetch`, volume/echo-top `decode`, volume/echo-top `prepare`, and voxel/echo-top instance upload) for regression checks.
 - Volume and echo-top payloads use metadata signatures to suppress equivalent state replacements, reducing downstream prepare/upload churn when upstream poll responses are unchanged.

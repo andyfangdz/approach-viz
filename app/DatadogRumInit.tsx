@@ -8,6 +8,7 @@ type RumWindow = Window & {
 };
 
 const DATADOG_SITE = process.env.NEXT_PUBLIC_DD_SITE || 'datadoghq.com';
+const RUM_PROXY_PATH = process.env.NEXT_PUBLIC_DD_RUM_PROXY_PATH || '/api/datadog/rum';
 const RUM_APPLICATION_ID = process.env.NEXT_PUBLIC_DD_RUM_APPLICATION_ID;
 const RUM_CLIENT_TOKEN = process.env.NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN;
 const RUM_SERVICE = process.env.NEXT_PUBLIC_DD_RUM_SERVICE || 'approach-viz-web';
@@ -19,6 +20,10 @@ const RUM_SESSION_SAMPLE_RATE = parseFloat(
 );
 const RUM_SESSION_REPLAY_SAMPLE_RATE = parseFloat(
   process.env.NEXT_PUBLIC_DD_RUM_SESSION_REPLAY_SAMPLE_RATE || '0'
+);
+const NORMALIZED_RUM_PROXY_PATH = (RUM_PROXY_PATH.trim() || '/api/datadog/rum').replace(
+  /\/+$/,
+  ''
 );
 
 function sampleRateOrDefault(value: number, fallback: number): number {
@@ -43,6 +48,7 @@ export default function DatadogRumInit() {
       applicationId: RUM_APPLICATION_ID,
       clientToken: RUM_CLIENT_TOKEN,
       site: DATADOG_SITE,
+      proxy: ({ path, parameters }) => `${NORMALIZED_RUM_PROXY_PATH}${path}?${parameters}`,
       service: RUM_SERVICE,
       env: RUM_ENV,
       version: RUM_VERSION,
