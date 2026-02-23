@@ -25,11 +25,19 @@ External data feeds and their ingestion paths.
 - Source: `aeronav.faa.gov/d-tpp/<cycle>/<plate_file>`.
 - Fetched server-side through same-origin proxy `app/api/faa-plate/route.ts` to avoid browser CORS.
 - Plate metadata (`cycle`, `plateFile`) is resolved server-side and included in scene payloads.
+- Client service worker caching stores plate responses in D-TPP-cycle-scoped caches and purges older cycle caches when the app reports the active `dtppCycle`.
 
 ## Terrain Elevation Tiles
 
 - Source: Terrarium PNG tiles from `https://elevation-tiles-prod.s3.amazonaws.com/terrarium`.
 - Used by Terrain wireframe surface mode (default 50 NM radius, adjustable 20–80 NM).
+- Client service worker applies stale-while-revalidate caching with bounded cache size for Terrarium tile requests.
+
+## Google 3D Tiles (Satellite/3D Plate Surfaces)
+
+- Source: Google Maps 3D Tiles API `https://tile.googleapis.com/v1/3dtiles/*`.
+- Used by `Satellite` and `3D Plate` surface modes for curved photoreal terrain.
+- Client service worker applies stale-while-revalidate caching with bounded cache size for Google tile requests.
 
 ## Live ADS-B Traffic
 

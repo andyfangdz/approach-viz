@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type {
   NexradDebugState,
   RuntimeCapabilities,
+  ServiceWorkerCacheDebugState,
   SurfaceMode,
   TrafficDebugState
 } from './types';
@@ -15,6 +16,7 @@ interface DebugPanelProps {
   approachId: string;
   surfaceMode: SurfaceMode;
   runtimeCapabilities: RuntimeCapabilities;
+  serviceWorkerDebug: ServiceWorkerCacheDebugState;
   nexradDebug: NexradDebugState;
   trafficDebug: TrafficDebugState;
   cycleInfo: CycleInfo | null;
@@ -107,6 +109,7 @@ export function DebugPanel({
   approachId,
   surfaceMode,
   runtimeCapabilities,
+  serviceWorkerDebug,
   nexradDebug,
   trafficDebug,
   cycleInfo,
@@ -221,6 +224,30 @@ export function DebugPanel({
             <div className="debug-row">
               <span>Cross-Origin Iso</span>
               <span>{boolLabel(runtimeCapabilities.crossOriginIsolated)}</span>
+            </div>
+            <div className="debug-row">
+              <span>SW Support</span>
+              <span>{boolLabel(serviceWorkerDebug.supported)}</span>
+            </div>
+            <div className="debug-row">
+              <span>SW Registered</span>
+              <span>{boolLabel(serviceWorkerDebug.registered)}</span>
+            </div>
+            <div className="debug-row">
+              <span>SW Controlling</span>
+              <span>{boolLabel(serviceWorkerDebug.controlling)}</span>
+            </div>
+            <div className="debug-row">
+              <span>SW State</span>
+              <span>{serviceWorkerDebug.activeState || 'n/a'}</span>
+            </div>
+            <div className="debug-row">
+              <span>SW Scope</span>
+              <span>{serviceWorkerDebug.scope || 'n/a'}</span>
+            </div>
+            <div className="debug-row">
+              <span>SW Plate Cycle</span>
+              <span>{serviceWorkerDebug.dtppCycle || 'n/a'}</span>
             </div>
             {cycleInfo && (
               <>

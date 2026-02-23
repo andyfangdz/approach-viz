@@ -51,11 +51,17 @@ import {
   MAX_NEXRAD_OPACITY
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
+import {
+  ensureServiceWorkerCacheRegistration,
+  getServiceWorkerCacheDebugSnapshot,
+  syncServiceWorkerDtppCycle
+} from '@/app/app-client/service-worker-cache';
 import type {
   LayerState,
   NexradDebugState,
   NexradPhaseMode,
   CameraControlMode,
+  ServiceWorkerCacheDebugState,
   SurfaceMode,
   RuntimeCapabilities,
   TrafficDebugState,
@@ -176,6 +182,14 @@ const EMPTY_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
   sharedArrayBufferAvailable: false,
   atomicsAvailable: false,
   crossOriginIsolated: false
+};
+const EMPTY_SERVICE_WORKER_DEBUG: ServiceWorkerCacheDebugState = {
+  supported: false,
+  registered: false,
+  controlling: false,
+  activeState: null,
+  scope: null,
+  dtppCycle: null
 };
 
 function clampValue(value: number, min: number, max: number, fallback = min): number {
@@ -319,6 +333,9 @@ export function AppClient({
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<RuntimeCapabilities>(
     EMPTY_RUNTIME_CAPABILITIES
   );
+  const [serviceWorkerDebug, setServiceWorkerDebug] = useState<ServiceWorkerCacheDebugState>(
+    EMPTY_SERVICE_WORKER_DEBUG
+  );
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
@@ -334,8 +351,20 @@ export function AppClient({
     setLayers((prev) => ({ ...prev, [id]: enabled }));
   };
 
+  const refreshServiceWorkerDebug = useCallback((cycle: string | null | undefined) => {
+    getServiceWorkerCacheDebugSnapshot(cycle)
+      .then((snapshot) => {
+        setServiceWorkerDebug(snapshot);
+      })
+      .catch(() => {
+        // Keep runtime non-fatal when service worker introspection fails.
+      });
+  }, []);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    ensureServiceWorkerCacheRegistration();
+    refreshServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
     setRuntimeCapabilities({
       workerAvailable: typeof Worker !== 'undefined',
       sharedWorkerAvailable: typeof SharedWorker !== 'undefined',
@@ -565,6 +594,24 @@ export function AppClient({
     setSelectedAirport(initialSceneData.airport?.id ?? initialAirportId);
     setSelectedApproach(initialSceneData.selectedApproachId || initialApproachId);
   }, [initialSceneData, initialAirportId, initialApproachId]);
+
+  useEffect(() => {
+    syncServiceWorkerDtppCycle(sceneData.cycleInfo?.dtppCycle);
+    refreshServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
+  }, [refreshServiceWorkerDebug, sceneData.cycleInfo?.dtppCycle]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+
+    const handleControllerChange = () => {
+      refreshServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
+    };
+
+    navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
+    return () => {
+      navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
+    };
+  }, [refreshServiceWorkerDebug, sceneData.cycleInfo?.dtppCycle]);
 
   useEffect(() => {
     if (airportOptions.length > 0) return;
@@ -960,6 +1007,7 @@ export function AppClient({
           approachId={selectedApproach}
           surfaceMode={surfaceMode}
           runtimeCapabilities={runtimeCapabilities}
+          serviceWorkerDebug={serviceWorkerDebug}
           nexradDebug={nexradDebug}
           trafficDebug={trafficDebug}
           cycleInfo={sceneData.cycleInfo}

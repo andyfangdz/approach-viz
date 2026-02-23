@@ -92,6 +92,15 @@ export interface RuntimeCapabilities {
   crossOriginIsolated: boolean;
 }
 
+export interface ServiceWorkerCacheDebugState {
+  supported: boolean;
+  registered: boolean;
+  controlling: boolean;
+  activeState: string | null;
+  scope: string | null;
+  dtppCycle: string | null;
+}
+
 export interface HeaderControlsProps {
   selectorsCollapsed: boolean;
   onToggleSelectors: () => void;
