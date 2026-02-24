@@ -185,12 +185,14 @@ export class TrafficWorkerClient {
     this.worker = new Worker(new URL('./traffic.worker.ts', import.meta.url), { type: 'module' });
     this.worker.addEventListener('message', this.onMessage);
     this.worker.addEventListener('messageerror', this.onMessageError);
+    this.worker.addEventListener('error', this.onWorkerError);
     this.initializeSabTransport();
   }
 
   dispose() {
     this.worker.removeEventListener('message', this.onMessage);
     this.worker.removeEventListener('messageerror', this.onMessageError);
+    this.worker.removeEventListener('error', this.onWorkerError);
     this.worker.terminate();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeoutId);
@@ -526,6 +528,15 @@ export class TrafficWorkerClient {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeoutId);
       pending.reject(new Error('Traffic worker message error.'));
+    }
+    this.pending.clear();
+  };
+
+  private onWorkerError = () => {
+    this.sabChannelPool?.clearInFlightRequests();
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(new Error('Traffic worker runtime error.'));
     }
     this.pending.clear();
   };
