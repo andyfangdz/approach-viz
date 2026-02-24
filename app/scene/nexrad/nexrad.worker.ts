@@ -1,4 +1,9 @@
-import { applyPhaseDebugValues, decodeEchoTopPayload, decodePayload } from './nexrad-decode';
+import {
+  applyPhaseDebugValues,
+  decodeEchoTopPayload,
+  decodePayload,
+  extractPhaseDebugHeaderValues
+} from './nexrad-decode';
 import {
   buildCrossSectionData,
   prepareEchoTopSurfaces,
@@ -12,6 +17,8 @@ import type {
   NexradPrepareSabOverflow,
   NexradWorkerRequestMessage,
   NexradWorkerResponseMessage,
+  PollAndPrepareRequestMessage,
+  PollAndPrepareResponseMessage,
   PrepareEchoTopRequestMessage,
   PrepareVolumeRequestMessage
 } from './nexrad-worker-types';
@@ -25,6 +32,45 @@ type WorkerEndpoint = {
   postMessage: (message: NexradWorkerResponseMessage, transfer?: Transferable[]) => void;
 };
 const prepareSabViewsByChannel = new Map<number, NexradPrepareSabViews>();
+
+function errorResponseForRequest(
+  message: Exclude<NexradWorkerRequestMessage, NexradInitSabRequestMessage>,
+  error: unknown
+): NexradWorkerResponseMessage {
+  const errorMessage = error instanceof Error ? error.message : 'MRMS worker request failed.';
+  switch (message.type) {
+    case 'decode-volume':
+      return {
+        type: 'decode-volume-result',
+        requestId: message.requestId,
+        error: errorMessage
+      };
+    case 'decode-echo-top':
+      return {
+        type: 'decode-echo-top-result',
+        requestId: message.requestId,
+        error: errorMessage
+      };
+    case 'prepare-volume':
+      return {
+        type: 'prepare-volume-result',
+        requestId: message.requestId,
+        error: errorMessage
+      };
+    case 'prepare-echo-top':
+      return {
+        type: 'prepare-echo-top-result',
+        requestId: message.requestId,
+        error: errorMessage
+      };
+    case 'poll-and-prepare':
+      return {
+        type: 'poll-and-prepare-result',
+        requestId: message.requestId,
+        error: errorMessage
+      };
+  }
+}
 
 function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
   return [
@@ -49,6 +95,49 @@ function echoTopTransferables(payload: EchoTopPayload): Transferable[] {
   if (payload.top50Feet) transferables.push(payload.top50Feet.buffer);
   if (payload.top60Feet) transferables.push(payload.top60Feet.buffer);
   return transferables;
+}
+
+function roundMs(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function emptyPreparedVolume() {
+  return {
+    validCount: 0,
+    validIndices: new Int32Array(0),
+    yBase: new Float32Array(0),
+    heightBase: new Float32Array(0),
+    correctedBottomFeet: new Float32Array(0),
+    correctedTopFeet: new Float32Array(0),
+    effectivePhaseCode: new Uint8Array(0),
+    declutterIndices: new Int32Array(0),
+    declutterCount: 0
+  };
+}
+
+function normalizeFetchUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const workerLocation = (globalThis as { location?: { origin?: string } }).location;
+  if (workerLocation?.origin && workerLocation.origin !== 'null') {
+    return new URL(url, workerLocation.origin).toString();
+  }
+  return url;
+}
+
+async function fetchArrayBuffer(
+  url: string
+): Promise<{ buffer: ArrayBuffer; headers: Headers; fetchMs: number }> {
+  const fetchStartedAt = performance.now();
+  const response = await fetch(normalizeFetchUrl(url), { cache: 'no-store' });
+  const fetchMs = roundMs(performance.now() - fetchStartedAt);
+  if (!response.ok) {
+    throw new Error(`MRMS request failed (${response.status})`);
+  }
+  return {
+    buffer: await response.arrayBuffer(),
+    headers: response.headers,
+    fetchMs
+  };
 }
 
 function handleDecodeVolume(endpoint: WorkerEndpoint, message: DecodeVolumeRequestMessage): void {
@@ -176,11 +265,172 @@ function handlePrepareEchoTop(
   }
 }
 
+async function handlePollAndPrepare(
+  endpoint: WorkerEndpoint,
+  message: PollAndPrepareRequestMessage
+): Promise<void> {
+  const prepareSabViews = prepareSabViewsByChannel.get(message.sabChannelId) ?? null;
+  if (!prepareSabViews) {
+    endpoint.postMessage({
+      type: 'poll-and-prepare-result',
+      requestId: message.requestId,
+      error: 'MRMS poll-and-prepare SAB channel was not initialized.'
+    });
+    return;
+  }
+
+  const timings: PollAndPrepareResponseMessage['timings'] = {
+    volumeFetchMs: null,
+    volumeDecodeMs: null,
+    volumePrepareMs: null,
+    echoTopFetchMs: null,
+    echoTopDecodeMs: null,
+    echoTopPrepareMs: null
+  };
+
+  let volumePayload: NexradVolumePayload | undefined;
+  if (message.includeVolume) {
+    if (!message.volumeUrl) {
+      endpoint.postMessage({
+        type: 'poll-and-prepare-result',
+        requestId: message.requestId,
+        error: 'MRMS volume URL was missing for poll-and-prepare request.'
+      });
+      return;
+    }
+    const volumeFetch = await fetchArrayBuffer(message.volumeUrl);
+    timings.volumeFetchMs = volumeFetch.fetchMs;
+    const decodeStartedAt = performance.now();
+    volumePayload = applyPhaseDebugValues(
+      decodePayload(volumeFetch.buffer),
+      extractPhaseDebugHeaderValues(volumeFetch.headers)
+    );
+    timings.volumeDecodeMs = roundMs(performance.now() - decodeStartedAt);
+  }
+
+  const prepareStartedAt = performance.now();
+  const preparedVolume =
+    message.includeVolume && volumePayload
+      ? prepareVolumeData({
+          payload: volumePayload,
+          minDbz: message.minDbz,
+          phaseMode: message.phaseMode,
+          declutterMode: message.declutterMode,
+          applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
+          refLat: message.refLat
+        })
+      : emptyPreparedVolume();
+  const crossSectionData =
+    message.includeVolume && message.includeCrossSection && volumePayload
+      ? buildCrossSectionData({
+          payload: volumePayload,
+          volumeData: preparedVolume,
+          sliceAxis: message.sliceAxis,
+          slicePerpAxis: message.slicePerpAxis,
+          normalizedCrossSectionRange: message.normalizedCrossSectionRange,
+          crossSectionHalfWidthNm: message.crossSectionHalfWidthNm
+        })
+      : null;
+  timings.volumePrepareMs = roundMs(performance.now() - prepareStartedAt);
+
+  const sabResult = writeNexradPrepareSabResult(
+    prepareSabViews,
+    message.requestId,
+    preparedVolume,
+    crossSectionData
+  );
+  if (!sabResult.usedSab) {
+    endpoint.postMessage({
+      type: 'poll-and-prepare-result',
+      requestId: message.requestId,
+      usedSab: false,
+      sabOverflow: {
+        voxelCapacity: sabResult.requiredVoxelCapacity
+      },
+      timings
+    });
+    return;
+  }
+
+  let echoTop18Cells: PollAndPrepareResponseMessage['echoTop18Cells'] = [];
+  let echoTop30Cells: PollAndPrepareResponseMessage['echoTop30Cells'] = [];
+  let echoTop50Cells: PollAndPrepareResponseMessage['echoTop50Cells'] = [];
+  let echoTopSummary: PollAndPrepareResponseMessage['echoTopSummary'] = null;
+
+  if (message.includeEchoTop && message.echoTopUrl) {
+    try {
+      const echoTopFetch = await fetchArrayBuffer(message.echoTopUrl);
+      timings.echoTopFetchMs = echoTopFetch.fetchMs;
+      const decodeStartedAt = performance.now();
+      const echoTopPayload = decodeEchoTopPayload(echoTopFetch.buffer);
+      timings.echoTopDecodeMs = roundMs(performance.now() - decodeStartedAt);
+      const prepareStartedAt = performance.now();
+      const preparedEchoTop = prepareEchoTopSurfaces({
+        payload: echoTopPayload,
+        applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
+        refLat: message.refLat
+      });
+      timings.echoTopPrepareMs = roundMs(performance.now() - prepareStartedAt);
+      echoTop18Cells = preparedEchoTop.echoTop18Cells;
+      echoTop30Cells = preparedEchoTop.echoTop30Cells;
+      echoTop50Cells = preparedEchoTop.echoTop50Cells;
+      echoTopSummary = {
+        sourceCellCount:
+          echoTopPayload.sourceCellCount ??
+          echoTopPayload.cellCount ??
+          echoTopPayload.xNm?.length ??
+          echoTopPayload.cells?.length ??
+          0,
+        maxTop18Feet: echoTopPayload.maxTop18Feet ?? null,
+        maxTop30Feet: echoTopPayload.maxTop30Feet ?? null,
+        maxTop50Feet: echoTopPayload.maxTop50Feet ?? null,
+        maxTop60Feet: echoTopPayload.maxTop60Feet ?? null,
+        top18Timestamp: echoTopPayload.top18Timestamp ?? null,
+        top30Timestamp: echoTopPayload.top30Timestamp ?? null,
+        top50Timestamp: echoTopPayload.top50Timestamp ?? null,
+        top60Timestamp: echoTopPayload.top60Timestamp ?? null,
+        error: echoTopPayload.error ?? null
+      };
+    } catch (error) {
+      echoTopSummary = {
+        sourceCellCount: 0,
+        maxTop18Feet: null,
+        maxTop30Feet: null,
+        maxTop50Feet: null,
+        maxTop60Feet: null,
+        top18Timestamp: null,
+        top30Timestamp: null,
+        top50Timestamp: null,
+        top60Timestamp: null,
+        error: error instanceof Error ? error.message : 'MRMS echo-top poll failed.'
+      };
+    }
+  }
+
+  endpoint.postMessage(
+    {
+      type: 'poll-and-prepare-result',
+      requestId: message.requestId,
+      usedSab: true,
+      volumePayload,
+      echoTop18Cells,
+      echoTop30Cells,
+      echoTop50Cells,
+      echoTopSummary,
+      timings
+    },
+    volumePayload ? volumeTransferables(volumePayload) : []
+  );
+}
+
 function handleInitSab(message: NexradInitSabRequestMessage): void {
   prepareSabViewsByChannel.set(message.channelId, createNexradPrepareSabViews(message.buffers));
 }
 
-function handleMessage(endpoint: WorkerEndpoint, message: NexradWorkerRequestMessage): void {
+async function handleMessage(
+  endpoint: WorkerEndpoint,
+  message: NexradWorkerRequestMessage
+): Promise<void> {
   if (message.type === 'init-sab') {
     handleInitSab(message);
     return;
@@ -197,7 +447,11 @@ function handleMessage(endpoint: WorkerEndpoint, message: NexradWorkerRequestMes
     handlePrepareVolume(endpoint, message);
     return;
   }
-  handlePrepareEchoTop(endpoint, message);
+  if (message.type === 'prepare-echo-top') {
+    handlePrepareEchoTop(endpoint, message);
+    return;
+  }
+  await handlePollAndPrepare(endpoint, message);
 }
 
 const scope = self as unknown as {
@@ -207,12 +461,20 @@ const scope = self as unknown as {
 };
 
 scope.onmessage = (event) => {
-  handleMessage(
-    {
-      postMessage: (message, transfer) => scope.postMessage(message, transfer ?? [])
-    },
-    event.data
-  );
+  const message = event.data;
+  void (async () => {
+    try {
+      await handleMessage(
+        {
+          postMessage: (response, transfer) => scope.postMessage(response, transfer ?? [])
+        },
+        message
+      );
+    } catch (error) {
+      if (message.type === 'init-sab') return;
+      scope.postMessage(errorResponseForRequest(message, error));
+    }
+  })();
 };
 
 if (typeof scope.onconnect !== 'undefined') {
@@ -220,12 +482,20 @@ if (typeof scope.onconnect !== 'undefined') {
     const port = event.ports[0];
     if (!port) return;
     port.onmessage = (portEvent: MessageEvent<NexradWorkerRequestMessage>) => {
-      handleMessage(
-        {
-          postMessage: (message, transfer) => port.postMessage(message, transfer ?? [])
-        },
-        portEvent.data
-      );
+      const message = portEvent.data;
+      void (async () => {
+        try {
+          await handleMessage(
+            {
+              postMessage: (response, transfer) => port.postMessage(response, transfer ?? [])
+            },
+            message
+          );
+        } catch (error) {
+          if (message.type === 'init-sab') return;
+          port.postMessage(errorResponseForRequest(message, error));
+        }
+      })();
     };
     port.start();
   };

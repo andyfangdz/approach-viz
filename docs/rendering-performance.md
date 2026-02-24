@@ -17,7 +17,7 @@
 
 - Polling is throttled to a fixed interval (`5s`) through a same-origin proxy to the Rust runtime endpoint (`/v1/traffic/adsbx`) and bounded by viewport-centric query radius/aircraft limit to avoid full-feed client downloads.
 - Initial history request (default `3 min`) on overlay context/history changes, plus targeted incremental history refreshes for newly seen aircraft hexes on later polls (`historyHexes`) when `Show Departed Traffic Trails` is enabled; while enabled, the client also periodically re-runs full history refresh (interval derived from history window, clamped `60..300s`) to discover newly departed aircraft. Runtime serves these history windows from its disk-backed SQLite traffic store (`traffic-store.db`) fed by 1 Hz US-wide polling, so history queries avoid per-request upstream trace fetches and large in-memory history buffers.
-- Traffic poll requests default to runtime binary wire format (`format=binary`, `application/vnd.approach-viz.traffic.v1`); main thread only inspects lightweight hex metadata while raw payload buffers are transferred to the traffic worker for full decode+merge.
+- Traffic poll requests are worker-initiated via `ingest-runtime`; the worker fetches runtime binary wire payloads (`format=binary`, `application/vnd.approach-viz.traffic.v1`) and performs decode+merge fully off main thread.
 - Track merge/prune/projection compute is offloaded to a dedicated traffic worker and requires SharedArrayBuffer + Atomics transport; worker failures surface as explicit UI/debug errors (no synchronous fallback).
 - Traffic worker render payload transport uses SharedArrayBuffer + Atomics channels via shared utilities (`app/scene/shared/sab-channel-pool.ts`, `app/scene/shared/growable-sab.ts`), starting with two concurrent channels and growing channel count on demand up to a bounded cap. Each channel starts with a larger default shared point capacity (`1,000,000` history points); when an overflow reports required capacities, the client retries on a channel that can fit those capacities and grows that channel in place via growable SAB.
 - Traffic overlay consumes worker output through a buffer-native render frame (`Float32Array`/`Int32Array`/flags) from SAB transport, so trail/heading/marker uploads read directly from flat buffers instead of rebuilding nested `RenderTrafficTrack`/`trailPoints` object graphs on the main thread.
@@ -32,13 +32,12 @@
 
 ## MRMS Weather Volume
 
-- Decoded payloads use parallel flat `TypedArrays` (`xNm`, `zNm`, `bottomFeet`, etc.) instead of Javascript objects to eliminate `100k+` object allocations and GC pauses during the `120s` poll cycle.
-- Binary decode runs in dedicated workers off the main thread, reducing UI hitching during poll refreshes while surfacing worker failures as explicit errors (no synchronous fallback).
-- MRMS decode requests and responses use transferable `ArrayBuffer`/typed-array ownership moves to reduce cross-thread copy cost.
-- MRMS volume preprocessing (threshold filter, phase selection, curvature correction, declutter index generation), echo-top surface shaping, and cross-section binning are computed off-main-thread through the same worker pipeline.
+- Binary decode and prepare run in a single worker poll request (`poll-and-prepare`), reducing UI hitching during refreshes while surfacing worker failures as explicit errors (no synchronous fallback).
+- MRMS poll responses keep heavy prepared-volume arrays on SAB transport; decoded volume typed arrays needed for final render upload are returned as transferables.
+- MRMS volume preprocessing (threshold filter, phase selection, curvature correction, declutter index generation), echo-top surface shaping, and cross-section binning are computed off-main-thread in that same poll path.
 - MRMS prepared-volume worker responses use a SharedArrayBuffer + Atomics channel (shared typed-array views with counts in an atomic control block) and automatically grow SAB voxel capacity with overflow retry.
 - Runtime debug telemetry exposes per-stage MRMS timings (`poll cycle`, volume/echo-top `fetch`, volume/echo-top `decode`, volume/echo-top `prepare`, and voxel/echo-top instance upload) for regression checks.
-- Volume and echo-top payloads use metadata signatures to suppress equivalent state replacements, reducing downstream prepare/upload churn when upstream poll responses are unchanged.
+- Volume/echo-top metadata signatures are still used to suppress equivalent state replacements, reducing downstream upload churn when upstream poll responses are unchanged.
 - Volumetric instanced meshes calculate transforms and scale by writing directly into the `Float32Array` of `InstancedMesh.instanceMatrix.array` (via 16-element offsets), avoiding the heavy `THREE.Object3D` quaternion scaling overhead completely.
 - MRMS base/glow dual-pass volume rendering shares populated instance buffers between passes, avoiding a second per-voxel transform/color upload each refresh.
 - MRMS instanced capacities grow in buckets instead of resizing every poll, reducing remount/reallocation churn for fluctuating voxel counts.

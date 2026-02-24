@@ -9,7 +9,7 @@ import type {
   TrafficWorkerResponseMessage
 } from './traffic-worker-types';
 import { createTrafficSabViews, type TrafficSabViews, writeTrafficSabResult } from './traffic-sab';
-import { decodeTrafficBinaryPayload } from './traffic-binary-protocol';
+import { decodeTrafficBinaryPayload, isTrafficBinaryContentType } from './traffic-binary-protocol';
 
 const STALE_TRACK_GRACE_MS = 20000;
 const MIN_SAMPLE_DISTANCE_NM = 0.03;
@@ -327,6 +327,116 @@ function mergeRemoteHistoryMaps(
   return merged;
 }
 
+interface LiveTrafficFeed {
+  aircraft?: LiveTrafficAircraft[];
+  historyByHex?: Record<string, LiveTrafficHistoryPoint[]>;
+  error?: string;
+}
+
+interface RuntimeTrafficFetchResult {
+  aircraftList: LiveTrafficAircraft[];
+  historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined;
+  trackedHexes: string[];
+  returnedHistoryHexes: string[];
+  feedTransport: 'binary' | 'json';
+  fetchMs: number;
+  parseMs: number;
+}
+
+function normalizeFetchUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const workerLocation = (globalThis as { location?: { origin?: string } }).location;
+  if (workerLocation?.origin && workerLocation.origin !== 'null') {
+    return new URL(url, workerLocation.origin).toString();
+  }
+  return url;
+}
+
+function dedupeHexes(hexes: string[]): string[] {
+  return Array.from(new Set(hexes.filter((hex) => typeof hex === 'string' && hex.length > 0)));
+}
+
+function trackedHexesFromAircraft(aircraftList: LiveTrafficAircraft[]): string[] {
+  return dedupeHexes(aircraftList.map((aircraft) => aircraft.hex));
+}
+
+function historyHexesFromMap(
+  historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined
+): string[] {
+  if (!historyByHex || typeof historyByHex !== 'object') return [];
+  return dedupeHexes(Object.keys(historyByHex));
+}
+
+async function fetchTrafficRuntimePayload(url: string): Promise<RuntimeTrafficFetchResult> {
+  const fetchStartedAt = performance.now();
+  const response = await fetch(normalizeFetchUrl(url), { cache: 'no-store' });
+  const fetchMs = roundMs(performance.now() - fetchStartedAt);
+  if (!response.ok) {
+    throw new Error(`Traffic feed request failed (${response.status})`);
+  }
+
+  const parseStartedAt = performance.now();
+  const contentType = response.headers.get('content-type');
+  if (isTrafficBinaryContentType(contentType)) {
+    const payloadBuffer = await response.arrayBuffer();
+    const decoded = decodeTrafficBinaryPayload(payloadBuffer);
+    return {
+      aircraftList: decoded.aircraftList,
+      historyByHex: decoded.historyByHex,
+      trackedHexes: trackedHexesFromAircraft(decoded.aircraftList),
+      returnedHistoryHexes: historyHexesFromMap(decoded.historyByHex),
+      feedTransport: 'binary',
+      fetchMs,
+      parseMs: roundMs(performance.now() - parseStartedAt)
+    };
+  }
+
+  const payload = (await response.json()) as LiveTrafficFeed;
+  const aircraftList = Array.isArray(payload.aircraft) ? payload.aircraft : [];
+  const historyByHex =
+    payload.historyByHex && typeof payload.historyByHex === 'object'
+      ? payload.historyByHex
+      : undefined;
+  return {
+    aircraftList,
+    historyByHex,
+    trackedHexes: trackedHexesFromAircraft(aircraftList),
+    returnedHistoryHexes: historyHexesFromMap(historyByHex),
+    feedTransport: 'json',
+    fetchMs,
+    parseMs: roundMs(performance.now() - parseStartedAt)
+  };
+}
+
+async function fetchRuntimeIngestData(
+  primaryUrl: string,
+  followupUrl?: string
+): Promise<RuntimeTrafficFetchResult> {
+  const primary = await fetchTrafficRuntimePayload(primaryUrl);
+  if (!followupUrl) {
+    return primary;
+  }
+
+  try {
+    const followup = await fetchTrafficRuntimePayload(followupUrl);
+    return {
+      aircraftList: primary.aircraftList,
+      historyByHex: mergeRemoteHistoryMaps(primary.historyByHex, followup.historyByHex),
+      trackedHexes: primary.trackedHexes,
+      returnedHistoryHexes: dedupeHexes([
+        ...primary.returnedHistoryHexes,
+        ...followup.returnedHistoryHexes
+      ]),
+      feedTransport: primary.feedTransport,
+      fetchMs: roundMs(primary.fetchMs + followup.fetchMs),
+      parseMs: roundMs(primary.parseMs + followup.parseMs)
+    };
+  } catch (error) {
+    console.warn('Traffic history backfill follow-up failed.', error);
+    return primary;
+  }
+}
+
 function pruneForError(nowMs: number, historyMinutes: number) {
   const staleCutoffMs = nowMs - historyMinutes * 60_000;
   for (const [hex, track] of tracks.entries()) {
@@ -440,9 +550,9 @@ function handleInitSab(message: TrafficInitSabRequest): void {
   sabViewsByChannel.set(message.channelId, createTrafficSabViews(message.buffers));
 }
 
-function handleMessage(
+async function handleMessage(
   message: Exclude<TrafficWorkerRequestMessage, TrafficInitSabRequest>
-): TrafficWorkerResponseMessage {
+): Promise<TrafficWorkerResponseMessage> {
   const sabViews = sabViewsByChannel.get(message.sabChannelId) ?? null;
   if (!sabViews) {
     return {
@@ -454,6 +564,11 @@ function handleMessage(
   }
 
   const startedAt = performance.now();
+  let trackedHexes: string[] = [];
+  let returnedHistoryHexes: string[] = [];
+  let feedTransport: 'binary' | 'json' | undefined;
+  let fetchMs: number | undefined;
+  let parseMs: number | undefined;
   if (message.type === 'reset') {
     tracks.clear();
   } else if (message.type === 'ingest') {
@@ -476,6 +591,26 @@ function handleMessage(
       message.hideGroundTargets,
       mergeRemoteHistoryMaps(decoded.historyByHex, supplementalHistory)
     );
+    trackedHexes = trackedHexesFromAircraft(decoded.aircraftList);
+    returnedHistoryHexes = dedupeHexes([
+      ...historyHexesFromMap(decoded.historyByHex),
+      ...historyHexesFromMap(supplementalHistory)
+    ]);
+    feedTransport = 'binary';
+  } else if (message.type === 'ingest-runtime') {
+    const runtimeData = await fetchRuntimeIngestData(message.primaryUrl, message.followupUrl);
+    mergeTracks(
+      runtimeData.aircraftList,
+      message.nowMs,
+      message.historyMinutes,
+      message.hideGroundTargets,
+      runtimeData.historyByHex
+    );
+    trackedHexes = runtimeData.trackedHexes;
+    returnedHistoryHexes = runtimeData.returnedHistoryHexes;
+    feedTransport = runtimeData.feedTransport;
+    fetchMs = runtimeData.fetchMs;
+    parseMs = runtimeData.parseMs;
   } else if (message.type === 'prune-error') {
     pruneForError(message.nowMs, message.historyMinutes);
   } else {
@@ -503,7 +638,12 @@ function handleMessage(
       type: 'result',
       requestId: message.requestId,
       operation: message.type,
-      usedSab: true
+      usedSab: true,
+      trackedHexes,
+      returnedHistoryHexes,
+      feedTransport,
+      fetchMs,
+      parseMs
     };
   }
   return {
@@ -511,7 +651,12 @@ function handleMessage(
     requestId: message.requestId,
     operation: message.type,
     workerProcessingMs,
-    sabOverflow: sabResult.overflow
+    sabOverflow: sabResult.overflow,
+    trackedHexes,
+    returnedHistoryHexes,
+    feedTransport,
+    fetchMs,
+    parseMs
   };
 }
 
@@ -521,25 +666,23 @@ const scope = self as unknown as {
 };
 
 scope.onmessage = (event) => {
-  try {
-    const message = event.data;
-    if (message.type === 'init-sab') {
-      handleInitSab(message);
-      return;
-    }
-    scope.postMessage(handleMessage(message));
-  } catch (error) {
-    const message = event.data;
-    if (message.type === 'init-sab') {
-      return;
-    }
-    scope.postMessage({
-      type: 'result',
-      requestId: message.requestId,
-      operation: message.type,
-      error: error instanceof Error ? error.message : 'Traffic worker processing failed.'
-    });
+  const message = event.data;
+  if (message.type === 'init-sab') {
+    handleInitSab(message);
+    return;
   }
+  void (async () => {
+    try {
+      scope.postMessage(await handleMessage(message));
+    } catch (error) {
+      scope.postMessage({
+        type: 'result',
+        requestId: message.requestId,
+        operation: message.type,
+        error: error instanceof Error ? error.message : 'Traffic worker processing failed.'
+      });
+    }
+  })();
 };
 
 export {};

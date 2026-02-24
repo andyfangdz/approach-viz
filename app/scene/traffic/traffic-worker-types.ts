@@ -85,6 +85,12 @@ export interface TrafficBinaryIngestRequest extends TrafficBaseRequest {
   historyPayloadBuffer?: ArrayBuffer;
 }
 
+export interface TrafficRuntimeIngestRequest extends TrafficBaseRequest {
+  type: 'ingest-runtime';
+  primaryUrl: string;
+  followupUrl?: string;
+}
+
 export interface TrafficRecomputeRequest extends TrafficBaseRequest {
   type: 'recompute';
 }
@@ -98,6 +104,7 @@ export type TrafficWorkerRequestMessage =
   | TrafficResetRequest
   | TrafficIngestRequest
   | TrafficBinaryIngestRequest
+  | TrafficRuntimeIngestRequest
   | TrafficRecomputeRequest
   | TrafficErrorPruneRequest;
 
@@ -117,5 +124,10 @@ export interface TrafficWorkerResponseMessage {
   workerProcessingMs?: number;
   usedSab?: boolean;
   sabOverflow?: TrafficSabOverflow;
+  trackedHexes?: string[];
+  returnedHistoryHexes?: string[];
+  feedTransport?: 'binary' | 'json';
+  fetchMs?: number;
+  parseMs?: number;
   error?: string;
 }

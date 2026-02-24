@@ -11,6 +11,9 @@ import type {
   DecodeVolumeResponseMessage,
   NexradWorkerRequestMessage,
   NexradWorkerResponseMessage,
+  PollAndPrepareEchoTopSummary,
+  PollAndPrepareResponseMessage,
+  PollAndPrepareTimings,
   PhaseDebugHeaderValues,
   PrepareEchoTopResponseMessage,
   PrepareVolumeResponseMessage
@@ -46,7 +49,7 @@ const PREPARE_SAB_MAX_CHANNEL_COUNT = 3;
 type NexradWorkerRuntimeMode = 'worker' | 'worker-error';
 type NexradWorkerMode = 'worker';
 type NexradWorkerFailureStage = 'worker-init' | 'worker-request';
-type NexradDecodeTransport = 'post-message' | 'worker-error';
+type NexradDecodeTransport = 'sab' | 'post-message' | 'worker-error';
 type NexradPrepareTransport = 'sab' | 'worker-error';
 
 export interface NexradWorkerDiagnostics {
@@ -76,6 +79,24 @@ export interface VolumePrepareOptions {
 export interface EchoTopPrepareOptions {
   applyEarthCurvatureCompensation: boolean;
   refLat: number;
+}
+
+export interface NexradPollAndPrepareOptions extends VolumePrepareOptions {
+  volumeUrl?: string;
+  echoTopUrl?: string;
+  includeVolume: boolean;
+  includeEchoTop: boolean;
+}
+
+export interface NexradPollAndPrepareResult {
+  volumePayload: NexradVolumePayload | null;
+  preparedVolume: NexradPreparedVolumeData;
+  crossSectionData: CrossSectionData | null;
+  echoTop18Cells: EchoTopSurfaceCell[];
+  echoTop30Cells: EchoTopSurfaceCell[];
+  echoTop50Cells: EchoTopSurfaceCell[];
+  echoTopSummary: PollAndPrepareEchoTopSummary | null;
+  timings: PollAndPrepareTimings | null;
 }
 
 type PendingRequest =
@@ -117,6 +138,17 @@ type PendingRequest =
       }) => void;
       reject: (reason?: unknown) => void;
       timeoutId: ReturnType<typeof setTimeout>;
+    }
+  | {
+      type: 'poll-and-prepare';
+      resolve: (payload: NexradPollAndPrepareResult) => void;
+      reject: (reason?: unknown) => void;
+      timeoutId: ReturnType<typeof setTimeout>;
+      expectedSab: boolean;
+      sabChannelId: number | null;
+      requiredVoxelCapacity: number | null;
+      overflowRetryCount: number;
+      request: NexradPollAndPrepareOptions;
     };
 
 type WorkerChannel = {
@@ -416,6 +448,44 @@ class NexradDecodeWorkerClient {
     });
   }
 
+  async pollAndPrepare(options: NexradPollAndPrepareOptions): Promise<NexradPollAndPrepareResult> {
+    const requestId = this.nextRequestId++;
+    return new Promise((resolve, reject) => {
+      const requiredVoxelCapacity =
+        typeof this.prepareSabVoxelCapacityHint === 'number'
+          ? this.prepareSabVoxelCapacityHint
+          : null;
+      const sabChannelId = this.claimPrepareSabChannel(requestId, requiredVoxelCapacity);
+      if (sabChannelId === null) {
+        reject(new Error('No MRMS SAB prepare channel was available for poll-and-prepare.'));
+        return;
+      }
+      const timeoutId = setTimeout(() => {
+        this.pending.delete(requestId);
+        this.releasePrepareSabChannel(requestId);
+        reject(new Error('Timed out while polling MRMS in worker.'));
+      }, REQUEST_TIMEOUT_MS);
+      this.pending.set(requestId, {
+        type: 'poll-and-prepare',
+        resolve,
+        reject,
+        timeoutId,
+        expectedSab: true,
+        sabChannelId,
+        requiredVoxelCapacity,
+        overflowRetryCount: 0,
+        request: options
+      });
+      this.channel.postMessage({
+        type: 'poll-and-prepare',
+        requestId,
+        ...options,
+        preferSab: true,
+        sabChannelId
+      });
+    });
+  }
+
   dispose(): void {
     this.channel.removeEventListener('message', this.onMessage);
     this.channel.removeEventListener('messageerror', this.onMessageError);
@@ -434,6 +504,10 @@ class NexradDecodeWorkerClient {
     if (!pending) return;
     if (message.type === 'prepare-volume-result' && pending.type === 'prepare-volume') {
       this.resolvePreparedVolumeRequest(message, pending);
+      return;
+    }
+    if (message.type === 'poll-and-prepare-result' && pending.type === 'poll-and-prepare') {
+      this.resolvePollAndPrepareRequest(message, pending);
       return;
     }
     clearTimeout(pending.timeoutId);
@@ -473,6 +547,18 @@ class NexradDecodeWorkerClient {
       this.pending.delete(requestId);
       this.releasePrepareSabChannel(requestId);
       pending.reject(new Error('Timed out while preparing MRMS volume data in worker.'));
+    }, REQUEST_TIMEOUT_MS);
+  }
+
+  private resetPollAndPrepareTimeout(
+    requestId: number,
+    pending: Extract<PendingRequest, { type: 'poll-and-prepare' }>
+  ): void {
+    clearTimeout(pending.timeoutId);
+    pending.timeoutId = setTimeout(() => {
+      this.pending.delete(requestId);
+      this.releasePrepareSabChannel(requestId);
+      pending.reject(new Error('Timed out while polling MRMS in worker.'));
     }, REQUEST_TIMEOUT_MS);
   }
 
@@ -580,6 +666,88 @@ class NexradDecodeWorkerClient {
     pending.reject(new Error('MRMS worker returned non-SAB payload for SAB prepare request.'));
   }
 
+  private resolvePollAndPrepareRequest(
+    message: PollAndPrepareResponseMessage,
+    pending: Extract<PendingRequest, { type: 'poll-and-prepare' }>
+  ): void {
+    if (message.error) {
+      clearTimeout(pending.timeoutId);
+      this.pending.delete(message.requestId);
+      this.releasePrepareSabChannel(message.requestId);
+      pending.reject(new Error(message.error));
+      return;
+    }
+    if (message.sabOverflow) {
+      const requiredVoxelCapacity = Math.max(1, Math.round(message.sabOverflow.voxelCapacity));
+      this.prepareSabVoxelCapacityHint = Math.max(
+        this.prepareSabVoxelCapacityHint ?? 0,
+        requiredVoxelCapacity
+      );
+      pending.requiredVoxelCapacity = Math.max(
+        pending.requiredVoxelCapacity ?? 0,
+        requiredVoxelCapacity
+      );
+      if (pending.overflowRetryCount >= MAX_PREPARE_SAB_OVERFLOW_RETRIES) {
+        clearTimeout(pending.timeoutId);
+        this.pending.delete(message.requestId);
+        this.releasePrepareSabChannel(message.requestId);
+        pending.reject(new Error('MRMS SAB capacity growth retries exceeded.'));
+        return;
+      }
+      this.releasePrepareSabChannel(message.requestId);
+      pending.sabChannelId = this.claimPrepareSabChannel(
+        message.requestId,
+        pending.requiredVoxelCapacity
+      );
+      pending.expectedSab = pending.sabChannelId !== null;
+      if (!pending.expectedSab || pending.sabChannelId === null) {
+        clearTimeout(pending.timeoutId);
+        this.pending.delete(message.requestId);
+        pending.reject(new Error('MRMS SAB prepare channel allocation failed after overflow.'));
+        return;
+      }
+      pending.overflowRetryCount += 1;
+      this.resetPollAndPrepareTimeout(message.requestId, pending);
+      this.channel.postMessage({
+        type: 'poll-and-prepare',
+        requestId: message.requestId,
+        ...pending.request,
+        preferSab: true,
+        sabChannelId: pending.sabChannelId
+      });
+      return;
+    }
+    clearTimeout(pending.timeoutId);
+    this.pending.delete(message.requestId);
+    this.releasePrepareSabChannel(message.requestId);
+    if (!message.usedSab) {
+      pending.reject(new Error('MRMS worker returned non-SAB payload for SAB poll request.'));
+      return;
+    }
+    if (!pending.expectedSab || pending.sabChannelId === null) {
+      pending.reject(new Error('MRMS worker returned SAB payload without a SAB request.'));
+      return;
+    }
+    const sabChannel = this.getPrepareSabChannel(pending.sabChannelId);
+    if (!sabChannel) {
+      pending.reject(new Error('MRMS worker returned a SAB payload for an unknown SAB channel.'));
+      return;
+    }
+    const decoded = readNexradPrepareSabResult(sabChannel.views, message.requestId);
+    recordPrepareTransport('sab');
+    recordDecodeTransport('sab');
+    pending.resolve({
+      volumePayload: message.volumePayload ?? null,
+      preparedVolume: decoded.payload,
+      crossSectionData: decoded.crossSectionData,
+      echoTop18Cells: message.echoTop18Cells ?? [],
+      echoTop30Cells: message.echoTop30Cells ?? [],
+      echoTop50Cells: message.echoTop50Cells ?? [],
+      echoTopSummary: message.echoTopSummary ?? null,
+      timings: message.timings ?? null
+    });
+  }
+
   private resolvePreparedEchoTopRequest(
     message: PrepareEchoTopResponseMessage,
     pending: Extract<PendingRequest, { type: 'prepare-echo-top' }>
@@ -601,10 +769,12 @@ let prepareClient: NexradDecodeWorkerClient | null = null;
 let disableWorkerPath = false;
 let disablePrepareWorkerPath = false;
 let runtimeMode: NexradWorkerRuntimeMode = 'worker';
+let activePollPromise: Promise<NexradPollAndPrepareResult> | null = null;
 
 function disposeClient() {
   sharedClient?.dispose();
   sharedClient = null;
+  activePollPromise = null;
 }
 
 function disposePrepareClient() {
@@ -661,6 +831,36 @@ export function getNexradWorkerDiagnostics(): NexradWorkerDiagnostics {
 
 export function getNexradWorkerTransportDiagnostics(): NexradWorkerTransportDiagnostics {
   return workerTransportDiagnostics;
+}
+
+export async function pollNexradWithWorker(
+  options: NexradPollAndPrepareOptions
+): Promise<NexradPollAndPrepareResult> {
+  const client = getDecodeWorkerClient();
+  if (!client) {
+    recordDecodeTransport('worker-error');
+    recordPrepareTransport('worker-error');
+    throw new Error('MRMS poll worker is unavailable.');
+  }
+  if (activePollPromise) {
+    try {
+      await activePollPromise;
+    } catch {
+      // Ignore; this call will attempt a fresh poll.
+    }
+  }
+  const pollPromise = client.pollAndPrepare(options);
+  activePollPromise = pollPromise;
+  try {
+    return await pollPromise;
+  } catch (error) {
+    recordWorkerFailure('worker-request', error);
+    throw error instanceof Error ? error : new Error('MRMS poll worker failed.');
+  } finally {
+    if (activePollPromise === pollPromise) {
+      activePollPromise = null;
+    }
+  }
 }
 
 export async function decodeVolumePayload(

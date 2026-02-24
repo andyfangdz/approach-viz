@@ -3,6 +3,7 @@ import type {
   SceneAirport,
   TrafficErrorPruneRequest,
   TrafficIngestRequest,
+  TrafficRuntimeIngestRequest,
   TrafficRecomputeRequest,
   TrafficResetRequest,
   TrafficSabOverflow,
@@ -76,10 +77,22 @@ export interface TrafficProcessResult {
   trackCount: number;
   historyPointCount: number;
   renderHash: number | null;
-  operation: 'reset' | 'ingest' | 'ingest-binary' | 'recompute' | 'prune-error' | null;
+  operation:
+    | 'reset'
+    | 'ingest'
+    | 'ingest-binary'
+    | 'ingest-runtime'
+    | 'recompute'
+    | 'prune-error'
+    | null;
   workerTransport: 'sab' | null;
   workerRoundTripMs: number | null;
   workerProcessingMs: number | null;
+  trackedHexes: string[];
+  returnedHistoryHexes: string[];
+  feedTransport: 'binary' | 'json' | null;
+  fetchMs: number | null;
+  parseMs: number | null;
 }
 
 type PendingResolver = {
@@ -99,6 +112,7 @@ type TrafficRequestWithoutId =
   | Omit<TrafficResetRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficBinaryIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
+  | Omit<TrafficRuntimeIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficRecomputeRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficErrorPruneRequest, 'requestId' | 'preferSab' | 'sabChannelId'>;
 
@@ -223,6 +237,19 @@ export class TrafficWorkerClient {
       },
       transferList
     );
+  }
+
+  ingestRuntime(
+    primaryUrl: string,
+    followupUrl: string | undefined,
+    options: TrafficProcessOptions
+  ): Promise<TrafficProcessResult> {
+    return this.sendRequest({
+      type: 'ingest-runtime',
+      primaryUrl,
+      followupUrl,
+      ...options
+    });
   }
 
   recompute(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
@@ -453,7 +480,23 @@ export class TrafficWorkerClient {
         response.operation && response.operation !== 'init-sab' ? response.operation : null,
       workerTransport: 'sab',
       workerRoundTripMs: Number.isFinite(roundTripMs) ? roundTripMs : null,
-      workerProcessingMs
+      workerProcessingMs,
+      trackedHexes: Array.isArray(response.trackedHexes) ? response.trackedHexes : [],
+      returnedHistoryHexes: Array.isArray(response.returnedHistoryHexes)
+        ? response.returnedHistoryHexes
+        : [],
+      feedTransport:
+        response.feedTransport === 'binary' || response.feedTransport === 'json'
+          ? response.feedTransport
+          : null,
+      fetchMs:
+        typeof response.fetchMs === 'number' && Number.isFinite(response.fetchMs)
+          ? response.fetchMs
+          : null,
+      parseMs:
+        typeof response.parseMs === 'number' && Number.isFinite(response.parseMs)
+          ? response.parseMs
+          : null
     });
   };
 

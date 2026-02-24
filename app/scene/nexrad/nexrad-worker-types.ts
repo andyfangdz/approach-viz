@@ -71,12 +71,34 @@ export interface PrepareEchoTopRequestMessage {
   refLat: number;
 }
 
+export interface PollAndPrepareRequestMessage {
+  type: 'poll-and-prepare';
+  requestId: number;
+  volumeUrl?: string;
+  echoTopUrl?: string;
+  includeVolume: boolean;
+  includeEchoTop: boolean;
+  minDbz: number;
+  phaseMode: NexradPhaseMode;
+  declutterMode: NexradDeclutterMode;
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
+  includeCrossSection: boolean;
+  normalizedCrossSectionRange: number;
+  crossSectionHalfWidthNm: number;
+  sliceAxis: { x: number; z: number };
+  slicePerpAxis: { x: number; z: number };
+  preferSab: true;
+  sabChannelId: number;
+}
+
 export type NexradWorkerRequestMessage =
   | NexradInitSabRequestMessage
   | DecodeVolumeRequestMessage
   | DecodeEchoTopRequestMessage
   | PrepareVolumeRequestMessage
-  | PrepareEchoTopRequestMessage;
+  | PrepareEchoTopRequestMessage
+  | PollAndPrepareRequestMessage;
 
 export interface NexradPrepareSabOverflow {
   voxelCapacity: number;
@@ -113,8 +135,45 @@ export interface PrepareEchoTopResponseMessage {
   error?: string;
 }
 
+export interface PollAndPrepareTimings {
+  volumeFetchMs: number | null;
+  volumeDecodeMs: number | null;
+  volumePrepareMs: number | null;
+  echoTopFetchMs: number | null;
+  echoTopDecodeMs: number | null;
+  echoTopPrepareMs: number | null;
+}
+
+export interface PollAndPrepareEchoTopSummary {
+  sourceCellCount: number;
+  maxTop18Feet: number | null;
+  maxTop30Feet: number | null;
+  maxTop50Feet: number | null;
+  maxTop60Feet: number | null;
+  top18Timestamp: string | null;
+  top30Timestamp: string | null;
+  top50Timestamp: string | null;
+  top60Timestamp: string | null;
+  error: string | null;
+}
+
+export interface PollAndPrepareResponseMessage {
+  type: 'poll-and-prepare-result';
+  requestId: number;
+  usedSab?: boolean;
+  sabOverflow?: NexradPrepareSabOverflow;
+  volumePayload?: NexradVolumePayload;
+  echoTop18Cells?: EchoTopSurfaceCell[];
+  echoTop30Cells?: EchoTopSurfaceCell[];
+  echoTop50Cells?: EchoTopSurfaceCell[];
+  echoTopSummary?: PollAndPrepareEchoTopSummary | null;
+  timings?: PollAndPrepareTimings;
+  error?: string;
+}
+
 export type NexradWorkerResponseMessage =
   | DecodeVolumeResponseMessage
   | DecodeEchoTopResponseMessage
   | PrepareVolumeResponseMessage
-  | PrepareEchoTopResponseMessage;
+  | PrepareEchoTopResponseMessage
+  | PollAndPrepareResponseMessage;

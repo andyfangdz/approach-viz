@@ -60,15 +60,13 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 
 ## Transport and Polling
 
-- Client decodes compact binary payloads (`application/vnd.approach-viz.mrms.v3`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays. The v3 format adds a `surface_phase` byte at record offset 18 (formerly reserved). The client also accepts v2 payloads for backward compatibility.
-- Decode work is offloaded from the React render thread into a dedicated `Worker` path. Worker startup/communication failures surface as explicit overlay/debug errors (no synchronous in-thread fallback).
-- Decode worker requests transfer fetched binary `ArrayBuffer` payloads from main thread to worker, and decode responses transfer typed-array buffers back to main thread (ownership moves instead of clone).
-- Echo-top decode payloads are flattened typed arrays (`xNm`/`zNm`/`top18|30|50|60Feet`) so decode responses avoid tuple-array structured-clone cost.
-- Post-decode preprocess work runs on an isolated dedicated worker channel so heavy prepare jobs do not starve decode responses.
+- MRMS polling is worker-initiated (`poll-and-prepare`): the worker fetches volume/echo-top endpoints directly (proxy or direct configured URL), decodes compact binary payloads (`application/vnd.approach-viz.mrms.v3`), and runs prepare steps in the same request cycle.
+- Worker startup/communication failures surface as explicit overlay/debug errors (no synchronous in-thread fallback).
 - Prepared-volume worker responses use a SharedArrayBuffer + Atomics transport (`init-sab` handshake + shared typed arrays + atomic control metadata), with automatic voxel-capacity growth/retry when shared capacity is exceeded.
+- The poll response also returns decoded volume typed-array buffers as transferables for final instanced upload inputs (`xNm`/`zNm`/`dbz`/footprints) and returns prepared echo-top surfaces + summary metadata for caps/debug readouts.
 - Worker failures are captured with stage + message + timestamp telemetry (`worker-init`, `worker-request`) and shown in the runtime debug panel for diagnosis.
-- Volume/echo-top decode worker requests use adaptive timeout windows (bounded floor/ceiling, scaled by payload size) to reduce false timeout errors during large-product bursts or worker queue contention.
-- Post-decode volume preprocessing is also offloaded to worker compute: threshold filtering, phase-mode selection, curvature compensation, declutter index generation, echo-top cap surface shaping, and vertical cross-section binning.
+- Poll/prepare worker requests remain bounded by worker-client timeouts, with explicit failure surfacing in debug telemetry.
+- Volume preprocessing and echo-top shaping remain off-main-thread: threshold filtering, phase-mode selection, curvature compensation, declutter index generation, cap surface shaping, and vertical cross-section binning.
 - App responses include cross-origin isolation headers (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` by default) so browser features needed for `SharedArrayBuffer`/`Atomics` are available across Safari and Chromium; this can be disabled with `DISABLE_CROSS_ORIGIN_ISOLATION=1`, and `CROSS_ORIGIN_EMBEDDER_POLICY=credentialless` is available when deployments need broader third-party compatibility.
 - v2 transport merges contiguous same-phase / similar-dBZ cells into larger brick records server-side, reducing client instance count while preserving full coverage.
 - Wire format details: [`docs/mrms-rust-pipeline.md`](mrms-rust-pipeline.md).

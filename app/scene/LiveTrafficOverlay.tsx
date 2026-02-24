@@ -9,18 +9,10 @@ import {
   type TrafficRenderBuffers
 } from './traffic/traffic-worker-client';
 import {
-  inspectTrafficBinaryPayload,
-  isTrafficBinaryContentType
-} from './traffic/traffic-binary-protocol';
-import {
   TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
   TRAFFIC_FLAG_IS_ON_GROUND
 } from './traffic/traffic-sab';
-import type {
-  LiveTrafficAircraft,
-  LiveTrafficHistoryPoint,
-  SceneAirport
-} from './traffic/traffic-worker-types';
+import type { SceneAirport } from './traffic/traffic-worker-types';
 export type { SceneAirport } from './traffic/traffic-worker-types';
 
 const DEFAULT_RADIUS_NM = 80;
@@ -44,6 +36,12 @@ const EMPTY_TIMINGS_MS: TrafficTimingDebugState = {
 
 function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function toWorkerFetchUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (typeof window === 'undefined') return url;
+  return new URL(url, window.location.origin).toString();
 }
 
 function formatTrafficWorkerErrorReason(error: unknown, context: string): string {
@@ -70,12 +68,6 @@ interface LiveTrafficOverlayProps {
   radiusNm?: number;
   limit?: number;
   onDebugChange?: (debug: TrafficDebugState) => void;
-}
-
-interface LiveTrafficFeed {
-  aircraft?: LiveTrafficAircraft[];
-  historyByHex?: Record<string, LiveTrafficHistoryPoint[]>;
-  error?: string;
 }
 
 interface ActiveTrackRenderEntry {
@@ -288,7 +280,6 @@ export function LiveTrafficOverlay({
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let activeAbortController: AbortController | null = null;
     let shouldRequestHistoryBackfill =
       showDepartedTrafficTrails && (shouldHardReset || showDepartedChanged);
     let lastFullBackfillAtMs: number | null = shouldRequestHistoryBackfill ? null : Date.now();
@@ -299,8 +290,6 @@ export function LiveTrafficOverlay({
       let parseMs: number | null = null;
       let processMs: number | null = null;
       let pruneMs: number | null = null;
-      const addTimingMs = (currentValue: number | null, deltaMs: number): number =>
-        roundMs((currentValue ?? 0) + deltaMs);
       const pollNowMs = Date.now();
       const historyWindowMs = normalizedHistoryMinutes * 60_000;
       const fullBackfillIntervalMs = Math.min(
@@ -318,7 +307,7 @@ export function LiveTrafficOverlay({
       if (!cancelled) {
         setIsLoading(true);
       }
-      activeAbortController = new AbortController();
+
       const params = new URLSearchParams();
       params.set('lat', refLat.toFixed(6));
       params.set('lon', refLon.toFixed(6));
@@ -326,6 +315,7 @@ export function LiveTrafficOverlay({
       params.set('limit', String(limit));
       params.set('hideGround', hideGroundTargets ? '1' : '0');
       params.set('format', 'binary');
+
       let requestedHistoryHexes: string[] = [];
       if (showDepartedTrafficTrails) {
         if (shouldRequestHistoryBackfill) {
@@ -340,140 +330,65 @@ export function LiveTrafficOverlay({
         }
       }
 
-      try {
-        const fetchStartedAt = performance.now();
-        const response = await fetch(`/api/traffic/adsbx?${params.toString()}`, {
-          cache: 'no-store',
-          signal: activeAbortController.signal
-        });
-        fetchMs = roundMs(performance.now() - fetchStartedAt);
-        if (!response.ok) {
-          throw new Error(`Traffic feed request failed (${response.status})`);
-        }
-        const parseStartedAt = performance.now();
-        const requestedHistory =
-          showDepartedTrafficTrails &&
-          (shouldRequestHistoryBackfill || requestedHistoryHexes.length > 0);
-        const primaryContentType = response.headers.get('content-type');
-        let transportUsed: 'binary' | 'json' = 'json';
-        let primaryBinaryPayload: ArrayBuffer | null = null;
-        let followupBinaryPayload: ArrayBuffer | undefined;
-        let nextAircraft: LiveTrafficAircraft[] = [];
-        let trackedHexes: string[] = [];
-        let backfilledHistory: Record<string, LiveTrafficHistoryPoint[]> | undefined;
-        const returnedHistoryHexes = new Set<string>();
+      let followupUrl: string | undefined;
+      if (
+        showDepartedTrafficTrails &&
+        !shouldRequestHistoryBackfill &&
+        requestedHistoryHexes.length > 0
+      ) {
+        const followupParams = new URLSearchParams();
+        followupParams.set('lat', refLat.toFixed(6));
+        followupParams.set('lon', refLon.toFixed(6));
+        followupParams.set('radiusNm', String(radiusNm));
+        followupParams.set('limit', String(limit));
+        followupParams.set('hideGround', hideGroundTargets ? '1' : '0');
+        followupParams.set('historyMinutes', String(normalizedHistoryMinutes));
+        followupParams.set('format', 'binary');
+        followupParams.set('historyHexes', requestedHistoryHexes.join(','));
+        followupUrl = toWorkerFetchUrl(`/api/traffic/adsbx?${followupParams.toString()}`);
+      }
 
-        if (isTrafficBinaryContentType(primaryContentType)) {
-          primaryBinaryPayload = await response.arrayBuffer();
-          const payloadSummary = inspectTrafficBinaryPayload(primaryBinaryPayload);
-          trackedHexes = Array.from(
-            new Set(
-              payloadSummary.aircraftHexes.filter(
-                (hex) => typeof hex === 'string' && hex.length > 0
-              )
-            )
-          );
-          for (const hex of payloadSummary.historyHexes) {
-            if (typeof hex === 'string' && hex.length > 0) {
-              returnedHistoryHexes.add(hex);
-            }
-          }
-          transportUsed = 'binary';
-        } else {
-          const payload = (await response.json()) as LiveTrafficFeed;
-          nextAircraft = Array.isArray(payload.aircraft) ? payload.aircraft : [];
-          backfilledHistory = requestedHistory ? payload.historyByHex : undefined;
-          trackedHexes = Array.from(
-            new Set(
-              nextAircraft
-                .map((aircraft) => aircraft.hex)
-                .filter((hex): hex is string => typeof hex === 'string' && hex.length > 0)
-            )
-          );
-          if (backfilledHistory && typeof backfilledHistory === 'object') {
-            for (const hex of Object.keys(backfilledHistory)) {
-              if (hex.length > 0) returnedHistoryHexes.add(hex);
-            }
-          }
-        }
-        parseMs = roundMs(performance.now() - parseStartedAt);
-        setFeedTransport(transportUsed);
+      try {
         const nowMs = Date.now();
-        if (showDepartedTrafficTrails && trackedHexes.length > 0) {
-          const knownBackfilledHexes = backfilledHexesRef.current;
-          const missingHistoryHexes = trackedHexes.filter((hex) => {
-            if (returnedHistoryHexes.has(hex)) return false;
-            const lastBackfillAtMs = knownBackfilledHexes.get(hex);
-            return !(
-              typeof lastBackfillAtMs === 'number' && nowMs - lastBackfillAtMs <= historyWindowMs
-            );
-          });
-          if (missingHistoryHexes.length > 0) {
-            const followupParams = new URLSearchParams();
-            followupParams.set('lat', refLat.toFixed(6));
-            followupParams.set('lon', refLon.toFixed(6));
-            followupParams.set('radiusNm', String(radiusNm));
-            followupParams.set('limit', String(limit));
-            followupParams.set('hideGround', hideGroundTargets ? '1' : '0');
-            followupParams.set('historyMinutes', String(normalizedHistoryMinutes));
-            followupParams.set('format', transportUsed === 'binary' ? 'binary' : 'json');
-            followupParams.set(
-              'historyHexes',
-              missingHistoryHexes.slice(0, MAX_HISTORY_BACKFILL_HEXES).join(',')
-            );
-            try {
-              const historyFetchStartedAt = performance.now();
-              const historyResponse = await fetch(
-                `/api/traffic/adsbx?${followupParams.toString()}`,
-                {
-                  cache: 'no-store',
-                  signal: activeAbortController.signal
-                }
-              );
-              fetchMs = addTimingMs(fetchMs, performance.now() - historyFetchStartedAt);
-              if (historyResponse.ok) {
-                const historyParseStartedAt = performance.now();
-                if (
-                  transportUsed === 'binary' &&
-                  isTrafficBinaryContentType(historyResponse.headers.get('content-type'))
-                ) {
-                  followupBinaryPayload = await historyResponse.arrayBuffer();
-                  const followupSummary = inspectTrafficBinaryPayload(followupBinaryPayload);
-                  for (const hex of followupSummary.historyHexes) {
-                    if (typeof hex === 'string' && hex.length > 0) {
-                      returnedHistoryHexes.add(hex);
-                    }
-                  }
-                } else {
-                  const historyPayload = (await historyResponse.json()) as LiveTrafficFeed;
-                  const followupHistory =
-                    historyPayload.historyByHex && typeof historyPayload.historyByHex === 'object'
-                      ? historyPayload.historyByHex
-                      : undefined;
-                  if (followupHistory && Object.keys(followupHistory).length > 0) {
-                    backfilledHistory = { ...(backfilledHistory ?? {}), ...followupHistory };
-                    for (const hex of Object.keys(followupHistory)) {
-                      if (hex.length > 0) returnedHistoryHexes.add(hex);
-                    }
-                  }
-                }
-                parseMs = addTimingMs(parseMs, performance.now() - historyParseStartedAt);
-              }
-            } catch (error) {
-              if (!(error instanceof DOMException && error.name === 'AbortError')) {
-                console.warn('Traffic history backfill follow-up failed.', error);
-              }
-            }
-          }
+        const ingestWorker = trafficWorkerRef.current;
+        if (!ingestWorker) {
+          setTrafficMode('worker-error');
+          throw new Error('Traffic worker is unavailable.');
         }
+        const processStartedAt = performance.now();
+        const result = await ingestWorker.ingestRuntime(
+          toWorkerFetchUrl(`/api/traffic/adsbx?${params.toString()}`),
+          followupUrl,
+          {
+            nowMs,
+            historyMinutes: normalizedHistoryMinutes,
+            hideGroundTargets,
+            showDepartedTrafficTrails,
+            refLat,
+            refLon,
+            verticalScale,
+            applyEarthCurvatureCompensation,
+            sceneAirports
+          }
+        );
+        processMs = roundMs(performance.now() - processStartedAt);
+        fetchMs = result.fetchMs;
+        parseMs = result.parseMs;
+        setFeedTransport(result.feedTransport);
+        if (!cancelled) {
+          applyWorkerResult(result);
+        }
+
         if (showDepartedTrafficTrails) {
           const knownBackfilledHexes = backfilledHexesRef.current;
           const pendingBackfillHexes = pendingBackfillHexesRef.current;
+          const returnedHistoryHexes = new Set(result.returnedHistoryHexes);
+
           for (const [hex, backfillAtMs] of knownBackfilledHexes.entries()) {
             if (nowMs - backfillAtMs <= historyWindowMs * 2) continue;
             knownBackfilledHexes.delete(hex);
           }
-          for (const hex of trackedHexes) {
+          for (const hex of result.trackedHexes) {
             if (!hex) continue;
             const lastBackfillAtMs = knownBackfilledHexes.get(hex);
             const hasFreshBackfill =
@@ -496,46 +411,6 @@ export function LiveTrafficOverlay({
           }
         }
 
-        const ingestWorker = trafficWorkerRef.current;
-        if (!ingestWorker) {
-          setTrafficMode('worker-error');
-          throw new Error('Traffic worker is unavailable.');
-        }
-        try {
-          const processStartedAt = performance.now();
-          const result =
-            primaryBinaryPayload !== null
-              ? await ingestWorker.ingestBinary(primaryBinaryPayload, followupBinaryPayload, {
-                  nowMs,
-                  historyMinutes: normalizedHistoryMinutes,
-                  hideGroundTargets,
-                  showDepartedTrafficTrails,
-                  refLat,
-                  refLon,
-                  verticalScale,
-                  applyEarthCurvatureCompensation,
-                  sceneAirports
-                })
-              : await ingestWorker.ingest(nextAircraft, backfilledHistory, {
-                  nowMs,
-                  historyMinutes: normalizedHistoryMinutes,
-                  hideGroundTargets,
-                  showDepartedTrafficTrails,
-                  refLat,
-                  refLon,
-                  verticalScale,
-                  applyEarthCurvatureCompensation,
-                  sceneAirports
-                });
-          processMs = roundMs(performance.now() - processStartedAt);
-          if (!cancelled) {
-            applyWorkerResult(result);
-          }
-        } catch (error) {
-          setTrafficMode('worker-error');
-          throw new Error(formatTrafficWorkerErrorReason(error, 'Traffic worker ingest failed'));
-        }
-
         setLastError(null);
         setLastPollAt(new Date(nowMs).toISOString());
         if (showDepartedTrafficTrails) {
@@ -550,47 +425,43 @@ export function LiveTrafficOverlay({
         }
         shouldRequestHistoryBackfill = false;
       } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          setLastError(error instanceof Error ? error.message : 'Traffic poll failed');
-          setLastPollAt(new Date().toISOString());
-          const nowMs = Date.now();
-          const pruneWorker = trafficWorkerRef.current;
-          if (!pruneWorker) {
+        setLastError(error instanceof Error ? error.message : 'Traffic poll failed');
+        setLastPollAt(new Date().toISOString());
+        const nowMs = Date.now();
+        const pruneWorker = trafficWorkerRef.current;
+        if (!pruneWorker) {
+          setTrafficMode('worker-error');
+          setWorkerErrorReason('Traffic worker is unavailable; stale tracks could not be pruned.');
+          setWorkerTransport(null);
+        } else {
+          try {
+            const pruneStartedAt = performance.now();
+            const result = await pruneWorker.pruneError({
+              nowMs,
+              historyMinutes: normalizedHistoryMinutes,
+              hideGroundTargets,
+              showDepartedTrafficTrails,
+              refLat,
+              refLon,
+              verticalScale,
+              applyEarthCurvatureCompensation,
+              sceneAirports
+            });
+            pruneMs = roundMs(performance.now() - pruneStartedAt);
+            if (!cancelled) {
+              applyWorkerResult(result);
+            }
+          } catch (pruneError) {
+            if (cancelled) return;
             setTrafficMode('worker-error');
             setWorkerErrorReason(
-              'Traffic worker is unavailable; stale tracks could not be pruned.'
+              formatTrafficWorkerErrorReason(pruneError, 'Traffic worker prune failed')
             );
             setWorkerTransport(null);
-          } else {
-            try {
-              const pruneStartedAt = performance.now();
-              const result = await pruneWorker.pruneError({
-                nowMs,
-                historyMinutes: normalizedHistoryMinutes,
-                hideGroundTargets,
-                showDepartedTrafficTrails,
-                refLat,
-                refLon,
-                verticalScale,
-                applyEarthCurvatureCompensation,
-                sceneAirports
-              });
-              pruneMs = roundMs(performance.now() - pruneStartedAt);
-              if (!cancelled) {
-                applyWorkerResult(result);
-              }
-            } catch (error) {
-              if (cancelled) return;
-              setTrafficMode('worker-error');
-              setWorkerErrorReason(
-                formatTrafficWorkerErrorReason(error, 'Traffic worker prune failed')
-              );
-              setWorkerTransport(null);
-              patchTimings({
-                workerRoundTripMs: null,
-                workerProcessingMs: null
-              });
-            }
+            patchTimings({
+              workerRoundTripMs: null,
+              workerProcessingMs: null
+            });
           }
         }
       } finally {
@@ -604,7 +475,6 @@ export function LiveTrafficOverlay({
           });
           setIsLoading(false);
         }
-        activeAbortController = null;
         if (!cancelled) {
           timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
         }
@@ -616,7 +486,6 @@ export function LiveTrafficOverlay({
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
-      if (activeAbortController) activeAbortController.abort();
     };
   }, [
     refLat,

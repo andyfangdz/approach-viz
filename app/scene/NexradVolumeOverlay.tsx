@@ -20,19 +20,12 @@ import {
   MIN_CROSS_SECTION_HALF_WIDTH_NM,
   MAX_CROSS_SECTION_HALF_WIDTH_NM
 } from './nexrad/nexrad-types';
+import { buildEchoTopRequestUrl, buildNexradRequestUrl } from './nexrad/nexrad-decode';
 import {
-  buildNexradRequestUrl,
-  buildEchoTopRequestUrl,
-  extractPhaseDebugHeaderValues
-} from './nexrad/nexrad-decode';
-import {
-  decodeEchoTopPayloadWithWorker,
   getNexradWorkerDiagnostics,
-  decodeVolumePayload,
   getNexradWorkerRuntimeMode,
   getNexradWorkerTransportDiagnostics,
-  prepareEchoTopWithWorker,
-  prepareVolumeWithWorker
+  pollNexradWithWorker
 } from './nexrad/nexrad-worker-client';
 import {
   dbzToAlpha,
@@ -58,6 +51,12 @@ const EMPTY_TIMINGS_MS: NexradTimingDebugState = {
 
 function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function toWorkerFetchUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (typeof window === 'undefined') return url;
+  return new URL(url, window.location.origin).toString();
 }
 
 function volumePayloadSignature(payload: NexradVolumePayload | null): string | null {
@@ -192,8 +191,6 @@ export function NexradVolumeOverlay({
   const [echoTop30Cells, setEchoTop30Cells] = useState<EchoTopSurfaceCell[]>([]);
   const [echoTop50Cells, setEchoTop50Cells] = useState<EchoTopSurfaceCell[]>([]);
   const [timingsMs, setTimingsMs] = useState<NexradTimingDebugState>(EMPTY_TIMINGS_MS);
-  const volumePrepareSeqRef = useRef(0);
-  const echoTopPrepareSeqRef = useRef(0);
   const patchTimings = useCallback((patch: Partial<NexradTimingDebugState>) => {
     setTimingsMs((previous) => {
       let changed = false;
@@ -207,109 +204,6 @@ export function NexradVolumeOverlay({
       return changed ? next : previous;
     });
   }, []);
-
-  useEffect(() => {
-    if (!enabled || !payload) {
-      volumePrepareSeqRef.current += 1;
-      setVolumeData(emptyPreparedVolume());
-      setCrossSectionData(null);
-      patchTimings({ volumePrepareMs: null });
-      return;
-    }
-    const sequence = volumePrepareSeqRef.current + 1;
-    volumePrepareSeqRef.current = sequence;
-    let cancelled = false;
-    const startedAt = performance.now();
-
-    void prepareVolumeWithWorker(payload, {
-      minDbz,
-      phaseMode,
-      declutterMode,
-      applyEarthCurvatureCompensation,
-      refLat,
-      includeCrossSection: showCrossSection,
-      normalizedCrossSectionRange,
-      crossSectionHalfWidthNm,
-      sliceAxis,
-      slicePerpAxis
-    })
-      .then((prepared) => {
-        if (cancelled || sequence !== volumePrepareSeqRef.current) return;
-        setVolumeData(prepared.payload);
-        setCrossSectionData(prepared.crossSectionData);
-        patchTimings({ volumePrepareMs: roundMs(performance.now() - startedAt) });
-      })
-      .catch((error) => {
-        if (cancelled || sequence !== volumePrepareSeqRef.current) return;
-        setVolumeData(emptyPreparedVolume());
-        setCrossSectionData(null);
-        setLastError(error instanceof Error ? error.message : 'MRMS volume prep failed');
-        patchTimings({ volumePrepareMs: roundMs(performance.now() - startedAt) });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    enabled,
-    payload,
-    minDbz,
-    phaseMode,
-    declutterMode,
-    applyEarthCurvatureCompensation,
-    refLat,
-    showCrossSection,
-    normalizedCrossSectionRange,
-    crossSectionHalfWidthNm,
-    sliceAxis,
-    slicePerpAxis,
-    patchTimings
-  ]);
-
-  useEffect(() => {
-    if (!enabled || !showEchoTops || !echoTopPayload) {
-      echoTopPrepareSeqRef.current += 1;
-      setEchoTop18Cells([]);
-      setEchoTop30Cells([]);
-      setEchoTop50Cells([]);
-      patchTimings({ echoTopPrepareMs: null });
-      return;
-    }
-    const sequence = echoTopPrepareSeqRef.current + 1;
-    echoTopPrepareSeqRef.current = sequence;
-    let cancelled = false;
-    const startedAt = performance.now();
-    void prepareEchoTopWithWorker(echoTopPayload, {
-      applyEarthCurvatureCompensation,
-      refLat
-    })
-      .then((prepared) => {
-        if (cancelled || sequence !== echoTopPrepareSeqRef.current) return;
-        setEchoTop18Cells(prepared.echoTop18Cells);
-        setEchoTop30Cells(prepared.echoTop30Cells);
-        setEchoTop50Cells(prepared.echoTop50Cells);
-        patchTimings({ echoTopPrepareMs: roundMs(performance.now() - startedAt) });
-      })
-      .catch((error) => {
-        if (cancelled || sequence !== echoTopPrepareSeqRef.current) return;
-        setEchoTop18Cells([]);
-        setEchoTop30Cells([]);
-        setEchoTop50Cells([]);
-        setLastError(error instanceof Error ? error.message : 'MRMS echo-top prep failed');
-        patchTimings({ echoTopPrepareMs: roundMs(performance.now() - startedAt) });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    enabled,
-    showEchoTops,
-    echoTopPayload,
-    applyEarthCurvatureCompensation,
-    refLat,
-    patchTimings
-  ]);
 
   const declutterIndices = volumeData.declutterIndices;
   const declutterCount = volumeData.declutterCount;
@@ -471,6 +365,11 @@ export function NexradVolumeOverlay({
     if (!enabled) {
       setPayload(null);
       setEchoTopPayload(null);
+      setVolumeData(emptyPreparedVolume());
+      setCrossSectionData(null);
+      setEchoTop18Cells([]);
+      setEchoTop30Cells([]);
+      setEchoTop50Cells([]);
       setIsLoading(false);
       setLastError(null);
       setLastPollAt(null);
@@ -480,6 +379,11 @@ export function NexradVolumeOverlay({
 
     setPayload(null);
     setEchoTopPayload(null);
+    setVolumeData(emptyPreparedVolume());
+    setCrossSectionData(null);
+    setEchoTop18Cells([]);
+    setEchoTop30Cells([]);
+    setEchoTop50Cells([]);
     setIsLoading(true);
     setLastError(null);
     setLastPollAt(null);
@@ -487,18 +391,26 @@ export function NexradVolumeOverlay({
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let activeAbortController: AbortController | null = null;
+    let pollInFlight = false;
+    let pendingImmediatePoll = false;
 
     const poll = async () => {
+      if (pollInFlight) {
+        pendingImmediatePoll = true;
+        return;
+      }
+      pollInFlight = true;
       const cycleStartedAt = performance.now();
+      let nextDelayMs = POLL_INTERVAL_MS;
       let volumeFetchMs: number | null = null;
       let volumeDecodeMs: number | null = null;
+      let volumePrepareMs: number | null = null;
       let echoTopFetchMs: number | null = null;
       let echoTopDecodeMs: number | null = null;
+      let echoTopPrepareMs: number | null = null;
       if (!cancelled) {
         setIsLoading(true);
       }
-      activeAbortController = new AbortController();
       const shouldFetchVolume = showVolumeRef.current || showCrossSectionRef.current;
       const shouldFetchEchoTops = showEchoTopsRef.current;
       const volumeParams = new URLSearchParams();
@@ -510,137 +422,147 @@ export function NexradVolumeOverlay({
       echoTopParams.set('lat', refLat.toFixed(6));
       echoTopParams.set('lon', refLon.toFixed(6));
       echoTopParams.set('maxRangeNm', String(maxRangeNm));
-      let nextDelayMs = POLL_INTERVAL_MS;
 
       try {
-        const [response, echoTopResponse] = await Promise.all([
-          shouldFetchVolume
-            ? (async () => {
-                const startedAt = performance.now();
-                const result = await fetch(buildNexradRequestUrl(volumeParams), {
-                  cache: 'no-store',
-                  signal: activeAbortController.signal
-                });
-                volumeFetchMs = roundMs(performance.now() - startedAt);
-                return result;
-              })()
-            : Promise.resolve(null),
-          shouldFetchEchoTops
-            ? (async () => {
-                const startedAt = performance.now();
-                try {
-                  return await fetch(buildEchoTopRequestUrl(echoTopParams), {
-                    cache: 'no-store',
-                    signal: activeAbortController.signal
-                  });
-                } catch {
-                  return null;
-                } finally {
-                  echoTopFetchMs = roundMs(performance.now() - startedAt);
-                }
-              })()
-            : Promise.resolve(null)
-        ]);
-        if (response && !response.ok) {
-          throw new Error(`NEXRAD request failed (${response.status})`);
-        }
+        const result = await pollNexradWithWorker({
+          volumeUrl: shouldFetchVolume
+            ? toWorkerFetchUrl(buildNexradRequestUrl(volumeParams))
+            : undefined,
+          echoTopUrl: shouldFetchEchoTops
+            ? toWorkerFetchUrl(buildEchoTopRequestUrl(echoTopParams))
+            : undefined,
+          includeVolume: shouldFetchVolume,
+          includeEchoTop: shouldFetchEchoTops,
+          minDbz,
+          phaseMode,
+          declutterMode,
+          applyEarthCurvatureCompensation,
+          refLat,
+          includeCrossSection: showCrossSection,
+          normalizedCrossSectionRange,
+          crossSectionHalfWidthNm,
+          sliceAxis,
+          slicePerpAxis
+        });
+        volumeFetchMs = shouldFetchVolume ? (result.timings?.volumeFetchMs ?? null) : null;
+        volumeDecodeMs = shouldFetchVolume ? (result.timings?.volumeDecodeMs ?? null) : null;
+        volumePrepareMs = shouldFetchVolume ? (result.timings?.volumePrepareMs ?? null) : null;
+        echoTopFetchMs = shouldFetchEchoTops ? (result.timings?.echoTopFetchMs ?? null) : null;
+        echoTopDecodeMs = shouldFetchEchoTops ? (result.timings?.echoTopDecodeMs ?? null) : null;
+        echoTopPrepareMs = shouldFetchEchoTops ? (result.timings?.echoTopPrepareMs ?? null) : null;
 
-        const nextPayload = response
-          ? await (async () => {
-              const decodeStartedAt = performance.now();
-              const decoded = await decodeVolumePayload(
-                await response.arrayBuffer(),
-                extractPhaseDebugHeaderValues(response.headers)
-              );
-              volumeDecodeMs = roundMs(performance.now() - decodeStartedAt);
-              return decoded;
-            })()
+        const nextPayload = result.volumePayload;
+        const nextEchoTopPayload: EchoTopPayload | null = result.echoTopSummary
+          ? {
+              sourceCellCount: result.echoTopSummary.sourceCellCount,
+              maxTop18Feet: result.echoTopSummary.maxTop18Feet,
+              maxTop30Feet: result.echoTopSummary.maxTop30Feet,
+              maxTop50Feet: result.echoTopSummary.maxTop50Feet,
+              maxTop60Feet: result.echoTopSummary.maxTop60Feet,
+              top18Timestamp: result.echoTopSummary.top18Timestamp,
+              top30Timestamp: result.echoTopSummary.top30Timestamp,
+              top50Timestamp: result.echoTopSummary.top50Timestamp,
+              top60Timestamp: result.echoTopSummary.top60Timestamp,
+              error: result.echoTopSummary.error ?? undefined
+            }
           : null;
-        let nextEchoTopPayload: EchoTopPayload | null = null;
-        if (echoTopResponse && echoTopResponse.ok) {
-          const decodeStartedAt = performance.now();
-          nextEchoTopPayload = await decodeEchoTopPayloadWithWorker(
-            await echoTopResponse.arrayBuffer()
-          );
-          echoTopDecodeMs = roundMs(performance.now() - decodeStartedAt);
-        }
+
         if (!cancelled) {
           const nextError = nextPayload?.error ?? nextEchoTopPayload?.error ?? null;
           setLastError(nextError);
           setLastPollAt(new Date().toISOString());
+          const keepPreviousVolume =
+            Boolean(nextPayload?.error) &&
+            Boolean(payloadRef.current && payloadRef.current.voxelCount > 0);
           if (shouldFetchVolume && nextPayload) {
-            setPayload((previousPayload) => {
-              if (nextPayload.error && previousPayload && previousPayload.voxelCount > 0) {
-                return previousPayload;
-              }
-              if (
-                previousPayload &&
-                volumePayloadSignature(previousPayload) === volumePayloadSignature(nextPayload)
-              ) {
-                return previousPayload;
-              }
-              return nextPayload;
-            });
+            if (!keepPreviousVolume) {
+              setPayload((previousPayload) => {
+                if (
+                  previousPayload &&
+                  volumePayloadSignature(previousPayload) === volumePayloadSignature(nextPayload)
+                ) {
+                  return previousPayload;
+                }
+                return nextPayload;
+              });
+              setVolumeData(result.preparedVolume);
+              setCrossSectionData(result.crossSectionData);
+            }
           } else if (!showVolumeRef.current && !showCrossSectionRef.current) {
             setPayload(null);
+            setVolumeData(emptyPreparedVolume());
+            setCrossSectionData(null);
           }
+
           if (shouldFetchEchoTops) {
-            setEchoTopPayload((previousPayload) => {
-              if (
-                nextEchoTopPayload?.error &&
-                previousPayload &&
-                Array.isArray(previousPayload.cells) &&
-                previousPayload.cells.length > 0
-              ) {
-                return previousPayload;
-              }
-              if (
-                previousPayload &&
-                nextEchoTopPayload &&
-                echoTopPayloadSignature(previousPayload) ===
-                  echoTopPayloadSignature(nextEchoTopPayload)
-              ) {
-                return previousPayload;
-              }
-              return nextEchoTopPayload ?? previousPayload;
-            });
+            const keepPreviousEchoTop =
+              Boolean(nextEchoTopPayload?.error) &&
+              Boolean(
+                echoTopPayloadRef.current && (echoTopPayloadRef.current.sourceCellCount ?? 0) > 0
+              );
+            if (!keepPreviousEchoTop) {
+              setEchoTopPayload((previousPayload) => {
+                if (
+                  previousPayload &&
+                  nextEchoTopPayload &&
+                  echoTopPayloadSignature(previousPayload) ===
+                    echoTopPayloadSignature(nextEchoTopPayload)
+                ) {
+                  return previousPayload;
+                }
+                return nextEchoTopPayload ?? previousPayload;
+              });
+              setEchoTop18Cells(result.echoTop18Cells);
+              setEchoTop30Cells(result.echoTop30Cells);
+              setEchoTop50Cells(result.echoTop50Cells);
+            }
           } else if (!showEchoTopsRef.current) {
             setEchoTopPayload(null);
+            setEchoTop18Cells([]);
+            setEchoTop30Cells([]);
+            setEchoTop50Cells([]);
           }
         }
       } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          // Keep rendering the last successful payload when polling fails.
-          setLastError(error instanceof Error ? error.message : 'NEXRAD poll failed');
-          setLastPollAt(new Date().toISOString());
-          nextDelayMs = RETRY_INTERVAL_MS;
-        }
+        // Keep rendering the last successful payload when polling fails.
+        setLastError(error instanceof Error ? error.message : 'NEXRAD poll failed');
+        setLastPollAt(new Date().toISOString());
+        nextDelayMs = RETRY_INTERVAL_MS;
       } finally {
+        pollInFlight = false;
         if (!cancelled) {
           patchTimings({
             pollCycleMs: roundMs(performance.now() - cycleStartedAt),
             volumeFetchMs: shouldFetchVolume ? volumeFetchMs : null,
             volumeDecodeMs: shouldFetchVolume ? volumeDecodeMs : null,
+            volumePrepareMs: shouldFetchVolume ? volumePrepareMs : null,
             echoTopFetchMs: shouldFetchEchoTops ? echoTopFetchMs : null,
-            echoTopDecodeMs: shouldFetchEchoTops ? echoTopDecodeMs : null
+            echoTopDecodeMs: shouldFetchEchoTops ? echoTopDecodeMs : null,
+            echoTopPrepareMs: shouldFetchEchoTops ? echoTopPrepareMs : null
           });
           setIsLoading(false);
         }
-        activeAbortController = null;
         if (!cancelled) {
-          timeoutId = setTimeout(poll, nextDelayMs);
+          if (pendingImmediatePoll) {
+            pendingImmediatePoll = false;
+            timeoutId = setTimeout(poll, 0);
+          } else {
+            timeoutId = setTimeout(poll, nextDelayMs);
+          }
         }
       }
     };
 
     // Expose a way for external code to trigger an immediate poll cycle.
-    // Aborts any in-flight request and cancels the pending timeout so we
-    // don't double-poll.
+    // If a poll is already in-flight, queue an immediate run afterwards.
     pollNowRef.current = () => {
       if (cancelled) return;
-      if (activeAbortController) activeAbortController.abort();
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = undefined;
+      if (pollInFlight) {
+        pendingImmediatePoll = true;
+        return;
+      }
       void poll();
     };
 
@@ -650,9 +572,23 @@ export function NexradVolumeOverlay({
       cancelled = true;
       pollNowRef.current = null;
       if (timeoutId) clearTimeout(timeoutId);
-      if (activeAbortController) activeAbortController.abort();
     };
-  }, [enabled, refLat, refLon, minDbz, maxRangeNm, patchTimings]);
+  }, [
+    enabled,
+    refLat,
+    refLon,
+    minDbz,
+    maxRangeNm,
+    phaseMode,
+    declutterMode,
+    applyEarthCurvatureCompensation,
+    showCrossSection,
+    normalizedCrossSectionRange,
+    crossSectionHalfWidthNm,
+    sliceAxis,
+    slicePerpAxis,
+    patchTimings
+  ]);
 
   // When a sub-layer is toggled on and has no data yet, trigger an immediate
   // poll rather than waiting up to 120 s for the next scheduled one.

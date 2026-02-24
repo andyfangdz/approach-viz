@@ -6,7 +6,7 @@ This document defines client <-> worker communication for:
 
 - Picker filtering (`app/app-client/filter.worker.ts`)
 - Approach-path compute (`app/scene/approach-path/approach.worker.ts`)
-- MRMS decode/prepare (`app/scene/nexrad/nexrad.worker.ts`)
+- MRMS poll/decode/prepare (`app/scene/nexrad/nexrad.worker.ts`)
 - Traffic merge/render (`app/scene/traffic/traffic.worker.ts`)
 
 ## Common Protocol Shape
@@ -21,14 +21,12 @@ Across all workers:
 
 ## Transport Matrix
 
-| Pipeline                                                             | Primary Transport                   | Binary/SAB | Fallback Policy                                               |
-| -------------------------------------------------------------------- | ----------------------------------- | ---------- | ------------------------------------------------------------- |
-| Filter                                                               | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
-| Approach altitude/path                                               | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
-| MRMS decode (`decode-volume`, `decode-echo-top`)                     | `postMessage` (+ transferables)     | No SAB     | No sync fallback; worker error surfaces                       |
-| MRMS prepare-volume                                                  | `postMessage` control + SAB payload | Yes        | No non-SAB payload fallback; overflow retries with SAB growth |
-| MRMS prepare-echo-top                                                | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
-| Traffic (`reset`/`ingest`/`ingest-binary`/`recompute`/`prune-error`) | `postMessage` control + SAB payload | Yes        | No non-SAB/sync fallback; worker error surfaces               |
+| Pipeline                                                                              | Primary Transport                   | Binary/SAB | Fallback Policy                                               |
+| ------------------------------------------------------------------------------------- | ----------------------------------- | ---------- | ------------------------------------------------------------- |
+| Filter                                                                                | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
+| Approach altitude/path                                                                | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
+| MRMS `poll-and-prepare` (worker fetch + decode + prepare)                             | `postMessage` control + SAB payload | Yes        | No non-SAB payload fallback; overflow retries with SAB growth |
+| Traffic (`reset`/`ingest`/`ingest-binary`/`ingest-runtime`/`recompute`/`prune-error`) | `postMessage` control + SAB payload | Yes        | No non-SAB/sync fallback; worker error surfaces               |
 
 ## Shared SAB Utilities
 
@@ -53,8 +51,8 @@ This allows concurrent requests while minimizing over-allocation.
 
 - Runtime endpoint `/v1/traffic/adsbx` accepts `format=binary` and emits `application/vnd.approach-viz.traffic.v1`.
 - Payload layout: fixed 64-byte header (`AVTR` magic + version + section offsets/counts), fixed-width aircraft records, fixed-width history-group records, fixed-width history-point records, and a trailing UTF-8 string table.
-- Main thread uses `inspectTrafficBinaryPayload(...)` for low-cost aircraft/history hex discovery to drive backfill targeting.
 - Worker uses `decodeTrafficBinaryPayload(...)` to deserialize full aircraft/history payloads before merge/prune/projection.
+- Main thread now only constructs URLs/backfill policy; worker performs network fetch + decode for `ingest-runtime`.
 
 ## Traffic Worker Protocol
 
@@ -87,6 +85,7 @@ Operations:
 - `reset`
 - `ingest` (`aircraftList`, optional `historyByHex`)
 - `ingest-binary` (`payloadBuffer`, optional `historyPayloadBuffer`; request buffers are transferable)
+- `ingest-runtime` (`primaryUrl`, optional `followupUrl`; worker fetches/parses runtime payloads directly)
 - `recompute`
 - `prune-error`
 
@@ -96,6 +95,7 @@ Operations:
 
 - Success: `usedSab: true` (payload is read from SAB)
 - Capacity miss: `sabOverflow` with required capacities (`trackCapacity`, `pointCapacity`, `stringCapacity`)
+- Runtime-ingest metadata: `feedTransport` (`binary`/`json`), `fetchMs`, `parseMs`, `trackedHexes`, `returnedHistoryHexes`
 - Failure: `error`
 
 Worker does not return object payload track arrays anymore; SAB is authoritative.
@@ -121,18 +121,7 @@ Worker does not return object payload track arrays anymore; SAB is authoritative
 - Types: `app/scene/nexrad/nexrad-worker-types.ts`
 - SAB layout/read-write: `app/scene/nexrad/nexrad-sab.ts`
 
-### Decode (`postMessage` + transferables)
-
-Operations:
-
-- `decode-volume`
-- `decode-echo-top`
-
-Decode requests transfer the fetched binary `ArrayBuffer` from main thread to worker (ownership move, no clone).
-Worker returns decoded payloads via transferable typed-array buffers (no SAB transport for decode).
-Echo-top decode payloads are flattened typed arrays (`xNm`/`zNm`/`top*Feet`) so response transfer is buffer-based instead of tuple-array clone.
-
-### Prepare-Volume (SAB-only payload)
+### Poll-And-Prepare (single-flight worker request)
 
 Handshake:
 
@@ -140,24 +129,30 @@ Handshake:
 
 Request:
 
-- `prepare-volume` with `preferSab: true`, `sabChannelId`, and preprocess options.
+- `poll-and-prepare` with `preferSab: true`, `sabChannelId`, runtime URLs (`volumeUrl`, `echoTopUrl`), and preprocess options (`minDbz`, `phaseMode`, `declutterMode`, cross-section settings, curvature settings).
+- Worker fetches MRMS volume/echo-top endpoints directly, decodes payloads, then runs volume/echo-top prepare in the same request.
 
 Response:
 
-- Success: `usedSab: true` (client reads prepared volume/cross-section arrays from SAB)
+- Success: `usedSab: true`
+- Prepared volume/cross-section arrays are read from SAB
+- Decoded volume payload typed arrays are returned as transferables (`volumePayload`) for final mesh upload inputs
+- Prepared echo-top surfaces (`echoTop18/30/50Cells`) and echo-top summary metadata are returned in the response object
 - Overflow: `sabOverflow.voxelCapacity`
 - Failure: `error`
 
-Worker does not return transferable `payload`/`crossSectionData` fallback for prepare-volume.
+Worker does not return non-SAB fallback payload for prepared volume/cross-section.
 
 Retry:
 
 - Client tracks required voxel capacity hint and retries up to `MAX_PREPARE_SAB_OVERFLOW_RETRIES`.
 - Channel is re-claimed with best-fit capacity; SAB buffers grow in place when needed.
+- Poll-and-prepare retries replay the full poll request after capacity growth (same request options, larger SAB channel).
 
-### Prepare-Echo-Top
+### Legacy Decode/Prepare Operations
 
-- `prepare-echo-top` remains `postMessage` response payload (JSON + arrays).
+- `decode-volume`, `decode-echo-top`, `prepare-volume`, and `prepare-echo-top` remain in the worker contract for test coverage/compatibility paths.
+- Active overlay runtime path uses `poll-and-prepare`.
 
 ## Approach Worker Protocol
 
@@ -199,7 +194,7 @@ Failure policy:
 Runtime debug panel fields currently expose:
 
 - Capability flags: `Worker`, `SharedArrayBuffer`, `Atomics`, `crossOriginIsolated`
-- MRMS: offload mode, decode transport (`post-message` / `worker-error`), prepare transport (`sab` / `worker-error`), worker failure diagnostics
+- MRMS: offload mode, decode transport (`sab` / `worker-error`), prepare transport (`sab` / `worker-error`), worker failure diagnostics
 - Traffic: offload mode, feed transport (`binary` / `json`), worker transport (`sab`), worker error reason, stage timings
 
 These fields are intended to explain whether the active worker protocol is healthy and which transport path is in use.
