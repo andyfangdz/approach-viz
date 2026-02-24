@@ -189,6 +189,15 @@ export class TrafficWorkerClient {
     this.initializeSabTransport();
   }
 
+  cancelAllPending(): void {
+    for (const [requestId, pending] of this.pending) {
+      clearTimeout(pending.timeoutId);
+      this.releaseSabChannelForRequest(requestId);
+      pending.reject(new Error('Traffic worker request cancelled.'));
+    }
+    this.pending.clear();
+  }
+
   dispose() {
     this.worker.removeEventListener('message', this.onMessage);
     this.worker.removeEventListener('messageerror', this.onMessageError);
