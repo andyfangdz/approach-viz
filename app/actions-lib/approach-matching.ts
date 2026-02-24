@@ -46,6 +46,17 @@ function isCatIIOrIIIOnly(name: string): boolean {
   return !/\bCAT\s+I(?!I)\b/.test(upper);
 }
 
+/**
+ * Returns true if the approach name indicates a Special Authorization (SA)
+ * plate (e.g. "ILS RWY 04R (SA CAT I)", "ILS RWY 28R (SA CAT I - II)").
+ *
+ * SA plates require special FAA authorization to fly and should be
+ * deprioritized in favor of the standard plate for the same runway.
+ */
+function isSpecialAuthorization(name: string): boolean {
+  return /\(SA\b/.test(name.toUpperCase());
+}
+
 function parseApproachCirclingSuffix(raw: string): string {
   const upper = raw.toUpperCase().trim();
   const dashed = upper.match(/-([A-Z])\s*$/);
@@ -213,7 +224,8 @@ function resolveExternalApproach(
             : 1;
         const typeScore = getTypeMatchScore(approach.type, candidate);
         const catPenalty = isCatIIOrIIIOnly(candidate.name) ? -0.5 : 0;
-        return { candidate, score: suffixScore + typeScore + catPenalty };
+        const saPenalty = isSpecialAuthorization(candidate.name) ? -0.5 : 0;
+        return { candidate, score: suffixScore + typeScore + catPenalty + saPenalty };
       })
       .sort((a, b) => b.score - a.score);
 
@@ -238,7 +250,8 @@ function resolveExternalApproach(
           : 1;
       const typeScore = getTypeMatchScore(approach.type, candidate);
       const catPenalty = isCatIIOrIIIOnly(candidate.name) ? -0.5 : 0;
-      return { candidate, score: variantScore + typeScore + catPenalty };
+      const saPenalty = isSpecialAuthorization(candidate.name) ? -0.5 : 0;
+      return { candidate, score: variantScore + typeScore + catPenalty + saPenalty };
     })
     .sort((a, b) => b.score - a.score);
 
