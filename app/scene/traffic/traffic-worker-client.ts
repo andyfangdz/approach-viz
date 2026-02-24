@@ -1,4 +1,5 @@
 import type {
+  TrafficBinaryIngestRequest,
   SceneAirport,
   TrafficErrorPruneRequest,
   TrafficIngestRequest,
@@ -75,7 +76,7 @@ export interface TrafficProcessResult {
   trackCount: number;
   historyPointCount: number;
   renderHash: number | null;
-  operation: 'reset' | 'ingest' | 'recompute' | 'prune-error' | null;
+  operation: 'reset' | 'ingest' | 'ingest-binary' | 'recompute' | 'prune-error' | null;
   workerTransport: 'sab' | null;
   workerRoundTripMs: number | null;
   workerProcessingMs: number | null;
@@ -91,11 +92,13 @@ type PendingResolver = {
   requiredSabCapacity: TrafficSabOverflow | null;
   request: TrafficRequestWithoutId;
   overflowRetryCount: number;
+  canRetryAfterOverflow: boolean;
 };
 
 type TrafficRequestWithoutId =
   | Omit<TrafficResetRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
+  | Omit<TrafficBinaryIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficRecomputeRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficErrorPruneRequest, 'requestId' | 'preferSab' | 'sabChannelId'>;
 
@@ -203,6 +206,25 @@ export class TrafficWorkerClient {
     });
   }
 
+  ingestBinary(
+    payloadBuffer: ArrayBuffer,
+    historyPayloadBuffer: ArrayBuffer | undefined,
+    options: TrafficProcessOptions
+  ): Promise<TrafficProcessResult> {
+    const transferList = historyPayloadBuffer
+      ? [payloadBuffer, historyPayloadBuffer]
+      : [payloadBuffer];
+    return this.sendRequest(
+      {
+        type: 'ingest-binary',
+        payloadBuffer,
+        historyPayloadBuffer,
+        ...options
+      },
+      transferList
+    );
+  }
+
   recompute(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
     return this.sendRequest({
       type: 'recompute',
@@ -267,7 +289,7 @@ export class TrafficWorkerClient {
     return this.sabChannelPool?.getChannel(channelId) ?? null;
   }
 
-  private sendRequest(message: TrafficRequestWithoutId) {
+  private sendRequest(message: TrafficRequestWithoutId, transferList?: Transferable[]) {
     const requestId = this.nextRequestId++;
     return new Promise<TrafficProcessResult>((resolve, reject) => {
       const requiredSabCapacity = cloneSabCapacity(this.sabCapacityHint);
@@ -291,14 +313,18 @@ export class TrafficWorkerClient {
         sabChannelId,
         requiredSabCapacity,
         request: message,
-        overflowRetryCount: 0
+        overflowRetryCount: 0,
+        canRetryAfterOverflow: !transferList || transferList.length === 0
       });
-      this.worker.postMessage({
-        ...message,
-        requestId,
-        preferSab: expectedSab,
-        sabChannelId
-      });
+      this.worker.postMessage(
+        {
+          ...message,
+          requestId,
+          preferSab: expectedSab,
+          sabChannelId
+        },
+        transferList ?? []
+      );
     });
   }
 
@@ -336,6 +362,15 @@ export class TrafficWorkerClient {
         pending.requiredSabCapacity,
         requiredSabCapacity
       );
+      if (!pending.canRetryAfterOverflow) {
+        clearTimeout(pending.timeoutId);
+        this.pending.delete(response.requestId);
+        this.releaseSabChannelForRequest(response.requestId);
+        pending.reject(
+          new Error('Traffic SAB overflow requires a fresh request for transferable payloads.')
+        );
+        return;
+      }
       if (pending.overflowRetryCount >= MAX_SAB_OVERFLOW_RETRIES) {
         clearTimeout(pending.timeoutId);
         this.pending.delete(response.requestId);

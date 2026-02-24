@@ -43,6 +43,7 @@ External data feeds and their ingestion paths.
 
 - Source: ADSB Exchange tar1090 `binCraft+zstd` feed (`/re-api/?binCraft&zstd&box=...`).
 - Fetched/decoded by the Rust runtime service (`services/runtime-rs`) endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is a thin proxy.
+- Runtime traffic endpoint can emit JSON (default) or compact binary wire payloads (`format=binary`, `application/vnd.approach-viz.traffic.v1`) for browser worker ingestion.
 - Runtime continuously polls ADS-B Exchange at 1 Hz across four US regions (CONUS, Alaska, Hawaii, Puerto Rico/USVI), and writes decoded aircraft updates into a disk-backed SQLite traffic store (`RUNTIME_STORAGE_DIR/traffic-store.db`).
 - The store maintains live per-aircraft state in `traffic_tracks` and one-hour historical points in a fixed 12-slot ring (5-minute buckets) with per-slot time/hex indexes plus slot-local `R*Tree` spatial indexes.
 - Runtime startup reconciles ring-slot schemas, installs trigger-based `R*Tree` maintenance (`INSERT`/`UPDATE`/`DELETE`), backfills missing `R*Tree` rows for pre-existing point data, and can migrate legacy dynamic partition data into the ring when the ring is empty.

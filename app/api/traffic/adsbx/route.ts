@@ -32,7 +32,8 @@ function upstreamTrafficUrl(request: NextRequest): string {
     'limit',
     'historyMinutes',
     'historyHexes',
-    'hideGround'
+    'hideGround',
+    'format'
   ];
   for (const key of passthroughParams) {
     const value = request.nextUrl.searchParams.get(key);
@@ -51,7 +52,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
       cache: 'no-store',
       signal: controller.signal,
       headers: {
-        accept: 'application/json',
+        accept: '*/*',
         'user-agent': 'approach-viz/1.0'
       }
     });
@@ -72,7 +73,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const upstreamResponse = await fetchWithTimeout(upstreamTrafficUrl(request));
-    const body = await upstreamResponse.text();
+    const body = await upstreamResponse.arrayBuffer();
     const contentType = upstreamResponse.headers.get('content-type') || 'application/json';
     return new NextResponse(body, {
       status: upstreamResponse.status,

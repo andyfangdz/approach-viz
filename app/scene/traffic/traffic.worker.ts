@@ -9,6 +9,7 @@ import type {
   TrafficWorkerResponseMessage
 } from './traffic-worker-types';
 import { createTrafficSabViews, type TrafficSabViews, writeTrafficSabResult } from './traffic-sab';
+import { decodeTrafficBinaryPayload } from './traffic-binary-protocol';
 
 const STALE_TRACK_GRACE_MS = 20000;
 const MIN_SAMPLE_DISTANCE_NM = 0.03;
@@ -307,6 +308,25 @@ function mergeTracks(
   }
 }
 
+function mergeRemoteHistoryMaps(
+  primary: Record<string, LiveTrafficHistoryPoint[]> | undefined,
+  secondary: Record<string, LiveTrafficHistoryPoint[]> | undefined
+): Record<string, LiveTrafficHistoryPoint[]> | undefined {
+  if (!primary && !secondary) return undefined;
+  if (!primary) return secondary;
+  if (!secondary) return primary;
+  const merged: Record<string, LiveTrafficHistoryPoint[]> = { ...primary };
+  for (const [hex, points] of Object.entries(secondary)) {
+    const existing = merged[hex];
+    if (!existing) {
+      merged[hex] = points;
+      continue;
+    }
+    merged[hex] = [...existing, ...points];
+  }
+  return merged;
+}
+
 function pruneForError(nowMs: number, historyMinutes: number) {
   const staleCutoffMs = nowMs - historyMinutes * 60_000;
   for (const [hex, track] of tracks.entries()) {
@@ -443,6 +463,18 @@ function handleMessage(
       message.historyMinutes,
       message.hideGroundTargets,
       message.historyByHex
+    );
+  } else if (message.type === 'ingest-binary') {
+    const decoded = decodeTrafficBinaryPayload(message.payloadBuffer);
+    const supplementalHistory = message.historyPayloadBuffer
+      ? decodeTrafficBinaryPayload(message.historyPayloadBuffer).historyByHex
+      : undefined;
+    mergeTracks(
+      decoded.aircraftList,
+      message.nowMs,
+      message.historyMinutes,
+      message.hideGroundTargets,
+      mergeRemoteHistoryMaps(decoded.historyByHex, supplementalHistory)
     );
   } else if (message.type === 'prune-error') {
     pruneForError(message.nowMs, message.historyMinutes);

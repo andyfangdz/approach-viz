@@ -75,6 +75,7 @@ export interface TrafficTimingDebugState {
 
 export interface TrafficDebugState {
   offloadMode: string | null;
+  feedTransport: string | null;
   workerTransport: string | null;
   workerErrorReason: string | null;
   enabled: boolean;

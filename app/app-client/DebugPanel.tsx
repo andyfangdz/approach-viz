@@ -544,6 +544,10 @@ export function DebugPanel({
               <span>{trafficDebug.offloadMode || 'n/a'}</span>
             </div>
             <div className="debug-row">
+              <span>Feed</span>
+              <span>{trafficDebug.feedTransport || 'n/a'}</span>
+            </div>
+            <div className="debug-row">
               <span>Transport</span>
               <span>{trafficDebug.workerTransport || 'n/a'}</span>
             </div>

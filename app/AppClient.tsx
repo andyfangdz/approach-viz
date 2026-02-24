@@ -158,6 +158,7 @@ const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
 };
 const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
   offloadMode: null,
+  feedTransport: null,
   workerTransport: null,
   workerErrorReason: null,
   enabled: false,

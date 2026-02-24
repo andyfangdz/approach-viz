@@ -9,6 +9,10 @@ import {
   type TrafficRenderBuffers
 } from './traffic/traffic-worker-client';
 import {
+  inspectTrafficBinaryPayload,
+  isTrafficBinaryContentType
+} from './traffic/traffic-binary-protocol';
+import {
   TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
   TRAFFIC_FLAG_IS_ON_GROUND
 } from './traffic/traffic-sab';
@@ -71,6 +75,7 @@ interface LiveTrafficOverlayProps {
 interface LiveTrafficFeed {
   aircraft?: LiveTrafficAircraft[];
   historyByHex?: Record<string, LiveTrafficHistoryPoint[]>;
+  error?: string;
 }
 
 interface ActiveTrackRenderEntry {
@@ -155,6 +160,7 @@ export function LiveTrafficOverlay({
   );
   const [trackCount, setTrackCount] = useState(0);
   const [historyPointCount, setHistoryPointCount] = useState(0);
+  const [feedTransport, setFeedTransport] = useState<string | null>(null);
   const [workerTransport, setWorkerTransport] = useState<string | null>(null);
   const [workerErrorReason, setWorkerErrorReason] = useState<string | null>(() =>
     typeof Worker === 'undefined' ? 'Worker API unavailable in this environment.' : null
@@ -225,6 +231,7 @@ export function LiveTrafficOverlay({
   useEffect(() => {
     if (trafficMode !== 'worker') {
       setIsLoading(false);
+      setFeedTransport(null);
       return;
     }
     const sceneAirportsKey = sceneAirports
@@ -257,6 +264,7 @@ export function LiveTrafficOverlay({
       setRenderBuffers(EMPTY_TRAFFIC_RENDER_BUFFERS);
       setTrackCount(0);
       setHistoryPointCount(0);
+      setFeedTransport(null);
       setWorkerTransport(null);
       setIsLoading(true);
       setLastError(null);
@@ -317,6 +325,7 @@ export function LiveTrafficOverlay({
       params.set('radiusNm', String(radiusNm));
       params.set('limit', String(limit));
       params.set('hideGround', hideGroundTargets ? '1' : '0');
+      params.set('format', 'binary');
       let requestedHistoryHexes: string[] = [];
       if (showDepartedTrafficTrails) {
         if (shouldRequestHistoryBackfill) {
@@ -342,25 +351,55 @@ export function LiveTrafficOverlay({
           throw new Error(`Traffic feed request failed (${response.status})`);
         }
         const parseStartedAt = performance.now();
-        const payload = (await response.json()) as LiveTrafficFeed;
-        parseMs = roundMs(performance.now() - parseStartedAt);
-        const nextAircraft = Array.isArray(payload.aircraft) ? payload.aircraft : [];
         const requestedHistory =
           showDepartedTrafficTrails &&
           (shouldRequestHistoryBackfill || requestedHistoryHexes.length > 0);
-        let backfilledHistory = requestedHistory ? payload.historyByHex : undefined;
-        const nowMs = Date.now();
-        if (showDepartedTrafficTrails && nextAircraft.length > 0) {
-          const returnedHistoryHexes = new Set(
-            backfilledHistory ? Object.keys(backfilledHistory) : []
+        const primaryContentType = response.headers.get('content-type');
+        let transportUsed: 'binary' | 'json' = 'json';
+        let primaryBinaryPayload: ArrayBuffer | null = null;
+        let followupBinaryPayload: ArrayBuffer | undefined;
+        let nextAircraft: LiveTrafficAircraft[] = [];
+        let trackedHexes: string[] = [];
+        let backfilledHistory: Record<string, LiveTrafficHistoryPoint[]> | undefined;
+        const returnedHistoryHexes = new Set<string>();
+
+        if (isTrafficBinaryContentType(primaryContentType)) {
+          primaryBinaryPayload = await response.arrayBuffer();
+          const payloadSummary = inspectTrafficBinaryPayload(primaryBinaryPayload);
+          trackedHexes = Array.from(
+            new Set(
+              payloadSummary.aircraftHexes.filter(
+                (hex) => typeof hex === 'string' && hex.length > 0
+              )
+            )
           );
-          const trackedHexes = Array.from(
+          for (const hex of payloadSummary.historyHexes) {
+            if (typeof hex === 'string' && hex.length > 0) {
+              returnedHistoryHexes.add(hex);
+            }
+          }
+          transportUsed = 'binary';
+        } else {
+          const payload = (await response.json()) as LiveTrafficFeed;
+          nextAircraft = Array.isArray(payload.aircraft) ? payload.aircraft : [];
+          backfilledHistory = requestedHistory ? payload.historyByHex : undefined;
+          trackedHexes = Array.from(
             new Set(
               nextAircraft
                 .map((aircraft) => aircraft.hex)
                 .filter((hex): hex is string => typeof hex === 'string' && hex.length > 0)
             )
           );
+          if (backfilledHistory && typeof backfilledHistory === 'object') {
+            for (const hex of Object.keys(backfilledHistory)) {
+              if (hex.length > 0) returnedHistoryHexes.add(hex);
+            }
+          }
+        }
+        parseMs = roundMs(performance.now() - parseStartedAt);
+        setFeedTransport(transportUsed);
+        const nowMs = Date.now();
+        if (showDepartedTrafficTrails && trackedHexes.length > 0) {
           const knownBackfilledHexes = backfilledHexesRef.current;
           const missingHistoryHexes = trackedHexes.filter((hex) => {
             if (returnedHistoryHexes.has(hex)) return false;
@@ -377,6 +416,7 @@ export function LiveTrafficOverlay({
             followupParams.set('limit', String(limit));
             followupParams.set('hideGround', hideGroundTargets ? '1' : '0');
             followupParams.set('historyMinutes', String(normalizedHistoryMinutes));
+            followupParams.set('format', transportUsed === 'binary' ? 'binary' : 'json');
             followupParams.set(
               'historyHexes',
               missingHistoryHexes.slice(0, MAX_HISTORY_BACKFILL_HEXES).join(',')
@@ -393,15 +433,31 @@ export function LiveTrafficOverlay({
               fetchMs = addTimingMs(fetchMs, performance.now() - historyFetchStartedAt);
               if (historyResponse.ok) {
                 const historyParseStartedAt = performance.now();
-                const historyPayload = (await historyResponse.json()) as LiveTrafficFeed;
-                parseMs = addTimingMs(parseMs, performance.now() - historyParseStartedAt);
-                const followupHistory =
-                  historyPayload.historyByHex && typeof historyPayload.historyByHex === 'object'
-                    ? historyPayload.historyByHex
-                    : undefined;
-                if (followupHistory && Object.keys(followupHistory).length > 0) {
-                  backfilledHistory = { ...(backfilledHistory ?? {}), ...followupHistory };
+                if (
+                  transportUsed === 'binary' &&
+                  isTrafficBinaryContentType(historyResponse.headers.get('content-type'))
+                ) {
+                  followupBinaryPayload = await historyResponse.arrayBuffer();
+                  const followupSummary = inspectTrafficBinaryPayload(followupBinaryPayload);
+                  for (const hex of followupSummary.historyHexes) {
+                    if (typeof hex === 'string' && hex.length > 0) {
+                      returnedHistoryHexes.add(hex);
+                    }
+                  }
+                } else {
+                  const historyPayload = (await historyResponse.json()) as LiveTrafficFeed;
+                  const followupHistory =
+                    historyPayload.historyByHex && typeof historyPayload.historyByHex === 'object'
+                      ? historyPayload.historyByHex
+                      : undefined;
+                  if (followupHistory && Object.keys(followupHistory).length > 0) {
+                    backfilledHistory = { ...(backfilledHistory ?? {}), ...followupHistory };
+                    for (const hex of Object.keys(followupHistory)) {
+                      if (hex.length > 0) returnedHistoryHexes.add(hex);
+                    }
+                  }
                 }
+                parseMs = addTimingMs(parseMs, performance.now() - historyParseStartedAt);
               }
             } catch (error) {
               if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -417,16 +473,16 @@ export function LiveTrafficOverlay({
             if (nowMs - backfillAtMs <= historyWindowMs * 2) continue;
             knownBackfilledHexes.delete(hex);
           }
-          for (const aircraft of nextAircraft) {
-            if (!aircraft.hex) continue;
-            const lastBackfillAtMs = knownBackfilledHexes.get(aircraft.hex);
+          for (const hex of trackedHexes) {
+            if (!hex) continue;
+            const lastBackfillAtMs = knownBackfilledHexes.get(hex);
             const hasFreshBackfill =
               typeof lastBackfillAtMs === 'number' && nowMs - lastBackfillAtMs <= historyWindowMs;
             if (hasFreshBackfill) {
-              pendingBackfillHexes.delete(aircraft.hex);
+              pendingBackfillHexes.delete(hex);
               continue;
             }
-            pendingBackfillHexes.add(aircraft.hex);
+            pendingBackfillHexes.add(hex);
           }
           if (requestedHistoryHexes.length > 0) {
             for (const hex of requestedHistoryHexes) {
@@ -434,11 +490,9 @@ export function LiveTrafficOverlay({
               knownBackfilledHexes.set(hex, nowMs);
             }
           }
-          if (backfilledHistory) {
-            for (const hex of Object.keys(backfilledHistory)) {
-              pendingBackfillHexes.delete(hex);
-              knownBackfilledHexes.set(hex, nowMs);
-            }
+          for (const hex of returnedHistoryHexes) {
+            pendingBackfillHexes.delete(hex);
+            knownBackfilledHexes.set(hex, nowMs);
           }
         }
 
@@ -449,17 +503,30 @@ export function LiveTrafficOverlay({
         }
         try {
           const processStartedAt = performance.now();
-          const result = await ingestWorker.ingest(nextAircraft, backfilledHistory, {
-            nowMs,
-            historyMinutes: normalizedHistoryMinutes,
-            hideGroundTargets,
-            showDepartedTrafficTrails,
-            refLat,
-            refLon,
-            verticalScale,
-            applyEarthCurvatureCompensation,
-            sceneAirports
-          });
+          const result =
+            primaryBinaryPayload !== null
+              ? await ingestWorker.ingestBinary(primaryBinaryPayload, followupBinaryPayload, {
+                  nowMs,
+                  historyMinutes: normalizedHistoryMinutes,
+                  hideGroundTargets,
+                  showDepartedTrafficTrails,
+                  refLat,
+                  refLon,
+                  verticalScale,
+                  applyEarthCurvatureCompensation,
+                  sceneAirports
+                })
+              : await ingestWorker.ingest(nextAircraft, backfilledHistory, {
+                  nowMs,
+                  historyMinutes: normalizedHistoryMinutes,
+                  hideGroundTargets,
+                  showDepartedTrafficTrails,
+                  refLat,
+                  refLon,
+                  verticalScale,
+                  applyEarthCurvatureCompensation,
+                  sceneAirports
+                });
           processMs = roundMs(performance.now() - processStartedAt);
           if (!cancelled) {
             applyWorkerResult(result);
@@ -749,6 +816,7 @@ export function LiveTrafficOverlay({
   const debugState = useMemo<TrafficDebugState>(
     () => ({
       offloadMode: trafficMode,
+      feedTransport,
       workerTransport,
       workerErrorReason,
       enabled: true,
@@ -773,6 +841,7 @@ export function LiveTrafficOverlay({
       renderBuffers.renderedTrackCount,
       historyPointCount,
       trafficMode,
+      feedTransport,
       workerTransport,
       workerErrorReason,
       radiusNm,
@@ -792,6 +861,7 @@ export function LiveTrafficOverlay({
       if (!onDebugChange) return;
       onDebugChange({
         offloadMode: null,
+        feedTransport: null,
         workerTransport: null,
         workerErrorReason: null,
         enabled: false,

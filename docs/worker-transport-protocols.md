@@ -21,14 +21,14 @@ Across all workers:
 
 ## Transport Matrix
 
-| Pipeline                                             | Primary Transport                   | Binary/SAB | Fallback Policy                                               |
-| ---------------------------------------------------- | ----------------------------------- | ---------- | ------------------------------------------------------------- |
-| Filter                                               | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
-| Approach altitude/path                               | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
-| MRMS decode (`decode-volume`, `decode-echo-top`)     | `postMessage` (+ transferables)     | No SAB     | No sync fallback; worker error surfaces                       |
-| MRMS prepare-volume                                  | `postMessage` control + SAB payload | Yes        | No non-SAB payload fallback; overflow retries with SAB growth |
-| MRMS prepare-echo-top                                | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
-| Traffic (`reset`/`ingest`/`recompute`/`prune-error`) | `postMessage` control + SAB payload | Yes        | No non-SAB/sync fallback; worker error surfaces               |
+| Pipeline                                                             | Primary Transport                   | Binary/SAB | Fallback Policy                                               |
+| -------------------------------------------------------------------- | ----------------------------------- | ---------- | ------------------------------------------------------------- |
+| Filter                                                               | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
+| Approach altitude/path                                               | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
+| MRMS decode (`decode-volume`, `decode-echo-top`)                     | `postMessage` (+ transferables)     | No SAB     | No sync fallback; worker error surfaces                       |
+| MRMS prepare-volume                                                  | `postMessage` control + SAB payload | Yes        | No non-SAB payload fallback; overflow retries with SAB growth |
+| MRMS prepare-echo-top                                                | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
+| Traffic (`reset`/`ingest`/`ingest-binary`/`recompute`/`prune-error`) | `postMessage` control + SAB payload | Yes        | No non-SAB/sync fallback; worker error surfaces               |
 
 ## Shared SAB Utilities
 
@@ -49,6 +49,13 @@ Across all workers:
 
 This allows concurrent requests while minimizing over-allocation.
 
+## Traffic Runtime Wire Format
+
+- Runtime endpoint `/v1/traffic/adsbx` accepts `format=binary` and emits `application/vnd.approach-viz.traffic.v1`.
+- Payload layout: fixed 64-byte header (`AVTR` magic + version + section offsets/counts), fixed-width aircraft records, fixed-width history-group records, fixed-width history-point records, and a trailing UTF-8 string table.
+- Main thread uses `inspectTrafficBinaryPayload(...)` for low-cost aircraft/history hex discovery to drive backfill targeting.
+- Worker uses `decodeTrafficBinaryPayload(...)` to deserialize full aircraft/history payloads before merge/prune/projection.
+
 ## Traffic Worker Protocol
 
 ### Files
@@ -57,6 +64,7 @@ This allows concurrent requests while minimizing over-allocation.
 - Worker: `app/scene/traffic/traffic.worker.ts`
 - Types: `app/scene/traffic/traffic-worker-types.ts`
 - SAB layout/read-write: `app/scene/traffic/traffic-sab.ts`
+- Binary payload codec: `app/scene/traffic/traffic-binary-protocol.ts`
 
 ### Handshake
 
@@ -78,6 +86,7 @@ Operations:
 
 - `reset`
 - `ingest` (`aircraftList`, optional `historyByHex`)
+- `ingest-binary` (`payloadBuffer`, optional `historyPayloadBuffer`; request buffers are transferable)
 - `recompute`
 - `prune-error`
 
@@ -97,6 +106,7 @@ Worker does not return object payload track arrays anymore; SAB is authoritative
 - Client merges required-capacity hints and retries up to `MAX_SAB_OVERFLOW_RETRIES`.
 - Retry chooses/reassigns a SAB channel that fits (or can be grown).
 - Growth uses in-place growable SAB (no buffer replacement transport).
+- For transferable `ingest-binary` requests, overflow updates capacity hints but the specific request cannot be replayed from detached buffers; client surfaces an explicit fresh-request error and retries on the next poll.
 
 ### Render Semantics
 
@@ -190,6 +200,6 @@ Runtime debug panel fields currently expose:
 
 - Capability flags: `Worker`, `SharedArrayBuffer`, `Atomics`, `crossOriginIsolated`
 - MRMS: offload mode, decode transport (`post-message` / `worker-error`), prepare transport (`sab` / `worker-error`), worker failure diagnostics
-- Traffic: offload mode, transport (`sab`), worker error reason, stage timings
+- Traffic: offload mode, feed transport (`binary` / `json`), worker transport (`sab`), worker error reason, stage timings
 
 These fields are intended to explain whether the active worker protocol is healthy and which transport path is in use.

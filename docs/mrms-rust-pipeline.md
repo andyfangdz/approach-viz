@@ -144,7 +144,7 @@ ps -ef | grep '[d]dprof'
 - `GET /v1/volume?...` -> legacy weather alias
 - `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> JSON echo-top cells (`EchoTop_18/30/50/60`)
 - `GET /v1/echo-tops?...` -> legacy echo-top alias
-- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>` -> JSON aircraft + optional trail history served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
+- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>&format=<json|binary>` -> default JSON aircraft + optional trail history, or compact binary payload (`format=binary`, `application/vnd.approach-viz.traffic.v1`) served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
 
 ## Next.js Configuration
 

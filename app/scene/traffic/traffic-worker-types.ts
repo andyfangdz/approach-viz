@@ -79,6 +79,12 @@ export interface TrafficIngestRequest extends TrafficBaseRequest {
   historyByHex?: Record<string, LiveTrafficHistoryPoint[]>;
 }
 
+export interface TrafficBinaryIngestRequest extends TrafficBaseRequest {
+  type: 'ingest-binary';
+  payloadBuffer: ArrayBuffer;
+  historyPayloadBuffer?: ArrayBuffer;
+}
+
 export interface TrafficRecomputeRequest extends TrafficBaseRequest {
   type: 'recompute';
 }
@@ -91,6 +97,7 @@ export type TrafficWorkerRequestMessage =
   | TrafficInitSabRequest
   | TrafficResetRequest
   | TrafficIngestRequest
+  | TrafficBinaryIngestRequest
   | TrafficRecomputeRequest
   | TrafficErrorPruneRequest;
 
