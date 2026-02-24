@@ -786,7 +786,6 @@ let activePollPromise: Promise<NexradPollAndPrepareResult> | null = null;
 function disposeClient() {
   sharedClient?.dispose();
   sharedClient = null;
-  activePollPromise = null;
 }
 
 function disposePrepareClient() {
@@ -840,12 +839,6 @@ export function getNexradWorkerTransportDiagnostics(): NexradWorkerTransportDiag
 export async function pollNexradWithWorker(
   options: NexradPollAndPrepareOptions
 ): Promise<NexradPollAndPrepareResult> {
-  const client = getDecodeWorkerClient();
-  if (!client) {
-    recordDecodeTransport('worker-error');
-    recordPrepareTransport('worker-error');
-    throw new Error('MRMS poll worker is unavailable.');
-  }
   if (activePollPromise) {
     try {
       await activePollPromise;
@@ -853,13 +846,19 @@ export async function pollNexradWithWorker(
       // Ignore; this call will attempt a fresh poll.
     }
   }
+  const client = getDecodeWorkerClient();
+  if (!client) {
+    recordDecodeTransport('worker-error');
+    recordPrepareTransport('worker-error');
+    throw new Error('MRMS poll worker is unavailable.');
+  }
   const pollPromise = client.pollAndPrepare(options);
   activePollPromise = pollPromise;
   try {
     return await pollPromise;
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disposeClient();
+    if (sharedClient === client) disposeClient();
     throw error instanceof Error ? error : new Error('MRMS poll worker failed.');
   } finally {
     if (activePollPromise === pollPromise) {
@@ -883,7 +882,7 @@ export async function decodeVolumePayload(
     return payload;
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disposeClient();
+    if (sharedClient === client) disposeClient();
     recordDecodeTransport('worker-error');
     throw error instanceof Error ? error : new Error('MRMS decode worker failed.');
   }
@@ -901,7 +900,7 @@ export async function decodeEchoTopPayloadWithWorker(buffer: ArrayBuffer): Promi
     return payload;
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disposeClient();
+    if (sharedClient === client) disposeClient();
     recordDecodeTransport('worker-error');
     throw error instanceof Error ? error : new Error('MRMS echo-top decode worker failed.');
   }
@@ -920,7 +919,7 @@ export async function prepareVolumeWithWorker(
     return await client.prepareVolume(payload, options);
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disposePrepareClient();
+    if (prepareClient === client) disposePrepareClient();
     recordPrepareTransport('worker-error');
     throw error instanceof Error ? error : new Error('MRMS volume prepare worker failed.');
   }
@@ -942,7 +941,7 @@ export async function prepareEchoTopWithWorker(
     return await client.prepareEchoTop(payload, options);
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disposePrepareClient();
+    if (prepareClient === client) disposePrepareClient();
     throw error instanceof Error ? error : new Error('MRMS echo-top prepare worker failed.');
   }
 }
