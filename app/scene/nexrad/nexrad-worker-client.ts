@@ -154,11 +154,11 @@ type PendingRequest =
 type WorkerChannel = {
   postMessage: (message: NexradWorkerRequestMessage, transfer?: Transferable[]) => void;
   addEventListener: (
-    type: 'message' | 'messageerror',
+    type: 'message' | 'messageerror' | 'error',
     listener: (event: MessageEvent<NexradWorkerResponseMessage>) => void
   ) => void;
   removeEventListener: (
-    type: 'message' | 'messageerror',
+    type: 'message' | 'messageerror' | 'error',
     listener: (event: MessageEvent<NexradWorkerResponseMessage>) => void
   ) => void;
   close: () => void;
@@ -227,8 +227,9 @@ function createDedicatedWorkerChannel(): WorkerChannel {
   const worker = new Worker(new URL('./nexrad.worker.ts', import.meta.url), { type: 'module' });
   return {
     postMessage: (message, transfer) => worker.postMessage(message, transfer ?? []),
-    addEventListener: (type, listener) => worker.addEventListener(type, listener),
-    removeEventListener: (type, listener) => worker.removeEventListener(type, listener),
+    addEventListener: (type, listener) => worker.addEventListener(type, listener as EventListener),
+    removeEventListener: (type, listener) =>
+      worker.removeEventListener(type, listener as EventListener),
     close: () => worker.terminate()
   };
 }
@@ -249,6 +250,7 @@ class NexradDecodeWorkerClient {
     this.channel = createDedicatedWorkerChannel();
     this.channel.addEventListener('message', this.onMessage);
     this.channel.addEventListener('messageerror', this.onMessageError);
+    this.channel.addEventListener('error', this.onWorkerError);
     this.initializePrepareSab();
   }
 
@@ -489,6 +491,7 @@ class NexradDecodeWorkerClient {
   dispose(): void {
     this.channel.removeEventListener('message', this.onMessage);
     this.channel.removeEventListener('messageerror', this.onMessageError);
+    this.channel.removeEventListener('error', this.onWorkerError);
     this.channel.close();
     this.prepareSabChannelPool?.clearInFlightRequests();
     for (const pending of this.pending.values()) {
@@ -534,6 +537,15 @@ class NexradDecodeWorkerClient {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeoutId);
       pending.reject(new Error('MRMS decode worker message error.'));
+    }
+    this.pending.clear();
+  };
+
+  private onWorkerError = () => {
+    this.prepareSabChannelPool?.clearInFlightRequests();
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(new Error('MRMS decode worker runtime error.'));
     }
     this.pending.clear();
   };
@@ -797,14 +809,6 @@ function getDecodeWorkerClient(): NexradDecodeWorkerClient | null {
   }
 }
 
-function disableWorkersAndError() {
-  disableWorkerPath = true;
-  disablePrepareWorkerPath = true;
-  runtimeMode = 'worker-error';
-  disposeClient();
-  disposePrepareClient();
-}
-
 function getPrepareWorkerClient(): NexradDecodeWorkerClient | null {
   if (!supportsWorkers() || disableWorkerPath || disablePrepareWorkerPath || !supportsNexradSab()) {
     return null;
@@ -878,7 +882,7 @@ export async function decodeVolumePayload(
     return payload;
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disableWorkersAndError();
+    disposeClient();
     recordDecodeTransport('worker-error');
     throw error instanceof Error ? error : new Error('MRMS decode worker failed.');
   }
@@ -896,7 +900,7 @@ export async function decodeEchoTopPayloadWithWorker(buffer: ArrayBuffer): Promi
     return payload;
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disableWorkersAndError();
+    disposeClient();
     recordDecodeTransport('worker-error');
     throw error instanceof Error ? error : new Error('MRMS echo-top decode worker failed.');
   }
@@ -915,9 +919,7 @@ export async function prepareVolumeWithWorker(
     return await client.prepareVolume(payload, options);
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disablePrepareWorkerPath = true;
     disposePrepareClient();
-    runtimeMode = 'worker-error';
     recordPrepareTransport('worker-error');
     throw error instanceof Error ? error : new Error('MRMS volume prepare worker failed.');
   }
@@ -939,9 +941,7 @@ export async function prepareEchoTopWithWorker(
     return await client.prepareEchoTop(payload, options);
   } catch (error) {
     recordWorkerFailure('worker-request', error);
-    disablePrepareWorkerPath = true;
     disposePrepareClient();
-    runtimeMode = 'worker-error';
     throw error instanceof Error ? error : new Error('MRMS echo-top prepare worker failed.');
   }
 }

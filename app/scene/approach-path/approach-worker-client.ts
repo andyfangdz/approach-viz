@@ -42,11 +42,13 @@ class ApproachWorkerClient {
     this.worker = new Worker(new URL('./approach.worker.ts', import.meta.url), { type: 'module' });
     this.worker.addEventListener('message', this.onMessage);
     this.worker.addEventListener('messageerror', this.onMessageError);
+    this.worker.addEventListener('error', this.onWorkerError);
   }
 
   dispose() {
     this.worker.removeEventListener('message', this.onMessage);
     this.worker.removeEventListener('messageerror', this.onMessageError);
+    this.worker.removeEventListener('error', this.onWorkerError);
     this.worker.terminate();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeoutId);
@@ -142,6 +144,14 @@ class ApproachWorkerClient {
     this.pending.clear();
   };
 
+  private onWorkerError = () => {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(new Error('Approach worker runtime error.'));
+    }
+    this.pending.clear();
+  };
+
   private resolveAltitudesRequest(
     message: ResolveAltitudesResponse,
     pending: Extract<PendingRequest, { type: 'resolve-altitudes' }>
@@ -180,27 +190,17 @@ class ApproachWorkerClient {
 }
 
 let sharedClient: ApproachWorkerClient | null = null;
-let workerDisabled = false;
 
 function getWorkerClient(): ApproachWorkerClient {
   if (typeof Worker === 'undefined') {
     throw new Error('Approach worker API is unavailable in this runtime.');
   }
-  if (workerDisabled) {
-    throw new Error('Approach worker is unavailable after a previous failure.');
-  }
   if (sharedClient) return sharedClient;
-  try {
-    sharedClient = new ApproachWorkerClient();
-    return sharedClient;
-  } catch (error) {
-    workerDisabled = true;
-    throw error instanceof Error ? error : new Error('Failed to initialize approach worker.');
-  }
+  sharedClient = new ApproachWorkerClient();
+  return sharedClient;
 }
 
-function disableWorker() {
-  workerDisabled = true;
+function disposeWorkerClient() {
   sharedClient?.dispose();
   sharedClient = null;
 }
@@ -220,7 +220,7 @@ export async function resolveApproachAltitudesWithWorker(params: {
   try {
     return await client.resolveAltitudes(params);
   } catch (error) {
-    disableWorker();
+    disposeWorkerClient();
     throw error instanceof Error ? error : new Error('Approach altitude worker failed.');
   }
 }
@@ -240,7 +240,7 @@ export async function buildPathGeometryWithWorker(params: {
   try {
     return await client.buildPathGeometry(params);
   } catch (error) {
-    disableWorker();
+    disposeWorkerClient();
     throw error instanceof Error ? error : new Error('Approach geometry worker failed.');
   }
 }

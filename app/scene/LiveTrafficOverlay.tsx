@@ -22,6 +22,8 @@ const MAX_HISTORY_BACKFILL_HEXES = 80;
 const MIN_FULL_BACKFILL_INTERVAL_MS = 60_000;
 const MAX_FULL_BACKFILL_INTERVAL_MS = 5 * 60_000;
 const POLL_INTERVAL_MS = 5000;
+const RECOMPUTE_DEBOUNCE_MS = 100;
+const POLL_RESTART_DEBOUNCE_MS = 200;
 const EMPTY_TIMINGS_MS: TrafficTimingDebugState = {
   pollCycleMs: null,
   fetchMs: null,
@@ -280,6 +282,7 @@ export function LiveTrafficOverlay({
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let startDebounceId: ReturnType<typeof setTimeout> | undefined;
     let shouldRequestHistoryBackfill =
       showDepartedTrafficTrails && (shouldHardReset || showDepartedChanged);
     let lastFullBackfillAtMs: number | null = shouldRequestHistoryBackfill ? null : Date.now();
@@ -481,10 +484,17 @@ export function LiveTrafficOverlay({
       }
     };
 
-    void poll();
+    if (previousContextKey !== null && contextChanged) {
+      startDebounceId = setTimeout(() => {
+        if (!cancelled) void poll();
+      }, POLL_RESTART_DEBOUNCE_MS);
+    } else {
+      void poll();
+    }
 
     return () => {
       cancelled = true;
+      if (startDebounceId) clearTimeout(startDebounceId);
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [
@@ -506,7 +516,9 @@ export function LiveTrafficOverlay({
   useEffect(() => {
     let cancelled = false;
     const recomputeWorker = trafficWorkerRef.current;
-    if (recomputeWorker) {
+    if (!recomputeWorker) return () => {};
+    const debounceId = setTimeout(() => {
+      if (cancelled) return;
       const recomputeStartedAt = performance.now();
       void recomputeWorker
         .recompute({
@@ -529,27 +541,13 @@ export function LiveTrafficOverlay({
         })
         .catch((error) => {
           if (cancelled || trafficWorkerRef.current !== recomputeWorker) return;
-          setTrafficMode('worker-error');
           const message = formatTrafficWorkerErrorReason(error, 'Traffic worker recompute failed');
-          setWorkerErrorReason(message);
           setLastError(message);
-          setWorkerTransport(null);
         });
-      return () => {
-        cancelled = true;
-      };
-    }
-    setWorkerErrorReason('Traffic worker is unavailable; recompute skipped.');
-    setLastError('Traffic worker is unavailable; recompute skipped.');
-    setTrafficMode('worker-error');
-    setWorkerTransport(null);
-    patchTimings({
-      recomputeMs: null,
-      workerRoundTripMs: null,
-      workerProcessingMs: null
-    });
+    }, RECOMPUTE_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      clearTimeout(debounceId);
     };
   }, [
     normalizedHistoryMinutes,

@@ -17,16 +17,16 @@ Across all workers:
 - Responses echo the same `requestId`.
 - Errors are returned as `error` strings in response payloads.
 - Clients maintain per-request timeout maps and reject timed-out requests.
-- `messageerror` invalidates in-flight requests and rejects all pending promises.
+- `messageerror` and `error` events invalidate in-flight requests and reject all pending promises.
 
 ## Transport Matrix
 
-| Pipeline                                                                              | Primary Transport                   | Binary/SAB | Fallback Policy                                               |
-| ------------------------------------------------------------------------------------- | ----------------------------------- | ---------- | ------------------------------------------------------------- |
-| Filter                                                                                | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
-| Approach altitude/path                                                                | `postMessage`                       | No         | No sync fallback; worker error surfaces                       |
-| MRMS `poll-and-prepare` (worker fetch + decode + prepare)                             | `postMessage` control + SAB payload | Yes        | No non-SAB payload fallback; overflow retries with SAB growth |
-| Traffic (`reset`/`ingest`/`ingest-binary`/`ingest-runtime`/`recompute`/`prune-error`) | `postMessage` control + SAB payload | Yes        | No non-SAB/sync fallback; worker error surfaces               |
+| Pipeline                                                                              | Primary Transport                   | Binary/SAB | Fallback Policy                                                                                                      |
+| ------------------------------------------------------------------------------------- | ----------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| Filter                                                                                | `postMessage`                       | No         | Dispose + recreate worker on failure; no sync fallback                                                               |
+| Approach altitude/path                                                                | `postMessage`                       | No         | Dispose + recreate worker on failure; no sync fallback                                                               |
+| MRMS `poll-and-prepare` (worker fetch + decode + prepare)                             | `postMessage` control + SAB payload | Yes        | Dispose + recreate on failure; overflow retries with SAB growth                                                      |
+| Traffic (`reset`/`ingest`/`ingest-binary`/`ingest-runtime`/`recompute`/`prune-error`) | `postMessage` control + SAB payload | Yes        | Transient errors surface without permanent disable; debounced recompute/poll restart prevents SAB channel exhaustion |
 
 ## Shared SAB Utilities
 
@@ -171,7 +171,7 @@ Transport is plain `postMessage` (no SAB). `build-path-geometry` returns `points
 
 Failure policy:
 
-- If worker unavailable or errors, client disables the worker path and surfaces explicit worker errors (no synchronous compute fallback).
+- If a request fails, client disposes the current worker and recreates a fresh one on the next attempt, allowing recovery from transient errors without permanent disable (no synchronous compute fallback).
 
 ## Filter Worker Protocol
 
@@ -187,7 +187,7 @@ Failure policy:
 
 Failure policy:
 
-- On worker init/message failure, client disables worker filtering and surfaces worker errors (no synchronous in-thread filter fallback).
+- On request failure, client disposes the current worker and recreates a fresh one on the next attempt, allowing recovery from transient errors (no synchronous in-thread filter fallback).
 
 ## Runtime and Debug Telemetry
 

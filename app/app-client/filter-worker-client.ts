@@ -30,6 +30,7 @@ export class FilterWorkerClient {
     this.worker = new Worker(new URL('./filter.worker.ts', import.meta.url), { type: 'module' });
     this.worker.addEventListener('message', this.onMessage);
     this.worker.addEventListener('messageerror', this.onMessageError);
+    this.worker.addEventListener('error', this.onWorkerError);
   }
 
   async filter(options: SelectOption[], query: string): Promise<SelectOption[]> {
@@ -48,6 +49,7 @@ export class FilterWorkerClient {
   dispose() {
     this.worker.removeEventListener('message', this.onMessage);
     this.worker.removeEventListener('messageerror', this.onMessageError);
+    this.worker.removeEventListener('error', this.onWorkerError);
     this.worker.terminate();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeoutId);
@@ -76,26 +78,30 @@ export class FilterWorkerClient {
     }
     this.pending.clear();
   };
+
+  private onWorkerError = () => {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(new Error('Filter worker runtime error.'));
+    }
+    this.pending.clear();
+  };
 }
 
 let sharedClient: FilterWorkerClient | null = null;
-let workerDisabled = false;
 
 function getClient(): FilterWorkerClient {
   if (typeof Worker === 'undefined') {
     throw new Error('Filter worker API is unavailable in this runtime.');
   }
-  if (workerDisabled) {
-    throw new Error('Filter worker is unavailable after a previous failure.');
-  }
   if (sharedClient) return sharedClient;
-  try {
-    sharedClient = new FilterWorkerClient();
-    return sharedClient;
-  } catch (error) {
-    workerDisabled = true;
-    throw error instanceof Error ? error : new Error('Failed to initialize filter worker.');
-  }
+  sharedClient = new FilterWorkerClient();
+  return sharedClient;
+}
+
+function disposeClient() {
+  sharedClient?.dispose();
+  sharedClient = null;
 }
 
 export async function filterOptionsWithWorker(
@@ -106,9 +112,7 @@ export async function filterOptionsWithWorker(
   try {
     return await client.filter(options, query);
   } catch (error) {
-    workerDisabled = true;
-    sharedClient?.dispose();
-    sharedClient = null;
+    disposeClient();
     throw error instanceof Error ? error : new Error('Filter worker failed.');
   }
 }

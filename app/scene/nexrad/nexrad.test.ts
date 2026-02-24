@@ -268,7 +268,9 @@ test(
         () => workerClientModule.decodeVolumePayload(buildTestVolumeBuffer(), TEST_PHASE_DEBUG),
         /message error/
       );
-      assert.strictEqual(workerClientModule.getNexradWorkerRuntimeMode(), 'worker-error');
+      // After a transient failure the mode stays 'worker' (client is disposed
+      // and will be recreated on next attempt, not permanently disabled).
+      assert.strictEqual(workerClientModule.getNexradWorkerRuntimeMode(), 'worker');
       const diagnostics = workerClientModule.getNexradWorkerDiagnostics();
       assert.strictEqual(diagnostics.lastFailureStage, 'worker-request');
       assert.match(diagnostics.lastFailureMessage || '', /message error/);
