@@ -4,7 +4,7 @@ import {
   prepareEchoTopSurfaces,
   prepareVolumeData
 } from './nexrad-preprocess';
-import type { NexradVolumePayload } from './nexrad-types';
+import type { EchoTopPayload, NexradVolumePayload } from './nexrad-types';
 import type {
   DecodeEchoTopRequestMessage,
   DecodeVolumeRequestMessage,
@@ -40,6 +40,17 @@ function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
   ];
 }
 
+function echoTopTransferables(payload: EchoTopPayload): Transferable[] {
+  const transferables: Transferable[] = [];
+  if (payload.xNm) transferables.push(payload.xNm.buffer);
+  if (payload.zNm) transferables.push(payload.zNm.buffer);
+  if (payload.top18Feet) transferables.push(payload.top18Feet.buffer);
+  if (payload.top30Feet) transferables.push(payload.top30Feet.buffer);
+  if (payload.top50Feet) transferables.push(payload.top50Feet.buffer);
+  if (payload.top60Feet) transferables.push(payload.top60Feet.buffer);
+  return transferables;
+}
+
 function handleDecodeVolume(endpoint: WorkerEndpoint, message: DecodeVolumeRequestMessage): void {
   try {
     const decoded = decodePayload(message.buffer);
@@ -64,11 +75,14 @@ function handleDecodeVolume(endpoint: WorkerEndpoint, message: DecodeVolumeReque
 function handleDecodeEchoTop(endpoint: WorkerEndpoint, message: DecodeEchoTopRequestMessage): void {
   try {
     const payload = decodeEchoTopPayload(message.buffer);
-    endpoint.postMessage({
-      type: 'decode-echo-top-result',
-      requestId: message.requestId,
-      payload
-    });
+    endpoint.postMessage(
+      {
+        type: 'decode-echo-top-result',
+        requestId: message.requestId,
+        payload
+      },
+      echoTopTransferables(payload)
+    );
   } catch (error) {
     endpoint.postMessage({
       type: 'decode-echo-top-result',

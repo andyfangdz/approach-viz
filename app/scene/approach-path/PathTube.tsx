@@ -113,7 +113,13 @@ export function PathTube({
     })
       .then((next) => {
         if (cancelled) return;
-        setPoints(next.points.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+        const nextPoints: THREE.Vector3[] = [];
+        for (let i = 0; i < next.pointsFlat.length; i += 3) {
+          nextPoints.push(
+            new THREE.Vector3(next.pointsFlat[i], next.pointsFlat[i + 1], next.pointsFlat[i + 2])
+          );
+        }
+        setPoints(nextPoints);
         setVerticalLines(next.verticalLines);
         setTurnConstraintLabels(next.turnConstraintLabels);
       })

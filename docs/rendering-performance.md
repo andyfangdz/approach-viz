@@ -3,6 +3,7 @@
 ## General Scene
 
 - Approach altitude-profile resolution and path-geometry assembly are computed through a worker-backed pipeline, reducing main-thread spikes during approach/option changes while avoiding synchronous main-thread fallback.
+- Approach geometry worker responses transfer a flat `Float32Array` point buffer (`pointsFlat`) back to main thread rather than cloning tuple arrays.
 - Vertical reference lines for path points are batched into a single `lineSegments` geometry per path segment (final/transition/missed) to reduce draw-call count.
 - Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized.
 - The top-level scene wrapper (`SceneCanvas`) is memoized so selector typing/collapse state updates in the header do not re-render the Three.js subtree.
@@ -32,6 +33,7 @@
 
 - Decoded payloads use parallel flat `TypedArrays` (`xNm`, `zNm`, `bottomFeet`, etc.) instead of Javascript objects to eliminate `100k+` object allocations and GC pauses during the `120s` poll cycle.
 - Binary decode runs in dedicated workers off the main thread, reducing UI hitching during poll refreshes while surfacing worker failures as explicit errors (no synchronous fallback).
+- MRMS decode requests and responses use transferable `ArrayBuffer`/typed-array ownership moves to reduce cross-thread copy cost.
 - MRMS volume preprocessing (threshold filter, phase selection, curvature correction, declutter index generation), echo-top surface shaping, and cross-section binning are computed off-main-thread through the same worker pipeline.
 - MRMS prepared-volume worker responses use a SharedArrayBuffer + Atomics channel (shared typed-array views with counts in an atomic control block) and automatically grow SAB voxel capacity with overflow retry.
 - Runtime debug telemetry exposes per-stage MRMS timings (`poll cycle`, volume/echo-top `fetch`, volume/echo-top `decode`, volume/echo-top `prepare`, and voxel/echo-top instance upload) for regression checks.

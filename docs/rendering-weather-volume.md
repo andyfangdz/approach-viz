@@ -62,6 +62,8 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 
 - Client decodes compact binary payloads (`application/vnd.approach-viz.mrms.v3`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays. The v3 format adds a `surface_phase` byte at record offset 18 (formerly reserved). The client also accepts v2 payloads for backward compatibility.
 - Decode work is offloaded from the React render thread into a dedicated `Worker` path. Worker startup/communication failures surface as explicit overlay/debug errors (no synchronous in-thread fallback).
+- Decode worker requests transfer fetched binary `ArrayBuffer` payloads from main thread to worker, and decode responses transfer typed-array buffers back to main thread (ownership moves instead of clone).
+- Echo-top decode payloads are flattened typed arrays (`xNm`/`zNm`/`top18|30|50|60Feet`) so decode responses avoid tuple-array structured-clone cost.
 - Post-decode preprocess work runs on an isolated dedicated worker channel so heavy prepare jobs do not starve decode responses.
 - Prepared-volume worker responses use a SharedArrayBuffer + Atomics transport (`init-sab` handshake + shared typed arrays + atomic control metadata), with automatic voxel-capacity growth/retry when shared capacity is exceeded.
 - Worker failures are captured with stage + message + timestamp telemetry (`worker-init`, `worker-request`) and shown in the runtime debug panel for diagnosis.

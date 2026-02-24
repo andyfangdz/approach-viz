@@ -82,7 +82,11 @@ function echoTopPayloadSignature(payload: EchoTopPayload | null): string | null 
     payload.top30Timestamp ?? '',
     payload.top50Timestamp ?? '',
     payload.top60Timestamp ?? '',
-    payload.sourceCellCount ?? payload.cells?.length ?? 0,
+    payload.sourceCellCount ??
+      payload.cellCount ??
+      payload.xNm?.length ??
+      payload.cells?.length ??
+      0,
     payload.error ?? ''
   ].join('|');
 }
@@ -703,7 +707,12 @@ export function NexradVolumeOverlay({
     precipFlagTimestamp: payload?.precipFlagTimestamp ?? null,
     freezingLevelTimestamp: payload?.freezingLevelTimestamp ?? null,
     phaseCounts,
-    echoTopCellCount: echoTopPayload?.sourceCellCount ?? echoTopPayload?.cells?.length ?? 0,
+    echoTopCellCount:
+      echoTopPayload?.sourceCellCount ??
+      echoTopPayload?.cellCount ??
+      echoTopPayload?.xNm?.length ??
+      echoTopPayload?.cells?.length ??
+      0,
     echoTopMax18Feet: echoTopPayload?.maxTop18Feet ?? null,
     echoTopMax30Feet: echoTopPayload?.maxTop30Feet ?? null,
     echoTopMax50Feet: echoTopPayload?.maxTop50Feet ?? null,

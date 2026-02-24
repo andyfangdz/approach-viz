@@ -120,7 +120,7 @@ type PendingRequest =
     };
 
 type WorkerChannel = {
-  postMessage: (message: NexradWorkerRequestMessage) => void;
+  postMessage: (message: NexradWorkerRequestMessage, transfer?: Transferable[]) => void;
   addEventListener: (
     type: 'message' | 'messageerror',
     listener: (event: MessageEvent<NexradWorkerResponseMessage>) => void
@@ -194,7 +194,7 @@ function recordWorkerFailure(stage: NexradWorkerFailureStage, error: unknown): v
 function createDedicatedWorkerChannel(): WorkerChannel {
   const worker = new Worker(new URL('./nexrad.worker.ts', import.meta.url), { type: 'module' });
   return {
-    postMessage: (message) => worker.postMessage(message),
+    postMessage: (message, transfer) => worker.postMessage(message, transfer ?? []),
     addEventListener: (type, listener) => worker.addEventListener(type, listener),
     removeEventListener: (type, listener) => worker.removeEventListener(type, listener),
     close: () => worker.terminate()
@@ -295,45 +295,53 @@ class NexradDecodeWorkerClient {
     phaseDebug: PhaseDebugHeaderValues
   ): Promise<NexradVolumePayload> {
     const requestId = this.nextRequestId++;
-    const timeoutMs = timeoutForVolumeDecode(buffer.byteLength);
+    const bufferByteLength = buffer.byteLength;
+    const timeoutMs = timeoutForVolumeDecode(bufferByteLength);
     const payload = await new Promise<NexradVolumePayload>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pending.delete(requestId);
         reject(
           new Error(
-            `Timed out (${timeoutMs} ms) while decoding MRMS payload in ${this.mode} (bytes=${buffer.byteLength}).`
+            `Timed out (${timeoutMs} ms) while decoding MRMS payload in ${this.mode} (bytes=${bufferByteLength}).`
           )
         );
       }, timeoutMs);
       this.pending.set(requestId, { type: 'decode-volume', resolve, reject, timeoutId });
-      this.channel.postMessage({
-        type: 'decode-volume',
-        requestId,
-        buffer,
-        phaseDebug
-      });
+      this.channel.postMessage(
+        {
+          type: 'decode-volume',
+          requestId,
+          buffer,
+          phaseDebug
+        },
+        [buffer]
+      );
     });
     return payload;
   }
 
   async decodeEchoTop(buffer: ArrayBuffer): Promise<EchoTopPayload> {
     const requestId = this.nextRequestId++;
-    const timeoutMs = timeoutForEchoTopDecode(buffer.byteLength);
+    const bufferByteLength = buffer.byteLength;
+    const timeoutMs = timeoutForEchoTopDecode(bufferByteLength);
     const payload = await new Promise<EchoTopPayload>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pending.delete(requestId);
         reject(
           new Error(
-            `Timed out (${timeoutMs} ms) while decoding MRMS echo-top payload in ${this.mode} (bytes=${buffer.byteLength}).`
+            `Timed out (${timeoutMs} ms) while decoding MRMS echo-top payload in ${this.mode} (bytes=${bufferByteLength}).`
           )
         );
       }, timeoutMs);
       this.pending.set(requestId, { type: 'decode-echo-top', resolve, reject, timeoutId });
-      this.channel.postMessage({
-        type: 'decode-echo-top',
-        requestId,
-        buffer
-      });
+      this.channel.postMessage(
+        {
+          type: 'decode-echo-top',
+          requestId,
+          buffer
+        },
+        [buffer]
+      );
     });
     return payload;
   }

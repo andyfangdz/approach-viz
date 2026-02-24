@@ -11,7 +11,7 @@ import type {
 } from './approach-worker-types';
 
 type WorkerEndpoint = {
-  postMessage: (message: ApproachWorkerResponseMessage) => void;
+  postMessage: (message: ApproachWorkerResponseMessage, transfer?: Transferable[]) => void;
 };
 
 function resolveAltitudesForApproach(
@@ -120,13 +120,23 @@ function handleMessage(endpoint: WorkerEndpoint, message: ApproachWorkerRequestM
       magVar: message.magVar,
       showTurnConstraintLabels: message.showTurnConstraintLabels
     });
-    endpoint.postMessage({
-      type: 'build-path-geometry-result',
-      requestId: message.requestId,
-      points: result.points.map((point) => [point.x, point.y, point.z]),
-      verticalLines: result.verticalLines,
-      turnConstraintLabels: result.turnConstraintLabels
-    });
+    const pointsFlat = new Float32Array(result.points.length * 3);
+    let pointOffset = 0;
+    for (const point of result.points) {
+      pointsFlat[pointOffset++] = point.x;
+      pointsFlat[pointOffset++] = point.y;
+      pointsFlat[pointOffset++] = point.z;
+    }
+    endpoint.postMessage(
+      {
+        type: 'build-path-geometry-result',
+        requestId: message.requestId,
+        pointsFlat,
+        verticalLines: result.verticalLines,
+        turnConstraintLabels: result.turnConstraintLabels
+      },
+      [pointsFlat.buffer]
+    );
   } catch (error) {
     endpoint.postMessage({
       type: 'build-path-geometry-result',
@@ -144,7 +154,7 @@ const scope = self as unknown as {
 scope.onmessage = (event) => {
   handleMessage(
     {
-      postMessage: (message) => scope.postMessage(message)
+      postMessage: (message, transfer) => scope.postMessage(message, transfer ?? [])
     },
     event.data
   );

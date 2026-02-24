@@ -118,7 +118,9 @@ Operations:
 - `decode-volume`
 - `decode-echo-top`
 
+Decode requests transfer the fetched binary `ArrayBuffer` from main thread to worker (ownership move, no clone).
 Worker returns decoded payloads via transferable typed-array buffers (no SAB transport for decode).
+Echo-top decode payloads are flattened typed arrays (`xNm`/`zNm`/`top*Feet`) so response transfer is buffer-based instead of tuple-array clone.
 
 ### Prepare-Volume (SAB-only payload)
 
@@ -160,7 +162,7 @@ Retry:
 - `resolve-altitudes`
 - `build-path-geometry`
 
-Transport is plain `postMessage` JSON payloads (no SAB).
+Transport is plain `postMessage` (no SAB). `build-path-geometry` returns `pointsFlat: Float32Array` and transfers its buffer back to main thread.
 
 Failure policy:
 

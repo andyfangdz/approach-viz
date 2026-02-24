@@ -45,7 +45,7 @@ export interface ResolveAltitudesResponse {
 export interface BuildPathGeometryResponse {
   type: 'build-path-geometry-result';
   requestId: number;
-  points?: [number, number, number][];
+  pointsFlat?: Float32Array;
   verticalLines?: VerticalLineData[];
   turnConstraintLabels?: TurnConstraintLabel[];
   error?: string;

@@ -1,9 +1,4 @@
-import type {
-  NexradVolumePayload,
-  NexradLayerSummary,
-  EchoTopPayload,
-  EchoTopCellTuple
-} from './nexrad-types';
+import type { NexradVolumePayload, NexradLayerSummary, EchoTopPayload } from './nexrad-types';
 import {
   MRMS_BINARY_MAGIC,
   MRMS_BINARY_V2_VERSION,
@@ -229,7 +224,13 @@ export function decodeEchoTopPayload(buffer: ArrayBuffer): EchoTopPayload {
   const text = new TextDecoder().decode(buffer);
   const parsed = JSON.parse(text) as Record<string, unknown>;
   const rawCells = Array.isArray(parsed.cells) ? (parsed.cells as unknown[]) : [];
-  const cells: EchoTopCellTuple[] = [];
+  const xNmBuffer = new Float32Array(rawCells.length);
+  const zNmBuffer = new Float32Array(rawCells.length);
+  const top18FeetBuffer = new Float32Array(rawCells.length);
+  const top30FeetBuffer = new Float32Array(rawCells.length);
+  const top50FeetBuffer = new Float32Array(rawCells.length);
+  const top60FeetBuffer = new Float32Array(rawCells.length);
+  let cellCount = 0;
   for (const rawCell of rawCells) {
     let xNm: number;
     let zNm: number;
@@ -266,7 +267,13 @@ export function decodeEchoTopPayload(buffer: ArrayBuffer): EchoTopPayload {
     ) {
       continue;
     }
-    cells.push([xNm, zNm, top18Feet, top30Feet, top50Feet, top60Feet]);
+    xNmBuffer[cellCount] = xNm;
+    zNmBuffer[cellCount] = zNm;
+    top18FeetBuffer[cellCount] = top18Feet;
+    top30FeetBuffer[cellCount] = top30Feet;
+    top50FeetBuffer[cellCount] = top50Feet;
+    top60FeetBuffer[cellCount] = top60Feet;
+    cellCount += 1;
   }
 
   return {
@@ -277,7 +284,7 @@ export function decodeEchoTopPayload(buffer: ArrayBuffer): EchoTopPayload {
       typeof parsed.sourceCellCount === 'number' &&
       Number.isFinite(parsed.sourceCellCount as number)
         ? Math.max(0, Math.round(parsed.sourceCellCount as number))
-        : undefined,
+        : cellCount,
     footprintXNm:
       typeof parsed.footprintXNm === 'number' && Number.isFinite(parsed.footprintXNm as number)
         ? (parsed.footprintXNm as number)
@@ -294,7 +301,13 @@ export function decodeEchoTopPayload(buffer: ArrayBuffer): EchoTopPayload {
     top30Timestamp: typeof parsed.top30Timestamp === 'string' ? parsed.top30Timestamp : null,
     top50Timestamp: typeof parsed.top50Timestamp === 'string' ? parsed.top50Timestamp : null,
     top60Timestamp: typeof parsed.top60Timestamp === 'string' ? parsed.top60Timestamp : null,
-    cells,
+    cellCount,
+    xNm: xNmBuffer.slice(0, cellCount),
+    zNm: zNmBuffer.slice(0, cellCount),
+    top18Feet: top18FeetBuffer.slice(0, cellCount),
+    top30Feet: top30FeetBuffer.slice(0, cellCount),
+    top50Feet: top50FeetBuffer.slice(0, cellCount),
+    top60Feet: top60FeetBuffer.slice(0, cellCount),
     error: typeof parsed.error === 'string' ? parsed.error : undefined
   };
 }

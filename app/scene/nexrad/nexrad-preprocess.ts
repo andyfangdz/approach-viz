@@ -265,7 +265,32 @@ export function prepareEchoTopSurfaces({
   const echoTop30Cells: EchoTopSurfaceCell[] = [];
   const echoTop50Cells: EchoTopSurfaceCell[] = [];
 
-  if (!payload?.cells?.length) {
+  const xNmSeries = payload?.xNm;
+  const zNmSeries = payload?.zNm;
+  const top18FeetSeries = payload?.top18Feet;
+  const top30FeetSeries = payload?.top30Feet;
+  const top50FeetSeries = payload?.top50Feet;
+  const typedCellCount =
+    xNmSeries &&
+    zNmSeries &&
+    top18FeetSeries &&
+    top30FeetSeries &&
+    top50FeetSeries &&
+    Number.isFinite(payload?.cellCount)
+      ? Math.max(
+          0,
+          Math.min(
+            Math.round(payload.cellCount as number),
+            xNmSeries.length,
+            zNmSeries.length,
+            top18FeetSeries.length,
+            top30FeetSeries.length,
+            top50FeetSeries.length
+          )
+        )
+      : 0;
+  const hasLegacyCells = Array.isArray(payload?.cells) && payload.cells.length > 0;
+  if (typedCellCount === 0 && !hasLegacyCells) {
     return { echoTop18Cells, echoTop30Cells, echoTop50Cells };
   }
 
@@ -278,9 +303,14 @@ export function prepareEchoTopSurfaces({
       ? Math.max(0.03, payload.footprintYNm)
       : footprintXNm;
 
-  for (const cell of payload.cells) {
-    const [xNm, zNm, top18FeetRaw, top30FeetRaw, top50FeetRaw] = cell;
-    if (!Number.isFinite(xNm) || !Number.isFinite(zNm)) continue;
+  const applyCell = (
+    xNm: number,
+    zNm: number,
+    top18FeetRaw: number,
+    top30FeetRaw: number,
+    top50FeetRaw: number
+  ): void => {
+    if (!Number.isFinite(xNm) || !Number.isFinite(zNm)) return;
     const curvatureDropFeet = applyEarthCurvatureCompensation
       ? earthCurvatureDropNm(xNm, zNm, refLat) * FEET_PER_NM
       : 0;
@@ -315,6 +345,24 @@ export function prepareEchoTopSurfaces({
         footprintYNm
       });
     }
+  };
+
+  if (typedCellCount > 0) {
+    for (let i = 0; i < typedCellCount; i += 1) {
+      applyCell(
+        xNmSeries![i],
+        zNmSeries![i],
+        top18FeetSeries![i],
+        top30FeetSeries![i],
+        top50FeetSeries![i]
+      );
+    }
+    return { echoTop18Cells, echoTop30Cells, echoTop50Cells };
+  }
+
+  for (const cell of payload.cells ?? []) {
+    const [xNm, zNm, top18FeetRaw, top30FeetRaw, top50FeetRaw] = cell;
+    applyCell(xNm, zNm, top18FeetRaw, top30FeetRaw, top50FeetRaw);
   }
 
   return { echoTop18Cells, echoTop30Cells, echoTop50Cells };

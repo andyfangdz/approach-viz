@@ -25,7 +25,7 @@ type PendingRequest =
   | {
       type: 'build-path-geometry';
       resolve: (payload: {
-        points: [number, number, number][];
+        pointsFlat: Float32Array;
         verticalLines: VerticalLineData[];
         turnConstraintLabels: TurnConstraintLabel[];
       }) => void;
@@ -99,7 +99,7 @@ class ApproachWorkerClient {
   }) {
     const requestId = this.nextRequestId++;
     return new Promise<{
-      points: [number, number, number][];
+      pointsFlat: Float32Array;
       verticalLines: VerticalLineData[];
       turnConstraintLabels: TurnConstraintLabel[];
     }>((resolve, reject) => {
@@ -166,8 +166,13 @@ class ApproachWorkerClient {
       pending.reject(new Error(message.error));
       return;
     }
+    const pointsFlat = message.pointsFlat;
+    if (!pointsFlat) {
+      pending.reject(new Error('Approach worker returned no geometry point buffer.'));
+      return;
+    }
     pending.resolve({
-      points: message.points ?? [],
+      pointsFlat,
       verticalLines: message.verticalLines ?? [],
       turnConstraintLabels: message.turnConstraintLabels ?? []
     });

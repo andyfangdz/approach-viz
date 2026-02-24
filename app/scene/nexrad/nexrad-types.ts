@@ -137,7 +137,14 @@ export interface EchoTopPayload {
   top30Timestamp?: string | null;
   top50Timestamp?: string | null;
   top60Timestamp?: string | null;
-  cells: EchoTopCellTuple[];
+  cellCount?: number;
+  xNm?: Float32Array;
+  zNm?: Float32Array;
+  top18Feet?: Float32Array;
+  top30Feet?: Float32Array;
+  top50Feet?: Float32Array;
+  top60Feet?: Float32Array;
+  cells?: EchoTopCellTuple[];
   error?: string;
 }
 
