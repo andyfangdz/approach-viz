@@ -428,6 +428,7 @@ export function LiveTrafficOverlay({
         }
         shouldRequestHistoryBackfill = false;
       } catch (error) {
+        if (cancelled) return;
         setLastError(error instanceof Error ? error.message : 'Traffic poll failed');
         setLastPollAt(new Date().toISOString());
         const nowMs = Date.now();
@@ -496,6 +497,7 @@ export function LiveTrafficOverlay({
       cancelled = true;
       if (startDebounceId) clearTimeout(startDebounceId);
       if (timeoutId) clearTimeout(timeoutId);
+      trafficWorkerRef.current?.cancelAllPending();
     };
   }, [
     refLat,
