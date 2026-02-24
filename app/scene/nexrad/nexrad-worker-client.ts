@@ -859,6 +859,7 @@ export async function pollNexradWithWorker(
     return await pollPromise;
   } catch (error) {
     recordWorkerFailure('worker-request', error);
+    disposeClient();
     throw error instanceof Error ? error : new Error('MRMS poll worker failed.');
   } finally {
     if (activePollPromise === pollPromise) {
