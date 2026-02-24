@@ -6,11 +6,6 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { Approach, ApproachLeg, Airport, Waypoint } from '@/lib/cifp/parser';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
-import {
-  applyGlidepathInsideFaf,
-  resolveMissedApproachAltitudes,
-  resolveSegmentAltitudes
-} from './approach-path/altitudes';
 import { resolveApproachAltitudesWithWorker } from './approach-path/approach-worker-client';
 import { COLORS } from './approach-path/constants';
 import { altToY, isHoldLeg, resolveWaypoint } from './approach-path/coordinates';
@@ -59,49 +54,6 @@ export const ApproachPath = memo(function ApproachPath({
   useEffect(() => {
     let cancelled = false;
     const transitionEntries = Array.from(approach.transitions.entries());
-    const setFallback = () => {
-      const altitudes = new Map<ApproachLeg, number>();
-      const finalAltitudes = resolveSegmentAltitudes(approach.finalLegs, waypoints, refLat, refLon);
-      for (const [leg, altitude] of finalAltitudes.entries()) {
-        altitudes.set(leg, altitude);
-      }
-      for (const [, legs] of transitionEntries) {
-        const transitionAltitudes = resolveSegmentAltitudes(legs, waypoints, refLat, refLon);
-        for (const [leg, altitude] of transitionAltitudes.entries()) {
-          altitudes.set(leg, altitude);
-        }
-      }
-      const missedAltitudes = resolveSegmentAltitudes(
-        approach.missedLegs,
-        waypoints,
-        refLat,
-        refLon
-      );
-      for (const [leg, altitude] of missedAltitudes.entries()) {
-        altitudes.set(leg, altitude);
-      }
-      const glideAdjusted = applyGlidepathInsideFaf(
-        approach.finalLegs,
-        approach.missedLegs,
-        altitudes,
-        waypoints,
-        refLat,
-        refLon,
-        airport.elevation
-      );
-      const missedAdjusted = resolveMissedApproachAltitudes(
-        approach.missedLegs,
-        glideAdjusted,
-        waypoints,
-        refLat,
-        refLon,
-        missedApproachStartAltitudeFeet,
-        missedApproachClimbRequirement
-      );
-      if (cancelled) return;
-      setResolvedAltitudes(glideAdjusted);
-      setMissedPathAltitudes(missedAdjusted);
-    };
 
     void resolveApproachAltitudesWithWorker({
       finalLegs: approach.finalLegs,
@@ -137,8 +89,11 @@ export const ApproachPath = memo(function ApproachPath({
         setResolvedAltitudes(nextResolved);
         setMissedPathAltitudes(nextMissed);
       })
-      .catch(() => {
-        setFallback();
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Approach altitude worker failed.', error);
+        setResolvedAltitudes(new Map());
+        setMissedPathAltitudes(new Map());
       });
 
     return () => {

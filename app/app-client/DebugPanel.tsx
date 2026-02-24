@@ -360,6 +360,12 @@ export function DebugPanel({
               <span>{nexradDebug.offloadMode || 'n/a'}</span>
             </div>
             <div className="debug-row">
+              <span>Transport D/P</span>
+              <span>
+                {nexradDebug.decodeTransport || 'n/a'}/{nexradDebug.prepareTransport || 'n/a'}
+              </span>
+            </div>
+            <div className="debug-row">
               <span>Worker Fail</span>
               <span>{nexradDebug.workerFailureStage || 'n/a'}</span>
             </div>
@@ -537,6 +543,15 @@ export function DebugPanel({
               <span>Offload</span>
               <span>{trafficDebug.offloadMode || 'n/a'}</span>
             </div>
+            <div className="debug-row">
+              <span>Transport</span>
+              <span>{trafficDebug.workerTransport || 'n/a'}</span>
+            </div>
+            {trafficDebug.workerErrorReason && (
+              <div className="debug-row debug-row-wrap">
+                Worker Error: {trafficDebug.workerErrorReason}
+              </div>
+            )}
             <div className="debug-row">
               <span>Poll Cycle</span>
               <span>{formatMs(trafficDebug.timingsMs.pollCycleMs)}</span>

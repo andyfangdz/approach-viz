@@ -21,6 +21,8 @@ export interface NexradTimingDebugState {
 
 export interface NexradDebugState {
   offloadMode: string | null;
+  decodeTransport: string | null;
+  prepareTransport: string | null;
   workerFailureStage: string | null;
   workerFailureMessage: string | null;
   workerFailureAt: string | null;
@@ -73,6 +75,8 @@ export interface TrafficTimingDebugState {
 
 export interface TrafficDebugState {
   offloadMode: string | null;
+  workerTransport: string | null;
+  workerErrorReason: string | null;
   enabled: boolean;
   loading: boolean;
   error: string | null;

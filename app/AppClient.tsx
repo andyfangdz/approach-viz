@@ -108,6 +108,8 @@ const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
 const SELECTION_STORAGE_KEY = 'approach-viz:last-selection';
 const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
   offloadMode: null,
+  decodeTransport: null,
+  prepareTransport: null,
   workerFailureStage: null,
   workerFailureMessage: null,
   workerFailureAt: null,
@@ -156,6 +158,8 @@ const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
 };
 const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
   offloadMode: null,
+  workerTransport: null,
+  workerErrorReason: null,
   enabled: false,
   loading: false,
   error: null,

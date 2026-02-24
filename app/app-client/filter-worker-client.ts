@@ -1,5 +1,4 @@
 import type { SelectOption } from '@/app/app-client-utils';
-import { filterOptions as filterOptionsFallback } from '@/app/app-client-utils';
 
 interface FilterRequestMessage {
   requestId: number;
@@ -82,15 +81,20 @@ export class FilterWorkerClient {
 let sharedClient: FilterWorkerClient | null = null;
 let workerDisabled = false;
 
-function getClient(): FilterWorkerClient | null {
-  if (typeof Worker === 'undefined' || workerDisabled) return null;
+function getClient(): FilterWorkerClient {
+  if (typeof Worker === 'undefined') {
+    throw new Error('Filter worker API is unavailable in this runtime.');
+  }
+  if (workerDisabled) {
+    throw new Error('Filter worker is unavailable after a previous failure.');
+  }
   if (sharedClient) return sharedClient;
   try {
     sharedClient = new FilterWorkerClient();
     return sharedClient;
-  } catch {
+  } catch (error) {
     workerDisabled = true;
-    return null;
+    throw error instanceof Error ? error : new Error('Failed to initialize filter worker.');
   }
 }
 
@@ -99,15 +103,12 @@ export async function filterOptionsWithWorker(
   query: string
 ): Promise<SelectOption[]> {
   const client = getClient();
-  if (!client) {
-    return filterOptionsFallback(options, query);
-  }
   try {
     return await client.filter(options, query);
-  } catch {
+  } catch (error) {
     workerDisabled = true;
     sharedClient?.dispose();
     sharedClient = null;
-    return filterOptionsFallback(options, query);
+    throw error instanceof Error ? error : new Error('Filter worker failed.');
   }
 }

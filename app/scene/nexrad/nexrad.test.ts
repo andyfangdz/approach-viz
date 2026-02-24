@@ -223,7 +223,7 @@ test('MRMS worker client uses dedicated Worker decode path', { concurrency: fals
 });
 
 test(
-  'MRMS worker client falls back to sync decode when dedicated Worker request fails',
+  'MRMS worker client surfaces worker error when dedicated Worker request fails',
   { concurrency: false },
   async () => {
     const originalWindow = (globalThis as { window?: unknown }).window;
@@ -264,13 +264,11 @@ test(
       const workerClientModule = await import(
         new URL(`./nexrad-worker-client.ts?test=${uniqueImportSuffix()}`, import.meta.url).href
       );
-      const decoded = await workerClientModule.decodeVolumePayload(
-        buildTestVolumeBuffer(),
-        TEST_PHASE_DEBUG
+      await assert.rejects(
+        () => workerClientModule.decodeVolumePayload(buildTestVolumeBuffer(), TEST_PHASE_DEBUG),
+        /message error/
       );
-
-      assert.strictEqual(decoded.voxelCount, 1);
-      assert.strictEqual(workerClientModule.getNexradWorkerRuntimeMode(), 'sync-fallback');
+      assert.strictEqual(workerClientModule.getNexradWorkerRuntimeMode(), 'worker-error');
       const diagnostics = workerClientModule.getNexradWorkerDiagnostics();
       assert.strictEqual(diagnostics.lastFailureStage, 'worker-request');
       assert.match(diagnostics.lastFailureMessage || '', /message error/);

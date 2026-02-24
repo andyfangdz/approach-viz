@@ -33,6 +33,21 @@ export interface RenderTrafficTrack {
   trailPoints: [number, number, number][];
 }
 
+export interface TrafficSabBuffers {
+  control: SharedArrayBuffer;
+  markerPositions: SharedArrayBuffer;
+  headingDeg: SharedArrayBuffer;
+  flags: SharedArrayBuffer;
+  trailOffsets: SharedArrayBuffer;
+  trailCounts: SharedArrayBuffer;
+  hexOffsets: SharedArrayBuffer;
+  hexLengths: SharedArrayBuffer;
+  callsignOffsets: SharedArrayBuffer;
+  callsignLengths: SharedArrayBuffer;
+  points: SharedArrayBuffer;
+  strings: SharedArrayBuffer;
+}
+
 interface TrafficBaseRequest {
   requestId: number;
   nowMs: number;
@@ -44,6 +59,14 @@ interface TrafficBaseRequest {
   verticalScale: number;
   applyEarthCurvatureCompensation: boolean;
   sceneAirports: SceneAirport[];
+  preferSab: true;
+  sabChannelId: number;
+}
+
+export interface TrafficInitSabRequest {
+  type: 'init-sab';
+  channelId: number;
+  buffers: TrafficSabBuffers;
 }
 
 export interface TrafficResetRequest extends TrafficBaseRequest {
@@ -65,19 +88,27 @@ export interface TrafficErrorPruneRequest extends TrafficBaseRequest {
 }
 
 export type TrafficWorkerRequestMessage =
+  | TrafficInitSabRequest
   | TrafficResetRequest
   | TrafficIngestRequest
   | TrafficRecomputeRequest
   | TrafficErrorPruneRequest;
 
+export interface TrafficSabOverflow {
+  trackCapacity: number;
+  pointCapacity: number;
+  stringCapacity: number;
+}
+
 export interface TrafficWorkerResponseMessage {
   type: 'result';
   requestId: number;
-  renderTracks?: RenderTrafficTrack[];
   trackCount?: number;
   historyPointCount?: number;
   renderHash?: number;
   operation?: TrafficWorkerRequestMessage['type'];
   workerProcessingMs?: number;
+  usedSab?: boolean;
+  sabOverflow?: TrafficSabOverflow;
   error?: string;
 }

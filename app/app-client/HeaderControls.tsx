@@ -42,10 +42,15 @@ export function HeaderControls({
 
   useEffect(() => {
     let cancelled = false;
-    void filterOptionsWithWorker(effectiveAirportOptions, airportQuery).then((filtered) => {
-      if (cancelled) return;
-      setFilteredAirportOptions(filtered);
-    });
+    void filterOptionsWithWorker(effectiveAirportOptions, airportQuery)
+      .then((filtered) => {
+        if (cancelled) return;
+        setFilteredAirportOptions(filtered);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFilteredAirportOptions(effectiveAirportOptions);
+      });
     return () => {
       cancelled = true;
     };
@@ -53,10 +58,15 @@ export function HeaderControls({
 
   useEffect(() => {
     let cancelled = false;
-    void filterOptionsWithWorker(approachOptions, approachQuery).then((filtered) => {
-      if (cancelled) return;
-      setFilteredApproachOptions(filtered);
-    });
+    void filterOptionsWithWorker(approachOptions, approachQuery)
+      .then((filtered) => {
+        if (cancelled) return;
+        setFilteredApproachOptions(filtered);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFilteredApproachOptions(approachOptions);
+      });
     return () => {
       cancelled = true;
     };

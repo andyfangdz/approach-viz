@@ -61,10 +61,11 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 ## Transport and Polling
 
 - Client decodes compact binary payloads (`application/vnd.approach-viz.mrms.v3`) from the Rust service (via proxy or direct configured URL), reducing payload size and parse overhead versus JSON tuple arrays. The v3 format adds a `surface_phase` byte at record offset 18 (formerly reserved). The client also accepts v2 payloads for backward compatibility.
-- Decode work is offloaded from the React render thread into a dedicated `Worker` path. Decode falls back to synchronous in-thread decoding only when worker startup/communication fails, preserving correctness.
+- Decode work is offloaded from the React render thread into a dedicated `Worker` path. Worker startup/communication failures surface as explicit overlay/debug errors (no synchronous in-thread fallback).
 - Post-decode preprocess work runs on an isolated dedicated worker channel so heavy prepare jobs do not starve decode responses.
+- Prepared-volume worker responses use a SharedArrayBuffer + Atomics transport (`init-sab` handshake + shared typed arrays + atomic control metadata), with automatic voxel-capacity growth/retry when shared capacity is exceeded.
 - Worker failures are captured with stage + message + timestamp telemetry (`worker-init`, `worker-request`) and shown in the runtime debug panel for diagnosis.
-- Volume/echo-top decode worker requests use adaptive timeout windows (bounded floor/ceiling, scaled by payload size) to reduce false timeout fallbacks during large-product bursts or worker queue contention.
+- Volume/echo-top decode worker requests use adaptive timeout windows (bounded floor/ceiling, scaled by payload size) to reduce false timeout errors during large-product bursts or worker queue contention.
 - Post-decode volume preprocessing is also offloaded to worker compute: threshold filtering, phase-mode selection, curvature compensation, declutter index generation, echo-top cap surface shaping, and vertical cross-section binning.
 - App responses include cross-origin isolation headers (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` by default) so browser features needed for `SharedArrayBuffer`/`Atomics` are available across Safari and Chromium; this can be disabled with `DISABLE_CROSS_ORIGIN_ISOLATION=1`, and `CROSS_ORIGIN_EMBEDDER_POLICY=credentialless` is available when deployments need broader third-party compatibility.
 - v2 transport merges contiguous same-phase / similar-dBZ cells into larger brick records server-side, reducing client instance count while preserving full coverage.

@@ -7,12 +7,6 @@ import type {
   BuildPathGeometryResponse,
   ResolveAltitudesResponse
 } from './approach-worker-types';
-import {
-  applyGlidepathInsideFaf,
-  resolveMissedApproachAltitudes,
-  resolveSegmentAltitudes
-} from './altitudes';
-import { buildPathGeometry } from './path-builder';
 
 const REQUEST_TIMEOUT_MS = 6000;
 
@@ -183,15 +177,20 @@ class ApproachWorkerClient {
 let sharedClient: ApproachWorkerClient | null = null;
 let workerDisabled = false;
 
-function getWorkerClient(): ApproachWorkerClient | null {
-  if (typeof Worker === 'undefined' || workerDisabled) return null;
+function getWorkerClient(): ApproachWorkerClient {
+  if (typeof Worker === 'undefined') {
+    throw new Error('Approach worker API is unavailable in this runtime.');
+  }
+  if (workerDisabled) {
+    throw new Error('Approach worker is unavailable after a previous failure.');
+  }
   if (sharedClient) return sharedClient;
   try {
     sharedClient = new ApproachWorkerClient();
     return sharedClient;
-  } catch {
+  } catch (error) {
     workerDisabled = true;
-    return null;
+    throw error instanceof Error ? error : new Error('Failed to initialize approach worker.');
   }
 }
 
@@ -213,90 +212,12 @@ export async function resolveApproachAltitudesWithWorker(params: {
   missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
 }) {
   const client = getWorkerClient();
-  if (!client) {
-    return resolveApproachAltitudesFallback(params);
-  }
   try {
     return await client.resolveAltitudes(params);
-  } catch {
+  } catch (error) {
     disableWorker();
-    return resolveApproachAltitudesFallback(params);
+    throw error instanceof Error ? error : new Error('Approach altitude worker failed.');
   }
-}
-
-function resolveApproachAltitudesFallback(params: {
-  finalLegs: ApproachLeg[];
-  transitionEntries: [string, ApproachLeg[]][];
-  missedLegs: ApproachLeg[];
-  waypoints: [string, Waypoint][];
-  refLat: number;
-  refLon: number;
-  airportElevation: number;
-  missedApproachStartAltitudeFeet?: number;
-  missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
-}) {
-  const waypoints = new Map(params.waypoints);
-  const altitudes = new Map<ApproachLeg, number>();
-  const finalAltitudes = resolveSegmentAltitudes(
-    params.finalLegs,
-    waypoints,
-    params.refLat,
-    params.refLon
-  );
-  for (const [leg, altitude] of finalAltitudes.entries()) {
-    altitudes.set(leg, altitude);
-  }
-  for (const [, legs] of params.transitionEntries) {
-    const transitionAltitudes = resolveSegmentAltitudes(
-      legs,
-      waypoints,
-      params.refLat,
-      params.refLon
-    );
-    for (const [leg, altitude] of transitionAltitudes.entries()) {
-      altitudes.set(leg, altitude);
-    }
-  }
-  const missedAltitudes = resolveSegmentAltitudes(
-    params.missedLegs,
-    waypoints,
-    params.refLat,
-    params.refLon
-  );
-  for (const [leg, altitude] of missedAltitudes.entries()) {
-    altitudes.set(leg, altitude);
-  }
-
-  const glideAdjusted = applyGlidepathInsideFaf(
-    params.finalLegs,
-    params.missedLegs,
-    altitudes,
-    waypoints,
-    params.refLat,
-    params.refLon,
-    params.airportElevation
-  );
-  const missedPathAltitudes = resolveMissedApproachAltitudes(
-    params.missedLegs,
-    glideAdjusted,
-    waypoints,
-    params.refLat,
-    params.refLon,
-    params.missedApproachStartAltitudeFeet,
-    params.missedApproachClimbRequirement ?? null
-  );
-
-  return {
-    finalAltitudes: params.finalLegs.map((leg) => glideAdjusted.get(leg) ?? leg.altitude ?? 0),
-    transitionAltitudes: params.transitionEntries.map(([name, legs]) => [
-      name,
-      legs.map((leg) => glideAdjusted.get(leg) ?? leg.altitude ?? 0)
-    ]) as [string, number[]][],
-    missedAltitudes: params.missedLegs.map((leg) => glideAdjusted.get(leg) ?? leg.altitude ?? 0),
-    missedPathAltitudes: params.missedLegs.map(
-      (leg) => missedPathAltitudes.get(leg) ?? leg.altitude ?? 0
-    )
-  };
 }
 
 export async function buildPathGeometryWithWorker(params: {
@@ -311,49 +232,10 @@ export async function buildPathGeometryWithWorker(params: {
   showTurnConstraintLabels?: boolean;
 }) {
   const client = getWorkerClient();
-  if (!client) {
-    return buildPathGeometryFallback(params);
-  }
   try {
     return await client.buildPathGeometry(params);
-  } catch {
+  } catch (error) {
     disableWorker();
-    return buildPathGeometryFallback(params);
+    throw error instanceof Error ? error : new Error('Approach geometry worker failed.');
   }
-}
-
-function buildPathGeometryFallback(params: {
-  legs: ApproachLeg[];
-  waypoints: [string, Waypoint][];
-  resolvedAltitudes: number[];
-  initialAltitudeFeet: number;
-  verticalScale: number;
-  refLat: number;
-  refLon: number;
-  magVar: number;
-  showTurnConstraintLabels?: boolean;
-}) {
-  const resolvedAltitudes = new Map<ApproachLeg, number>();
-  for (let i = 0; i < params.legs.length; i += 1) {
-    resolvedAltitudes.set(
-      params.legs[i],
-      params.resolvedAltitudes[i] ?? params.legs[i].altitude ?? 0
-    );
-  }
-  const result = buildPathGeometry({
-    legs: params.legs,
-    waypoints: new Map(params.waypoints),
-    resolvedAltitudes,
-    initialAltitudeFeet: params.initialAltitudeFeet,
-    verticalScale: params.verticalScale,
-    refLat: params.refLat,
-    refLon: params.refLon,
-    magVar: params.magVar,
-    showTurnConstraintLabels: params.showTurnConstraintLabels
-  });
-  return {
-    points: result.points.map((point) => [point.x, point.y, point.z] as [number, number, number]),
-    verticalLines: result.verticalLines,
-    turnConstraintLabels: result.turnConstraintLabels
-  };
 }

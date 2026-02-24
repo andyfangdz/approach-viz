@@ -2,7 +2,7 @@
 
 ## General Scene
 
-- Approach altitude-profile resolution and path-geometry assembly are computed through a worker-backed pipeline with synchronous fallback, reducing main-thread spikes during approach/option changes.
+- Approach altitude-profile resolution and path-geometry assembly are computed through a worker-backed pipeline, reducing main-thread spikes during approach/option changes while avoiding synchronous main-thread fallback.
 - Vertical reference lines for path points are batched into a single `lineSegments` geometry per path segment (final/transition/missed) to reduce draw-call count.
 - Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized.
 - The top-level scene wrapper (`SceneCanvas`) is memoized so selector typing/collapse state updates in the header do not re-render the Three.js subtree.
@@ -16,12 +16,14 @@
 
 - Polling is throttled to a fixed interval (`5s`) through a same-origin proxy to the Rust runtime endpoint (`/v1/traffic/adsbx`) and bounded by viewport-centric query radius/aircraft limit to avoid full-feed client downloads.
 - Initial history request (default `3 min`) on overlay context/history changes, plus targeted incremental history refreshes for newly seen aircraft hexes on later polls (`historyHexes`) when `Show Departed Traffic Trails` is enabled; while enabled, the client also periodically re-runs full history refresh (interval derived from history window, clamped `60..300s`) to discover newly departed aircraft. Runtime serves these history windows from its disk-backed SQLite traffic store (`traffic-store.db`) fed by 1 Hz US-wide polling, so history queries avoid per-request upstream trace fetches and large in-memory history buffers.
-- Track merge/prune/projection compute is offloaded to a dedicated traffic worker, with synchronous fallback when workers are unavailable.
+- Track merge/prune/projection compute is offloaded to a dedicated traffic worker and requires SharedArrayBuffer + Atomics transport; worker failures surface as explicit UI/debug errors (no synchronous fallback).
+- Traffic worker render payload transport uses SharedArrayBuffer + Atomics channels via shared utilities (`app/scene/shared/sab-channel-pool.ts`, `app/scene/shared/growable-sab.ts`), starting with two concurrent channels and growing channel count on demand up to a bounded cap. Each channel starts with a larger default shared point capacity (`1,000,000` history points); when an overflow reports required capacities, the client retries on a channel that can fit those capacities and grows that channel in place via growable SAB.
+- Traffic overlay consumes worker output through a buffer-native render frame (`Float32Array`/`Int32Array`/flags) from SAB transport, so trail/heading/marker uploads read directly from flat buffers instead of rebuilding nested `RenderTrafficTrack`/`trailPoints` object graphs on the main thread.
 - Runtime debug telemetry exposes per-stage ADS-B timings (`poll cycle`, `fetch`, `json parse`, `worker process/recompute/prune`, `worker round-trip/CPU`, and marker instance upload) to validate main-thread offload impact.
 - Trail history is time-pruned by the user-selected retention window (`1..30 minutes`) to cap per-aircraft polyline growth (runtime SQLite store keeps up to 60 minutes available for history queries).
 - Trail rendering can continue for aircraft that are no longer in the current live feed as long as retained history samples are still within the selected window, and this behavior is user-toggleable via `Show Departed Traffic Trails`.
 - Trail and heading vectors are batched into shared `lineSegments` geometries per frame update, replacing per-track line component trees and reducing draw-call/reconciliation overhead.
-- Worker responses include render hashes; unchanged hashes skip main-thread render-track state updates to avoid redundant line/instance uploads.
+- Worker responses include render hashes; unchanged hashes skip main-thread render-buffer state updates to avoid redundant line/instance uploads.
 - Callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled.
 - Marker meshes reuse shared sphere geometry/material instances.
 - Aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead.
@@ -29,8 +31,9 @@
 ## MRMS Weather Volume
 
 - Decoded payloads use parallel flat `TypedArrays` (`xNm`, `zNm`, `bottomFeet`, etc.) instead of Javascript objects to eliminate `100k+` object allocations and GC pauses during the `120s` poll cycle.
-- Binary decode runs in dedicated workers off the main thread, reducing UI hitching during poll refreshes while preserving a synchronous fallback path for reliability.
+- Binary decode runs in dedicated workers off the main thread, reducing UI hitching during poll refreshes while surfacing worker failures as explicit errors (no synchronous fallback).
 - MRMS volume preprocessing (threshold filter, phase selection, curvature correction, declutter index generation), echo-top surface shaping, and cross-section binning are computed off-main-thread through the same worker pipeline.
+- MRMS prepared-volume worker responses use a SharedArrayBuffer + Atomics channel (shared typed-array views with counts in an atomic control block) and automatically grow SAB voxel capacity with overflow retry.
 - Runtime debug telemetry exposes per-stage MRMS timings (`poll cycle`, volume/echo-top `fetch`, volume/echo-top `decode`, volume/echo-top `prepare`, and voxel/echo-top instance upload) for regression checks.
 - Volume and echo-top payloads use metadata signatures to suppress equivalent state replacements, reducing downstream prepare/upload churn when upstream poll responses are unchanged.
 - Volumetric instanced meshes calculate transforms and scale by writing directly into the `Float32Array` of `InstancedMesh.instanceMatrix.array` (via 16-element offsets), avoiding the heavy `THREE.Object3D` quaternion scaling overhead completely.

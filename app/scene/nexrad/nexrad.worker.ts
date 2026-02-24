@@ -4,23 +4,27 @@ import {
   prepareEchoTopSurfaces,
   prepareVolumeData
 } from './nexrad-preprocess';
-import type {
-  CrossSectionData,
-  NexradPreparedVolumeData,
-  NexradVolumePayload
-} from './nexrad-types';
+import type { NexradVolumePayload } from './nexrad-types';
 import type {
   DecodeEchoTopRequestMessage,
   DecodeVolumeRequestMessage,
+  NexradInitSabRequestMessage,
+  NexradPrepareSabOverflow,
   NexradWorkerRequestMessage,
   NexradWorkerResponseMessage,
   PrepareEchoTopRequestMessage,
   PrepareVolumeRequestMessage
 } from './nexrad-worker-types';
+import {
+  createNexradPrepareSabViews,
+  type NexradPrepareSabViews,
+  writeNexradPrepareSabResult
+} from './nexrad-sab';
 
 type WorkerEndpoint = {
   postMessage: (message: NexradWorkerResponseMessage, transfer?: Transferable[]) => void;
 };
+const prepareSabViewsByChannel = new Map<number, NexradPrepareSabViews>();
 
 function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
   return [
@@ -34,23 +38,6 @@ function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
     payload.phaseCode.buffer,
     payload.surfacePhaseCode.buffer
   ];
-}
-
-function preparedVolumeTransferables(payload: NexradPreparedVolumeData): Transferable[] {
-  return [
-    payload.validIndices.buffer,
-    payload.yBase.buffer,
-    payload.heightBase.buffer,
-    payload.correctedBottomFeet.buffer,
-    payload.correctedTopFeet.buffer,
-    payload.effectivePhaseCode.buffer,
-    payload.declutterIndices.buffer
-  ];
-}
-
-function crossSectionTransferables(data: CrossSectionData | null | undefined): Transferable[] {
-  if (!data) return [];
-  return [data.grid.buffer, data.phaseGrid.buffer, data.topEnvelopeFeet.buffer];
 }
 
 function handleDecodeVolume(endpoint: WorkerEndpoint, message: DecodeVolumeRequestMessage): void {
@@ -111,15 +98,38 @@ function handlePrepareVolume(endpoint: WorkerEndpoint, message: PrepareVolumeReq
           crossSectionHalfWidthNm: message.crossSectionHalfWidthNm
         })
       : null;
-    endpoint.postMessage(
-      {
+    const prepareSabViews = prepareSabViewsByChannel.get(message.sabChannelId) ?? null;
+    if (!prepareSabViews) {
+      endpoint.postMessage({
         type: 'prepare-volume-result',
         requestId: message.requestId,
-        payload,
-        crossSectionData
-      },
-      [...preparedVolumeTransferables(payload), ...crossSectionTransferables(crossSectionData)]
+        error: 'MRMS prepare-volume SAB channel was not initialized.'
+      });
+      return;
+    }
+    const sabResult = writeNexradPrepareSabResult(
+      prepareSabViews,
+      message.requestId,
+      payload,
+      crossSectionData
     );
+    if (sabResult.usedSab) {
+      endpoint.postMessage({
+        type: 'prepare-volume-result',
+        requestId: message.requestId,
+        usedSab: true
+      });
+      return;
+    }
+    const sabOverflow: NexradPrepareSabOverflow = {
+      voxelCapacity: sabResult.requiredVoxelCapacity
+    };
+    endpoint.postMessage({
+      type: 'prepare-volume-result',
+      requestId: message.requestId,
+      usedSab: false,
+      sabOverflow
+    });
   } catch (error) {
     endpoint.postMessage({
       type: 'prepare-volume-result',
@@ -152,7 +162,15 @@ function handlePrepareEchoTop(
   }
 }
 
+function handleInitSab(message: NexradInitSabRequestMessage): void {
+  prepareSabViewsByChannel.set(message.channelId, createNexradPrepareSabViews(message.buffers));
+}
+
 function handleMessage(endpoint: WorkerEndpoint, message: NexradWorkerRequestMessage): void {
+  if (message.type === 'init-sab') {
+    handleInitSab(message);
+    return;
+  }
   if (message.type === 'decode-volume') {
     handleDecodeVolume(endpoint, message);
     return;

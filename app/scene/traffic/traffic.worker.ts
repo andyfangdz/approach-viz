@@ -4,9 +4,11 @@ import type {
   LiveTrafficHistoryPoint,
   RenderTrafficTrack,
   SceneAirport,
+  TrafficInitSabRequest,
   TrafficWorkerRequestMessage,
   TrafficWorkerResponseMessage
 } from './traffic-worker-types';
+import { createTrafficSabViews, type TrafficSabViews, writeTrafficSabResult } from './traffic-sab';
 
 const STALE_TRACK_GRACE_MS = 20000;
 const MIN_SAMPLE_DISTANCE_NM = 0.03;
@@ -74,6 +76,7 @@ interface TrafficTrack {
 }
 
 const tracks = new Map<string, TrafficTrack>();
+const sabViewsByChannel = new Map<number, TrafficSabViews>();
 
 function buildSyntheticAircraft(
   hex: string,
@@ -413,7 +416,23 @@ function buildRenderTracks(
   return { renderTracks, historyPointCount, renderHash: hashRenderTracks(renderTracks) };
 }
 
-function handleMessage(message: TrafficWorkerRequestMessage): TrafficWorkerResponseMessage {
+function handleInitSab(message: TrafficInitSabRequest): void {
+  sabViewsByChannel.set(message.channelId, createTrafficSabViews(message.buffers));
+}
+
+function handleMessage(
+  message: Exclude<TrafficWorkerRequestMessage, TrafficInitSabRequest>
+): TrafficWorkerResponseMessage {
+  const sabViews = sabViewsByChannel.get(message.sabChannelId) ?? null;
+  if (!sabViews) {
+    return {
+      type: 'result',
+      requestId: message.requestId,
+      operation: message.type,
+      error: 'Traffic SAB channel was not initialized for this request.'
+    };
+  }
+
   const startedAt = performance.now();
   if (message.type === 'reset') {
     tracks.clear();
@@ -439,15 +458,28 @@ function handleMessage(message: TrafficWorkerRequestMessage): TrafficWorkerRespo
     message.applyEarthCurvatureCompensation,
     message.showDepartedTrafficTrails
   );
-  return {
-    type: 'result',
-    requestId: message.requestId,
+  const workerProcessingMs = roundMs(performance.now() - startedAt);
+  const sabResult = writeTrafficSabResult(sabViews, message.requestId, {
     renderTracks,
     trackCount: tracks.size,
     historyPointCount,
     renderHash,
+    workerProcessingMs
+  });
+  if (sabResult.usedSab) {
+    return {
+      type: 'result',
+      requestId: message.requestId,
+      operation: message.type,
+      usedSab: true
+    };
+  }
+  return {
+    type: 'result',
+    requestId: message.requestId,
     operation: message.type,
-    workerProcessingMs: roundMs(performance.now() - startedAt)
+    workerProcessingMs,
+    sabOverflow: sabResult.overflow
   };
 }
 
@@ -458,12 +490,21 @@ const scope = self as unknown as {
 
 scope.onmessage = (event) => {
   try {
-    scope.postMessage(handleMessage(event.data));
+    const message = event.data;
+    if (message.type === 'init-sab') {
+      handleInitSab(message);
+      return;
+    }
+    scope.postMessage(handleMessage(message));
   } catch (error) {
+    const message = event.data;
+    if (message.type === 'init-sab') {
+      return;
+    }
     scope.postMessage({
       type: 'result',
-      requestId: event.data.requestId,
-      operation: event.data.type,
+      requestId: message.requestId,
+      operation: message.type,
       error: error instanceof Error ? error.message : 'Traffic worker processing failed.'
     });
   }

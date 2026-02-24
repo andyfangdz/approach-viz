@@ -1,10 +1,4 @@
-import type {
-  CrossSectionData,
-  EchoTopPayload,
-  EchoTopSurfaceCell,
-  NexradPreparedVolumeData,
-  NexradVolumePayload
-} from './nexrad-types';
+import type { EchoTopPayload, EchoTopSurfaceCell, NexradVolumePayload } from './nexrad-types';
 import type { NexradDeclutterMode, NexradPhaseMode } from '@/app/app-client/types';
 
 export interface PhaseDebugHeaderValues {
@@ -31,6 +25,26 @@ export interface DecodeEchoTopRequestMessage {
   buffer: ArrayBuffer;
 }
 
+export interface NexradPrepareSabBuffers {
+  control: SharedArrayBuffer;
+  validIndices: SharedArrayBuffer;
+  yBase: SharedArrayBuffer;
+  heightBase: SharedArrayBuffer;
+  correctedBottomFeet: SharedArrayBuffer;
+  correctedTopFeet: SharedArrayBuffer;
+  effectivePhaseCode: SharedArrayBuffer;
+  declutterIndices: SharedArrayBuffer;
+  crossSectionGrid: SharedArrayBuffer;
+  crossSectionPhaseGrid: SharedArrayBuffer;
+  crossSectionTopEnvelopeFeet: SharedArrayBuffer;
+}
+
+export interface NexradInitSabRequestMessage {
+  type: 'init-sab';
+  channelId: number;
+  buffers: NexradPrepareSabBuffers;
+}
+
 export interface PrepareVolumeRequestMessage {
   type: 'prepare-volume';
   requestId: number;
@@ -45,6 +59,8 @@ export interface PrepareVolumeRequestMessage {
   crossSectionHalfWidthNm: number;
   sliceAxis: { x: number; z: number };
   slicePerpAxis: { x: number; z: number };
+  preferSab: true;
+  sabChannelId: number;
 }
 
 export interface PrepareEchoTopRequestMessage {
@@ -56,10 +72,15 @@ export interface PrepareEchoTopRequestMessage {
 }
 
 export type NexradWorkerRequestMessage =
+  | NexradInitSabRequestMessage
   | DecodeVolumeRequestMessage
   | DecodeEchoTopRequestMessage
   | PrepareVolumeRequestMessage
   | PrepareEchoTopRequestMessage;
+
+export interface NexradPrepareSabOverflow {
+  voxelCapacity: number;
+}
 
 export interface DecodeVolumeResponseMessage {
   type: 'decode-volume-result';
@@ -78,8 +99,8 @@ export interface DecodeEchoTopResponseMessage {
 export interface PrepareVolumeResponseMessage {
   type: 'prepare-volume-result';
   requestId: number;
-  payload?: NexradPreparedVolumeData;
-  crossSectionData?: CrossSectionData | null;
+  usedSab?: boolean;
+  sabOverflow?: NexradPrepareSabOverflow;
   error?: string;
 }
 

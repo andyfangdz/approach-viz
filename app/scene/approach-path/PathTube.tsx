@@ -4,7 +4,6 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { buildPathGeometryWithWorker } from './approach-worker-client';
-import { buildPathGeometry } from './path-builder';
 import { altToY } from './coordinates';
 import { VerticalLines } from './VerticalLines';
 import { WaypointMarker } from './WaypointMarker';
@@ -101,24 +100,6 @@ export function PathTube({
     const resolvedAltitudesByLeg = legs.map(
       (leg) => resolvedAltitudes.get(leg) ?? leg.altitude ?? 0
     );
-    const fallback = () => {
-      const next = buildPathGeometry({
-        legs,
-        waypoints,
-        resolvedAltitudes,
-        initialAltitudeFeet,
-        verticalScale,
-        refLat,
-        refLon,
-        magVar,
-        showTurnConstraintLabels
-      });
-      if (cancelled) return;
-      setPoints(next.points);
-      setVerticalLines(next.verticalLines);
-      setTurnConstraintLabels(next.turnConstraintLabels);
-    };
-
     void buildPathGeometryWithWorker({
       legs,
       waypoints: Array.from(waypoints.entries()),
@@ -136,8 +117,12 @@ export function PathTube({
         setVerticalLines(next.verticalLines);
         setTurnConstraintLabels(next.turnConstraintLabels);
       })
-      .catch(() => {
-        fallback();
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Approach geometry worker failed.', error);
+        setPoints([]);
+        setVerticalLines([]);
+        setTurnConstraintLabels([]);
       });
 
     return () => {

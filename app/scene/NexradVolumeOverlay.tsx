@@ -30,6 +30,7 @@ import {
   getNexradWorkerDiagnostics,
   decodeVolumePayload,
   getNexradWorkerRuntimeMode,
+  getNexradWorkerTransportDiagnostics,
   prepareEchoTopWithWorker,
   prepareVolumeWithWorker
 } from './nexrad/nexrad-worker-client';
@@ -678,6 +679,8 @@ export function NexradVolumeOverlay({
 
   const debugState: NexradDebugState = {
     offloadMode: getNexradWorkerRuntimeMode(),
+    decodeTransport: getNexradWorkerTransportDiagnostics().decodeTransport,
+    prepareTransport: getNexradWorkerTransportDiagnostics().prepareTransport,
     workerFailureStage: getNexradWorkerDiagnostics().lastFailureStage,
     workerFailureMessage: getNexradWorkerDiagnostics().lastFailureMessage,
     workerFailureAt: getNexradWorkerDiagnostics().lastFailureAt,
@@ -722,6 +725,8 @@ export function NexradVolumeOverlay({
       if (!onDebugChange) return;
       onDebugChange({
         offloadMode: null,
+        decodeTransport: null,
+        prepareTransport: null,
         workerFailureStage: null,
         workerFailureMessage: null,
         workerFailureAt: null,
