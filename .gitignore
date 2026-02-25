@@ -33,6 +33,6 @@ npm-debug.log*
 .tmp*
 output/playwright
 
-# WASM build output — only the raw .wasm in the wasm-pack output dir is ignored;
-# public/ copies + .d.ts + .js glue are checked in for CI and Vercel deployment.
-packages/approach-viz-core-wasm/*.wasm
+# WASM build output — all wasm-pack artifacts are checked in (102KB binary + JS glue +
+# type declarations) for CI typecheck/build and Vercel deployment without requiring
+# wasm-pack/Rust toolchain.
