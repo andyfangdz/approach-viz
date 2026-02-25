@@ -9,7 +9,40 @@ import type {
   TrafficWorkerResponseMessage
 } from './traffic-worker-types';
 import { createTrafficSabViews, type TrafficSabViews, writeTrafficSabResult } from './traffic-sab';
-import { decodeTrafficBinaryPayload, isTrafficBinaryContentType } from './traffic-binary-protocol';
+import {
+  decodeTrafficBinaryPayload,
+  isTrafficBinaryContentType,
+  type TrafficBinaryDecodedPayload
+} from './traffic-binary-protocol';
+import { ensureWasm, isWasmReady } from '../shared/wasm-loader';
+import { decode_traffic } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+
+/**
+ * Adapt the WASM `decode_traffic` output to the `TrafficBinaryDecodedPayload`
+ * shape that the TS merge pipeline expects.
+ *
+ * The WASM function returns `{ aircraft, historyGroups, fetchedAtMs, source, error }`,
+ * while TS expects `{ aircraftList, historyByHex, fetchedAtMs, source, error }`.
+ */
+function decodeTrafficViaWasm(buffer: ArrayBuffer): TrafficBinaryDecodedPayload {
+  const result = decode_traffic(new Uint8Array(buffer)) as any; // WASM returns untyped JS object
+  const historyByHex: Record<string, LiveTrafficHistoryPoint[]> = {};
+  if (Array.isArray(result.historyGroups)) {
+    for (const group of result.historyGroups as {
+      hex: string;
+      points: LiveTrafficHistoryPoint[];
+    }[]) {
+      historyByHex[group.hex as string] = group.points as LiveTrafficHistoryPoint[];
+    }
+  }
+  return {
+    fetchedAtMs: result.fetchedAtMs as number,
+    source: (result.source as string | null) ?? null,
+    error: (result.error as string | null) ?? null,
+    aircraftList: result.aircraft as LiveTrafficAircraft[],
+    historyByHex: Object.keys(historyByHex).length > 0 ? historyByHex : undefined
+  };
+}
 
 const STALE_TRACK_GRACE_MS = 20000;
 const MIN_SAMPLE_DISTANCE_NM = 0.03;
@@ -379,7 +412,10 @@ async function fetchTrafficRuntimePayload(url: string): Promise<RuntimeTrafficFe
   const contentType = response.headers.get('content-type');
   if (isTrafficBinaryContentType(contentType)) {
     const payloadBuffer = await response.arrayBuffer();
-    const decoded = decodeTrafficBinaryPayload(payloadBuffer);
+    await ensureWasm();
+    const decoded = isWasmReady()
+      ? decodeTrafficViaWasm(payloadBuffer)
+      : decodeTrafficBinaryPayload(payloadBuffer);
     return {
       aircraftList: decoded.aircraftList,
       historyByHex: decoded.historyByHex,
@@ -563,6 +599,7 @@ async function handleMessage(
     };
   }
 
+  await ensureWasm();
   const startedAt = performance.now();
   let trackedHexes: string[] = [];
   let returnedHistoryHexes: string[] = [];
@@ -580,9 +617,10 @@ async function handleMessage(
       message.historyByHex
     );
   } else if (message.type === 'ingest-binary') {
-    const decoded = decodeTrafficBinaryPayload(message.payloadBuffer);
+    const decodeBinary = isWasmReady() ? decodeTrafficViaWasm : decodeTrafficBinaryPayload;
+    const decoded = decodeBinary(message.payloadBuffer);
     const supplementalHistory = message.historyPayloadBuffer
-      ? decodeTrafficBinaryPayload(message.historyPayloadBuffer).historyByHex
+      ? decodeBinary(message.historyPayloadBuffer).historyByHex
       : undefined;
     mergeTracks(
       decoded.aircraftList,
