@@ -146,6 +146,7 @@ export function LiveTrafficOverlay({
   const pendingBackfillHexesRef = useRef<Set<string>>(new Set());
   const pollContextKeyRef = useRef<string | null>(null);
   const previousShowDepartedRef = useRef(showDepartedTrafficTrails);
+  const needsHistoryBackfillRef = useRef(false);
   const [trafficMode, setTrafficMode] = useState<TrafficMode>(() =>
     typeof Worker !== 'undefined' ? 'worker' : 'worker-error'
   );
@@ -277,14 +278,17 @@ export function LiveTrafficOverlay({
         setHistoryBackfillPending(false);
         backfilledHexesRef.current.clear();
         pendingBackfillHexesRef.current.clear();
+        needsHistoryBackfillRef.current = false;
       }
     }
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let startDebounceId: ReturnType<typeof setTimeout> | undefined;
-    let shouldRequestHistoryBackfill =
-      showDepartedTrafficTrails && (shouldHardReset || showDepartedChanged);
+    if (showDepartedTrafficTrails && (shouldHardReset || showDepartedChanged)) {
+      needsHistoryBackfillRef.current = true;
+    }
+    let shouldRequestHistoryBackfill = needsHistoryBackfillRef.current;
     let lastFullBackfillAtMs: number | null = shouldRequestHistoryBackfill ? null : Date.now();
 
     const poll = async () => {
@@ -427,6 +431,7 @@ export function LiveTrafficOverlay({
           setHistoryBackfillPending(false);
         }
         shouldRequestHistoryBackfill = false;
+        needsHistoryBackfillRef.current = false;
       } catch (error) {
         if (cancelled) return;
         setLastError(error instanceof Error ? error.message : 'Traffic poll failed');

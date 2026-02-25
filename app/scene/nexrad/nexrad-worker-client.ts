@@ -7,16 +7,11 @@ import type {
   NexradVolumePayload
 } from './nexrad-types';
 import type {
-  DecodeEchoTopResponseMessage,
-  DecodeVolumeResponseMessage,
   NexradWorkerRequestMessage,
   NexradWorkerResponseMessage,
   PollAndPrepareEchoTopSummary,
-  PollAndPrepareResponseMessage,
   PollAndPrepareTimings,
-  PhaseDebugHeaderValues,
-  PrepareEchoTopResponseMessage,
-  PrepareVolumeResponseMessage
+  PhaseDebugHeaderValues
 } from './nexrad-worker-types';
 import {
   createNexradPrepareSabBuffers,
@@ -34,6 +29,12 @@ import {
   SharedSabChannelPool,
   type SharedSabChannel
 } from '../shared/sab-channel-pool';
+import {
+  BaseWorkerClient,
+  WorkerClientError,
+  handleSabOverflowRetry,
+  type WorkerLike
+} from '../shared/base-worker-client';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const REQUEST_TIMEOUT_DECODE_VOLUME_MS_FLOOR = 20_000;
@@ -99,99 +100,7 @@ export interface NexradPollAndPrepareResult {
   timings: PollAndPrepareTimings | null;
 }
 
-type PendingRequest =
-  | {
-      type: 'decode-volume';
-      resolve: (payload: NexradVolumePayload) => void;
-      reject: (reason?: unknown) => void;
-      timeoutId: ReturnType<typeof setTimeout>;
-    }
-  | {
-      type: 'decode-echo-top';
-      resolve: (payload: EchoTopPayload) => void;
-      reject: (reason?: unknown) => void;
-      timeoutId: ReturnType<typeof setTimeout>;
-    }
-  | {
-      type: 'prepare-volume';
-      resolve: (payload: {
-        payload: NexradPreparedVolumeData;
-        crossSectionData: CrossSectionData | null;
-      }) => void;
-      reject: (reason?: unknown) => void;
-      timeoutId: ReturnType<typeof setTimeout>;
-      expectedSab: boolean;
-      sabChannelId: number | null;
-      requiredVoxelCapacity: number | null;
-      overflowRetryCount: number;
-      request: {
-        payload: NexradVolumePayload;
-        options: VolumePrepareOptions;
-      };
-    }
-  | {
-      type: 'prepare-echo-top';
-      resolve: (payload: {
-        echoTop18Cells: EchoTopSurfaceCell[];
-        echoTop30Cells: EchoTopSurfaceCell[];
-        echoTop50Cells: EchoTopSurfaceCell[];
-      }) => void;
-      reject: (reason?: unknown) => void;
-      timeoutId: ReturnType<typeof setTimeout>;
-    }
-  | {
-      type: 'poll-and-prepare';
-      resolve: (payload: NexradPollAndPrepareResult) => void;
-      reject: (reason?: unknown) => void;
-      timeoutId: ReturnType<typeof setTimeout>;
-      expectedSab: boolean;
-      sabChannelId: number | null;
-      requiredVoxelCapacity: number | null;
-      overflowRetryCount: number;
-      request: NexradPollAndPrepareOptions;
-    };
-
-type WorkerChannel = {
-  postMessage: (message: NexradWorkerRequestMessage, transfer?: Transferable[]) => void;
-  addEventListener: (
-    type: 'message' | 'messageerror' | 'error',
-    listener: (event: MessageEvent<NexradWorkerResponseMessage>) => void
-  ) => void;
-  removeEventListener: (
-    type: 'message' | 'messageerror' | 'error',
-    listener: (event: MessageEvent<NexradWorkerResponseMessage>) => void
-  ) => void;
-  close: () => void;
-};
-
-function supportsWorkers(): boolean {
-  return typeof window !== 'undefined' && typeof Worker !== 'undefined';
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  return String(error);
-}
-
-function timeoutForEchoTopDecode(bufferByteLength: number): number {
-  const perMbMs =
-    Math.ceil(Math.max(0, bufferByteLength) / 1_000_000) *
-    REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_PER_MB;
-  return Math.max(
-    REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_FLOOR,
-    Math.min(REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_CEIL, REQUEST_TIMEOUT_MS + perMbMs)
-  );
-}
-
-function timeoutForVolumeDecode(bufferByteLength: number): number {
-  const perMbMs =
-    Math.ceil(Math.max(0, bufferByteLength) / 1_000_000) * REQUEST_TIMEOUT_DECODE_VOLUME_MS_PER_MB;
-  return Math.max(
-    REQUEST_TIMEOUT_DECODE_VOLUME_MS_FLOOR,
-    Math.min(REQUEST_TIMEOUT_DECODE_VOLUME_MS_CEIL, REQUEST_TIMEOUT_MS + perMbMs)
-  );
-}
+// --- Diagnostics state (module-level, shared across instances) ---
 
 let workerDiagnostics: NexradWorkerDiagnostics = {
   lastFailureStage: null,
@@ -213,6 +122,12 @@ function recordPrepareTransport(transport: NexradPrepareTransport): void {
   workerTransportDiagnostics = { ...workerTransportDiagnostics, prepareTransport: transport };
 }
 
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return String(error);
+}
+
 function recordWorkerFailure(stage: NexradWorkerFailureStage, error: unknown): void {
   const message = describeError(error);
   workerDiagnostics = {
@@ -223,36 +138,183 @@ function recordWorkerFailure(stage: NexradWorkerFailureStage, error: unknown): v
   console.warn(`[MRMS worker] ${stage}: ${message}`);
 }
 
-function createDedicatedWorkerChannel(): WorkerChannel {
+function timeoutForEchoTopDecode(bufferByteLength: number): number {
+  const perMbMs =
+    Math.ceil(Math.max(0, bufferByteLength) / 1_000_000) *
+    REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_PER_MB;
+  return Math.max(
+    REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_FLOOR,
+    Math.min(REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_CEIL, REQUEST_TIMEOUT_MS + perMbMs)
+  );
+}
+
+function timeoutForVolumeDecode(bufferByteLength: number): number {
+  const perMbMs =
+    Math.ceil(Math.max(0, bufferByteLength) / 1_000_000) * REQUEST_TIMEOUT_DECODE_VOLUME_MS_PER_MB;
+  return Math.max(
+    REQUEST_TIMEOUT_DECODE_VOLUME_MS_FLOOR,
+    Math.min(REQUEST_TIMEOUT_DECODE_VOLUME_MS_CEIL, REQUEST_TIMEOUT_MS + perMbMs)
+  );
+}
+
+function createDedicatedWorkerChannel(): WorkerLike {
   const worker = new Worker(new URL('./nexrad.worker.ts', import.meta.url), { type: 'module' });
   return {
     postMessage: (message, transfer) => worker.postMessage(message, transfer ?? []),
-    addEventListener: (type, listener) => worker.addEventListener(type, listener as EventListener),
-    removeEventListener: (type, listener) =>
-      worker.removeEventListener(type, listener as EventListener),
-    close: () => worker.terminate()
+    addEventListener: (type, listener) => worker.addEventListener(type, listener),
+    removeEventListener: (type, listener) => worker.removeEventListener(type, listener),
+    terminate: () => worker.terminate()
   };
 }
 
-class NexradDecodeWorkerClient {
+// --- Per-request overflow tracking ---
+
+interface SabOverflowState {
+  sabChannelId: number | null;
+  requiredVoxelCapacity: number | null;
+  overflowRetryCount: number;
+  resubmit: (requestId: number, sabChannelId: number) => void;
+}
+
+function mergeVoxelCapacity(base: number | null, next: number): number {
+  return Math.max(base ?? 0, next);
+}
+
+// --- Worker client ---
+
+class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMessage> {
   readonly mode: NexradWorkerMode;
-  private readonly channel: WorkerChannel;
-  private readonly pending = new Map<number, PendingRequest>();
-  private nextRequestId = 1;
   private prepareSabChannelPool: SharedSabChannelPool<
     NexradPrepareSabBufferSet,
     NexradPrepareSabViews
   > | null = null;
   private prepareSabVoxelCapacityHint: number | null = null;
+  private readonly overflowState = new Map<number, SabOverflowState>();
 
   constructor() {
+    super(createDedicatedWorkerChannel(), {
+      name: 'MRMS',
+      defaultTimeoutMs: REQUEST_TIMEOUT_MS
+    });
     this.mode = 'worker';
-    this.channel = createDedicatedWorkerChannel();
-    this.channel.addEventListener('message', this.onMessage);
-    this.channel.addEventListener('messageerror', this.onMessageError);
-    this.channel.addEventListener('error', this.onWorkerError);
     this.initializePrepareSab();
   }
+
+  // --- Public API ---
+
+  async decodeVolume(
+    buffer: ArrayBuffer,
+    phaseDebug: PhaseDebugHeaderValues
+  ): Promise<NexradVolumePayload> {
+    const requestId = this.allocateRequestId();
+    return this.send<NexradVolumePayload>(
+      requestId,
+      { type: 'decode-volume', requestId, buffer, phaseDebug },
+      { timeoutMs: timeoutForVolumeDecode(buffer.byteLength), transferList: [buffer] }
+    );
+  }
+
+  async decodeEchoTop(buffer: ArrayBuffer): Promise<EchoTopPayload> {
+    const requestId = this.allocateRequestId();
+    return this.send<EchoTopPayload>(
+      requestId,
+      { type: 'decode-echo-top', requestId, buffer },
+      { timeoutMs: timeoutForEchoTopDecode(buffer.byteLength), transferList: [buffer] }
+    );
+  }
+
+  async prepareVolume(
+    payload: NexradVolumePayload,
+    options: VolumePrepareOptions
+  ): Promise<{ payload: NexradPreparedVolumeData; crossSectionData: CrossSectionData | null }> {
+    const requestId = this.allocateRequestId();
+    const sabChannelId = this.claimPrepareSabChannel(requestId);
+    if (sabChannelId === null) {
+      return Promise.reject(
+        new Error('No MRMS SAB prepare channel was available for this request.')
+      );
+    }
+    this.overflowState.set(requestId, {
+      sabChannelId,
+      requiredVoxelCapacity: this.prepareSabVoxelCapacityHint,
+      overflowRetryCount: 0,
+      resubmit: (rid, channelId) => {
+        this.worker.postMessage({
+          type: 'prepare-volume',
+          requestId: rid,
+          payload,
+          ...options,
+          preferSab: true as const,
+          sabChannelId: channelId
+        } satisfies NexradWorkerRequestMessage);
+      }
+    });
+    return this.send<{
+      payload: NexradPreparedVolumeData;
+      crossSectionData: CrossSectionData | null;
+    }>(requestId, {
+      type: 'prepare-volume',
+      requestId,
+      payload,
+      ...options,
+      preferSab: true as const,
+      sabChannelId
+    });
+  }
+
+  async prepareEchoTop(
+    payload: EchoTopPayload,
+    options: EchoTopPrepareOptions
+  ): Promise<{
+    echoTop18Cells: EchoTopSurfaceCell[];
+    echoTop30Cells: EchoTopSurfaceCell[];
+    echoTop50Cells: EchoTopSurfaceCell[];
+  }> {
+    const requestId = this.allocateRequestId();
+    return this.send<{
+      echoTop18Cells: EchoTopSurfaceCell[];
+      echoTop30Cells: EchoTopSurfaceCell[];
+      echoTop50Cells: EchoTopSurfaceCell[];
+    }>(requestId, {
+      type: 'prepare-echo-top',
+      requestId,
+      payload,
+      ...options
+    });
+  }
+
+  async pollAndPrepare(options: NexradPollAndPrepareOptions): Promise<NexradPollAndPrepareResult> {
+    const requestId = this.allocateRequestId();
+    const sabChannelId = this.claimPrepareSabChannel(requestId);
+    if (sabChannelId === null) {
+      return Promise.reject(
+        new Error('No MRMS SAB prepare channel was available for poll-and-prepare.')
+      );
+    }
+    this.overflowState.set(requestId, {
+      sabChannelId,
+      requiredVoxelCapacity: this.prepareSabVoxelCapacityHint,
+      overflowRetryCount: 0,
+      resubmit: (rid, channelId) => {
+        this.worker.postMessage({
+          type: 'poll-and-prepare',
+          requestId: rid,
+          ...options,
+          preferSab: true as const,
+          sabChannelId: channelId
+        } satisfies NexradWorkerRequestMessage);
+      }
+    });
+    return this.send<NexradPollAndPrepareResult>(requestId, {
+      type: 'poll-and-prepare',
+      requestId,
+      ...options,
+      preferSab: true as const,
+      sabChannelId
+    });
+  }
+
+  // --- SAB channel management ---
 
   private initializePrepareSab(): void {
     if (!supportsNexradSab()) return;
@@ -262,36 +324,26 @@ class NexradDecodeWorkerClient {
       createBuffers: () => createNexradPrepareSabBuffers(),
       createViews: (buffers) => createNexradPrepareSabViews(buffers),
       onChannelInitialized: (channelId, buffers) => {
-        this.channel.postMessage({
-          type: 'init-sab',
-          channelId,
-          buffers
-        });
+        this.worker.postMessage({ type: 'init-sab', channelId, buffers });
       }
     });
     this.prepareSabChannelPool.initializeChannels();
   }
 
-  private claimPrepareSabChannel(
-    requestId: number,
-    requiredVoxelCapacity: number | null
-  ): number | null {
+  private claimPrepareSabChannel(requestId: number): number | null {
     const pool = this.prepareSabChannelPool;
     if (!pool) return null;
-    const safeRequiredVoxelCapacity =
-      typeof requiredVoxelCapacity === 'number' && Number.isFinite(requiredVoxelCapacity)
-        ? Math.max(1, Math.round(requiredVoxelCapacity))
-        : null;
+    const hint = this.prepareSabVoxelCapacityHint;
+    const required =
+      typeof hint === 'number' && Number.isFinite(hint) ? Math.max(1, Math.round(hint)) : null;
     const claimed = claimBestFitSabChannelForRequest({
       pool,
       requestId,
-      requiredCapacity: safeRequiredVoxelCapacity,
+      requiredCapacity: required,
       getChannelCapacity: (channel) => describeNexradPrepareSabVoxelCapacity(channel.views),
-      canChannelFitCapacity: (channelCapacity, requiredCapacity) =>
-        channelCapacity >= requiredCapacity,
+      canChannelFitCapacity: (cap, req) => cap >= req,
       compareCapacitiesAscending: (left, right) => left - right,
-      ensureChannelCapacity: (channel, requiredCapacity) =>
-        this.ensurePrepareSabChannelCapacity(channel.id, requiredCapacity)
+      ensureChannelCapacity: (channel, req) => this.ensurePrepareSabChannelCapacity(channel.id, req)
     });
     return claimed ? claimed.id : null;
   }
@@ -307,473 +359,171 @@ class NexradDecodeWorkerClient {
     return this.prepareSabChannelPool?.getChannel(channelId) ?? null;
   }
 
-  private ensurePrepareSabChannelCapacity(
-    channelId: number,
-    requiredVoxelCapacity: number
-  ): boolean {
+  private ensurePrepareSabChannelCapacity(channelId: number, required: number): boolean {
     const channel = this.getPrepareSabChannel(channelId);
     if (!channel) return false;
-    const currentVoxelCapacity = describeNexradPrepareSabVoxelCapacity(channel.views);
-    if (currentVoxelCapacity >= requiredVoxelCapacity) {
+    const current = describeNexradPrepareSabVoxelCapacity(channel.views);
+    if (current >= required) return true;
+    const next = growNexradPrepareSabVoxelCapacity(required, current);
+    return growNexradPrepareSabBuffers(channel.buffers, next);
+  }
+
+  // --- Hooks ---
+
+  protected onDispose(): void {
+    this.prepareSabChannelPool?.clearInFlightRequests();
+    this.overflowState.clear();
+  }
+
+  protected onFatalError(): void {
+    this.prepareSabChannelPool?.clearInFlightRequests();
+    this.overflowState.clear();
+  }
+
+  protected onRequestTimeout(requestId: number): void {
+    this.releasePrepareSabChannel(requestId);
+    this.overflowState.delete(requestId);
+  }
+
+  protected handleSpecialResponse(
+    response: NexradWorkerResponseMessage,
+    requestId: number
+  ): boolean {
+    // Only prepare-volume and poll-and-prepare can overflow.
+    if (response.type !== 'prepare-volume-result' && response.type !== 'poll-and-prepare-result') {
+      return false;
+    }
+    if (!response.sabOverflow) return false;
+    const state = this.overflowState.get(requestId);
+    if (!state) return false;
+
+    const requiredVoxelCapacity = Math.max(1, Math.round(response.sabOverflow.voxelCapacity));
+
+    let retrySabChannelId: number | null = null;
+    const { retried, mergedCapacity } = handleSabOverflowRetry(
+      {
+        requestId,
+        currentChannelId: state.sabChannelId,
+        requiredCapacity: state.requiredVoxelCapacity,
+        overflowRetryCount: state.overflowRetryCount,
+        maxRetries: MAX_PREPARE_SAB_OVERFLOW_RETRIES
+      },
+      {
+        reportedCapacity: requiredVoxelCapacity,
+        mergeCapacity: mergeVoxelCapacity,
+        updateGlobalHint: (merged) => {
+          this.prepareSabVoxelCapacityHint = Math.max(
+            this.prepareSabVoxelCapacityHint ?? 0,
+            merged
+          );
+        },
+        tryGrowCurrentChannel: (channelId, capacity) =>
+          this.ensurePrepareSabChannelCapacity(channelId, capacity),
+        releaseSabChannel: (rid) => this.releasePrepareSabChannel(rid),
+        reclaimSabChannel: (rid, required) => this.claimPrepareSabChannel(rid),
+        resetTimeout: (rid) => this.resetTimeout(rid),
+        resubmitRequest: (rid, channelId) => {
+          retrySabChannelId = channelId;
+          state.resubmit(rid, channelId);
+        }
+      }
+    );
+
+    if (retried) {
+      state.overflowRetryCount += 1;
+      state.requiredVoxelCapacity = mergedCapacity;
+      state.sabChannelId = retrySabChannelId;
       return true;
     }
-    const nextVoxelCapacity = growNexradPrepareSabVoxelCapacity(
-      requiredVoxelCapacity,
-      currentVoxelCapacity
+
+    this.overflowState.delete(requestId);
+    this.releasePrepareSabChannel(requestId);
+    this.rejectPending(
+      requestId,
+      new WorkerClientError('overflow-exhausted', 'MRMS SAB capacity growth retries exceeded.')
     );
-    return growNexradPrepareSabBuffers(channel.buffers, nextVoxelCapacity);
+    return true;
   }
 
-  async decodeVolume(
-    buffer: ArrayBuffer,
-    phaseDebug: PhaseDebugHeaderValues
-  ): Promise<NexradVolumePayload> {
-    const requestId = this.nextRequestId++;
-    const bufferByteLength = buffer.byteLength;
-    const timeoutMs = timeoutForVolumeDecode(bufferByteLength);
-    const payload = await new Promise<NexradVolumePayload>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(
-          new Error(
-            `Timed out (${timeoutMs} ms) while decoding MRMS payload in ${this.mode} (bytes=${bufferByteLength}).`
-          )
-        );
-      }, timeoutMs);
-      this.pending.set(requestId, { type: 'decode-volume', resolve, reject, timeoutId });
-      this.channel.postMessage(
-        {
-          type: 'decode-volume',
-          requestId,
-          buffer,
-          phaseDebug
-        },
-        [buffer]
-      );
-    });
-    return payload;
-  }
+  protected resolveResponse(response: NexradWorkerResponseMessage): unknown {
+    const requestId = response.requestId;
+    const overflowState = this.overflowState.get(requestId);
+    this.overflowState.delete(requestId);
 
-  async decodeEchoTop(buffer: ArrayBuffer): Promise<EchoTopPayload> {
-    const requestId = this.nextRequestId++;
-    const bufferByteLength = buffer.byteLength;
-    const timeoutMs = timeoutForEchoTopDecode(bufferByteLength);
-    const payload = await new Promise<EchoTopPayload>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(
-          new Error(
-            `Timed out (${timeoutMs} ms) while decoding MRMS echo-top payload in ${this.mode} (bytes=${bufferByteLength}).`
-          )
-        );
-      }, timeoutMs);
-      this.pending.set(requestId, { type: 'decode-echo-top', resolve, reject, timeoutId });
-      this.channel.postMessage(
-        {
-          type: 'decode-echo-top',
-          requestId,
-          buffer
-        },
-        [buffer]
-      );
-    });
-    return payload;
-  }
-
-  async prepareVolume(
-    payload: NexradVolumePayload,
-    options: VolumePrepareOptions
-  ): Promise<{ payload: NexradPreparedVolumeData; crossSectionData: CrossSectionData | null }> {
-    const requestId = this.nextRequestId++;
-    return new Promise((resolve, reject) => {
-      const requiredVoxelCapacity =
-        typeof this.prepareSabVoxelCapacityHint === 'number'
-          ? this.prepareSabVoxelCapacityHint
-          : null;
-      const sabChannelId = this.claimPrepareSabChannel(requestId, requiredVoxelCapacity);
-      if (sabChannelId === null) {
-        reject(new Error('No MRMS SAB prepare channel was available for this request.'));
-        return;
-      }
-      const expectedSab = true;
-      const timeoutId = setTimeout(() => {
-        this.pending.delete(requestId);
-        this.releasePrepareSabChannel(requestId);
-        reject(new Error('Timed out while preparing MRMS volume data in worker.'));
-      }, REQUEST_TIMEOUT_MS);
-      this.pending.set(requestId, {
-        type: 'prepare-volume',
-        resolve,
-        reject,
-        timeoutId,
-        expectedSab,
-        sabChannelId,
-        requiredVoxelCapacity,
-        overflowRetryCount: 0,
-        request: {
-          payload,
-          options
-        }
-      });
-      this.channel.postMessage({
-        type: 'prepare-volume',
-        requestId,
-        payload,
-        ...options,
-        preferSab: true,
-        sabChannelId
-      });
-    });
-  }
-
-  async prepareEchoTop(
-    payload: EchoTopPayload,
-    options: EchoTopPrepareOptions
-  ): Promise<{
-    echoTop18Cells: EchoTopSurfaceCell[];
-    echoTop30Cells: EchoTopSurfaceCell[];
-    echoTop50Cells: EchoTopSurfaceCell[];
-  }> {
-    const requestId = this.nextRequestId++;
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(new Error('Timed out while preparing MRMS echo-top data in worker.'));
-      }, REQUEST_TIMEOUT_MS);
-      this.pending.set(requestId, { type: 'prepare-echo-top', resolve, reject, timeoutId });
-      this.channel.postMessage({
-        type: 'prepare-echo-top',
-        requestId,
-        payload,
-        ...options
-      });
-    });
-  }
-
-  async pollAndPrepare(options: NexradPollAndPrepareOptions): Promise<NexradPollAndPrepareResult> {
-    const requestId = this.nextRequestId++;
-    return new Promise((resolve, reject) => {
-      const requiredVoxelCapacity =
-        typeof this.prepareSabVoxelCapacityHint === 'number'
-          ? this.prepareSabVoxelCapacityHint
-          : null;
-      const sabChannelId = this.claimPrepareSabChannel(requestId, requiredVoxelCapacity);
-      if (sabChannelId === null) {
-        reject(new Error('No MRMS SAB prepare channel was available for poll-and-prepare.'));
-        return;
-      }
-      const timeoutId = setTimeout(() => {
-        this.pending.delete(requestId);
-        this.releasePrepareSabChannel(requestId);
-        reject(new Error('Timed out while polling MRMS in worker.'));
-      }, REQUEST_TIMEOUT_MS);
-      this.pending.set(requestId, {
-        type: 'poll-and-prepare',
-        resolve,
-        reject,
-        timeoutId,
-        expectedSab: true,
-        sabChannelId,
-        requiredVoxelCapacity,
-        overflowRetryCount: 0,
-        request: options
-      });
-      this.channel.postMessage({
-        type: 'poll-and-prepare',
-        requestId,
-        ...options,
-        preferSab: true,
-        sabChannelId
-      });
-    });
-  }
-
-  dispose(): void {
-    this.channel.removeEventListener('message', this.onMessage);
-    this.channel.removeEventListener('messageerror', this.onMessageError);
-    this.channel.removeEventListener('error', this.onWorkerError);
-    this.channel.close();
-    this.prepareSabChannelPool?.clearInFlightRequests();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('MRMS decode worker closed.'));
-    }
-    this.pending.clear();
-  }
-
-  private onMessage = (event: MessageEvent<NexradWorkerResponseMessage>) => {
-    const message = event.data;
-    const pending = this.pending.get(message.requestId);
-    if (!pending) return;
-    if (message.type === 'prepare-volume-result' && pending.type === 'prepare-volume') {
-      this.resolvePreparedVolumeRequest(message, pending);
-      return;
-    }
-    if (message.type === 'poll-and-prepare-result' && pending.type === 'poll-and-prepare') {
-      this.resolvePollAndPrepareRequest(message, pending);
-      return;
-    }
-    clearTimeout(pending.timeoutId);
-    this.pending.delete(message.requestId);
-    this.releasePrepareSabChannel(message.requestId);
-
-    if (message.type === 'decode-volume-result' && pending.type === 'decode-volume') {
-      this.resolveVolumeRequest(message, pending);
-      return;
-    }
-    if (message.type === 'decode-echo-top-result' && pending.type === 'decode-echo-top') {
-      this.resolveEchoTopRequest(message, pending);
-      return;
-    }
-    if (message.type === 'prepare-echo-top-result' && pending.type === 'prepare-echo-top') {
-      this.resolvePreparedEchoTopRequest(message, pending);
-      return;
-    }
-    pending.reject(new Error('MRMS decode worker response type mismatch.'));
-  };
-
-  private onMessageError = () => {
-    this.prepareSabChannelPool?.clearInFlightRequests();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('MRMS decode worker message error.'));
-    }
-    this.pending.clear();
-  };
-
-  private onWorkerError = () => {
-    this.prepareSabChannelPool?.clearInFlightRequests();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('MRMS decode worker runtime error.'));
-    }
-    this.pending.clear();
-  };
-
-  private resetPrepareVolumeTimeout(
-    requestId: number,
-    pending: Extract<PendingRequest, { type: 'prepare-volume' }>
-  ): void {
-    clearTimeout(pending.timeoutId);
-    pending.timeoutId = setTimeout(() => {
-      this.pending.delete(requestId);
+    if (response.type === 'decode-volume-result') {
       this.releasePrepareSabChannel(requestId);
-      pending.reject(new Error('Timed out while preparing MRMS volume data in worker.'));
-    }, REQUEST_TIMEOUT_MS);
-  }
+      if (!response.payload) throw new Error('MRMS decode worker returned no volume payload.');
+      return response.payload;
+    }
 
-  private resetPollAndPrepareTimeout(
-    requestId: number,
-    pending: Extract<PendingRequest, { type: 'poll-and-prepare' }>
-  ): void {
-    clearTimeout(pending.timeoutId);
-    pending.timeoutId = setTimeout(() => {
-      this.pending.delete(requestId);
+    if (response.type === 'decode-echo-top-result') {
       this.releasePrepareSabChannel(requestId);
-      pending.reject(new Error('Timed out while polling MRMS in worker.'));
-    }, REQUEST_TIMEOUT_MS);
-  }
+      if (!response.payload) throw new Error('MRMS decode worker returned no echo-top payload.');
+      return response.payload;
+    }
 
-  private resolveVolumeRequest(
-    message: DecodeVolumeResponseMessage,
-    pending: Extract<PendingRequest, { type: 'decode-volume' }>
-  ): void {
-    if (message.error) {
-      pending.reject(new Error(message.error));
-      return;
-    }
-    if (!message.payload) {
-      pending.reject(new Error('MRMS decode worker returned no volume payload.'));
-      return;
-    }
-    pending.resolve(message.payload);
-  }
-
-  private resolveEchoTopRequest(
-    message: DecodeEchoTopResponseMessage,
-    pending: Extract<PendingRequest, { type: 'decode-echo-top' }>
-  ): void {
-    if (message.error) {
-      pending.reject(new Error(message.error));
-      return;
-    }
-    if (!message.payload) {
-      pending.reject(new Error('MRMS decode worker returned no echo-top payload.'));
-      return;
-    }
-    pending.resolve(message.payload);
-  }
-
-  private resolvePreparedVolumeRequest(
-    message: PrepareVolumeResponseMessage,
-    pending: Extract<PendingRequest, { type: 'prepare-volume' }>
-  ): void {
-    if (message.error) {
-      clearTimeout(pending.timeoutId);
-      this.pending.delete(message.requestId);
-      this.releasePrepareSabChannel(message.requestId);
-      pending.reject(new Error(message.error));
-      return;
-    }
-    if (message.sabOverflow) {
-      const requiredVoxelCapacity = Math.max(1, Math.round(message.sabOverflow.voxelCapacity));
-      this.prepareSabVoxelCapacityHint = Math.max(
-        this.prepareSabVoxelCapacityHint ?? 0,
-        requiredVoxelCapacity
-      );
-      pending.requiredVoxelCapacity = Math.max(
-        pending.requiredVoxelCapacity ?? 0,
-        requiredVoxelCapacity
-      );
-      if (pending.overflowRetryCount >= MAX_PREPARE_SAB_OVERFLOW_RETRIES) {
-        clearTimeout(pending.timeoutId);
-        this.pending.delete(message.requestId);
-        this.releasePrepareSabChannel(message.requestId);
-        pending.reject(new Error('MRMS SAB capacity growth retries exceeded.'));
-        return;
+    if (response.type === 'prepare-volume-result') {
+      this.releasePrepareSabChannel(requestId);
+      if (!response.usedSab) {
+        throw new Error('MRMS worker returned non-SAB payload for SAB prepare request.');
       }
-      this.releasePrepareSabChannel(message.requestId);
-      pending.sabChannelId = this.claimPrepareSabChannel(
-        message.requestId,
-        pending.requiredVoxelCapacity
-      );
-      pending.expectedSab = pending.sabChannelId !== null;
-      if (!pending.expectedSab || pending.sabChannelId === null) {
-        clearTimeout(pending.timeoutId);
-        this.pending.delete(message.requestId);
-        pending.reject(new Error('MRMS SAB prepare channel allocation failed after overflow.'));
-        return;
+      const sabChannelId = overflowState?.sabChannelId ?? null;
+      if (sabChannelId === null) {
+        throw new Error('MRMS worker returned SAB payload without a SAB request.');
       }
-      pending.overflowRetryCount += 1;
-      this.resetPrepareVolumeTimeout(message.requestId, pending);
-      this.channel.postMessage({
-        type: 'prepare-volume',
-        requestId: message.requestId,
-        payload: pending.request.payload,
-        ...pending.request.options,
-        preferSab: true,
-        sabChannelId: pending.sabChannelId
-      });
-      return;
-    }
-    clearTimeout(pending.timeoutId);
-    this.pending.delete(message.requestId);
-    this.releasePrepareSabChannel(message.requestId);
-    if (message.usedSab) {
-      if (!pending.expectedSab || pending.sabChannelId === null) {
-        pending.reject(
-          new Error('MRMS worker returned a SAB payload without an initialized SAB request.')
-        );
-        return;
-      }
-      const sabChannel = this.getPrepareSabChannel(pending.sabChannelId);
+      const sabChannel = this.getPrepareSabChannel(sabChannelId);
       if (!sabChannel) {
-        pending.reject(new Error('MRMS worker returned a SAB payload for an unknown SAB channel.'));
-        return;
+        throw new Error('MRMS worker returned SAB payload for an unknown SAB channel.');
       }
-      pending.resolve(readNexradPrepareSabResult(sabChannel.views, message.requestId));
       recordPrepareTransport('sab');
-      return;
+      return readNexradPrepareSabResult(sabChannel.views, requestId);
     }
-    pending.reject(new Error('MRMS worker returned non-SAB payload for SAB prepare request.'));
-  }
 
-  private resolvePollAndPrepareRequest(
-    message: PollAndPrepareResponseMessage,
-    pending: Extract<PendingRequest, { type: 'poll-and-prepare' }>
-  ): void {
-    if (message.error) {
-      clearTimeout(pending.timeoutId);
-      this.pending.delete(message.requestId);
-      this.releasePrepareSabChannel(message.requestId);
-      pending.reject(new Error(message.error));
-      return;
+    if (response.type === 'prepare-echo-top-result') {
+      this.releasePrepareSabChannel(requestId);
+      return {
+        echoTop18Cells: response.echoTop18Cells ?? [],
+        echoTop30Cells: response.echoTop30Cells ?? [],
+        echoTop50Cells: response.echoTop50Cells ?? []
+      };
     }
-    if (message.sabOverflow) {
-      const requiredVoxelCapacity = Math.max(1, Math.round(message.sabOverflow.voxelCapacity));
-      this.prepareSabVoxelCapacityHint = Math.max(
-        this.prepareSabVoxelCapacityHint ?? 0,
-        requiredVoxelCapacity
-      );
-      pending.requiredVoxelCapacity = Math.max(
-        pending.requiredVoxelCapacity ?? 0,
-        requiredVoxelCapacity
-      );
-      if (pending.overflowRetryCount >= MAX_PREPARE_SAB_OVERFLOW_RETRIES) {
-        clearTimeout(pending.timeoutId);
-        this.pending.delete(message.requestId);
-        this.releasePrepareSabChannel(message.requestId);
-        pending.reject(new Error('MRMS SAB capacity growth retries exceeded.'));
-        return;
-      }
-      this.releasePrepareSabChannel(message.requestId);
-      pending.sabChannelId = this.claimPrepareSabChannel(
-        message.requestId,
-        pending.requiredVoxelCapacity
-      );
-      pending.expectedSab = pending.sabChannelId !== null;
-      if (!pending.expectedSab || pending.sabChannelId === null) {
-        clearTimeout(pending.timeoutId);
-        this.pending.delete(message.requestId);
-        pending.reject(new Error('MRMS SAB prepare channel allocation failed after overflow.'));
-        return;
-      }
-      pending.overflowRetryCount += 1;
-      this.resetPollAndPrepareTimeout(message.requestId, pending);
-      this.channel.postMessage({
-        type: 'poll-and-prepare',
-        requestId: message.requestId,
-        ...pending.request,
-        preferSab: true,
-        sabChannelId: pending.sabChannelId
-      });
-      return;
-    }
-    clearTimeout(pending.timeoutId);
-    this.pending.delete(message.requestId);
-    this.releasePrepareSabChannel(message.requestId);
-    if (!message.usedSab) {
-      pending.reject(new Error('MRMS worker returned non-SAB payload for SAB poll request.'));
-      return;
-    }
-    if (!pending.expectedSab || pending.sabChannelId === null) {
-      pending.reject(new Error('MRMS worker returned SAB payload without a SAB request.'));
-      return;
-    }
-    const sabChannel = this.getPrepareSabChannel(pending.sabChannelId);
-    if (!sabChannel) {
-      pending.reject(new Error('MRMS worker returned a SAB payload for an unknown SAB channel.'));
-      return;
-    }
-    const decoded = readNexradPrepareSabResult(sabChannel.views, message.requestId);
-    recordPrepareTransport('sab');
-    recordDecodeTransport('sab');
-    pending.resolve({
-      volumePayload: message.volumePayload ?? null,
-      preparedVolume: decoded.payload,
-      crossSectionData: decoded.crossSectionData,
-      echoTop18Cells: message.echoTop18Cells ?? [],
-      echoTop30Cells: message.echoTop30Cells ?? [],
-      echoTop50Cells: message.echoTop50Cells ?? [],
-      echoTopSummary: message.echoTopSummary ?? null,
-      timings: message.timings ?? null
-    });
-  }
 
-  private resolvePreparedEchoTopRequest(
-    message: PrepareEchoTopResponseMessage,
-    pending: Extract<PendingRequest, { type: 'prepare-echo-top' }>
-  ): void {
-    if (message.error) {
-      pending.reject(new Error(message.error));
-      return;
+    if (response.type === 'poll-and-prepare-result') {
+      this.releasePrepareSabChannel(requestId);
+      if (!response.usedSab) {
+        throw new Error('MRMS worker returned non-SAB payload for SAB poll request.');
+      }
+      const sabChannelId = overflowState?.sabChannelId ?? null;
+      if (sabChannelId === null) {
+        throw new Error('MRMS worker returned SAB payload without a SAB request.');
+      }
+      const sabChannel = this.getPrepareSabChannel(sabChannelId);
+      if (!sabChannel) {
+        throw new Error('MRMS worker returned SAB payload for an unknown SAB channel.');
+      }
+      const decoded = readNexradPrepareSabResult(sabChannel.views, requestId);
+      recordPrepareTransport('sab');
+      recordDecodeTransport('sab');
+      return {
+        volumePayload: response.volumePayload ?? null,
+        preparedVolume: decoded.payload,
+        crossSectionData: decoded.crossSectionData,
+        echoTop18Cells: response.echoTop18Cells ?? [],
+        echoTop30Cells: response.echoTop30Cells ?? [],
+        echoTop50Cells: response.echoTop50Cells ?? [],
+        echoTopSummary: response.echoTopSummary ?? null,
+        timings: response.timings ?? null
+      } satisfies NexradPollAndPrepareResult;
     }
-    pending.resolve({
-      echoTop18Cells: message.echoTop18Cells ?? [],
-      echoTop30Cells: message.echoTop30Cells ?? [],
-      echoTop50Cells: message.echoTop50Cells ?? []
-    });
+
+    throw new Error('MRMS decode worker response type mismatch.');
   }
+}
+
+// --- Module-level singleton management ---
+
+function supportsWorkers(): boolean {
+  return typeof window !== 'undefined' && typeof Worker !== 'undefined';
 }
 
 let sharedClient: NexradDecodeWorkerClient | null = null;
@@ -814,7 +564,6 @@ function getPrepareWorkerClient(): NexradDecodeWorkerClient | null {
   }
   if (prepareClient) return prepareClient;
   try {
-    // Isolate heavier prepare jobs from decode requests.
     prepareClient = new NexradDecodeWorkerClient();
     return prepareClient;
   } catch (error) {

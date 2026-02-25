@@ -1,60 +1,28 @@
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
 import type { TurnConstraintLabel, VerticalLineData } from './types';
-import type {
-  ApproachWorkerRequestMessage,
-  ApproachWorkerResponseMessage,
-  BuildPathGeometryResponse,
-  ResolveAltitudesResponse
-} from './approach-worker-types';
+import type { ApproachWorkerResponseMessage } from './approach-worker-types';
+import { BaseWorkerClient } from '@/app/scene/shared/base-worker-client';
 
-const REQUEST_TIMEOUT_MS = 6000;
+type AltitudeResult = {
+  finalAltitudes: number[];
+  transitionAltitudes: [string, number[]][];
+  missedAltitudes: number[];
+  missedPathAltitudes: number[];
+};
 
-type PendingRequest =
-  | {
-      type: 'resolve-altitudes';
-      resolve: (payload: {
-        finalAltitudes: number[];
-        transitionAltitudes: [string, number[]][];
-        missedAltitudes: number[];
-        missedPathAltitudes: number[];
-      }) => void;
-      reject: (reason?: unknown) => void;
-      timeoutId: ReturnType<typeof setTimeout>;
-    }
-  | {
-      type: 'build-path-geometry';
-      resolve: (payload: {
-        pointsFlat: Float32Array;
-        verticalLines: VerticalLineData[];
-        turnConstraintLabels: TurnConstraintLabel[];
-      }) => void;
-      reject: (reason?: unknown) => void;
-      timeoutId: ReturnType<typeof setTimeout>;
-    };
+type GeometryResult = {
+  pointsFlat: Float32Array;
+  verticalLines: VerticalLineData[];
+  turnConstraintLabels: TurnConstraintLabel[];
+};
 
-class ApproachWorkerClient {
-  private readonly worker: Worker;
-  private readonly pending = new Map<number, PendingRequest>();
-  private nextRequestId = 1;
-
+class ApproachWorkerClient extends BaseWorkerClient<ApproachWorkerResponseMessage> {
   constructor() {
-    this.worker = new Worker(new URL('./approach.worker.ts', import.meta.url), { type: 'module' });
-    this.worker.addEventListener('message', this.onMessage);
-    this.worker.addEventListener('messageerror', this.onMessageError);
-    this.worker.addEventListener('error', this.onWorkerError);
-  }
-
-  dispose() {
-    this.worker.removeEventListener('message', this.onMessage);
-    this.worker.removeEventListener('messageerror', this.onMessageError);
-    this.worker.removeEventListener('error', this.onWorkerError);
-    this.worker.terminate();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('Approach worker terminated.'));
-    }
-    this.pending.clear();
+    super(new Worker(new URL('./approach.worker.ts', import.meta.url), { type: 'module' }), {
+      name: 'Approach',
+      defaultTimeoutMs: 6000
+    });
   }
 
   resolveAltitudes(params: {
@@ -67,24 +35,12 @@ class ApproachWorkerClient {
     airportElevation: number;
     missedApproachStartAltitudeFeet?: number;
     missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
-  }) {
-    const requestId = this.nextRequestId++;
-    return new Promise<{
-      finalAltitudes: number[];
-      transitionAltitudes: [string, number[]][];
-      missedAltitudes: number[];
-      missedPathAltitudes: number[];
-    }>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(new Error('Approach altitude worker request timed out.'));
-      }, REQUEST_TIMEOUT_MS);
-      this.pending.set(requestId, { type: 'resolve-altitudes', resolve, reject, timeoutId });
-      this.worker.postMessage({
-        type: 'resolve-altitudes',
-        requestId,
-        ...params
-      } satisfies ApproachWorkerRequestMessage);
+  }): Promise<AltitudeResult> {
+    const requestId = this.allocateRequestId();
+    return this.send<AltitudeResult>(requestId, {
+      type: 'resolve-altitudes',
+      requestId,
+      ...params
     });
   }
 
@@ -98,94 +54,35 @@ class ApproachWorkerClient {
     refLon: number;
     magVar: number;
     showTurnConstraintLabels?: boolean;
-  }) {
-    const requestId = this.nextRequestId++;
-    return new Promise<{
-      pointsFlat: Float32Array;
-      verticalLines: VerticalLineData[];
-      turnConstraintLabels: TurnConstraintLabel[];
-    }>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(new Error('Approach geometry worker request timed out.'));
-      }, REQUEST_TIMEOUT_MS);
-      this.pending.set(requestId, { type: 'build-path-geometry', resolve, reject, timeoutId });
-      this.worker.postMessage({
-        type: 'build-path-geometry',
-        requestId,
-        ...params
-      } satisfies ApproachWorkerRequestMessage);
+  }): Promise<GeometryResult> {
+    const requestId = this.allocateRequestId();
+    return this.send<GeometryResult>(requestId, {
+      type: 'build-path-geometry',
+      requestId,
+      ...params
     });
   }
 
-  private onMessage = (event: MessageEvent<ApproachWorkerResponseMessage>) => {
-    const message = event.data;
-    const pending = this.pending.get(message.requestId);
-    if (!pending) return;
-    clearTimeout(pending.timeoutId);
-    this.pending.delete(message.requestId);
-
-    if (message.type === 'resolve-altitudes-result' && pending.type === 'resolve-altitudes') {
-      this.resolveAltitudesRequest(message, pending);
-      return;
+  protected resolveResponse(response: ApproachWorkerResponseMessage): unknown {
+    if (response.type === 'resolve-altitudes-result') {
+      return {
+        finalAltitudes: response.finalAltitudes ?? [],
+        transitionAltitudes: response.transitionAltitudes ?? [],
+        missedAltitudes: response.missedAltitudes ?? [],
+        missedPathAltitudes: response.missedPathAltitudes ?? []
+      } satisfies AltitudeResult;
     }
-    if (message.type === 'build-path-geometry-result' && pending.type === 'build-path-geometry') {
-      this.resolveGeometryRequest(message, pending);
-      return;
+    if (response.type === 'build-path-geometry-result') {
+      if (!response.pointsFlat) {
+        throw new Error('Approach worker returned no geometry point buffer.');
+      }
+      return {
+        pointsFlat: response.pointsFlat,
+        verticalLines: response.verticalLines ?? [],
+        turnConstraintLabels: response.turnConstraintLabels ?? []
+      } satisfies GeometryResult;
     }
-    pending.reject(new Error('Approach worker response type mismatch.'));
-  };
-
-  private onMessageError = () => {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('Approach worker message error.'));
-    }
-    this.pending.clear();
-  };
-
-  private onWorkerError = () => {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('Approach worker runtime error.'));
-    }
-    this.pending.clear();
-  };
-
-  private resolveAltitudesRequest(
-    message: ResolveAltitudesResponse,
-    pending: Extract<PendingRequest, { type: 'resolve-altitudes' }>
-  ) {
-    if (message.error) {
-      pending.reject(new Error(message.error));
-      return;
-    }
-    pending.resolve({
-      finalAltitudes: message.finalAltitudes ?? [],
-      transitionAltitudes: message.transitionAltitudes ?? [],
-      missedAltitudes: message.missedAltitudes ?? [],
-      missedPathAltitudes: message.missedPathAltitudes ?? []
-    });
-  }
-
-  private resolveGeometryRequest(
-    message: BuildPathGeometryResponse,
-    pending: Extract<PendingRequest, { type: 'build-path-geometry' }>
-  ) {
-    if (message.error) {
-      pending.reject(new Error(message.error));
-      return;
-    }
-    const pointsFlat = message.pointsFlat;
-    if (!pointsFlat) {
-      pending.reject(new Error('Approach worker returned no geometry point buffer.'));
-      return;
-    }
-    pending.resolve({
-      pointsFlat,
-      verticalLines: message.verticalLines ?? [],
-      turnConstraintLabels: message.turnConstraintLabels ?? []
-    });
+    throw new Error('Approach worker response type mismatch.');
   }
 }
 

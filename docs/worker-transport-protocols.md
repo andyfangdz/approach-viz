@@ -9,6 +9,34 @@ This document defines client <-> worker communication for:
 - MRMS poll/decode/prepare (`app/scene/nexrad/nexrad.worker.ts`)
 - Traffic merge/render (`app/scene/traffic/traffic.worker.ts`)
 
+## Base Worker Client
+
+All worker clients extend `BaseWorkerClient<TRes>` (`app/scene/shared/base-worker-client.ts`), which handles:
+
+- Pending request map with `requestId` routing and per-request timeouts
+- Worker event listener lifecycle (`message`, `messageerror`, `error`)
+- Dispose: removes listeners, terminates worker, rejects all pending
+- `cancelAllPending()` for external cancellation
+- Structured `WorkerClientError` with error codes (`timeout`, `worker-error`, `message-error`, `terminated`, `cancelled`, `overflow-exhausted`, `application`)
+- Accepts a `WorkerLike` interface, allowing both raw `Worker` and wrapper objects (used by MRMS)
+
+Subclasses implement:
+
+- `resolveResponse(response)` — extract domain result from a response
+- `handleSpecialResponse(response, requestId)` — intercept overflow/retry responses before normal resolution (optional)
+- `onDispose()`, `onFatalError()`, `onRequestTimeout(requestId)` — lifecycle hooks for SAB cleanup (optional)
+
+### SAB Overflow Retry Helper
+
+`handleSabOverflowRetry(ctx, actions)` is a shared utility for SAB-using workers. It:
+
+1. Merges reported capacity into existing hints
+2. Tries in-place growth on the current channel first (avoids a contention window where another concurrent request could steal a released channel)
+3. Falls back to release + reclaim if in-place growth fails
+4. Resets timeout and resubmits the request
+
+Both traffic and MRMS overflow handlers delegate to this function.
+
 ## Common Protocol Shape
 
 Across all workers:
@@ -103,8 +131,8 @@ Worker does not return object payload track arrays anymore; SAB is authoritative
 ### Overflow and Retry
 
 - Worker writes `Overflow` control state and required capacities.
-- Client merges required-capacity hints and retries up to `MAX_SAB_OVERFLOW_RETRIES`.
-- Retry chooses/reassigns a SAB channel that fits (or can be grown).
+- Client delegates to `handleSabOverflowRetry`, which first attempts in-place growth on the current channel, falling back to release + reclaim.
+- Retry up to `MAX_SAB_OVERFLOW_RETRIES` times.
 - Growth uses in-place growable SAB (no buffer replacement transport).
 - For transferable `ingest-binary` requests, overflow updates capacity hints but the specific request cannot be replayed from detached buffers; client surfaces an explicit fresh-request error and retries on the next poll.
 
@@ -145,6 +173,7 @@ Worker does not return non-SAB fallback payload for prepared volume/cross-sectio
 
 Retry:
 
+- Both `prepare-volume` and `poll-and-prepare` overflow responses are handled by a single `handleSpecialResponse` path that delegates to `handleSabOverflowRetry`.
 - Client tracks required voxel capacity hint and retries up to `MAX_PREPARE_SAB_OVERFLOW_RETRIES`.
 - Channel is re-claimed with best-fit capacity; SAB buffers grow in place when needed.
 - Poll-and-prepare retries replay the full poll request after capacity growth (same request options, larger SAB channel).

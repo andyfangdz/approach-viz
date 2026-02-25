@@ -51,11 +51,46 @@ function normalizedIntakePath(datadogPath: string[]): string | null {
   return `/${datadogPath.map((segment) => encodeURIComponent(segment)).join('/')}`;
 }
 
-function noStoreHeaders(contentType?: string): Headers {
+function isLocalDevOrigin(origin: string): boolean {
+  try {
+    const hostname = new URL(origin).hostname.toLowerCase();
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+      return true;
+    }
+    return hostname.endsWith('.localhost');
+  } catch {
+    return false;
+  }
+}
+
+function corsHeaders(request: NextRequest): Headers {
+  const headers = new Headers();
+  const origin = request.headers.get('origin');
+  if (!origin || !isLocalDevOrigin(origin)) {
+    return headers;
+  }
+
+  headers.set('access-control-allow-origin', origin);
+  headers.set('access-control-allow-methods', 'POST, OPTIONS');
+  headers.set(
+    'access-control-allow-headers',
+    'content-type, content-encoding, accept, user-agent'
+  );
+  headers.set('access-control-max-age', '600');
+  headers.set('vary', 'origin');
+  return headers;
+}
+
+function noStoreHeaders(contentType?: string, extraHeaders?: Headers): Headers {
   const headers = new Headers();
   headers.set('cache-control', 'no-store, max-age=0');
   if (contentType) {
     headers.set('content-type', contentType);
+  }
+  if (extraHeaders) {
+    for (const [key, value] of extraHeaders.entries()) {
+      headers.set(key, value);
+    }
   }
   return headers;
 }
@@ -73,12 +108,13 @@ function forwardedRequestHeaders(request: NextRequest): Headers {
 }
 
 async function proxyRumRequest(request: NextRequest, context: RouteContext) {
+  const requestCorsHeaders = corsHeaders(request);
   const { datadogPath } = await context.params;
   const intakePath = normalizedIntakePath(datadogPath);
   if (!intakePath) {
     return NextResponse.json(
       { error: 'Invalid Datadog intake path.' },
-      { status: 400, headers: noStoreHeaders('application/json') }
+      { status: 400, headers: noStoreHeaders('application/json', requestCorsHeaders) }
     );
   }
 
@@ -100,13 +136,16 @@ async function proxyRumRequest(request: NextRequest, context: RouteContext) {
     });
     return new NextResponse(upstreamResponse.body, {
       status: upstreamResponse.status,
-      headers: noStoreHeaders(upstreamResponse.headers.get('content-type') || undefined)
+      headers: noStoreHeaders(
+        upstreamResponse.headers.get('content-type') || undefined,
+        requestCorsHeaders
+      )
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown upstream error';
     return NextResponse.json(
       { error: 'Datadog intake proxy request failed.', intakeHost, message },
-      { status: 502, headers: noStoreHeaders('application/json') }
+      { status: 502, headers: noStoreHeaders('application/json', requestCorsHeaders) }
     );
   }
 }
@@ -115,9 +154,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
   return proxyRumRequest(request, context);
 }
 
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, {
     status: 204,
-    headers: noStoreHeaders()
+    headers: noStoreHeaders(undefined, corsHeaders(request))
   });
 }

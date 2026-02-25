@@ -27,6 +27,11 @@ import {
   SharedSabChannelPool,
   type SharedSabChannel
 } from '../shared/sab-channel-pool';
+import {
+  BaseWorkerClient,
+  WorkerClientError,
+  handleSabOverflowRetry
+} from '../shared/base-worker-client';
 
 const REQUEST_TIMEOUT_MS = 5000;
 const MAX_SAB_OVERFLOW_RETRIES = 3;
@@ -95,19 +100,6 @@ export interface TrafficProcessResult {
   parseMs: number | null;
 }
 
-type PendingResolver = {
-  resolve: (value: TrafficProcessResult) => void;
-  reject: (reason?: unknown) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
-  startedAt: number;
-  expectedSab: boolean;
-  sabChannelId: number | null;
-  requiredSabCapacity: TrafficSabOverflow | null;
-  request: TrafficRequestWithoutId;
-  overflowRetryCount: number;
-  canRetryAfterOverflow: boolean;
-};
-
 type TrafficRequestWithoutId =
   | Omit<TrafficResetRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
@@ -115,6 +107,15 @@ type TrafficRequestWithoutId =
   | Omit<TrafficRuntimeIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficRecomputeRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficErrorPruneRequest, 'requestId' | 'preferSab' | 'sabChannelId'>;
+
+interface PendingOverflowState {
+  startedAt: number;
+  sabChannelId: number | null;
+  requiredSabCapacity: TrafficSabOverflow | null;
+  request: TrafficRequestWithoutId;
+  overflowRetryCount: number;
+  canRetryAfterOverflow: boolean;
+}
 
 function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
@@ -134,11 +135,6 @@ function normalizeSabCapacity(
     pointCapacity: sanitizeCapacity(value.pointCapacity),
     stringCapacity: sanitizeCapacity(value.stringCapacity)
   };
-}
-
-function cloneSabCapacity(value: TrafficSabOverflow | null): TrafficSabOverflow | null {
-  if (!value) return null;
-  return { ...value };
 }
 
 function mergeSabCapacityHints(
@@ -174,48 +170,21 @@ function compareSabCapacityAscending(left: TrafficSabOverflow, right: TrafficSab
   return left.stringCapacity - right.stringCapacity;
 }
 
-export class TrafficWorkerClient {
-  private readonly worker: Worker;
-  private nextRequestId = 1;
-  private readonly pending = new Map<number, PendingResolver>();
+export class TrafficWorkerClient extends BaseWorkerClient<TrafficWorkerResponseMessage> {
   private sabChannelPool: SharedSabChannelPool<TrafficSabBufferSet, TrafficSabViews> | null = null;
   private sabCapacityHint: TrafficSabOverflow | null = null;
+  private readonly overflowState = new Map<number, PendingOverflowState>();
 
   constructor() {
-    this.worker = new Worker(new URL('./traffic.worker.ts', import.meta.url), { type: 'module' });
-    this.worker.addEventListener('message', this.onMessage);
-    this.worker.addEventListener('messageerror', this.onMessageError);
-    this.worker.addEventListener('error', this.onWorkerError);
+    super(new Worker(new URL('./traffic.worker.ts', import.meta.url), { type: 'module' }), {
+      name: 'Traffic',
+      defaultTimeoutMs: REQUEST_TIMEOUT_MS
+    });
     this.initializeSabTransport();
   }
 
-  cancelAllPending(): void {
-    for (const [requestId, pending] of this.pending) {
-      clearTimeout(pending.timeoutId);
-      this.releaseSabChannelForRequest(requestId);
-      pending.reject(new Error('Traffic worker request cancelled.'));
-    }
-    this.pending.clear();
-  }
-
-  dispose() {
-    this.worker.removeEventListener('message', this.onMessage);
-    this.worker.removeEventListener('messageerror', this.onMessageError);
-    this.worker.removeEventListener('error', this.onWorkerError);
-    this.worker.terminate();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('Traffic worker terminated.'));
-    }
-    this.pending.clear();
-    this.sabChannelPool?.clearInFlightRequests();
-  }
-
   reset(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
-    return this.sendRequest({
-      type: 'reset',
-      ...options
-    });
+    return this.sendSabRequest({ type: 'reset', ...options });
   }
 
   ingest(
@@ -223,12 +192,7 @@ export class TrafficWorkerClient {
     historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined,
     options: TrafficProcessOptions
   ): Promise<TrafficProcessResult> {
-    return this.sendRequest({
-      type: 'ingest',
-      aircraftList,
-      historyByHex,
-      ...options
-    });
+    return this.sendSabRequest({ type: 'ingest', aircraftList, historyByHex, ...options });
   }
 
   ingestBinary(
@@ -239,13 +203,8 @@ export class TrafficWorkerClient {
     const transferList = historyPayloadBuffer
       ? [payloadBuffer, historyPayloadBuffer]
       : [payloadBuffer];
-    return this.sendRequest(
-      {
-        type: 'ingest-binary',
-        payloadBuffer,
-        historyPayloadBuffer,
-        ...options
-      },
+    return this.sendSabRequest(
+      { type: 'ingest-binary', payloadBuffer, historyPayloadBuffer, ...options },
       transferList
     );
   }
@@ -255,7 +214,7 @@ export class TrafficWorkerClient {
     followupUrl: string | undefined,
     options: TrafficProcessOptions
   ): Promise<TrafficProcessResult> {
-    return this.sendRequest({
+    return this.sendSabRequest({
       type: 'ingest-runtime',
       primaryUrl,
       followupUrl,
@@ -264,18 +223,14 @@ export class TrafficWorkerClient {
   }
 
   recompute(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
-    return this.sendRequest({
-      type: 'recompute',
-      ...options
-    });
+    return this.sendSabRequest({ type: 'recompute', ...options });
   }
 
   pruneError(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
-    return this.sendRequest({
-      type: 'prune-error',
-      ...options
-    });
+    return this.sendSabRequest({ type: 'prune-error', ...options });
   }
+
+  // --- SAB transport ---
 
   private initializeSabTransport(): void {
     if (!supportsTrafficSab()) {
@@ -301,17 +256,17 @@ export class TrafficWorkerClient {
     requestId: number,
     requiredSabCapacity: TrafficSabOverflow | null
   ): number | null {
-    const sabChannelPool = this.sabChannelPool;
-    if (!sabChannelPool) return null;
+    const pool = this.sabChannelPool;
+    if (!pool) return null;
     const claimed = claimBestFitSabChannelForRequest({
-      pool: sabChannelPool,
+      pool,
       requestId,
       requiredCapacity: requiredSabCapacity,
       getChannelCapacity: (channel) => describeTrafficSabCapacities(channel.views),
       canChannelFitCapacity: sabChannelCanFitCapacity,
       compareCapacitiesAscending: compareSabCapacityAscending,
-      ensureChannelCapacity: (channel, requiredCapacity) =>
-        this.ensureSabChannelCapacity(channel.id, requiredCapacity)
+      ensureChannelCapacity: (channel, required) =>
+        this.ensureSabChannelCapacity(channel.id, required)
     });
     return claimed ? claimed.id : null;
   }
@@ -327,143 +282,164 @@ export class TrafficWorkerClient {
     return this.sabChannelPool?.getChannel(channelId) ?? null;
   }
 
-  private sendRequest(message: TrafficRequestWithoutId, transferList?: Transferable[]) {
-    const requestId = this.nextRequestId++;
-    return new Promise<TrafficProcessResult>((resolve, reject) => {
-      const requiredSabCapacity = cloneSabCapacity(this.sabCapacityHint);
-      const sabChannelId = this.claimSabChannel(requestId, requiredSabCapacity);
-      if (sabChannelId === null) {
-        reject(new Error('No Traffic SAB channel was available for this request.'));
-        return;
-      }
-      const expectedSab = true;
-      const timeoutId = setTimeout(() => {
-        this.releaseSabChannelForRequest(requestId);
-        this.pending.delete(requestId);
-        reject(new Error('Traffic worker request timed out.'));
-      }, REQUEST_TIMEOUT_MS);
-      this.pending.set(requestId, {
-        resolve,
-        reject,
-        timeoutId,
-        startedAt: performance.now(),
-        expectedSab,
-        sabChannelId,
-        requiredSabCapacity,
-        request: message,
-        overflowRetryCount: 0,
-        canRetryAfterOverflow: !transferList || transferList.length === 0
-      });
-      this.worker.postMessage(
-        {
-          ...message,
-          requestId,
-          preferSab: expectedSab,
-          sabChannelId
-        },
-        transferList ?? []
-      );
+  private ensureSabChannelCapacity(channelId: number, required: TrafficSabOverflow): boolean {
+    const channel = this.getSabChannel(channelId);
+    if (!channel) return false;
+    const current = describeTrafficSabCapacities(channel.views);
+    if (sabChannelCanFitCapacity(current, required)) return true;
+    const next = growTrafficSabCapacities(required, current);
+    return growTrafficSabBuffers(channel.buffers, next);
+  }
+
+  private sendSabRequest(
+    message: TrafficRequestWithoutId,
+    transferList?: Transferable[]
+  ): Promise<TrafficProcessResult> {
+    const requestId = this.allocateRequestId();
+    const requiredSabCapacity = this.sabCapacityHint ? { ...this.sabCapacityHint } : null;
+    const sabChannelId = this.claimSabChannel(requestId, requiredSabCapacity);
+    if (sabChannelId === null) {
+      return Promise.reject(new Error('No Traffic SAB channel was available for this request.'));
+    }
+    this.overflowState.set(requestId, {
+      startedAt: performance.now(),
+      sabChannelId,
+      requiredSabCapacity,
+      request: message,
+      overflowRetryCount: 0,
+      canRetryAfterOverflow: !transferList || transferList.length === 0
     });
+    return this.send<TrafficProcessResult>(
+      requestId,
+      {
+        ...message,
+        requestId,
+        preferSab: true as const,
+        sabChannelId
+      },
+      { transferList }
+    );
   }
 
-  private resetPendingTimeout(requestId: number, pending: PendingResolver): void {
-    clearTimeout(pending.timeoutId);
-    pending.timeoutId = setTimeout(() => {
+  // --- Hooks ---
+
+  protected onDispose(): void {
+    this.sabChannelPool?.clearInFlightRequests();
+    this.overflowState.clear();
+  }
+
+  protected onFatalError(): void {
+    this.sabChannelPool?.clearInFlightRequests();
+    this.overflowState.clear();
+  }
+
+  protected onRequestTimeout(requestId: number): void {
+    this.releaseSabChannelForRequest(requestId);
+    this.overflowState.delete(requestId);
+  }
+
+  protected handleSpecialResponse(
+    response: TrafficWorkerResponseMessage,
+    requestId: number
+  ): boolean {
+    if (!response.sabOverflow) return false;
+    const state = this.overflowState.get(requestId);
+    if (!state) return false;
+
+    const requiredSabCapacity = normalizeSabCapacity(response.sabOverflow);
+    if (!requiredSabCapacity) {
+      this.overflowState.delete(requestId);
       this.releaseSabChannelForRequest(requestId);
-      this.pending.delete(requestId);
-      pending.reject(new Error('Traffic worker request timed out.'));
-    }, REQUEST_TIMEOUT_MS);
+      this.rejectPending(
+        requestId,
+        new WorkerClientError('application', 'Traffic SAB overflow metadata was invalid.')
+      );
+      return true;
+    }
+
+    if (!state.canRetryAfterOverflow) {
+      this.overflowState.delete(requestId);
+      this.releaseSabChannelForRequest(requestId);
+      this.rejectPending(
+        requestId,
+        new WorkerClientError(
+          'application',
+          'Traffic SAB overflow requires a fresh request for transferable payloads.'
+        )
+      );
+      return true;
+    }
+
+    let retrySabChannelId: number | null = null;
+    const { retried, mergedCapacity } = handleSabOverflowRetry(
+      {
+        requestId,
+        currentChannelId: state.sabChannelId,
+        requiredCapacity: state.requiredSabCapacity,
+        overflowRetryCount: state.overflowRetryCount,
+        maxRetries: MAX_SAB_OVERFLOW_RETRIES
+      },
+      {
+        reportedCapacity: requiredSabCapacity,
+        mergeCapacity: mergeSabCapacityHints,
+        updateGlobalHint: (merged) => {
+          this.sabCapacityHint = mergeSabCapacityHints(this.sabCapacityHint, merged);
+        },
+        tryGrowCurrentChannel: (channelId, capacity) =>
+          this.ensureSabChannelCapacity(channelId, capacity),
+        releaseSabChannel: (rid) => this.releaseSabChannelForRequest(rid),
+        reclaimSabChannel: (rid, required) => this.claimSabChannel(rid, required),
+        resetTimeout: (rid) => this.resetTimeout(rid),
+        resubmitRequest: (rid, channelId) => {
+          retrySabChannelId = channelId;
+          this.worker.postMessage({
+            ...state.request,
+            requestId: rid,
+            preferSab: true as const,
+            sabChannelId: channelId
+          });
+        }
+      }
+    );
+
+    if (retried) {
+      state.overflowRetryCount += 1;
+      state.requiredSabCapacity = mergedCapacity;
+      state.sabChannelId = retrySabChannelId;
+      return true;
+    }
+
+    this.overflowState.delete(requestId);
+    this.releaseSabChannelForRequest(requestId);
+    this.rejectPending(
+      requestId,
+      new WorkerClientError('overflow-exhausted', 'Traffic SAB capacity growth retries exceeded.')
+    );
+    return true;
   }
 
-  private onMessage = (event: MessageEvent<TrafficWorkerResponseMessage>) => {
-    const response = event.data;
-    const pending = this.pending.get(response.requestId);
-    if (!pending) return;
-    if (response.error) {
-      clearTimeout(pending.timeoutId);
-      this.pending.delete(response.requestId);
-      this.releaseSabChannelForRequest(response.requestId);
-      pending.reject(new Error(response.error));
-      return;
-    }
-    if (response.sabOverflow && pending.expectedSab) {
-      const requiredSabCapacity = normalizeSabCapacity(response.sabOverflow);
-      if (!requiredSabCapacity) {
-        clearTimeout(pending.timeoutId);
-        this.pending.delete(response.requestId);
-        this.releaseSabChannelForRequest(response.requestId);
-        pending.reject(new Error('Traffic SAB overflow metadata was invalid.'));
-        return;
-      }
-      this.sabCapacityHint = mergeSabCapacityHints(this.sabCapacityHint, requiredSabCapacity);
-      pending.requiredSabCapacity = mergeSabCapacityHints(
-        pending.requiredSabCapacity,
-        requiredSabCapacity
-      );
-      if (!pending.canRetryAfterOverflow) {
-        clearTimeout(pending.timeoutId);
-        this.pending.delete(response.requestId);
-        this.releaseSabChannelForRequest(response.requestId);
-        pending.reject(
-          new Error('Traffic SAB overflow requires a fresh request for transferable payloads.')
-        );
-        return;
-      }
-      if (pending.overflowRetryCount >= MAX_SAB_OVERFLOW_RETRIES) {
-        clearTimeout(pending.timeoutId);
-        this.pending.delete(response.requestId);
-        this.releaseSabChannelForRequest(response.requestId);
-        pending.reject(new Error('Traffic SAB capacity growth retries exceeded.'));
-        return;
-      }
-
-      this.releaseSabChannelForRequest(response.requestId);
-      pending.sabChannelId = this.claimSabChannel(response.requestId, pending.requiredSabCapacity);
-      pending.expectedSab = pending.sabChannelId !== null;
-      if (!pending.expectedSab || pending.sabChannelId === null) {
-        clearTimeout(pending.timeoutId);
-        this.pending.delete(response.requestId);
-        pending.reject(new Error('Traffic SAB channel allocation failed after overflow.'));
-        return;
-      }
-      pending.overflowRetryCount += 1;
-      this.resetPendingTimeout(response.requestId, pending);
-      this.worker.postMessage({
-        ...pending.request,
-        requestId: response.requestId,
-        preferSab: true,
-        sabChannelId: pending.sabChannelId
-      });
-      return;
-    }
-    clearTimeout(pending.timeoutId);
-    this.pending.delete(response.requestId);
+  protected resolveResponse(response: TrafficWorkerResponseMessage): TrafficProcessResult {
+    const state = this.overflowState.get(response.requestId);
+    this.overflowState.delete(response.requestId);
     this.releaseSabChannelForRequest(response.requestId);
-    const roundTripMs = roundMs(performance.now() - pending.startedAt);
-    let renderBuffers: TrafficRenderBuffers = EMPTY_TRAFFIC_RENDER_BUFFERS;
-    let trackCount = response.trackCount ?? 0;
-    let historyPointCount = response.historyPointCount ?? 0;
-    let renderHash = typeof response.renderHash === 'number' ? response.renderHash : null;
-    let workerProcessingMs =
-      typeof response.workerProcessingMs === 'number' &&
-      Number.isFinite(response.workerProcessingMs)
-        ? response.workerProcessingMs
-        : null;
+    const startedAt = state?.startedAt ?? performance.now();
+    const sabChannelId = state?.sabChannelId ?? null;
+    const roundTripMs = roundMs(performance.now() - startedAt);
 
-    if (response.usedSab) {
-      if (!pending.expectedSab || pending.sabChannelId === null) {
-        pending.reject(
-          new Error('Traffic SAB response received without an initialized SAB request.')
-        );
-        return;
-      }
-      const sabChannel = this.getSabChannel(pending.sabChannelId);
-      if (!sabChannel) {
-        pending.reject(new Error('Traffic SAB response referenced a missing SAB channel.'));
-        return;
-      }
-      const decoded = readTrafficSabResult(sabChannel.views, response.requestId);
-      renderBuffers = {
+    if (!response.usedSab) {
+      throw new Error('Traffic worker returned non-SAB payload for SAB request.');
+    }
+    if (sabChannelId === null) {
+      throw new Error('Traffic SAB response received without an initialized SAB request.');
+    }
+    const sabChannel = this.getSabChannel(sabChannelId);
+    if (!sabChannel) {
+      throw new Error('Traffic SAB response referenced a missing SAB channel.');
+    }
+    const decoded = readTrafficSabResult(sabChannel.views, response.requestId);
+
+    return {
+      renderBuffers: {
         renderedTrackCount: decoded.renderedTrackCount,
         markerPositions: decoded.markerPositions,
         headingDeg: decoded.headingDeg,
@@ -472,26 +448,15 @@ export class TrafficWorkerClient {
         trailCounts: decoded.trailCounts,
         points: decoded.points,
         callsignLabels: decoded.callsignLabels
-      };
-      trackCount = decoded.trackCount;
-      historyPointCount = decoded.historyPointCount;
-      renderHash = decoded.renderHash;
-      workerProcessingMs = decoded.workerProcessingMs;
-    } else {
-      pending.reject(new Error('Traffic worker returned non-SAB payload for SAB request.'));
-      return;
-    }
-
-    pending.resolve({
-      renderBuffers,
-      trackCount,
-      historyPointCount,
-      renderHash,
+      },
+      trackCount: decoded.trackCount,
+      historyPointCount: decoded.historyPointCount,
+      renderHash: decoded.renderHash,
       operation:
         response.operation && response.operation !== 'init-sab' ? response.operation : null,
       workerTransport: 'sab',
       workerRoundTripMs: Number.isFinite(roundTripMs) ? roundTripMs : null,
-      workerProcessingMs,
+      workerProcessingMs: decoded.workerProcessingMs,
       trackedHexes: Array.isArray(response.trackedHexes) ? response.trackedHexes : [],
       returnedHistoryHexes: Array.isArray(response.returnedHistoryHexes)
         ? response.returnedHistoryHexes
@@ -508,45 +473,6 @@ export class TrafficWorkerClient {
         typeof response.parseMs === 'number' && Number.isFinite(response.parseMs)
           ? response.parseMs
           : null
-    });
-  };
-
-  private ensureSabChannelCapacity(channelId: number, required: TrafficSabOverflow): boolean {
-    const channel = this.getSabChannel(channelId);
-    if (!channel) return false;
-    const channelCapacity = describeTrafficSabCapacities(channel.views);
-    if (sabChannelCanFitCapacity(channelCapacity, required)) {
-      return true;
-    }
-    return this.growSabBuffers(channelId, required);
+    };
   }
-
-  private growSabBuffers(channelId: number, overflow: TrafficSabOverflow): boolean {
-    if (!supportsTrafficSab()) return false;
-    const channel = this.getSabChannel(channelId);
-    if (!channel) return false;
-    const nextCapacities = growTrafficSabCapacities(
-      overflow,
-      describeTrafficSabCapacities(channel.views)
-    );
-    return growTrafficSabBuffers(channel.buffers, nextCapacities);
-  }
-
-  private onMessageError = () => {
-    this.sabChannelPool?.clearInFlightRequests();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('Traffic worker message error.'));
-    }
-    this.pending.clear();
-  };
-
-  private onWorkerError = () => {
-    this.sabChannelPool?.clearInFlightRequests();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('Traffic worker runtime error.'));
-    }
-    this.pending.clear();
-  };
 }
