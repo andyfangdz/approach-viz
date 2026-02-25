@@ -1,7 +1,6 @@
 import {
   applyPhaseDebugValues,
   decodeEchoTopPayload,
-  decodePayload,
   extractPhaseDebugHeaderValues
 } from './nexrad-decode';
 import {
@@ -28,7 +27,7 @@ import {
   type NexradPrepareSabViews,
   writeNexradPrepareSabResult
 } from './nexrad-sab';
-import { ensureWasm, isWasmReady } from '../shared/wasm-loader';
+import { ensureWasm } from '../shared/wasm-loader';
 import { decode_mrms_volume } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
 /**
@@ -238,9 +237,7 @@ async function handleDecodeVolume(
 ): Promise<void> {
   try {
     await ensureWasm();
-    const decoded = isWasmReady()
-      ? decodeVolumeViaWasm(message.buffer)
-      : decodePayload(message.buffer);
+    const decoded = decodeVolumeViaWasm(message.buffer);
     const payload = applyPhaseDebugValues(decoded, message.phaseDebug);
     endpoint.postMessage(
       {
@@ -400,9 +397,7 @@ async function handlePollAndPrepare(
     timings.volumeFetchMs = volumeFetch.fetchMs;
     const decodeStartedAt = performance.now();
     await ensureWasm();
-    const rawDecoded = isWasmReady()
-      ? decodeVolumeViaWasm(volumeFetch.buffer)
-      : decodePayload(volumeFetch.buffer);
+    const rawDecoded = decodeVolumeViaWasm(volumeFetch.buffer);
     volumePayload = applyPhaseDebugValues(
       rawDecoded,
       extractPhaseDebugHeaderValues(volumeFetch.headers)

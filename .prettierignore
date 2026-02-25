@@ -6,3 +6,6 @@ public/data
 next-env.d.ts
 *.sqlite
 *.png
+packages/approach-viz-core-wasm
+public/approach_viz_core.js
+test-results

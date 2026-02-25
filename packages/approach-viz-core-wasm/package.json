@@ -1,0 +1,15 @@
+{
+  "name": "approach-viz-core",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "approach_viz_core_bg.wasm",
+    "approach_viz_core.js",
+    "approach_viz_core.d.ts"
+  ],
+  "main": "approach_viz_core.js",
+  "types": "approach_viz_core.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

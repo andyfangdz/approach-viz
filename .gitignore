@@ -33,7 +33,6 @@ npm-debug.log*
 .tmp*
 output/playwright
 
-# WASM build output (built by wasm-pack via build:wasm npm script)
-packages/approach-viz-core-wasm/
-public/approach_viz_core_bg.wasm
-public/approach_viz_core.js
+# WASM build output — only the raw .wasm in the wasm-pack output dir is ignored;
+# public/ copies + .d.ts + .js glue are checked in for CI and Vercel deployment.
+packages/approach-viz-core-wasm/*.wasm

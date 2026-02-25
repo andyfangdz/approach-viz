@@ -9,7 +9,8 @@ export default [
       'output/**',
       'data/**',
       'public/data/**',
-      'services/runtime-rs/target/**'
+      'services/runtime-rs/target/**',
+      'packages/approach-viz-core-wasm/**'
     ]
   },
   {

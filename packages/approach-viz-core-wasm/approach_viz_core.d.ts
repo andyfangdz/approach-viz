@@ -1,0 +1,172 @@
+/* tslint:disable */
+/* eslint-disable */
+
+/**
+ * Stateful traffic merge state held in WASM memory.
+ *
+ * JS creates one instance and calls methods on it. The inner `TrafficState`
+ * maintains the track map across calls.
+ */
+export class WasmTrafficState {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Build render-ready tracks projected to scene coordinates.
+     *
+     * Returns `{ tracks: Array<RenderTrack>, hash: number }`.
+     */
+    build_render_tracks(ref_lat: number, ref_lon: number, vertical_scale: number, apply_earth_curvature: boolean, show_departed_trails: boolean): any;
+    /**
+     * Merge incoming traffic binary data + optional backfill history into the state.
+     *
+     * `data`: raw AVTR binary payload (current poll).
+     * `backfill_data`: raw AVTR binary payload (backfill history), or empty slice if none.
+     * `now_ms`: current timestamp in milliseconds.
+     * `history_minutes`: how many minutes of history to keep.
+     * `hide_ground`: whether to exclude ground aircraft.
+     *
+     * Returns a JS object with `{ trackCount: number, fetchedAtMs: number }`.
+     */
+    merge(data: Uint8Array, now_ms: number, history_minutes: number, hide_ground: boolean, backfill_data: Uint8Array): any;
+    /**
+     * Create a new empty traffic state.
+     */
+    constructor();
+    /**
+     * Prune tracks after a fetch error.
+     */
+    prune_for_error(now_ms: number, history_minutes: number): void;
+    /**
+     * Recompute tracks (trim history, hide ground, refresh timestamps).
+     *
+     * Returns `{ trackCount: number }`.
+     */
+    recompute(now_ms: number, history_minutes: number, hide_ground: boolean): any;
+    /**
+     * Number of active tracks.
+     */
+    readonly track_count: number;
+}
+
+/**
+ * Build a 2D cross-section grid from a prepared volume along a given slice axis.
+ *
+ * Accepts raw volume arrays, prepared volume arrays, and slice parameters.
+ * Returns null if the cross-section cannot be built (empty volume).
+ */
+export function build_mrms_cross_section(x_nm: Float32Array, z_nm: Float32Array, bottom_feet: Uint16Array, top_feet: Uint16Array, dbz_tenths: Int16Array, phase: Uint8Array, surface_phase: Uint8Array, footprint_x_span: Uint16Array, footprint_y_span: Uint16Array, footprint_x_nm: number, footprint_y_nm: number, layer_count: number, layer_voxel_counts: Uint32Array, valid_count: number, valid_indices: Int32Array, corrected_bottom_feet: Float32Array, corrected_top_feet: Float32Array, effective_phase_code: Uint8Array, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number): any;
+
+/**
+ * Decode an AVMR binary payload into a JS object matching NexradVolumePayload shape.
+ *
+ * Returns raw decoded values (dBZ in tenths, feet as u16, spans as-is).
+ * The TS caller is responsible for any further conversions (e.g. tenths -> whole dBZ).
+ */
+export function decode_mrms_volume(data: Uint8Array): any;
+
+/**
+ * Decode an AVTR binary payload into a JS object.
+ *
+ * Uses serde-wasm-bindgen for the complex nested structure (aircraft array,
+ * history groups with nested point arrays).
+ */
+export function decode_traffic(data: Uint8Array): any;
+
+/**
+ * Build echo-top surfaces from typed echo-top input arrays.
+ */
+export function prepare_echo_top_surfaces(x_nm: Float32Array, z_nm: Float32Array, top18_feet: Float32Array, top30_feet: Float32Array, top50_feet: Float32Array, footprint_x_nm: number, footprint_y_nm: number, apply_earth_curvature: boolean, ref_lat: number): any;
+
+/**
+ * Filter, curvature-correct, and declutter an MRMS decoded volume.
+ *
+ * Accepts raw SoA arrays (matching the decode output) plus configuration params.
+ *
+ * NOTE: `min_dbz_tenths` is in tenths of dBZ (e.g. 50 = 5.0 dBZ). The TS caller
+ * passes whole dBZ and must multiply by 10 before calling this function.
+ *
+ * `phase_mode`: 0 = Altitude, 1 = Surface.
+ * `declutter_mode`: 0 = All, 1 = Low, 2 = Mid, 3 = High.
+ */
+export function prepare_mrms_volume(x_nm: Float32Array, z_nm: Float32Array, bottom_feet: Uint16Array, top_feet: Uint16Array, dbz_tenths: Int16Array, phase: Uint8Array, surface_phase: Uint8Array, footprint_x_span: Uint16Array, footprint_y_span: Uint16Array, footprint_x_nm: number, footprint_y_nm: number, layer_count: number, layer_voxel_counts: Uint32Array, min_dbz_tenths: number, phase_mode: number, declutter_mode: number, apply_earth_curvature: boolean, ref_lat: number): any;
+
+/**
+ * Scale an altitude in feet to scene Y units.
+ */
+export function wasm_alt_to_y(alt_feet: number, vertical_scale: number): number;
+
+/**
+ * Approximate earth-curvature sag at a horizontal range, in nautical miles.
+ */
+export function wasm_earth_curvature_drop_nm(x_nm: number, z_nm: number, ref_lat: number): number;
+
+/**
+ * WGS84 geocentric radius at the given latitude, in nautical miles.
+ */
+export function wasm_geocentric_radius_nm(latitude_deg: number): number;
+
+/**
+ * Convert (lat, lon) to local scene coordinates relative to a reference point.
+ *
+ * Returns a Float64Array of `[x, z]` where x = east (NM), z = -north (NM).
+ */
+export function wasm_lat_lon_to_local(lat: number, lon: number, ref_lat: number, ref_lon: number): Float64Array;
+
+/**
+ * Projection scale factors at a given latitude, in NM per degree.
+ *
+ * Returns a Float64Array of `[east_nm_per_lon_deg, north_nm_per_lat_deg]`.
+ */
+export function wasm_projection_scales(lat_deg: number): Float64Array;
+
+export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+
+export interface InitOutput {
+    readonly memory: WebAssembly.Memory;
+    readonly __wbg_wasmtrafficstate_free: (a: number, b: number) => void;
+    readonly build_mrms_cross_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number, c1: number, d1: number, e1: number, f1: number, g1: number, h1: number, i1: number, j1: number, k1: number, l1: number) => [number, number, number];
+    readonly decode_mrms_volume: (a: number, b: number) => [number, number, number];
+    readonly decode_traffic: (a: number, b: number) => [number, number, number];
+    readonly prepare_echo_top_surfaces: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
+    readonly prepare_mrms_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number) => [number, number, number];
+    readonly wasm_alt_to_y: (a: number, b: number) => number;
+    readonly wasm_earth_curvature_drop_nm: (a: number, b: number, c: number) => number;
+    readonly wasm_geocentric_radius_nm: (a: number) => number;
+    readonly wasm_lat_lon_to_local: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly wasm_projection_scales: (a: number) => [number, number];
+    readonly wasmtrafficstate_build_render_tracks: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly wasmtrafficstate_merge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly wasmtrafficstate_new: () => number;
+    readonly wasmtrafficstate_prune_for_error: (a: number, b: number, c: number) => void;
+    readonly wasmtrafficstate_recompute: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly wasmtrafficstate_track_count: (a: number) => number;
+    readonly __wbindgen_exn_store: (a: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __externref_table_dealloc: (a: number) => void;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_start: () => void;
+}
+
+export type SyncInitInput = BufferSource | WebAssembly.Module;
+
+/**
+ * Instantiates the given `module`, which can either be bytes or
+ * a precompiled `WebAssembly.Module`.
+ *
+ * @param {{ module: SyncInitInput }} module - Passing `SyncInitInput` directly is deprecated.
+ *
+ * @returns {InitOutput}
+ */
+export function initSync(module: { module: SyncInitInput } | SyncInitInput): InitOutput;
+
+/**
+ * If `module_or_path` is {RequestInfo} or {URL}, makes a request and
+ * for everything else, calls `WebAssembly.instantiate` directly.
+ *
+ * @param {{ module_or_path: InitInput | Promise<InitInput> }} module_or_path - Passing `InitInput` directly is deprecated.
+ *
+ * @returns {Promise<InitOutput>}
+ */
+export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;

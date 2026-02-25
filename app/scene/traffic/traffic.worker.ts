@@ -10,11 +10,10 @@ import type {
 } from './traffic-worker-types';
 import { createTrafficSabViews, type TrafficSabViews, writeTrafficSabResult } from './traffic-sab';
 import {
-  decodeTrafficBinaryPayload,
   isTrafficBinaryContentType,
   type TrafficBinaryDecodedPayload
 } from './traffic-binary-protocol';
-import { ensureWasm, isWasmReady } from '../shared/wasm-loader';
+import { ensureWasm } from '../shared/wasm-loader';
 import { decode_traffic } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
 /**
@@ -413,9 +412,7 @@ async function fetchTrafficRuntimePayload(url: string): Promise<RuntimeTrafficFe
   if (isTrafficBinaryContentType(contentType)) {
     const payloadBuffer = await response.arrayBuffer();
     await ensureWasm();
-    const decoded = isWasmReady()
-      ? decodeTrafficViaWasm(payloadBuffer)
-      : decodeTrafficBinaryPayload(payloadBuffer);
+    const decoded = decodeTrafficViaWasm(payloadBuffer);
     return {
       aircraftList: decoded.aircraftList,
       historyByHex: decoded.historyByHex,
@@ -617,10 +614,9 @@ async function handleMessage(
       message.historyByHex
     );
   } else if (message.type === 'ingest-binary') {
-    const decodeBinary = isWasmReady() ? decodeTrafficViaWasm : decodeTrafficBinaryPayload;
-    const decoded = decodeBinary(message.payloadBuffer);
+    const decoded = decodeTrafficViaWasm(message.payloadBuffer);
     const supplementalHistory = message.historyPayloadBuffer
-      ? decodeBinary(message.historyPayloadBuffer).historyByHex
+      ? decodeTrafficViaWasm(message.historyPayloadBuffer).historyByHex
       : undefined;
     mergeTracks(
       decoded.aircraftList,
