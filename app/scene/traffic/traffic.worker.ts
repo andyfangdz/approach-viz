@@ -596,7 +596,6 @@ async function handleMessage(
     };
   }
 
-  await ensureWasm();
   const startedAt = performance.now();
   let trackedHexes: string[] = [];
   let returnedHistoryHexes: string[] = [];
@@ -614,6 +613,7 @@ async function handleMessage(
       message.historyByHex
     );
   } else if (message.type === 'ingest-binary') {
+    await ensureWasm();
     const decoded = decodeTrafficViaWasm(message.payloadBuffer);
     const supplementalHistory = message.historyPayloadBuffer
       ? decodeTrafficViaWasm(message.historyPayloadBuffer).historyByHex

@@ -10,13 +10,23 @@ import initWasm from '../../../packages/approach-viz-core-wasm/approach_viz_core
 
 let wasmReady: Promise<void> | undefined;
 
+/** Resolve a root-relative path to an absolute URL in worker scope. */
+function resolveWorkerUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  const loc = (globalThis as { location?: { origin?: string } }).location;
+  if (loc?.origin && loc.origin !== 'null') {
+    return new URL(path, loc.origin).toString();
+  }
+  return path;
+}
+
 /**
  * Ensure the WASM module is initialized.  Resolves immediately after the
  * first successful init; rejects with the init error if loading fails.
  */
 export function ensureWasm(): Promise<void> {
   if (!wasmReady) {
-    wasmReady = initWasm('/approach_viz_core_bg.wasm').then(() => {});
+    wasmReady = initWasm(resolveWorkerUrl('/approach_viz_core_bg.wasm')).then(() => {});
   }
   return wasmReady;
 }
