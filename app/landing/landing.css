@@ -189,24 +189,8 @@
 
 .landing-viz-stage {
   position: relative;
-  aspect-ratio: 1000 / 500;
+  aspect-ratio: 1000 / 560;
   transform-style: preserve-3d;
-  animation: landing-stage-tilt 2.2s cubic-bezier(0.4, 0, 0.2, 1) 3.8s forwards;
-}
-
-.landing-viz-profile,
-.landing-viz-plan {
-  position: absolute;
-  inset: 0;
-}
-
-.landing-viz-profile {
-  animation: landing-profile-exit 1s ease-in-out 3.8s forwards;
-}
-
-.landing-viz-plan {
-  opacity: 0;
-  animation: landing-plan-enter 1.4s ease-out 4.3s forwards;
 }
 
 .landing-hero-svg {
@@ -628,7 +612,7 @@
 }
 
 .landing-svg-waypoint:nth-child(1) {
-  animation: landing-waypoint-pop 0.5s ease-out 1.0s forwards;
+  animation: landing-waypoint-pop 0.5s ease-out 1s forwards;
 }
 .landing-svg-waypoint:nth-child(2) {
   animation: landing-waypoint-pop 0.5s ease-out 1.4s forwards;
@@ -655,7 +639,7 @@
   animation: landing-fade-in 0.5s ease-out 1.6s forwards;
 }
 .landing-svg-label:nth-of-type(3) {
-  animation: landing-fade-in 0.5s ease-out 2.0s forwards;
+  animation: landing-fade-in 0.5s ease-out 2s forwards;
 }
 .landing-svg-label:nth-of-type(4) {
   animation: landing-fade-in 0.5s ease-out 2.4s forwards;
@@ -750,78 +734,6 @@
   }
 }
 
-/* ── 3D stage transition ───────────────────────────── */
-@keyframes landing-stage-tilt {
-  0% {
-    transform: rotateX(0deg) scale(1);
-  }
-  100% {
-    transform: rotateX(50deg) scale(1.08);
-  }
-}
-
-@keyframes landing-profile-exit {
-  0% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes landing-plan-enter {
-  0% {
-    opacity: 0;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-
-/* ── Plan view element animations ──────────────────── */
-.landing-plan-terrain {
-  opacity: 0;
-  animation: landing-fade-in 1s ease-out 4.4s forwards;
-}
-
-.landing-plan-airspace {
-  opacity: 0;
-  animation: landing-fade-in 1s ease-out 4.6s forwards;
-}
-
-.landing-plan-runway {
-  opacity: 0;
-  animation: landing-fade-in 0.6s ease-out 4.3s forwards;
-}
-
-.landing-plan-path {
-  stroke-dasharray: 900;
-  stroke-dashoffset: 900;
-  animation: landing-draw-path 1.8s ease-out 4.5s forwards;
-}
-
-.landing-plan-missed {
-  opacity: 0;
-  animation: landing-fade-in 0.8s ease-out 6s forwards;
-}
-
-.landing-plan-waypoint {
-  opacity: 0;
-}
-
-.landing-plan-waypoint:nth-child(1) {
-  animation: landing-waypoint-pop 0.5s ease-out 5.0s forwards;
-}
-.landing-plan-waypoint:nth-child(2) {
-  animation: landing-waypoint-pop 0.5s ease-out 5.4s forwards;
-}
-.landing-plan-waypoint:nth-child(3) {
-  animation: landing-waypoint-pop 0.5s ease-out 5.8s forwards;
-}
-.landing-plan-waypoint:nth-child(4) {
-  animation: landing-waypoint-pop 0.5s ease-out 6.2s forwards;
-}
-
 /* ── Responsive ────────────────────────────────────── */
 @media (max-width: 900px) {
   .landing-features-grid {
@@ -874,4 +786,3 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
-
