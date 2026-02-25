@@ -49,7 +49,7 @@ pub const DECLUTTER_LOW_MAX_FEET: f64 = 10_000.0;
 pub const DECLUTTER_MID_MAX_FEET: f64 = 25_000.0;
 pub const CROSS_SECTION_BINS_X: usize = 120;
 pub const CROSS_SECTION_BINS_Y: usize = 56;
-pub const MIN_VOXEL_HEIGHT_NM: f64 = 0.015;
+pub const MIN_VOXEL_HEIGHT_NM: f64 = 0.04;
 
 // ---------------------------------------------------------------------------
 // Decoded types
