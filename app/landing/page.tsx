@@ -148,7 +148,7 @@ function ApproachProfileSvg() {
       </defs>
 
       {/* Grid lines */}
-      <g className="landing-svg-grid" opacity="0.3">
+      <g className="landing-svg-grid" opacity="0.5">
         {[80, 140, 200, 260, 320, 380].map((y) => (
           <line
             key={`h-${y}`}
@@ -182,14 +182,14 @@ function ApproachProfileSvg() {
           height="280"
           rx="4"
           fill="none"
-          stroke="rgba(111,123,255,0.15)"
+          stroke="rgba(111,123,255,0.25)"
           strokeWidth="1"
           strokeDasharray="8 6"
         />
         <text
           x="210"
           y="44"
-          fill="rgba(111,123,255,0.35)"
+          fill="rgba(111,123,255,0.5)"
           fontSize="10"
           fontFamily="JetBrains Mono, monospace"
         >
@@ -207,7 +207,7 @@ function ApproachProfileSvg() {
         className="landing-svg-terrain"
         d="M0,400 C60,395 120,405 200,385 S340,408 440,395 S560,415 650,405 S760,388 830,392 L920,397 Q960,399 1000,400"
         fill="none"
-        stroke="rgba(45,140,255,0.25)"
+        stroke="rgba(45,140,255,0.35)"
         strokeWidth="1"
       />
 
@@ -233,7 +233,7 @@ function ApproachProfileSvg() {
           y1="100"
           x2="140"
           y2="398"
-          stroke="rgba(136,136,170,0.2)"
+          stroke="rgba(136,136,170,0.3)"
           strokeWidth="0.5"
         />
         <line
@@ -242,7 +242,7 @@ function ApproachProfileSvg() {
           y1="100"
           x2="360"
           y2="395"
-          stroke="rgba(136,136,170,0.2)"
+          stroke="rgba(136,136,170,0.3)"
           strokeWidth="0.5"
         />
         <line
@@ -251,7 +251,7 @@ function ApproachProfileSvg() {
           y1="170"
           x2="500"
           y2="396"
-          stroke="rgba(136,136,170,0.2)"
+          stroke="rgba(136,136,170,0.3)"
           strokeWidth="0.5"
         />
         <line
@@ -260,7 +260,7 @@ function ApproachProfileSvg() {
           y1="330"
           x2="720"
           y2="402"
-          stroke="rgba(136,136,170,0.2)"
+          stroke="rgba(136,136,170,0.3)"
           strokeWidth="0.5"
         />
       </g>
@@ -519,9 +519,6 @@ export default function LandingPage() {
       {/* Hero */}
       <section className="landing-hero">
         <div className="landing-hero-glow" />
-        <div className="landing-hero-svg-wrap">
-          <ApproachProfileSvg />
-        </div>
         <div className="landing-hero-content">
           <div className="landing-hero-label">3D Instrument Approach Visualization</div>
           <h1>
@@ -548,6 +545,9 @@ export default function LandingPage() {
               See Features
             </a>
           </div>
+        </div>
+        <div className="landing-hero-viz">
+          <ApproachProfileSvg />
         </div>
         <div className="landing-hero-scroll">
           <span>scroll</span>
