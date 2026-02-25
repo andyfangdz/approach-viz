@@ -250,10 +250,7 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
   const layerCount = view.getUint16(16, true);
   const recordBytes = view.getUint16(18, true);
 
-  assert.ok(
-    wireVersion === WIRE_VERSION,
-    `Unexpected MRMS wire version: ${wireVersion}`
-  );
+  assert.ok(wireVersion === WIRE_VERSION, `Unexpected MRMS wire version: ${wireVersion}`);
   assert.equal(headerBytes, WIRE_HEADER_BYTES, 'Unexpected MRMS wire header length');
   assert.equal(recordBytes, WIRE_RECORD_BYTES, 'Unexpected MRMS wire record size');
   assert.ok(layerCount > 0, 'MRMS payload should include at least one layer');

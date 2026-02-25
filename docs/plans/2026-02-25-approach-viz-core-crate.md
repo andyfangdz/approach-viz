@@ -15,6 +15,7 @@
 ### Task 1: Cargo Workspace + Crate Skeleton
 
 **Files:**
+
 - Create: `Cargo.toml` (workspace root)
 - Create: `crates/approach-viz-core/Cargo.toml`
 - Create: `crates/approach-viz-core/src/lib.rs`
@@ -81,6 +82,7 @@ Create empty module files:
 **Step 4: Update runtime-rs Cargo.toml to join workspace**
 
 Add to `services/runtime-rs/Cargo.toml` under `[dependencies]`:
+
 ```toml
 approach-viz-core = { path = "../../crates/approach-viz-core" }
 ```
@@ -104,6 +106,7 @@ git commit -m "feat: scaffold approach-viz-core workspace and crate skeleton"
 Port the 6 pure math functions from `app/scene/approach-path/coordinates.ts` and align with `services/runtime-rs/src/utils.rs:196-208`.
 
 **Files:**
+
 - Modify: `crates/approach-viz-core/src/coords.rs`
 - Create: `crates/approach-viz-core/src/coords_tests.rs` (or inline `#[cfg(test)]`)
 
@@ -294,9 +297,10 @@ git commit -m "feat(core): implement WGS84 coordinate transforms with tests"
 
 ### Task 3: types Module — Wire Format Constants + Decoded Types
 
-Shared constants for the AVMR and AVTR binary wire formats, plus the decoded output types that workers consume. These are the *decoded* (client-side) types, not the server-side storage types.
+Shared constants for the AVMR and AVTR binary wire formats, plus the decoded output types that workers consume. These are the _decoded_ (client-side) types, not the server-side storage types.
 
 **Files:**
+
 - Modify: `crates/approach-viz-core/src/types.rs`
 
 **Step 1: Write decoded types and wire constants**
@@ -495,6 +499,7 @@ git commit -m "feat(core): add wire format constants and decoded types"
 Port `app/scene/nexrad/nexrad-decode.ts:32-146` (`decodeBinaryPayload`) to Rust.
 
 **Files:**
+
 - Create: `crates/approach-viz-core/src/mrms_wire_codec.rs`
 - Modify: `crates/approach-viz-core/src/lib.rs` (add module)
 
@@ -786,6 +791,7 @@ git commit -m "feat(core): AVMR binary wire format decoder with round-trip tests
 Port the client-side AVTR binary decode (currently in `app/scene/traffic/traffic-binary-protocol.ts`).
 
 **Files:**
+
 - Create: `crates/approach-viz-core/src/traffic_codec.rs`
 - Modify: `crates/approach-viz-core/src/lib.rs`
 
@@ -794,6 +800,7 @@ Port the client-side AVTR binary decode (currently in `app/scene/traffic/traffic
 Follow the same pattern as Task 4: construct a minimal AVTR payload (header + 1 aircraft + 1 history group + 1 history point + string table), decode, verify fields.
 
 Key assertions:
+
 - Bad magic → `TrafficDecodeError::BadMagic`
 - Truncated → `TrafficDecodeError::TooShort`
 - Single aircraft with known lat/lon/alt round-trips correctly
@@ -811,6 +818,7 @@ Run: `cargo test -p approach-viz-core`
 Same LE read helpers. Parse 64-byte header, then aircraft records (40B each), history groups (16B), history points (20B), and string table. Return `DecodedTrafficPayload`.
 
 Key details:
+
 - f32 fields: use `f32::from_le_bytes`. NaN check: `if v.is_nan() { None } else { Some(v) }`
 - String table: byte offsets + lengths into the trailing string pool, decoded as UTF-8
 - `is_on_ground`: `(flags & 1) != 0`
@@ -835,12 +843,14 @@ git commit -m "feat(core): AVTR traffic binary decoder with round-trip tests"
 Port `app/scene/nexrad/nexrad-preprocess.ts` functions: `prepareVolumeData`, `buildCrossSectionData`, `prepareEchoTopSurfaces`.
 
 **Files:**
+
 - Create: `crates/approach-viz-core/src/mrms_preprocess.rs`
 - Modify: `crates/approach-viz-core/src/lib.rs`
 
 **Step 1: Write failing tests**
 
 Test cases:
+
 - `prepare_volume_empty` → zero voxels in, zero out
 - `prepare_volume_filters_below_min_dbz` → voxel with 20 dBZ tenths filtered when min is 50
 - `prepare_volume_keeps_above_min_dbz` → voxel with 350 tenths kept
@@ -857,6 +867,7 @@ Test cases:
 **Step 3: Implement functions**
 
 Port the logic from `nexrad-preprocess.ts` line-for-line. Key differences from TS:
+
 - Use `DecodedMrmsVolume` (SoA arrays) instead of `NexradVolumePayload`
 - Return `PreparedVolume` and `CrossSectionData` from `types.rs`
 - Earth curvature via `coords::earth_curvature_drop_nm`
@@ -883,12 +894,14 @@ git commit -m "feat(core): MRMS volume preprocess, cross-section, echo-top prep"
 Port the stateful traffic merge logic from `app/scene/traffic/traffic.worker.ts`. This is the most complex module — it maintains a `HashMap<String, TrafficTrack>` state.
 
 **Files:**
+
 - Create: `crates/approach-viz-core/src/traffic_merge.rs`
 - Modify: `crates/approach-viz-core/src/lib.rs`
 
 **Step 1: Write failing tests**
 
 Test cases:
+
 - `merge_single_aircraft` → one aircraft, no history, creates track
 - `merge_updates_existing_track` → same hex, new position, track updated
 - `merge_prunes_stale_tracks` → track older than cutoff removed
@@ -946,12 +959,14 @@ pub struct ScenePoint {
 ```
 
 The `TrafficState` struct encapsulates the mutable track map. Methods:
+
 - `merge(&mut self, aircraft, now_ms, history_minutes, hide_ground, backfill_history)`
 - `prune_for_error(&mut self, now_ms, history_minutes)`
 - `recompute(&mut self, now_ms, history_minutes, hide_ground)`
 - `build_render_tracks(&self, ref_lat, ref_lon, airports, vertical_scale, earth_curvature) -> (Vec<RenderTrack>, u64)` (tracks + hash)
 
 FNV-1a hash (port from `traffic.worker.ts:22-63`):
+
 ```rust
 const FNV_OFFSET: u32 = 2166136261;
 
@@ -980,6 +995,7 @@ git commit -m "feat(core): traffic merge/prune/projection with FNV hashing"
 Expose core functions to JavaScript workers through `wasm-bindgen`.
 
 **Files:**
+
 - Create: `crates/approach-viz-core/src/wasm.rs`
 - Modify: `crates/approach-viz-core/src/lib.rs`
 - Modify: `crates/approach-viz-core/Cargo.toml`
@@ -987,6 +1003,7 @@ Expose core functions to JavaScript workers through `wasm-bindgen`.
 **Step 1: Add wasm-bindgen feature-gated module**
 
 In `lib.rs`:
+
 ```rust
 #[cfg(feature = "wasm")]
 pub mod wasm;
@@ -1044,6 +1061,7 @@ wasm-pack build crates/approach-viz-core --target web --out-dir ../../packages/a
 ```bash
 ls packages/approach-viz-core-wasm/
 ```
+
 Expected: `approach_viz_core.js`, `approach_viz_core_bg.wasm`, `package.json`, etc.
 
 **Step 4: Commit**
@@ -1060,6 +1078,7 @@ git commit -m "feat(core): wasm-bindgen bindings for workers"
 Wire existing workers to call WASM instead of TypeScript for decode and preprocess.
 
 **Files:**
+
 - Modify: `app/scene/nexrad/nexrad.worker.ts` (import + call WASM decode/preprocess)
 - Modify: `app/scene/traffic/traffic.worker.ts` (import + call WASM decode)
 - Modify: `next.config.ts` (WASM loading support if needed)
@@ -1068,6 +1087,7 @@ Wire existing workers to call WASM instead of TypeScript for decode and preproce
 **Step 1: Add npm build script**
 
 In `package.json`, add:
+
 ```json
 "build:wasm": "wasm-pack build crates/approach-viz-core --target web --out-dir ../../packages/approach-viz-core-wasm -- --features wasm"
 ```
@@ -1075,8 +1095,12 @@ In `package.json`, add:
 **Step 2: Initialize WASM in worker**
 
 In `nexrad.worker.ts`, add at top level:
+
 ```typescript
-import init, { decode_mrms_volume, prepare_mrms_volume } from '../../../packages/approach-viz-core-wasm';
+import init, {
+  decode_mrms_volume,
+  prepare_mrms_volume
+} from '../../../packages/approach-viz-core-wasm';
 
 let wasmReady: Promise<void> | null = null;
 function ensureWasm() {
@@ -1092,6 +1116,7 @@ Before processing messages, `await ensureWasm()`.
 **Step 3: Replace decodeBinaryPayload call with WASM**
 
 In the worker's poll handler, replace:
+
 ```typescript
 // Before:
 const decoded = decodeBinaryPayload(buffer);
@@ -1133,6 +1158,7 @@ git commit -m "feat: wire WASM core into nexrad + traffic workers"
 Replace duplicated math in `services/runtime-rs/src/utils.rs` with `approach-viz-core` imports.
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/utils.rs` (replace `projection_scales_nm_per_degree` + WGS84 math)
 - Modify: `services/runtime-rs/src/constants.rs` (remove duplicated WGS84 constants)
 - Modify: `services/runtime-rs/src/api/wire.rs` (use core wire constants)
@@ -1140,6 +1166,7 @@ Replace duplicated math in `services/runtime-rs/src/utils.rs` with `approach-viz
 **Step 1: Replace projection_scales_nm_per_degree**
 
 In `utils.rs`, replace the function body:
+
 ```rust
 pub fn projection_scales_nm_per_degree(lat_deg: f64) -> (f64, f64) {
     approach_viz_core::coords::projection_scales_nm_per_degree(lat_deg)
@@ -1168,13 +1195,13 @@ git commit -m "refactor(runtime): use approach-viz-core for shared math and cons
 
 ## Summary
 
-| Phase | Tasks | Estimated Modules | Key Risk |
-|-------|-------|-------------------|----------|
-| 1. Foundation | 1-3 | workspace, coords, types | Workspace setup cleanly with existing runtime-rs `.cargo/config.toml` |
-| 2. Wire Decoders | 4-5 | mrms_wire_codec, traffic_codec | Byte-level fidelity with existing TS decoders |
-| 3. Compute Kernels | 6-7 | mrms_preprocess, traffic_merge | Numerical parity with TS (f64 vs f32 edge cases) |
-| 4. WASM Bindings | 8-9 | wasm.rs, worker integration | WASM loading in Next.js module workers; typed array boundary crossing overhead |
-| 5. Runtime Dedup | 10 | runtime-rs refactor | Low risk, straightforward import replacement |
+| Phase              | Tasks | Estimated Modules              | Key Risk                                                                       |
+| ------------------ | ----- | ------------------------------ | ------------------------------------------------------------------------------ |
+| 1. Foundation      | 1-3   | workspace, coords, types       | Workspace setup cleanly with existing runtime-rs `.cargo/config.toml`          |
+| 2. Wire Decoders   | 4-5   | mrms_wire_codec, traffic_codec | Byte-level fidelity with existing TS decoders                                  |
+| 3. Compute Kernels | 6-7   | mrms_preprocess, traffic_merge | Numerical parity with TS (f64 vs f32 edge cases)                               |
+| 4. WASM Bindings   | 8-9   | wasm.rs, worker integration    | WASM loading in Next.js module workers; typed array boundary crossing overhead |
+| 5. Runtime Dedup   | 10    | runtime-rs refactor            | Low risk, straightforward import replacement                                   |
 
 **Validation approach:** For each module, construct test payloads in Rust that mirror known TS inputs, and assert identical outputs. When WASM is wired in (Phase 4), the existing `npm run test:mrms` suite validates end-to-end parity.
 

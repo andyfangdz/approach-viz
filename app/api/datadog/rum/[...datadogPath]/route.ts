@@ -72,10 +72,7 @@ function corsHeaders(request: NextRequest): Headers {
 
   headers.set('access-control-allow-origin', origin);
   headers.set('access-control-allow-methods', 'POST, OPTIONS');
-  headers.set(
-    'access-control-allow-headers',
-    'content-type, content-encoding, accept, user-agent'
-  );
+  headers.set('access-control-allow-headers', 'content-type, content-encoding, accept, user-agent');
   headers.set('access-control-max-age', '600');
   headers.set('vary', 'origin');
   return headers;
