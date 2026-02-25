@@ -202,6 +202,11 @@ function HeroApproachViz() {
     const profMissed = svg.querySelector('[data-m="prof-missed"]') as SVGGElement;
     const planMissed = svg.querySelector('[data-m="plan-missed"]') as SVGGElement;
 
+    // Reduce tilt on mobile so the plan view remains readable
+    const isMobile = window.innerWidth <= 900;
+    const maxTilt = isMobile ? 30 : 50;
+    const maxScale = isMobile ? 0.04 : 0.08;
+
     let raf: number;
     const timer = setTimeout(() => {
       // Disable all CSS animations before morphing so inline styles take precedence
@@ -275,7 +280,7 @@ function HeroApproachViz() {
         planMissed.style.opacity = String(Math.max(0, t * 2 - 1));
 
         // Rotate stage into 3D perspective
-        stage.style.transform = `rotateX(${t * 50}deg) scale(${1 + t * 0.08})`;
+        stage.style.transform = `rotateX(${t * maxTilt}deg) scale(${1 + t * maxScale})`;
 
         if (rawT < 1) raf = requestAnimationFrame(tick);
       }
@@ -629,7 +634,7 @@ function HeroApproachViz() {
           <g data-m="prof-missed">
             <path
               className="landing-svg-path-missed"
-              d="M820,398 C835,390 855,340 920,220"
+              d="M820,398 C832,388 845,348 880,260"
               fill="none"
               stroke="rgba(255,68,68,0.12)"
               strokeWidth="6"
@@ -638,7 +643,7 @@ function HeroApproachViz() {
             />
             <path
               className="landing-svg-path-missed"
-              d="M820,398 C835,390 855,340 920,220"
+              d="M820,398 C832,388 845,348 880,260"
               fill="none"
               stroke="#ff4444"
               strokeWidth="2"
@@ -648,8 +653,8 @@ function HeroApproachViz() {
             />
             <text
               className="landing-svg-path-missed"
-              x="928"
-              y="215"
+              x="875"
+              y="252"
               fill="rgba(255,68,68,0.6)"
               fontSize="9"
               fontFamily="JetBrains Mono, monospace"
@@ -661,7 +666,7 @@ function HeroApproachViz() {
           {/* ── Plan missed approach (fade in) ────── */}
           <g data-m="plan-missed" opacity="0">
             <path
-              d="M500,530 L500,550 Q500,570 480,570 L400,570 Q375,570 375,548 L375,440"
+              d="M500,510 L500,525 Q500,540 484,540 L410,540 Q392,540 392,522 L392,440"
               fill="none"
               stroke="#ff4444"
               strokeWidth="2"
@@ -671,7 +676,7 @@ function HeroApproachViz() {
               opacity="0.7"
             />
             <text
-              x="358"
+              x="378"
               y="435"
               fill="rgba(255,68,68,0.6)"
               fontSize="9"
