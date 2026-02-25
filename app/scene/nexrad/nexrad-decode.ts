@@ -1,9 +1,8 @@
 import type { NexradVolumePayload, NexradLayerSummary, EchoTopPayload } from './nexrad-types';
 import {
   MRMS_BINARY_MAGIC,
-  MRMS_BINARY_V2_VERSION,
-  MRMS_BINARY_V3_VERSION,
-  MRMS_BINARY_V2_RECORD_BYTES,
+  MRMS_BINARY_VERSION,
+  MRMS_BINARY_RECORD_BYTES,
   MRMS_BINARY_BASE_URL,
   MRMS_LEVEL_TAGS
 } from './nexrad-types';
@@ -46,7 +45,7 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
   }
 
   const version = view.getUint16(4, true);
-  if (version !== MRMS_BINARY_V2_VERSION && version !== MRMS_BINARY_V3_VERSION) {
+  if (version !== MRMS_BINARY_VERSION) {
     throw new Error(`Unsupported MRMS payload version (${version}).`);
   }
 
@@ -58,9 +57,9 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
   const scanTimeMs = readInt64LittleEndian(view, 28);
   const footprintXNm = view.getUint16(36, true) / 1000;
   const footprintYNm = view.getUint16(38, true) / 1000;
-  const defaultRecordBytes = MRMS_BINARY_V2_RECORD_BYTES;
+  const defaultRecordBytes = MRMS_BINARY_RECORD_BYTES;
   const recordBytes = recordBytesFromHeader > 0 ? recordBytesFromHeader : defaultRecordBytes;
-  if (recordBytes < MRMS_BINARY_V2_RECORD_BYTES) {
+  if (recordBytes < MRMS_BINARY_RECORD_BYTES) {
     throw new Error(
       `MRMS payload record size (${recordBytes}) is incompatible with version ${version}.`
     );
@@ -98,8 +97,7 @@ function decodeBinaryPayload(bytes: ArrayBuffer): NexradVolumePayload {
 
     const pCode = view.getUint8(offset + 10);
     phaseCode[index] = pCode;
-    surfacePhaseCode[index] =
-      version >= MRMS_BINARY_V3_VERSION ? view.getUint8(offset + 18) : pCode;
+    surfacePhaseCode[index] = view.getUint8(offset + 18);
 
     const spanX = Math.max(1, view.getUint16(offset + 12, true));
     const spanY = Math.max(1, view.getUint16(offset + 14, true));

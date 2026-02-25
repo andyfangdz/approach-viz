@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { decodePayload, decodeEchoTopPayload } from './nexrad-decode';
-import { MRMS_BINARY_MAGIC, MRMS_BINARY_V3_VERSION } from './nexrad-types';
+import { MRMS_BINARY_MAGIC, MRMS_BINARY_VERSION } from './nexrad-types';
 
 test('MRMS Decoder - JSON fallback with new TypedArray structural format', () => {
   const mockOldVoxel = [
@@ -69,7 +69,7 @@ test('MRMS Decoder - Binary flat array allocation logic (v3 format)', () => {
   view.setUint8(3, MRMS_BINARY_MAGIC.charCodeAt(3));
 
   // Version
-  view.setUint16(4, MRMS_BINARY_V3_VERSION, true);
+  view.setUint16(4, MRMS_BINARY_VERSION, true);
 
   // Header bytes
   view.setUint16(6, headerBytes, true);

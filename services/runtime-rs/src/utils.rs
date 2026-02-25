@@ -1,5 +1,4 @@
 use std::cmp::{max, min};
-use std::f64::consts::PI;
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
@@ -12,8 +11,6 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-
-use crate::constants::{DEG_TO_RAD, METERS_TO_NM, WGS84_E2, WGS84_SEMI_MAJOR_METERS};
 
 static DATADOG_TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
 
@@ -194,17 +191,7 @@ pub fn shortest_lon_delta_degrees(lon_deg360: f64, origin_lon_deg360: f64) -> f6
 }
 
 pub fn projection_scales_nm_per_degree(lat_deg: f64) -> (f64, f64) {
-    let phi = lat_deg * DEG_TO_RAD;
-    let sin_phi = phi.sin();
-    let cos_phi = phi.cos();
-    let denom = (1.0 - WGS84_E2 * sin_phi * sin_phi).sqrt();
-    let prime_vertical_meters = WGS84_SEMI_MAJOR_METERS / denom;
-    let meridional_meters = (WGS84_SEMI_MAJOR_METERS * (1.0 - WGS84_E2)) / (denom * denom * denom);
-
-    (
-        (PI / 180.0) * prime_vertical_meters * cos_phi * METERS_TO_NM,
-        (PI / 180.0) * meridional_meters * METERS_TO_NM,
-    )
+    approach_viz_core::coords::projection_scales_nm_per_degree(lat_deg)
 }
 
 pub fn clamp_i64(value: i64, min_value: i64, max_value: i64) -> i64 {

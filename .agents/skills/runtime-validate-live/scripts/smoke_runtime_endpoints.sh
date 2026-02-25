@@ -61,7 +61,7 @@ volume_body="${tmp_dir}/volume.bin"
 curl -fsS -D "${volume_headers}" -o "${volume_body}" "${volume_url}"
 
 content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/ {print $2}' "${volume_headers}" | tr -d '\r' | tail -n 1)"
-if [[ "${content_type}" != application/vnd.approach-viz.mrms.v2* ]] && [[ "${content_type}" != application/vnd.approach-viz.mrms.v3* ]]; then
+if [[ "${content_type}" != application/vnd.approach-viz.mrms.v3* ]]; then
   echo "unexpected MRMS content-type: ${content_type:-none}" >&2
   exit 1
 fi
@@ -78,7 +78,7 @@ if (magic !== 'AVMR') {
   throw new Error(`unexpected wire magic: ${magic}`);
 }
 const version = body.readUInt16LE(4);
-if (version !== 2 && version !== 3) {
+if (version !== 3) {
   throw new Error(`unexpected wire version: ${version}`);
 }
 console.log(`mrms: bytes=${body.length} magic=${magic} version=${version}`);

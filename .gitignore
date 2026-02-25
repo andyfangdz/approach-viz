@@ -5,6 +5,7 @@ node_modules/
 dist/
 .next/
 *.tsbuildinfo
+target/
 services/*/target/
 
 # Vite cache
@@ -31,3 +32,7 @@ npm-debug.log*
 .env.local
 .tmp*
 output/playwright
+
+# WASM build output — all wasm-pack artifacts are checked in (102KB binary + JS glue +
+# type declarations) for CI typecheck/build and Vercel deployment without requiring
+# wasm-pack/Rust toolchain.

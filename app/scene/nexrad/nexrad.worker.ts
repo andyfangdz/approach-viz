@@ -1,7 +1,6 @@
 import {
   applyPhaseDebugValues,
   decodeEchoTopPayload,
-  decodePayload,
   extractPhaseDebugHeaderValues
 } from './nexrad-decode';
 import {
@@ -9,7 +8,8 @@ import {
   prepareEchoTopSurfaces,
   prepareVolumeData
 } from './nexrad-preprocess';
-import type { EchoTopPayload, NexradVolumePayload } from './nexrad-types';
+import type { EchoTopPayload, NexradVolumePayload, NexradLayerSummary } from './nexrad-types';
+import { MRMS_LEVEL_TAGS } from './nexrad-types';
 import type {
   DecodeEchoTopRequestMessage,
   DecodeVolumeRequestMessage,
@@ -27,6 +27,97 @@ import {
   type NexradPrepareSabViews,
   writeNexradPrepareSabResult
 } from './nexrad-sab';
+import { ensureWasm } from '../shared/wasm-loader';
+import { decode_mrms_volume } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+
+/**
+ * Adapt the raw WASM `decode_mrms_volume` output to the `NexradVolumePayload`
+ * shape that the rest of the TS pipeline expects.
+ *
+ * Key conversions:
+ *  - dbzTenths (Int16Array) -> dbz (Float32Array, divide by 10)
+ *  - bottomFeet / topFeet (Uint16Array) -> Float32Array
+ *  - footprintXSpan / footprintYSpan + scalar footprintXNm/YNm -> per-voxel Float32Arrays
+ *  - Reconstruct generatedAt, scanTime, layerSummaries from header fields
+ */
+function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
+  const raw = decode_mrms_volume(new Uint8Array(buffer)) as any; // WASM returns untyped JS object
+
+  const voxelCount: number = raw.voxelCount;
+  const dbzTenths: Int16Array = raw.dbzTenths;
+  const rawBottomFeet: Uint16Array = raw.bottomFeet;
+  const rawTopFeet: Uint16Array = raw.topFeet;
+  const footprintXSpan: Uint16Array = raw.footprintXSpan;
+  const footprintYSpan: Uint16Array = raw.footprintYSpan;
+  const scalarFootprintXNm: number = raw.footprintXNm;
+  const scalarFootprintYNm: number = raw.footprintYNm;
+  const generatedAtMs: number = raw.generatedAtMs;
+  const scanTimeMs: number = raw.scanTimeMs;
+  const layerCount: number = raw.layerCount;
+  const layerVoxelCounts: Uint32Array = raw.layerVoxelCounts;
+
+  // Convert dBZ tenths -> whole dBZ as Float32Array
+  const dbz = new Float32Array(voxelCount);
+  for (let i = 0; i < voxelCount; i++) {
+    dbz[i] = dbzTenths[i] / 10;
+  }
+
+  // Convert u16 feet -> Float32Array
+  const bottomFeet = new Float32Array(voxelCount);
+  const topFeet = new Float32Array(voxelCount);
+  for (let i = 0; i < voxelCount; i++) {
+    bottomFeet[i] = rawBottomFeet[i];
+    topFeet[i] = rawTopFeet[i];
+  }
+
+  // Per-voxel footprint NM = scalar * span (min 1)
+  const footprintXNm = new Float32Array(voxelCount);
+  const footprintYNm = new Float32Array(voxelCount);
+  for (let i = 0; i < voxelCount; i++) {
+    footprintXNm[i] = scalarFootprintXNm * Math.max(1, footprintXSpan[i]);
+    footprintYNm[i] = scalarFootprintYNm * Math.max(1, footprintYSpan[i]);
+  }
+
+  // Reconstruct ISO timestamps
+  const generatedAt =
+    Number.isFinite(generatedAtMs) && generatedAtMs > 0
+      ? new Date(generatedAtMs).toISOString()
+      : new Date().toISOString();
+  const scanTime =
+    Number.isFinite(scanTimeMs) && scanTimeMs > 0
+      ? new Date(scanTimeMs).toISOString()
+      : generatedAt;
+
+  // Build layer summaries
+  const layerSummaries: NexradLayerSummary[] = [];
+  for (let i = 0; i < layerCount; i++) {
+    const levelTag = MRMS_LEVEL_TAGS[i] ?? `${i}`;
+    const elevation = Number(levelTag);
+    layerSummaries.push({
+      product: `MergedReflectivityQC_${levelTag}`,
+      elevationAngleDeg: Number.isFinite(elevation) ? elevation : i,
+      sourceKey: `mrms-binary://${scanTime}/${levelTag}`,
+      scanTime,
+      voxelCount: layerVoxelCounts[i] ?? 0
+    });
+  }
+
+  return {
+    generatedAt,
+    radar: null,
+    layerSummaries,
+    voxelCount,
+    xNm: raw.xNm as Float32Array,
+    zNm: raw.zNm as Float32Array,
+    bottomFeet,
+    topFeet,
+    dbz,
+    footprintXNm,
+    footprintYNm,
+    phaseCode: raw.phase as Uint8Array,
+    surfacePhaseCode: raw.surfacePhase as Uint8Array
+  };
+}
 
 type WorkerEndpoint = {
   postMessage: (message: NexradWorkerResponseMessage, transfer?: Transferable[]) => void;
@@ -140,9 +231,13 @@ async function fetchArrayBuffer(
   };
 }
 
-function handleDecodeVolume(endpoint: WorkerEndpoint, message: DecodeVolumeRequestMessage): void {
+async function handleDecodeVolume(
+  endpoint: WorkerEndpoint,
+  message: DecodeVolumeRequestMessage
+): Promise<void> {
   try {
-    const decoded = decodePayload(message.buffer);
+    await ensureWasm();
+    const decoded = decodeVolumeViaWasm(message.buffer);
     const payload = applyPhaseDebugValues(decoded, message.phaseDebug);
     endpoint.postMessage(
       {
@@ -301,8 +396,10 @@ async function handlePollAndPrepare(
     const volumeFetch = await fetchArrayBuffer(message.volumeUrl);
     timings.volumeFetchMs = volumeFetch.fetchMs;
     const decodeStartedAt = performance.now();
+    await ensureWasm();
+    const rawDecoded = decodeVolumeViaWasm(volumeFetch.buffer);
     volumePayload = applyPhaseDebugValues(
-      decodePayload(volumeFetch.buffer),
+      rawDecoded,
       extractPhaseDebugHeaderValues(volumeFetch.headers)
     );
     timings.volumeDecodeMs = roundMs(performance.now() - decodeStartedAt);
@@ -436,7 +533,7 @@ async function handleMessage(
     return;
   }
   if (message.type === 'decode-volume') {
-    handleDecodeVolume(endpoint, message);
+    await handleDecodeVolume(endpoint, message);
     return;
   }
   if (message.type === 'decode-echo-top') {

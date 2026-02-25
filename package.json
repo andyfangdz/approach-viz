@@ -19,7 +19,9 @@
     "format:check": "prettier --check .",
     "dev": "[ -f data/approach-viz.sqlite ] || npm run prepare-data; node scripts/dev-with-ddtrace.mjs",
     "build": "npm run prepare-data && next build",
-    "start": "next start"
+    "start": "next start",
+    "build:wasm": "PATH=$HOME/.cargo/bin:$PATH wasm-pack build crates/approach-viz-core --target web --out-dir ../../packages/approach-viz-core-wasm -- --features wasm && cp packages/approach-viz-core-wasm/approach_viz_core_bg.wasm public/approach_viz_core_bg.wasm && cp packages/approach-viz-core-wasm/approach_viz_core.js public/approach_viz_core.js",
+    "test:smoke": "npx playwright test pw-wasm-smoke --config .tmp/playwright.config.ts"
   },
   "keywords": [
     "aviation",
@@ -47,6 +49,7 @@
     "three": "^0.182.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "25.2.1",
     "@types/react": "^19.2.13",
