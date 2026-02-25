@@ -435,6 +435,190 @@ function ApproachProfileSvg() {
   );
 }
 
+/* ── Plan View SVG (top-down 3D) ───────────────────── */
+function ApproachPlanViewSvg() {
+  return (
+    <svg className="landing-hero-svg" viewBox="0 0 1000 600" aria-hidden="true">
+      <defs>
+        <linearGradient id="l-plan-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#00ffcc" />
+          <stop offset="100%" stopColor="#00ff88" />
+        </linearGradient>
+        <filter id="l-plan-glow">
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <filter id="l-plan-glow-lg">
+          <feGaussianBlur stdDeviation="8" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
+      {/* Terrain contour lines */}
+      <g className="landing-plan-terrain" opacity="0.18">
+        <ellipse cx="500" cy="360" rx="380" ry="200" fill="none" stroke="#2d8cff" strokeWidth="0.5" />
+        <ellipse cx="480" cy="380" rx="280" ry="150" fill="none" stroke="#2d8cff" strokeWidth="0.5" />
+        <ellipse cx="470" cy="400" rx="170" ry="90" fill="none" stroke="#2d8cff" strokeWidth="0.5" />
+      </g>
+
+      {/* Airspace circle */}
+      <circle
+        className="landing-plan-airspace"
+        cx="500"
+        cy="380"
+        r="230"
+        fill="none"
+        stroke="rgba(111,123,255,0.22)"
+        strokeWidth="1"
+        strokeDasharray="8 6"
+      />
+      <text
+        className="landing-plan-airspace"
+        x="500"
+        y="140"
+        fill="rgba(111,123,255,0.45)"
+        fontSize="10"
+        fontFamily="JetBrains Mono, monospace"
+        textAnchor="middle"
+      >
+        CLASS D
+      </text>
+
+      {/* Extended localizer centerline */}
+      <line
+        x1="500"
+        y1="120"
+        x2="500"
+        y2="470"
+        stroke="rgba(136,136,170,0.15)"
+        strokeWidth="0.5"
+        strokeDasharray="6 4"
+      />
+
+      {/* Compass north indicator */}
+      <g opacity="0.45">
+        <text
+          x="930"
+          y="52"
+          fill="#8888aa"
+          fontSize="12"
+          fontFamily="JetBrains Mono, monospace"
+          textAnchor="middle"
+          fontWeight="600"
+        >
+          N
+        </text>
+        <line x1="930" y1="58" x2="930" y2="76" stroke="#8888aa" strokeWidth="1" />
+        <path d="M926,61 L930,54 L934,61" fill="none" stroke="#8888aa" strokeWidth="1" />
+      </g>
+
+      {/* Runway */}
+      <g className="landing-plan-runway">
+        <rect x="494" y="470" width="12" height="58" rx="1" fill="#e4e4f0" opacity="0.8" />
+        <line
+          x1="500"
+          y1="475"
+          x2="500"
+          y2="523"
+          stroke="var(--l-bg)"
+          strokeWidth="1"
+          strokeDasharray="4 3"
+        />
+        <text
+          x="500"
+          y="544"
+          fill="#8888aa"
+          fontSize="9"
+          fontFamily="JetBrains Mono, monospace"
+          textAnchor="middle"
+        >
+          RWY 36
+        </text>
+      </g>
+
+      {/* Main approach path — glow */}
+      <path
+        className="landing-plan-path"
+        d="M180,80 C260,80 340,120 400,190 Q450,250 500,310 L500,470"
+        fill="none"
+        stroke="rgba(0,255,204,0.12)"
+        strokeWidth="8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        filter="url(#l-plan-glow-lg)"
+      />
+
+      {/* Main approach path */}
+      <path
+        className="landing-plan-path"
+        d="M180,80 C260,80 340,120 400,190 Q450,250 500,310 L500,470"
+        fill="none"
+        stroke="url(#l-plan-grad)"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        filter="url(#l-plan-glow)"
+      />
+
+      {/* Missed approach path */}
+      <path
+        className="landing-plan-missed"
+        d="M500,528 L500,558 Q500,578 520,578 L610,578 Q650,578 650,538 L650,440"
+        fill="none"
+        stroke="#ff4444"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        filter="url(#l-plan-glow)"
+        opacity="0.7"
+      />
+
+      {/* Waypoints */}
+      <g>
+        {[
+          { cx: 180, cy: 80, label: 'IAF', ly: -16 },
+          { cx: 400, cy: 190, label: 'IF', ly: -16 },
+          { cx: 500, cy: 310, label: 'FAF', ly: -16 },
+          { cx: 500, cy: 470, label: 'MAP', ly: 26 }
+        ].map((pt, i) => (
+          <g key={i} className="landing-plan-waypoint">
+            <circle cx={pt.cx} cy={pt.cy} r="12" fill="rgba(0,255,204,0.08)" />
+            <circle cx={pt.cx} cy={pt.cy} r="4" fill="#040410" stroke="#00ffcc" strokeWidth="2" />
+            <text
+              x={pt.cx}
+              y={pt.cy + pt.ly}
+              fill="#8888aa"
+              fontSize="10"
+              fontFamily="JetBrains Mono, monospace"
+              textAnchor="middle"
+            >
+              {pt.label}
+            </text>
+          </g>
+        ))}
+      </g>
+
+      {/* Missed label */}
+      <text
+        className="landing-plan-missed"
+        x="668"
+        y="486"
+        fill="rgba(255,68,68,0.6)"
+        fontSize="9"
+        fontFamily="JetBrains Mono, monospace"
+      >
+        MISSED
+      </text>
+    </svg>
+  );
+}
+
 /* ── Main Landing Page ─────────────────────────────── */
 export default function LandingPage() {
   const navRef = useRef<HTMLElement>(null);
@@ -547,7 +731,14 @@ export default function LandingPage() {
           </div>
         </div>
         <div className="landing-hero-viz">
-          <ApproachProfileSvg />
+          <div className="landing-viz-stage">
+            <div className="landing-viz-profile">
+              <ApproachProfileSvg />
+            </div>
+            <div className="landing-viz-plan">
+              <ApproachPlanViewSvg />
+            </div>
+          </div>
         </div>
         <div className="landing-hero-scroll">
           <span>scroll</span>
