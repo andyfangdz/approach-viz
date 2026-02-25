@@ -1,2 +1,3 @@
 pub mod coords;
+pub mod mrms_wire_codec;
 pub mod types;
