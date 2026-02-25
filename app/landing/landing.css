@@ -133,10 +133,16 @@
 }
 
 /* ── Hero ──────────────────────────────────────────── */
-.landing-hero {
+.landing-hero-wrap {
   position: relative;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 250vh;
+}
+
+.landing-hero {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -339,6 +345,8 @@
   text-transform: uppercase;
   opacity: 0;
   animation: landing-fade-up 0.8s ease-out 1.1s forwards;
+  /* Allow JS scroll handler to override opacity via inline style */
+  transition: opacity 0.15s ease-out;
 }
 
 .landing-hero-scroll-line {
@@ -746,10 +754,15 @@
     padding: 80px 20px;
   }
 
+  .landing-hero-wrap {
+    height: 200vh;
+  }
+
   .landing-hero {
     padding: 80px 16px 40px;
     gap: 24px;
-    min-height: auto;
+    height: 100vh;
+    height: 100dvh;
   }
 
   .landing-hero h1 {

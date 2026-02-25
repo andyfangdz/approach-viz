@@ -184,6 +184,10 @@ function HeroApproachViz() {
     const root = vizRef.current;
     if (!root) return;
 
+    const wrap = root.closest('.landing-hero-wrap') as HTMLElement | null;
+    const page = document.querySelector('.landing-page') as HTMLElement | null;
+    if (!wrap || !page) return;
+
     const stage = root.querySelector('.landing-viz-stage') as HTMLElement;
     const svg = root.querySelector('svg')!;
 
@@ -202,14 +206,27 @@ function HeroApproachViz() {
     const profMissed = svg.querySelector('[data-m="prof-missed"]') as SVGGElement;
     const planMissed = svg.querySelector('[data-m="plan-missed"]') as SVGGElement;
 
+    // Hero text for fade-out
+    const heroContent = root
+      .closest('.landing-hero')
+      ?.querySelector('.landing-hero-content') as HTMLElement | null;
+    const scrollHint = root
+      .closest('.landing-hero')
+      ?.querySelector('.landing-hero-scroll') as HTMLElement | null;
+
     // Reduce tilt on mobile so the plan view remains readable
     const isMobile = window.innerWidth <= 900;
     const maxTilt = isMobile ? 30 : 50;
     const maxScale = isMobile ? 0.04 : 0.08;
 
-    let raf: number;
-    const timer = setTimeout(() => {
-      // Disable all CSS animations before morphing so inline styles take precedence
+    let animationsDisabled = false;
+    let scrollHintAnimDisabled = false;
+    let heroContentAnimDisabled = false;
+    let raf = 0;
+
+    function disableAnimations() {
+      if (animationsDisabled) return;
+      animationsDisabled = true;
       paths.forEach((p) => {
         p.style.strokeDasharray = 'none';
         p.style.strokeDashoffset = '0';
@@ -221,76 +238,123 @@ function HeroApproachViz() {
       planLabels.forEach((el) => {
         el.style.animation = 'none';
       });
+    }
 
-      const start = performance.now();
-      const dur = 2400;
+    function applyMorph(t: number) {
+      // Interpolate waypoints
+      const wp = PROF_WP.map((pw, i) => [
+        lerp(pw[0], PLAN_WP[i][0], t),
+        lerp(pw[1], PLAN_WP[i][1], t)
+      ]);
+      const rwy = [lerp(PROF_RWY[0], PLAN_RWY[0], t), lerp(PROF_RWY[1], PLAN_RWY[1], t)];
+      const cp = PROF_CP.map((pc, i) => pc.map((v, j) => lerp(v, PLAN_CP[i][j], t)));
 
-      function tick(now: number) {
-        const rawT = Math.min((now - start) / dur, 1);
-        const t = easeInOutCubic(rawT);
+      // Update path
+      const d = buildPath(wp, rwy, cp);
+      paths.forEach((p) => p.setAttribute('d', d));
 
-        // Interpolate waypoints
-        const wp = PROF_WP.map((pw, i) => [
-          lerp(pw[0], PLAN_WP[i][0], t),
-          lerp(pw[1], PLAN_WP[i][1], t)
-        ]);
-        const rwy = [lerp(PROF_RWY[0], PLAN_RWY[0], t), lerp(PROF_RWY[1], PLAN_RWY[1], t)];
-        const cp = PROF_CP.map((pc, i) => pc.map((v, j) => lerp(v, PLAN_CP[i][j], t)));
+      // Update waypoint positions
+      wpDots.forEach((el, i) => {
+        if (i >= wp.length) return;
+        el.setAttribute('cx', String(wp[i][0]));
+        el.setAttribute('cy', String(wp[i][1]));
+      });
+      wpGlows.forEach((el, i) => {
+        if (i >= wp.length) return;
+        el.setAttribute('cx', String(wp[i][0]));
+        el.setAttribute('cy', String(wp[i][1]));
+      });
 
-        // Update path
-        const d = buildPath(wp, rwy, cp);
-        paths.forEach((p) => p.setAttribute('d', d));
+      // Update label positions with interpolated offsets and fade
+      profLabels.forEach((el, i) => {
+        if (i >= wp.length) return;
+        const dx = lerp(PROF_LABEL_DX[i], PLAN_LABEL_DX[i], t);
+        const dy = lerp(PROF_LABEL_DY[i], PLAN_LABEL_DY[i], t);
+        el.setAttribute('x', String(wp[i][0] + dx));
+        el.setAttribute('y', String(wp[i][1] + dy));
+        el.style.opacity = String(1 - t);
+      });
+      planLabels.forEach((el, i) => {
+        if (i >= wp.length) return;
+        const dx = lerp(PROF_LABEL_DX[i], PLAN_LABEL_DX[i], t);
+        const dy = lerp(PROF_LABEL_DY[i], PLAN_LABEL_DY[i], t);
+        el.setAttribute('x', String(wp[i][0] + dx));
+        el.setAttribute('y', String(wp[i][1] + dy));
+        el.style.opacity = String(t);
+      });
 
-        // Update waypoint positions
-        wpDots.forEach((el, i) => {
-          if (i >= wp.length) return;
-          el.setAttribute('cx', String(wp[i][0]));
-          el.setAttribute('cy', String(wp[i][1]));
-        });
-        wpGlows.forEach((el, i) => {
-          if (i >= wp.length) return;
-          el.setAttribute('cx', String(wp[i][0]));
-          el.setAttribute('cy', String(wp[i][1]));
-        });
+      // Cross-fade groups
+      profGroup.style.opacity = String(1 - t);
+      planGroup.style.opacity = String(t);
+      profRwy.style.opacity = String(1 - t);
+      planRwy.style.opacity = String(t);
+      profMissed.style.opacity = String(Math.max(0, 1 - t * 2));
+      planMissed.style.opacity = String(Math.max(0, t * 2 - 1));
 
-        // Update label positions with interpolated offsets and fade
-        profLabels.forEach((el, i) => {
-          if (i >= wp.length) return;
-          const dx = lerp(PROF_LABEL_DX[i], PLAN_LABEL_DX[i], t);
-          const dy = lerp(PROF_LABEL_DY[i], PLAN_LABEL_DY[i], t);
-          el.setAttribute('x', String(wp[i][0] + dx));
-          el.setAttribute('y', String(wp[i][1] + dy));
-          el.style.opacity = String(1 - t);
-        });
-        planLabels.forEach((el, i) => {
-          if (i >= wp.length) return;
-          const dx = lerp(PROF_LABEL_DX[i], PLAN_LABEL_DX[i], t);
-          const dy = lerp(PROF_LABEL_DY[i], PLAN_LABEL_DY[i], t);
-          el.setAttribute('x', String(wp[i][0] + dx));
-          el.setAttribute('y', String(wp[i][1] + dy));
-          el.style.opacity = String(t);
-        });
+      // Rotate stage into 3D perspective
+      stage.style.transform = `rotateX(${t * maxTilt}deg) scale(${1 + t * maxScale})`;
+    }
 
-        // Cross-fade groups
-        profGroup.style.opacity = String(1 - t);
-        planGroup.style.opacity = String(t);
-        profRwy.style.opacity = String(1 - t);
-        planRwy.style.opacity = String(t);
-        profMissed.style.opacity = String(Math.max(0, 1 - t * 2));
-        planMissed.style.opacity = String(Math.max(0, t * 2 - 1));
+    function onScroll() {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const rect = wrap!.getBoundingClientRect();
+        // rect.top starts at 0, goes to -(wrap.height - viewportHeight)
+        // progress: 0 when wrap top is at viewport top, 1 when wrap bottom is at viewport bottom
+        const scrollable = wrap!.offsetHeight - window.innerHeight;
+        const progress = scrollable > 0 ? Math.min(1, Math.max(0, -rect.top / scrollable)) : 0;
 
-        // Rotate stage into 3D perspective
-        stage.style.transform = `rotateX(${t * maxTilt}deg) scale(${1 + t * maxScale})`;
+        // Morph starts at 30% scroll progress, completes at 100%
+        const morphProgress = Math.min(1, Math.max(0, (progress - 0.3) / 0.7));
+        const morphT = easeInOutCubic(morphProgress);
 
-        if (rawT < 1) raf = requestAnimationFrame(tick);
-      }
+        // Once scroll is past 25%, disable CSS animations and take over
+        if (progress > 0.25) {
+          disableAnimations();
+        }
+        // Always apply morph when animations are disabled (even at t=0 on scroll-back)
+        if (animationsDisabled) {
+          applyMorph(morphT);
+        }
 
-      raf = requestAnimationFrame(tick);
-    }, 3800);
+        // Fade hero text: 100% at progress≈0, 0% at progress=0.35
+        if (heroContent) {
+          if (!heroContentAnimDisabled && progress > 0.01) {
+            heroContentAnimDisabled = true;
+            // Disable forwards-fill CSS animations on hero children so inline opacity works
+            heroContent.querySelectorAll<HTMLElement>('*').forEach((el) => {
+              if (getComputedStyle(el).animationFillMode === 'forwards') {
+                el.style.animation = 'none';
+                el.style.opacity = '1';
+              }
+            });
+          }
+          if (heroContentAnimDisabled) {
+            heroContent.style.opacity = String(Math.max(0, 1 - progress / 0.35));
+          }
+        }
+
+        // Fade scroll hint early
+        if (scrollHint) {
+          if (!scrollHintAnimDisabled && progress > 0.01) {
+            scrollHintAnimDisabled = true;
+            scrollHint.style.animation = 'none';
+          }
+          if (scrollHintAnimDisabled) {
+            scrollHint.style.opacity = String(Math.max(0, 1 - progress / 0.15));
+          }
+        }
+      });
+    }
+
+    page.addEventListener('scroll', onScroll, { passive: true });
+    // Run once on mount in case page is already scrolled
+    onScroll();
 
     return () => {
-      clearTimeout(timer);
-      cancelAnimationFrame(raf);
+      page.removeEventListener('scroll', onScroll);
+      if (raf) cancelAnimationFrame(raf);
     };
   }, []);
 
@@ -845,41 +909,43 @@ export default function LandingPage() {
         </div>
       </nav>
 
-      <section className="landing-hero">
-        <div className="landing-hero-glow" />
-        <div className="landing-hero-content">
-          <div className="landing-hero-label">3D Instrument Approach Visualization</div>
-          <h1>
-            See the approach
-            <br />
-            <span className="landing-accent">in three dimensions</span>
-          </h1>
-          <p className="landing-hero-sub">
-            <span className="landing-chip">3D flight paths</span>
-            <span className="landing-sep">/</span>
-            <span className="landing-chip">MRMS weather</span>
-            <span className="landing-sep">/</span>
-            <span className="landing-chip">ADS-B traffic</span>
-            <span className="landing-sep">/</span>
-            <span className="landing-chip">terrain</span>
-            <span className="landing-sep">/</span>
-            <span className="landing-chip">airspace</span>
-          </p>
-          <div className="landing-hero-actions">
-            <a href="/" className="landing-btn-primary">
-              Launch ApproachViz
-            </a>
-            <a href="#features" className="landing-btn-secondary">
-              See Features
-            </a>
+      <div className="landing-hero-wrap">
+        <section className="landing-hero">
+          <div className="landing-hero-glow" />
+          <div className="landing-hero-content">
+            <div className="landing-hero-label">3D Instrument Approach Visualization</div>
+            <h1>
+              See the approach
+              <br />
+              <span className="landing-accent">in three dimensions</span>
+            </h1>
+            <p className="landing-hero-sub">
+              <span className="landing-chip">3D flight paths</span>
+              <span className="landing-sep">/</span>
+              <span className="landing-chip">MRMS weather</span>
+              <span className="landing-sep">/</span>
+              <span className="landing-chip">ADS-B traffic</span>
+              <span className="landing-sep">/</span>
+              <span className="landing-chip">terrain</span>
+              <span className="landing-sep">/</span>
+              <span className="landing-chip">airspace</span>
+            </p>
+            <div className="landing-hero-actions">
+              <a href="/" className="landing-btn-primary">
+                Launch ApproachViz
+              </a>
+              <a href="#features" className="landing-btn-secondary">
+                See Features
+              </a>
+            </div>
           </div>
-        </div>
-        <HeroApproachViz />
-        <div className="landing-hero-scroll">
-          <span>scroll</span>
-          <div className="landing-hero-scroll-line" />
-        </div>
-      </section>
+          <HeroApproachViz />
+          <div className="landing-hero-scroll">
+            <span>scroll to transform</span>
+            <div className="landing-hero-scroll-line" />
+          </div>
+        </section>
+      </div>
 
       <section id="features" className="landing-section landing-features">
         <div className="landing-inner">
