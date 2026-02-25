@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+approach-viz-core = { path = "../../crates/approach-viz-core" }
 anyhow = "1.0"
 aws-config = "1.8"
 aws-sdk-sqs = "1.89"
@@ -29,10 +30,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tower-http = { version = "0.6", features = ["compression-gzip", "cors", "trace"] }
 urlencoding = "2.1"
 zstd = "0.13"
-
-[profile.release]
-codegen-units = 1
-lto = "thin"
-opt-level = 3
-debug = 1
-strip = false
