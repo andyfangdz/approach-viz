@@ -36,7 +36,8 @@
 - Check Rust workspace (all crates): `cargo check` (from project root)
 - Check Rust runtime service only: `cargo check -p approach-viz-runtime`
 - Check Rust core crate only: `cargo check -p approach-viz-core`
-- Build WASM core module (wasm-pack + copy to `public/`): `npm run build:wasm` (requires `wasm-pack`; outputs to `packages/approach-viz-core-wasm/` and copies `.wasm` binary to `public/approach_viz_core_bg.wasm` for worker `fetch()` loading)
+- Build WASM core module (wasm-pack + copy to `public/`): `npm run build:wasm` (requires `wasm-pack`; outputs to `packages/approach-viz-core-wasm/` and copies `.wasm` binary + JS glue to `public/` for worker `fetch()` loading and Playwright smoke tests)
+- Run WASM Playwright smoke tests (requires dev server on localhost:3000 + `build:wasm`): `npm run test:smoke`
 - Dev server: `npm run dev` (loads `.env.local`, preloads Datadog tracer, then starts `next dev`)
 - Production build (also refreshes data): `npm run build`
 - Run production server: `npm run start`
