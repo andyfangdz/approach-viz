@@ -32,3 +32,6 @@ npm-debug.log*
 .env.local
 .tmp*
 output/playwright
+
+# WASM build output (built by wasm-pack via build:wasm npm script)
+packages/approach-viz-core-wasm/

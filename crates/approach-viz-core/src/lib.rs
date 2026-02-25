@@ -5,3 +5,6 @@ pub mod traffic_codec;
 pub mod traffic_merge;
 pub mod types;
 pub(crate) mod wire_helpers;
+
+#[cfg(feature = "wasm")]
+pub mod wasm;
