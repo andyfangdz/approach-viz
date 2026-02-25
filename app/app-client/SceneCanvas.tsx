@@ -57,6 +57,116 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Recovers from "stuck pointer" states on mobile multi-touch.
+ *
+ * Three.js OrbitControls/MapControls call setPointerCapture only for the
+ * *first* pointer. When two fingers touch the canvas (pinch/rotate), the
+ * second pointer is tracked internally but not captured. If the second
+ * finger's pointerup is missed (common on mobile when a finger drifts off
+ * the canvas, the browser fires pointercancel, or the OS steals a gesture),
+ * the controls keep stale entries in their _pointers array and never release
+ * capture — so document-level pointermove/pointerup listeners stay attached
+ * and the canvas swallows all subsequent input including taps on FAB buttons.
+ *
+ * This guard listens on the actual canvas DOM element for lostpointercapture
+ * (fired when capture is revoked by the browser) and for pointerdown events
+ * that arrive while the controls still think old pointers are active. In
+ * both cases it force-clears the controls' internal pointer tracking and
+ * resets state to NONE so the next gesture starts clean.
+ */
+function PointerRecoveryGuard({
+  controlsRef
+}: {
+  controlsRef: RefObject<RecenterControlsApi | null>;
+}) {
+  const gl = useThree((s) => s.gl);
+
+  useEffect(() => {
+    const canvas = gl.domElement;
+
+    // Force-clear stale pointer tracking on the underlying three.js controls.
+    function resetControlPointers() {
+      const controls = controlsRef.current as unknown as {
+        _pointers?: number[];
+        _pointerPositions?: Record<number, unknown>;
+        state?: number;
+        _touchStart?: unknown[];
+        _touchCurrent?: unknown[];
+        _input?: number;
+      } | null;
+      if (!controls) return;
+
+      // OrbitControls / MapControls
+      if (controls._pointers && controls._pointers.length > 0) {
+        controls._pointers.length = 0;
+        if (controls._pointerPositions) {
+          for (const key of Object.keys(controls._pointerPositions)) {
+            delete controls._pointerPositions[Number(key)];
+          }
+        }
+        controls.state = -1; // _STATE.NONE = -1 in three.js OrbitControls
+      }
+
+      // ArcballControls uses Symbol-typed INPUT enum — clearing touch arrays
+      // and removing window listeners is sufficient to reset its state.
+      if (controls._touchStart) controls._touchStart.length = 0;
+      if (controls._touchCurrent) controls._touchCurrent.length = 0;
+    }
+
+    // When the browser revokes pointer capture (e.g. finger leaves screen
+    // bounds, tab switch, OS gesture override), clear stale state.
+    // OrbitControls attaches pointermove/pointerup to ownerDocument while
+    // a gesture is active, and only removes them in onPointerUp case 0.
+    // We force a disconnect+reconnect to guarantee those listeners are
+    // cleaned up, then clear the internal pointer tracking.
+    function onLostPointerCapture() {
+      const controls = controlsRef.current as unknown as {
+        _pointers?: number[];
+        disconnect?: () => void;
+        connect?: (el: HTMLElement) => void;
+      } | null;
+      if (controls?._pointers && controls._pointers.length > 0) {
+        // disconnect() removes all listeners including stale document ones,
+        // then connect() re-attaches the base pointerdown/wheel/etc listeners.
+        if (typeof controls.disconnect === 'function' && typeof controls.connect === 'function') {
+          controls.disconnect();
+          controls.connect(canvas);
+        }
+        resetControlPointers();
+      }
+    }
+
+    // On a new pointerdown, if the controls still have stale tracked pointers
+    // from a previous gesture, reset before the new gesture begins.
+    function onPointerDown() {
+      const controls = controlsRef.current as unknown as {
+        _pointers?: number[];
+      } | null;
+      if (controls?._pointers && controls._pointers.length > 0) {
+        // Controls think fingers are still down — but we're getting a fresh
+        // pointerdown from the browser, meaning the previous gesture is over.
+        // Check: are any of the tracked pointers actually still active?
+        // We can't query that directly, so we just reset if the tracked count
+        // seems stale (>= 2 is always suspect on a fresh pointerdown).
+        if (controls._pointers.length >= 2) {
+          resetControlPointers();
+        }
+      }
+    }
+
+    canvas.addEventListener('lostpointercapture', onLostPointerCapture);
+    canvas.addEventListener('pointerdown', onPointerDown, { capture: true });
+
+    return () => {
+      canvas.removeEventListener('lostpointercapture', onLostPointerCapture);
+      canvas.removeEventListener('pointerdown', onPointerDown, { capture: true });
+    };
+  }, [gl, controlsRef]);
+
+  return null;
+}
+
 function CameraStabilityGuard({
   controlsRef
 }: {
@@ -297,6 +407,7 @@ export const SceneCanvas = memo(function SceneCanvas({
 
       <Suspense fallback={<LoadingFallback />}>
         <AdaptiveDprController retinaRendering={retinaRendering} />
+        <PointerRecoveryGuard controlsRef={controlsRef} />
         <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />
         <CameraStabilityGuard controlsRef={controlsRef} />
         <ambientLight intensity={0.4} />
