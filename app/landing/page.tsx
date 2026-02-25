@@ -113,39 +113,49 @@ const AIRPORTS = [
 ];
 
 /* ── Morph geometry data ───────────────────────────── */
-// Waypoints: [x, y] for each fix in profile vs plan view
+// Realistic ILS-style approach: step-down from IAF, level IF→FAF, 3° glideslope to DA
+// Profile: x = distance-to-go (left=far, right=runway), y = altitude (up=higher)
+// Ground ≈ y=410, 5000' ≈ y=115, scale ≈ 59px per 1000'
 const PROF_WP = [
-  [140, 100],
-  [360, 170],
-  [500, 170],
-  [720, 330]
+  [130, 115],
+  [365, 220],
+  [530, 220],
+  [730, 342]
 ] as const;
+// Plan: overhead view, runway at bottom-center, IAF offset to upper-left
+// IF/FAF/MAP on extended centerline (x=500) — straight final approach course
 const PLAN_WP = [
   [180, 80],
-  [400, 200],
-  [500, 320],
-  [500, 440]
+  [500, 210],
+  [500, 350],
+  [500, 460]
 ] as const;
 
-const PROF_RWY: [number, number] = [790, 382];
-const PLAN_RWY: [number, number] = [500, 490];
+const PROF_RWY: [number, number] = [820, 398];
+const PLAN_RWY: [number, number] = [500, 510];
 
-// Cubic bezier control points per segment: [[cp1x,cp1y,cp2x,cp2y], ...]
+// Cubic bezier control points per segment: [cp1x, cp1y, cp2x, cp2y]
 const PROF_CP = [
-  [220, 100, 300, 100],
-  [400, 170, 460, 170],
-  [560, 200, 670, 300],
-  [745, 350, 775, 372]
+  [210, 115, 305, 198], // IAF→IF: descending arc
+  [405, 220, 490, 220], // IF→FAF: level segment (both 3200')
+  [578, 228, 685, 318], // FAF→DA: 3° glideslope
+  [758, 358, 808, 392] // DA→RWY: flare to threshold
 ];
 const PLAN_CP = [
-  [250, 80, 340, 135],
-  [440, 235, 488, 285],
-  [500, 355, 500, 405],
-  [500, 458, 500, 478]
+  [300, 55, 465, 120], // IAF→IF: sweeping turn to align with centerline
+  [500, 255, 500, 310], // IF→FAF: straight on localizer
+  [500, 390, 500, 435], // FAF→MAP: straight on localizer
+  [500, 478, 500, 500] // MAP→RWY: to threshold
 ];
 
-const PROF_LABELS = ["IAF 5000'", "IF 3200'", "FAF 3200'", "DA 1080'"];
+const PROF_LABELS = ["IAF  5000'", "IF  3200'", "FAF  3200'", "DA  1080'"];
 const PLAN_LABELS = ['IAF', 'IF', 'FAF', 'MAP'];
+
+// Label positioning offsets: profile labels centered above, plan labels offset for centerline
+const PROF_LABEL_DX = [0, 0, 0, 0];
+const PROF_LABEL_DY = [-18, -18, -18, -18];
+const PLAN_LABEL_DX = [0, 40, 40, 40]; // IAF centered, IF/FAF/MAP offset right of centerline
+const PLAN_LABEL_DY = [-18, 5, 5, 5]; // IAF above, rest at midline
 
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
@@ -194,11 +204,17 @@ function HeroApproachViz() {
 
     let raf: number;
     const timer = setTimeout(() => {
-      // Disable stroke-dash CSS animation before morphing
+      // Disable all CSS animations before morphing so inline styles take precedence
       paths.forEach((p) => {
         p.style.strokeDasharray = 'none';
         p.style.strokeDashoffset = '0';
         p.style.animation = 'none';
+      });
+      profLabels.forEach((el) => {
+        el.style.animation = 'none';
+      });
+      planLabels.forEach((el) => {
+        el.style.animation = 'none';
       });
 
       const start = performance.now();
@@ -232,17 +248,21 @@ function HeroApproachViz() {
           el.setAttribute('cy', String(wp[i][1]));
         });
 
-        // Update label positions and fade
+        // Update label positions with interpolated offsets and fade
         profLabels.forEach((el, i) => {
           if (i >= wp.length) return;
-          el.setAttribute('x', String(wp[i][0]));
-          el.setAttribute('y', String(wp[i][1] - 14));
+          const dx = lerp(PROF_LABEL_DX[i], PLAN_LABEL_DX[i], t);
+          const dy = lerp(PROF_LABEL_DY[i], PLAN_LABEL_DY[i], t);
+          el.setAttribute('x', String(wp[i][0] + dx));
+          el.setAttribute('y', String(wp[i][1] + dy));
           el.style.opacity = String(1 - t);
         });
         planLabels.forEach((el, i) => {
           if (i >= wp.length) return;
-          el.setAttribute('x', String(wp[i][0]));
-          el.setAttribute('y', String(wp[i][1] - 14));
+          const dx = lerp(PROF_LABEL_DX[i], PLAN_LABEL_DX[i], t);
+          const dy = lerp(PROF_LABEL_DY[i], PLAN_LABEL_DY[i], t);
+          el.setAttribute('x', String(wp[i][0] + dx));
+          el.setAttribute('y', String(wp[i][1] + dy));
           el.style.opacity = String(t);
         });
 
@@ -254,7 +274,7 @@ function HeroApproachViz() {
         profMissed.style.opacity = String(Math.max(0, 1 - t * 2));
         planMissed.style.opacity = String(Math.max(0, t * 2 - 1));
 
-        // Rotate stage
+        // Rotate stage into 3D perspective
         stage.style.transform = `rotateX(${t * 50}deg) scale(${1 + t * 0.08})`;
 
         if (rawT < 1) raf = requestAnimationFrame(tick);
@@ -300,24 +320,24 @@ function HeroApproachViz() {
 
           {/* ── Profile-only elements (fade out) ──── */}
           <g data-m="prof-only">
-            {/* Grid */}
+            {/* Grid lines at 1000' intervals */}
             <g className="landing-svg-grid" opacity="0.5">
-              {[80, 140, 200, 260, 320, 380].map((y) => (
+              {[115, 174, 233, 292, 351, 410].map((y) => (
                 <line
                   key={`h${y}`}
-                  x1="60"
+                  x1="80"
                   y1={y}
-                  x2="940"
+                  x2="900"
                   y2={y}
                   stroke="#1a1a30"
                   strokeWidth="0.5"
                 />
               ))}
-              {[140, 280, 420, 560, 700, 840].map((x) => (
+              {[200, 340, 480, 620, 760].map((x) => (
                 <line
                   key={`v${x}`}
                   x1={x}
-                  y1="60"
+                  y1="80"
                   x2={x}
                   y2="420"
                   stroke="#1a1a30"
@@ -326,13 +346,38 @@ function HeroApproachViz() {
               ))}
             </g>
 
+            {/* Altitude scale labels */}
+            <g className="landing-svg-grid">
+              {(
+                [
+                  [72, 119, "5000'"],
+                  [72, 178, "4000'"],
+                  [72, 237, "3000'"],
+                  [72, 296, "2000'"],
+                  [72, 355, "1000'"]
+                ] as const
+              ).map(([x, y, label]) => (
+                <text
+                  key={label}
+                  x={x}
+                  y={y}
+                  fill="rgba(136,136,170,0.4)"
+                  fontSize="8"
+                  fontFamily="JetBrains Mono, monospace"
+                  textAnchor="end"
+                >
+                  {label}
+                </text>
+              ))}
+            </g>
+
             {/* Airspace rectangle */}
             <g className="landing-svg-airspace">
               <rect
                 x="200"
-                y="50"
-                width="580"
-                height="280"
+                y="55"
+                width="650"
+                height="300"
                 rx="4"
                 fill="none"
                 stroke="rgba(111,123,255,0.25)"
@@ -341,36 +386,38 @@ function HeroApproachViz() {
               />
               <text
                 x="210"
-                y="44"
+                y="49"
                 fill="rgba(111,123,255,0.5)"
                 fontSize="10"
                 fontFamily="JetBrains Mono, monospace"
               >
-                CLASS D — SFC/2500
+                CLASS D — SFC / 2500
               </text>
             </g>
 
-            {/* Terrain */}
+            {/* Terrain with ridge near final approach */}
             <path
               className="landing-svg-terrain"
-              d="M0,400 C60,395 120,405 200,385 S340,408 440,395 S560,415 650,405 S760,388 830,392 L920,397 Q960,399 1000,400 L1000,480 L0,480 Z"
+              d="M0,418 C100,414 200,420 320,416 S440,422 520,416 C580,410 640,400 680,396 C710,394 740,397 770,402 S840,412 900,414 Q950,416 1000,418 L1000,460 L0,460 Z"
               fill="url(#l-terrain-grad)"
             />
             <path
               className="landing-svg-terrain"
-              d="M0,400 C60,395 120,405 200,385 S340,408 440,395 S560,415 650,405 S760,388 830,392 L920,397 Q960,399 1000,400"
+              d="M0,418 C100,414 200,420 320,416 S440,422 520,416 C580,410 640,400 680,396 C710,394 740,397 770,402 S840,412 900,414 Q950,416 1000,418"
               fill="none"
               stroke="rgba(45,140,255,0.35)"
               strokeWidth="1"
             />
 
-            {/* Altitude guide lines */}
-            {[
-              [140, 100, 398],
-              [360, 170, 395],
-              [500, 170, 396],
-              [720, 330, 402]
-            ].map(([x, y1, y2], i) => (
+            {/* Altitude guide lines (waypoint to ground) */}
+            {(
+              [
+                [130, 115, 416],
+                [365, 220, 418],
+                [530, 220, 416],
+                [730, 342, 400]
+              ] as const
+            ).map(([x, y1, y2], i) => (
               <line
                 key={i}
                 className="landing-svg-altitude-line"
@@ -383,56 +430,67 @@ function HeroApproachViz() {
               />
             ))}
 
-            {/* MDA line */}
+            {/* MDA/DA line */}
             <line
               className="landing-svg-mda"
-              x1="380"
-              y1="330"
-              x2="740"
-              y2="330"
+              x1="460"
+              y1="342"
+              x2="750"
+              y2="342"
               stroke="#ff00aa"
               strokeWidth="1"
               opacity="0.6"
             />
             <text
               className="landing-svg-mda"
-              x="390"
-              y="324"
+              x="466"
+              y="336"
               fill="#ff00aa"
               fontSize="9"
               fontFamily="JetBrains Mono, monospace"
               opacity="0.6"
             >
-              MDA 1080
+              DA 1080
             </text>
+
+            {/* Dashed below-DA segment (visual descent below minimums) */}
+            <path
+              className="landing-svg-terrain"
+              d="M730,342 C758,358 808,392 820,398"
+              fill="none"
+              stroke="rgba(0,255,204,0.25)"
+              strokeWidth="2"
+              strokeDasharray="6 4"
+              strokeLinecap="round"
+            />
           </g>
 
           {/* ── Plan-only elements (fade in) ──────── */}
           <g data-m="plan-only" opacity="0">
-            {/* Terrain contours */}
-            <g opacity="0.18">
+            {/* Terrain contours centered on airport */}
+            <g opacity="0.15">
               <ellipse
                 cx="500"
-                cy="380"
-                rx="380"
+                cy="400"
+                rx="400"
                 ry="200"
                 fill="none"
                 stroke="#2d8cff"
                 strokeWidth="0.5"
               />
               <ellipse
-                cx="480"
-                cy="395"
-                rx="280"
+                cx="490"
+                cy="410"
+                rx="290"
                 ry="150"
                 fill="none"
                 stroke="#2d8cff"
                 strokeWidth="0.5"
               />
               <ellipse
-                cx="470"
-                cy="410"
-                rx="170"
+                cx="480"
+                cy="420"
+                rx="180"
                 ry="90"
                 fill="none"
                 stroke="#2d8cff"
@@ -440,11 +498,11 @@ function HeroApproachViz() {
               />
             </g>
 
-            {/* Airspace circle */}
+            {/* Airspace circle centered near runway */}
             <circle
               cx="500"
-              cy="400"
-              r="230"
+              cy="420"
+              r="240"
               fill="none"
               stroke="rgba(111,123,255,0.22)"
               strokeWidth="1"
@@ -452,7 +510,7 @@ function HeroApproachViz() {
             />
             <text
               x="500"
-              y="158"
+              y="168"
               fill="rgba(111,123,255,0.45)"
               fontSize="10"
               fontFamily="JetBrains Mono, monospace"
@@ -461,44 +519,82 @@ function HeroApproachViz() {
               CLASS D
             </text>
 
-            {/* Localizer centerline */}
+            {/* Extended final approach course / localizer centerline */}
             <line
               x1="500"
-              y1="140"
+              y1="100"
               x2="500"
-              y2="490"
+              y2="510"
               stroke="rgba(136,136,170,0.15)"
               strokeWidth="0.5"
               strokeDasharray="6 4"
             />
 
-            {/* Compass */}
-            <g opacity="0.45">
+            {/* Distance rings (5 NM, 10 NM from runway) */}
+            <circle
+              cx="500"
+              cy="510"
+              r="120"
+              fill="none"
+              stroke="rgba(136,136,170,0.08)"
+              strokeWidth="0.5"
+              strokeDasharray="4 6"
+            />
+            <text
+              x="625"
+              y="475"
+              fill="rgba(136,136,170,0.2)"
+              fontSize="7"
+              fontFamily="JetBrains Mono, monospace"
+            >
+              5 NM
+            </text>
+            <circle
+              cx="500"
+              cy="510"
+              r="240"
+              fill="none"
+              stroke="rgba(136,136,170,0.06)"
+              strokeWidth="0.5"
+              strokeDasharray="4 6"
+            />
+            <text
+              x="745"
+              y="435"
+              fill="rgba(136,136,170,0.2)"
+              fontSize="7"
+              fontFamily="JetBrains Mono, monospace"
+            >
+              10 NM
+            </text>
+
+            {/* Compass rose */}
+            <g opacity="0.5">
               <text
                 x="930"
-                y="52"
+                y="48"
                 fill="#8888aa"
-                fontSize="12"
+                fontSize="11"
                 fontFamily="JetBrains Mono, monospace"
                 textAnchor="middle"
-                fontWeight="600"
+                fontWeight="700"
               >
                 N
               </text>
-              <line x1="930" y1="58" x2="930" y2="76" stroke="#8888aa" strokeWidth="1" />
-              <path d="M926,61 L930,54 L934,61" fill="none" stroke="#8888aa" strokeWidth="1" />
+              <path d="M926,56 L930,50 L934,56" fill="none" stroke="#8888aa" strokeWidth="1.2" />
+              <line x1="930" y1="56" x2="930" y2="72" stroke="#8888aa" strokeWidth="1" />
             </g>
           </g>
 
           {/* ── Profile runway (fade out) ─────────── */}
           <g data-m="prof-rwy">
             <g className="landing-svg-runway">
-              <rect x="765" y="376" width="55" height="6" rx="1" fill="#e4e4f0" opacity="0.8" />
+              <rect x="795" y="392" width="55" height="6" rx="1" fill="#e4e4f0" opacity="0.8" />
               <line
-                x1="773"
-                y1="379"
-                x2="812"
-                y2="379"
+                x1="803"
+                y1="395"
+                x2="842"
+                y2="395"
                 stroke="var(--l-bg)"
                 strokeWidth="1"
                 strokeDasharray="4 3"
@@ -508,25 +604,24 @@ function HeroApproachViz() {
 
           {/* ── Plan runway (fade in) ─────────────── */}
           <g data-m="plan-rwy" opacity="0">
-            <rect x="494" y="478" width="12" height="48" rx="1" fill="#e4e4f0" opacity="0.8" />
+            <rect x="494" y="496" width="12" height="48" rx="1" fill="#e4e4f0" opacity="0.8" />
             <line
               x1="500"
-              y1="483"
+              y1="501"
               x2="500"
-              y2="521"
+              y2="539"
               stroke="var(--l-bg)"
               strokeWidth="1"
               strokeDasharray="4 3"
             />
             <text
-              x="500"
-              y="542"
+              x="518"
+              y="530"
               fill="#8888aa"
               fontSize="9"
               fontFamily="JetBrains Mono, monospace"
-              textAnchor="middle"
             >
-              RWY 36
+              RWY
             </text>
           </g>
 
@@ -534,33 +629,30 @@ function HeroApproachViz() {
           <g data-m="prof-missed">
             <path
               className="landing-svg-path-missed"
-              d="M790,382 L810,382 L910,200"
+              d="M820,398 C835,390 855,340 920,220"
               fill="none"
               stroke="rgba(255,68,68,0.12)"
               strokeWidth="6"
               strokeLinecap="round"
-              strokeLinejoin="round"
               filter="url(#l-glow-lg)"
             />
             <path
               className="landing-svg-path-missed"
-              d="M790,382 L810,382 L910,200"
+              d="M820,398 C835,390 855,340 920,220"
               fill="none"
               stroke="#ff4444"
               strokeWidth="2"
               strokeLinecap="round"
-              strokeLinejoin="round"
               filter="url(#l-glow)"
               opacity="0.8"
             />
             <text
               className="landing-svg-path-missed"
-              x="870"
-              y="192"
+              x="928"
+              y="215"
               fill="rgba(255,68,68,0.6)"
               fontSize="9"
               fontFamily="JetBrains Mono, monospace"
-              textAnchor="middle"
             >
               MISSED
             </text>
@@ -569,7 +661,7 @@ function HeroApproachViz() {
           {/* ── Plan missed approach (fade in) ────── */}
           <g data-m="plan-missed" opacity="0">
             <path
-              d="M500,530 L500,555 Q500,570 518,570 L610,570 Q640,570 640,540 L640,440"
+              d="M500,530 L500,550 Q500,570 480,570 L400,570 Q375,570 375,548 L375,440"
               fill="none"
               stroke="#ff4444"
               strokeWidth="2"
@@ -579,11 +671,12 @@ function HeroApproachViz() {
               opacity="0.7"
             />
             <text
-              x="658"
-              y="486"
+              x="358"
+              y="435"
               fill="rgba(255,68,68,0.6)"
               fontSize="9"
               fontFamily="JetBrains Mono, monospace"
+              textAnchor="end"
             >
               MISSED
             </text>
@@ -643,8 +736,8 @@ function HeroApproachViz() {
             <text
               key={`pl${i}`}
               data-m="prof-label"
-              x={x}
-              y={y - 14}
+              x={x + PROF_LABEL_DX[i]}
+              y={y + PROF_LABEL_DY[i]}
               fill="#8888aa"
               fontSize="10"
               fontFamily="JetBrains Mono, monospace"
@@ -660,8 +753,8 @@ function HeroApproachViz() {
             <text
               key={`ql${i}`}
               data-m="plan-label"
-              x={x}
-              y={y - 14}
+              x={x + PROF_LABEL_DX[i]}
+              y={y + PROF_LABEL_DY[i]}
               fill="#8888aa"
               fontSize="10"
               fontFamily="JetBrains Mono, monospace"
