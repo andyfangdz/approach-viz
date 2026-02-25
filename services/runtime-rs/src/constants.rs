@@ -24,15 +24,9 @@ pub const LEVEL_TAGS: [&str; 33] = [
 
 pub const FEET_PER_KM: f64 = 3280.84;
 pub const FEET_PER_METER: f64 = 3.28084;
-pub const METERS_TO_NM: f64 = 1.0 / 1852.0;
-pub const DEG_TO_RAD: f64 = std::f64::consts::PI / 180.0;
-pub const WGS84_SEMI_MAJOR_METERS: f64 = 6_378_137.0;
-pub const WGS84_FLATTENING: f64 = 1.0 / 298.257_223_563;
-pub const WGS84_E2: f64 = WGS84_FLATTENING * (2.0 - WGS84_FLATTENING);
 
-pub const PHASE_RAIN: u8 = 0;
-pub const PHASE_MIXED: u8 = 1;
-pub const PHASE_SNOW: u8 = 2;
+// Phase codes — re-exported from approach-viz-core for single source of truth
+pub use approach_viz_core::types::{PHASE_RAIN, PHASE_MIXED, PHASE_SNOW};
 pub const PHASE_ZDR_MIN_VALID_DB: f32 = -8.0;
 pub const PHASE_ZDR_MAX_VALID_DB: f32 = 8.0;
 pub const PHASE_RHOHV_MIN_VALID: f32 = 0.0;
@@ -74,11 +68,14 @@ pub const STORE_MIN_DBZ_TENTHS: i16 = 50;
 pub const MAX_BASE_KEYS_LOOKUP: usize = 120;
 pub const MAX_BASE_DAY_LOOKBACK: i64 = 1;
 
-pub const WIRE_MAGIC: [u8; 4] = *b"AVMR";
-pub const WIRE_VERSION: u16 = 3;
-pub const WIRE_HEADER_BYTES: usize = 64;
-pub const WIRE_RECORD_BYTES: usize = 20;
-pub const WIRE_DBZ_QUANT_STEP_TENTHS: i16 = 50;
+// Wire format constants — re-exported from approach-viz-core for single source of truth
+pub use approach_viz_core::types::{
+    MRMS_WIRE_MAGIC as WIRE_MAGIC,
+    MRMS_WIRE_VERSION as WIRE_VERSION,
+    MRMS_WIRE_HEADER_BYTES as WIRE_HEADER_BYTES,
+    MRMS_WIRE_RECORD_BYTES as WIRE_RECORD_BYTES,
+    MRMS_WIRE_DBZ_QUANT_STEP_TENTHS as WIRE_DBZ_QUANT_STEP_TENTHS,
+};
 pub const WIRE_MAX_SPAN_LOW_DBZ: u16 = 48;
 pub const WIRE_MAX_SPAN_HIGH_DBZ: u16 = 20;
 pub const WIRE_MAX_VERTICAL_SPAN: u16 = 4;
