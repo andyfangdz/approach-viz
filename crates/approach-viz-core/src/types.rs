@@ -8,8 +8,7 @@
 // ---------------------------------------------------------------------------
 
 pub const MRMS_WIRE_MAGIC: [u8; 4] = *b"AVMR";
-pub const MRMS_WIRE_V2_VERSION: u16 = 2;
-pub const MRMS_WIRE_V3_VERSION: u16 = 3;
+pub const MRMS_WIRE_VERSION: u16 = 3;
 pub const MRMS_WIRE_HEADER_BYTES: usize = 64;
 pub const MRMS_WIRE_RECORD_BYTES: usize = 20;
 pub const MRMS_WIRE_DBZ_QUANT_STEP_TENTHS: i16 = 50;

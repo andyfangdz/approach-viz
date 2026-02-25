@@ -5,7 +5,7 @@
 
 use crate::types::{
     DecodedMrmsVolume, MRMS_WIRE_HEADER_BYTES, MRMS_WIRE_MAGIC, MRMS_WIRE_RECORD_BYTES,
-    MRMS_WIRE_V2_VERSION, MRMS_WIRE_V3_VERSION,
+    MRMS_WIRE_VERSION,
 };
 use crate::wire_helpers::{read_i16_le, read_i64_le, read_u16_le, read_u32_le};
 
@@ -81,7 +81,7 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
     }
 
     let version = read_u16_le(data, 4);
-    if version != MRMS_WIRE_V2_VERSION && version != MRMS_WIRE_V3_VERSION {
+    if version != MRMS_WIRE_VERSION {
         return Err(MrmsDecodeError::UnsupportedVersion(version));
     }
 
@@ -181,13 +181,8 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
         footprint_x_span.push(span_x);
         footprint_y_span.push(span_y);
 
-        // Surface phase: V3 reads from offset 18, V2 copies from phase
-        let s_phase = if version >= MRMS_WIRE_V3_VERSION {
-            data[offset + 18]
-        } else {
-            p_code
-        };
-        surface_phase.push(s_phase);
+        // Surface phase: always at offset 18
+        surface_phase.push(data[offset + 18]);
     }
 
     Ok(DecodedMrmsVolume {
@@ -328,12 +323,19 @@ mod tests {
         data[4..6].copy_from_slice(&99u16.to_le_bytes());
         let err = decode_mrms_binary(&data).unwrap_err();
         assert_eq!(err, MrmsDecodeError::UnsupportedVersion(99));
+
+        // V2 is no longer supported
+        let mut data_v2 = vec![0u8; 64];
+        data_v2[0..4].copy_from_slice(&MRMS_WIRE_MAGIC);
+        data_v2[4..6].copy_from_slice(&2u16.to_le_bytes());
+        let err_v2 = decode_mrms_binary(&data_v2).unwrap_err();
+        assert_eq!(err_v2, MrmsDecodeError::UnsupportedVersion(2));
     }
 
     #[test]
     fn decode_empty_volume() {
         let buf = build_test_header(
-            MRMS_WIRE_V3_VERSION,
+            MRMS_WIRE_VERSION,
             0,  // voxel_count
             1,  // layer_count
             1000000,
@@ -344,7 +346,7 @@ mod tests {
         );
 
         let vol = decode_mrms_binary(&buf).unwrap();
-        assert_eq!(vol.version, MRMS_WIRE_V3_VERSION);
+        assert_eq!(vol.version, MRMS_WIRE_VERSION);
         assert_eq!(vol.voxel_count, 0);
         assert_eq!(vol.layer_count, 1);
         assert_eq!(vol.generated_at_ms, 1000000);
@@ -371,7 +373,7 @@ mod tests {
         let footprint_y_thousandths: u16 = 300; // 0.30 NM
 
         let mut buf = build_test_header(
-            MRMS_WIRE_V3_VERSION,
+            MRMS_WIRE_VERSION,
             1,  // voxel_count
             1,  // layer_count
             generated_at,
@@ -399,7 +401,7 @@ mod tests {
 
         let vol = decode_mrms_binary(&buf).unwrap();
 
-        assert_eq!(vol.version, MRMS_WIRE_V3_VERSION);
+        assert_eq!(vol.version, MRMS_WIRE_VERSION);
         assert_eq!(vol.voxel_count, 1);
         assert_eq!(vol.layer_count, 1);
         assert_eq!(vol.generated_at_ms, generated_at);
@@ -434,46 +436,10 @@ mod tests {
     }
 
     #[test]
-    fn decode_v2_copies_phase_to_surface() {
-        let mut buf = build_test_header(
-            MRMS_WIRE_V2_VERSION,
-            1,
-            1,
-            0,
-            0,
-            100,
-            100,
-            &[1],
-        );
-
-        let rec = build_voxel_record(
-            100,   // x
-            200,   // z
-            1000,  // bottom
-            2000,  // top
-            250,   // dbz_tenths
-            PHASE_SNOW,
-            0,
-            1,
-            1,
-            1,
-            PHASE_RAIN, // surface_phase field in record (ignored for V2)
-        );
-        buf.extend_from_slice(&rec);
-
-        let vol = decode_mrms_binary(&buf).unwrap();
-
-        // V2 should copy phase to surface_phase (ignoring offset 18)
-        assert_eq!(vol.phase[0], PHASE_SNOW);
-        assert_eq!(vol.surface_phase[0], PHASE_SNOW);
-        assert_eq!(vol.version, MRMS_WIRE_V2_VERSION);
-    }
-
-    #[test]
     fn voxel_overflow_detected() {
         // Header claims 1000 voxels but we only provide room for 1
         let mut buf = build_test_header(
-            MRMS_WIRE_V3_VERSION,
+            MRMS_WIRE_VERSION,
             1000,
             1,
             0,

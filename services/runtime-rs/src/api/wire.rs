@@ -4,8 +4,8 @@ use std::cmp::min;
 
 use super::EchoTopCellRecord;
 use crate::constants::{
-    WIRE_HEADER_BYTES, WIRE_MAGIC, WIRE_V2_DBZ_QUANT_STEP_TENTHS, WIRE_V2_MAX_SPAN_HIGH_DBZ,
-    WIRE_V2_MAX_SPAN_LOW_DBZ, WIRE_V2_MAX_VERTICAL_SPAN, WIRE_V2_RECORD_BYTES, WIRE_V3_VERSION,
+    WIRE_DBZ_QUANT_STEP_TENTHS, WIRE_HEADER_BYTES, WIRE_MAGIC, WIRE_MAX_SPAN_HIGH_DBZ,
+    WIRE_MAX_SPAN_LOW_DBZ, WIRE_MAX_VERTICAL_SPAN, WIRE_RECORD_BYTES, WIRE_VERSION,
 };
 use crate::types::ScanSnapshot;
 use crate::utils::{
@@ -21,7 +21,7 @@ pub(super) fn build_volume_wire(
     max_range_nm: f64,
 ) -> Result<Vec<u8>> {
     let window = build_query_window(scan, origin_lat, origin_lon, min_dbz, max_range_nm);
-    Ok(build_volume_wire_v2(scan, &window))
+    Ok(build_volume_wire_impl(scan, &window))
 }
 
 #[derive(Clone, Copy)]
@@ -318,14 +318,14 @@ pub(super) fn build_echo_top_cells(
     cells
 }
 
-fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
+fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
     let projection = QueryProjection::new(scan, window);
     let mut body = build_wire_header(
         scan,
         window,
-        WIRE_V3_VERSION,
-        WIRE_V2_RECORD_BYTES as u16,
-        WIRE_V2_DBZ_QUANT_STEP_TENTHS as u16,
+        WIRE_VERSION,
+        WIRE_RECORD_BYTES as u16,
+        WIRE_DBZ_QUANT_STEP_TENTHS as u16,
     );
 
     let layer_counts_offset = WIRE_HEADER_BYTES;
@@ -372,7 +372,7 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
                         phase: record.phase,
                         dbz_tenths: quantize_dbz_tenths(
                             record.dbz_tenths,
-                            WIRE_V2_DBZ_QUANT_STEP_TENTHS,
+                            WIRE_DBZ_QUANT_STEP_TENTHS,
                         ),
                     },
                     surface_phase: record.surface_phase,
@@ -408,7 +408,7 @@ fn build_volume_wire_v2(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
                 let current = merged_bricks[existing_idx];
                 let next_vertical_span = level_idx as u16 - current.level_start as u16 + 1_u16;
                 if current.level_end as usize + 1 == level_idx
-                    && next_vertical_span <= WIRE_V2_MAX_VERTICAL_SPAN
+                    && next_vertical_span <= WIRE_MAX_VERTICAL_SPAN
                 {
                     let prev_bounds = scan.level_bounds[current.level_end as usize];
                     let next_bounds = scan.level_bounds[level_idx];
@@ -502,9 +502,9 @@ fn quantize_dbz_tenths(dbz_tenths: i16, step_tenths: i16) -> i16 {
 
 fn max_span_for_dbz(dbz_tenths: i16) -> u16 {
     if dbz_tenths >= 450 {
-        WIRE_V2_MAX_SPAN_HIGH_DBZ.max(1)
+        WIRE_MAX_SPAN_HIGH_DBZ.max(1)
     } else {
-        WIRE_V2_MAX_SPAN_LOW_DBZ.max(1)
+        WIRE_MAX_SPAN_LOW_DBZ.max(1)
     }
 }
 

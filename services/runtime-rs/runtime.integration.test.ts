@@ -11,8 +11,7 @@ const DEFAULT_MRMS_MIN_DBZ = 5;
 const DEFAULT_MRMS_MAX_RANGE_NM = 120;
 
 const WIRE_MAGIC = 'AVMR';
-const WIRE_V2_VERSION = 2;
-const WIRE_V3_VERSION = 3;
+const WIRE_VERSION = 3;
 const WIRE_HEADER_BYTES = 64;
 const WIRE_RECORD_BYTES = 20;
 
@@ -229,8 +228,7 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
   assert.equal(volumeResponse.status, 200, `Volume endpoint returned ${volumeResponse.status}`);
   const contentType = (volumeResponse.headers.get('content-type') || '').toLowerCase();
   assert.ok(
-    contentType.includes('application/vnd.approach-viz.mrms.v2') ||
-      contentType.includes('application/vnd.approach-viz.mrms.v3'),
+    contentType.includes('application/vnd.approach-viz.mrms.v3'),
     `Unexpected MRMS content-type: ${contentType || 'none'}`
   );
   assert.ok(
@@ -253,7 +251,7 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
   const recordBytes = view.getUint16(18, true);
 
   assert.ok(
-    wireVersion === WIRE_V2_VERSION || wireVersion === WIRE_V3_VERSION,
+    wireVersion === WIRE_VERSION,
     `Unexpected MRMS wire version: ${wireVersion}`
   );
   assert.equal(headerBytes, WIRE_HEADER_BYTES, 'Unexpected MRMS wire header length');
