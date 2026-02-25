@@ -258,7 +258,7 @@ pub fn build_cross_section(
         }
 
         let phase_code = prepared.effective_phase_code[i];
-        let v_dbz = volume.dbz_tenths[idx] as f32;
+        let v_dbz = volume.dbz_tenths[idx] as f32 / 10.0;
 
         for y in y0..=y1 {
             let grid_idx = y * CROSS_SECTION_BINS_X + bin_x;
@@ -642,12 +642,12 @@ mod tests {
         let y0 = 28_usize;
         let y1 = 45_usize;
 
-        // The grid should have 350.0 at these bins
+        // The grid should have 35.0 dBZ at these bins (350 tenths / 10)
         for y in y0..=y1 {
             let grid_idx = y * CROSS_SECTION_BINS_X + bin_x;
             assert!(
-                (cs.grid[grid_idx] - 350.0).abs() < 0.01,
-                "grid[{y}][{bin_x}] = {}, expected 350",
+                (cs.grid[grid_idx] - 35.0).abs() < 0.01,
+                "grid[{y}][{bin_x}] = {}, expected 35.0",
                 cs.grid[grid_idx]
             );
         }

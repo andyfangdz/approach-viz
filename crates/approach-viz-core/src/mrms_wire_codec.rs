@@ -7,6 +7,7 @@ use crate::types::{
     DecodedMrmsVolume, MRMS_WIRE_HEADER_BYTES, MRMS_WIRE_MAGIC, MRMS_WIRE_RECORD_BYTES,
     MRMS_WIRE_V2_VERSION, MRMS_WIRE_V3_VERSION,
 };
+use crate::wire_helpers::{read_i16_le, read_i64_le, read_u16_le, read_u32_le};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -18,6 +19,7 @@ pub enum MrmsDecodeError {
     BadMagic([u8; 4]),
     UnsupportedVersion(u16),
     VoxelOverflow { claimed: u32, available: usize },
+    InvalidHeaderBytes { header_bytes: u16 },
 }
 
 impl std::fmt::Display for MrmsDecodeError {
@@ -43,44 +45,17 @@ impl std::fmt::Display for MrmsDecodeError {
                      but only {available} bytes of record data available"
                 )
             }
+            MrmsDecodeError::InvalidHeaderBytes { header_bytes } => {
+                write!(
+                    f,
+                    "MRMS payload invalid header_bytes: {header_bytes} < minimum {MRMS_WIRE_HEADER_BYTES}"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for MrmsDecodeError {}
-
-// ---------------------------------------------------------------------------
-// Inline LE read helpers (no external dependency)
-// ---------------------------------------------------------------------------
-
-#[inline]
-fn read_u16_le(data: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([data[offset], data[offset + 1]])
-}
-
-#[inline]
-fn read_i16_le(data: &[u8], offset: usize) -> i16 {
-    i16::from_le_bytes([data[offset], data[offset + 1]])
-}
-
-#[inline]
-fn read_u32_le(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-}
-
-#[inline]
-fn read_i64_le(data: &[u8], offset: usize) -> i64 {
-    i64::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-        data[offset + 4],
-        data[offset + 5],
-        data[offset + 6],
-        data[offset + 7],
-    ])
-}
 
 // ---------------------------------------------------------------------------
 // Decoder
@@ -110,7 +85,13 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
         return Err(MrmsDecodeError::UnsupportedVersion(version));
     }
 
-    let header_bytes = read_u16_le(data, 6) as usize;
+    let header_bytes_raw = read_u16_le(data, 6);
+    if (header_bytes_raw as usize) < MRMS_WIRE_HEADER_BYTES {
+        return Err(MrmsDecodeError::InvalidHeaderBytes {
+            header_bytes: header_bytes_raw,
+        });
+    }
+    let header_bytes = header_bytes_raw as usize;
     // offset 8..12 = source voxel count (unused in decode)
     let voxel_count = read_u32_le(data, 12);
     let layer_count = read_u16_le(data, 16);

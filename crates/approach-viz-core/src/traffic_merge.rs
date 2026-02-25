@@ -313,8 +313,8 @@ impl TrafficState {
 
             let existing_history: Vec<TrafficHistoryPoint> = self
                 .tracks
-                .get(&ac.hex)
-                .map(|t| t.history.clone())
+                .get_mut(&ac.hex)
+                .map(|t| std::mem::take(&mut t.history))
                 .unwrap_or_default();
 
             let mut history = merge_history_samples(&existing_history, bf_points);

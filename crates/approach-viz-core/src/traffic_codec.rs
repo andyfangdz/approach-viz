@@ -9,6 +9,7 @@ use crate::types::{
     TRAFFIC_HISTORY_POINT_BYTES, TRAFFIC_WIRE_HEADER_BYTES, TRAFFIC_WIRE_MAGIC,
     TRAFFIC_WIRE_VERSION,
 };
+use crate::wire_helpers::{read_f32_le, read_i64_le, read_u16_le, read_u32_le};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -20,6 +21,7 @@ pub enum TrafficDecodeError {
     BadMagic([u8; 4]),
     UnsupportedVersion(u16),
     InvalidStringRef { offset: u32, length: u32, table_size: usize },
+    HistoryPointOverflow { point_start: u32, point_count: u32, total_points: u32 },
 }
 
 impl std::fmt::Display for TrafficDecodeError {
@@ -45,44 +47,18 @@ impl std::fmt::Display for TrafficDecodeError {
                      table_size={table_size}"
                 )
             }
+            TrafficDecodeError::HistoryPointOverflow { point_start, point_count, total_points } => {
+                write!(
+                    f,
+                    "Traffic payload history point overflow: point_start={point_start}, \
+                     point_count={point_count}, total_points={total_points}"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for TrafficDecodeError {}
-
-// ---------------------------------------------------------------------------
-// Inline LE read helpers
-// ---------------------------------------------------------------------------
-
-#[inline]
-fn read_u16_le(data: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([data[offset], data[offset + 1]])
-}
-
-#[inline]
-fn read_u32_le(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-}
-
-#[inline]
-fn read_f32_le(data: &[u8], offset: usize) -> f32 {
-    f32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-}
-
-#[inline]
-fn read_i64_le(data: &[u8], offset: usize) -> i64 {
-    i64::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-        data[offset + 4],
-        data[offset + 5],
-        data[offset + 6],
-        data[offset + 7],
-    ])
-}
 
 /// Convert NaN f32 to None; finite values become Some.
 #[inline]
@@ -102,7 +78,7 @@ fn read_string(
     data: &[u8],
     strings_section_start: usize,
     str_offset: u32,
-    str_length: u16,
+    str_length: u32,
 ) -> Result<String, TrafficDecodeError> {
     let table_size = data.len().saturating_sub(strings_section_start);
     let start = str_offset as usize;
@@ -110,7 +86,7 @@ fn read_string(
     if start.checked_add(len).map_or(true, |end| end > table_size) {
         return Err(TrafficDecodeError::InvalidStringRef {
             offset: str_offset,
-            length: str_length as u32,
+            length: str_length,
             table_size,
         });
     }
@@ -124,7 +100,7 @@ fn read_optional_string(
     data: &[u8],
     strings_section_start: usize,
     str_offset: u32,
-    str_length: u16,
+    str_length: u32,
 ) -> Result<Option<String>, TrafficDecodeError> {
     if str_offset == NONE_OFFSET {
         return Ok(None);
@@ -217,7 +193,7 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
         data,
         strings_section_offset,
         source_offset,
-        source_length_u32 as u16,
+        source_length_u32,
     )?;
 
     let error = if _flags & 1 != 0 {
@@ -225,7 +201,7 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
             data,
             strings_section_offset,
             error_offset,
-            error_length_u32 as u16,
+            error_length_u32,
         )?
     } else {
         None
@@ -250,12 +226,12 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
         let track_deg_raw = read_f32_le(data, offset + 32);
         let last_seen_seconds_raw = read_f32_le(data, offset + 36);
 
-        let hex = read_string(data, strings_section_offset, hex_str_offset, hex_str_length)?;
+        let hex = read_string(data, strings_section_offset, hex_str_offset, hex_str_length as u32)?;
         let flight = read_optional_string(
             data,
             strings_section_offset,
             flight_str_offset,
-            flight_str_length,
+            flight_str_length as u32,
         )?;
 
         aircraft.push(DecodedTrafficAircraft {
@@ -282,7 +258,16 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
         let point_start = read_u32_le(data, offset + 8) as usize;
         let point_count = read_u32_le(data, offset + 12) as usize;
 
-        let hex = read_string(data, strings_section_offset, hex_str_offset, hex_str_length)?;
+        let hex = read_string(data, strings_section_offset, hex_str_offset, hex_str_length as u32)?;
+
+        // Bounds check: ensure point range is within the declared total
+        if point_start as u64 + point_count as u64 > history_point_count as u64 {
+            return Err(TrafficDecodeError::HistoryPointOverflow {
+                point_start: point_start as u32,
+                point_count: point_count as u32,
+                total_points: history_point_count as u32,
+            });
+        }
 
         // Parse points for this group
         let mut points = Vec::with_capacity(point_count);
