@@ -1,5 +1,9 @@
 import { applyPhaseDebugValues, extractPhaseDebugHeaderValues } from './nexrad-decode';
-import type { NexradVolumePayload, NexradLayerSummary } from './nexrad-types';
+import type {
+  NexradVolumePayload,
+  NexradLayerSummary,
+  NexradPreparedVolumeData
+} from './nexrad-types';
 import { MRMS_LEVEL_TAGS } from './nexrad-types';
 import type {
   DecodeEchoTopRequestMessage,
@@ -453,7 +457,7 @@ async function handlePollAndPrepare(
   };
 
   let volumePayload: NexradVolumePayload | undefined;
-  let preparedVolume;
+  let preparedVolume: NexradPreparedVolumeData = emptyPreparedVolume();
   let crossSectionData = null;
   if (message.includeVolume) {
     if (!message.volumeUrl) {
@@ -555,8 +559,6 @@ async function handlePollAndPrepare(
     const elapsed = roundMs(performance.now() - decodeAndPrepareStartedAt);
     timings.volumeDecodeMs = elapsed;
     timings.volumePrepareMs = 0; // included in decode timing
-  } else {
-    preparedVolume = emptyPreparedVolume();
   }
 
   const sabResult = writeNexradPrepareSabResult(

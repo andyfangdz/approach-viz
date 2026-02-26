@@ -240,7 +240,6 @@ async function handleMessage(
 
   const startedAt = performance.now();
   await ensureWasm();
-  const state = getTrafficState();
 
   let trackedHexes: string[] = [];
   let returnedHistoryHexes: string[] = [];
@@ -252,6 +251,7 @@ async function handleMessage(
     trafficState?.free();
     trafficState = new WasmTrafficState();
   } else if (message.type === 'ingest') {
+    const state = getTrafficState();
     // Pre-decoded JS objects — use merge_decoded
     state.merge_decoded(
       message.aircraftList,
@@ -261,6 +261,7 @@ async function handleMessage(
       message.hideGroundTargets
     );
   } else if (message.type === 'ingest-binary') {
+    const state = getTrafficState();
     // Decode AVTR binary, then merge via decoded path (avoids double decode)
     const decoded = decodeTrafficViaWasm(message.payloadBuffer);
     const supplementalHistory = message.historyPayloadBuffer
@@ -281,6 +282,7 @@ async function handleMessage(
     ]);
     feedTransport = 'binary';
   } else if (message.type === 'ingest-runtime') {
+    const state = getTrafficState();
     const runtimeData = await fetchRuntimeIngestData(message.primaryUrl, message.followupUrl);
     // Use merge_decoded since fetchRuntimeIngestData returns decoded JS objects
     state.merge_decoded(
@@ -296,12 +298,13 @@ async function handleMessage(
     fetchMs = runtimeData.fetchMs;
     parseMs = runtimeData.parseMs;
   } else if (message.type === 'prune-error') {
-    state.prune_for_error(message.nowMs, message.historyMinutes);
+    getTrafficState().prune_for_error(message.nowMs, message.historyMinutes);
   } else {
     // recompute
-    state.recompute(message.nowMs, message.historyMinutes, message.hideGroundTargets);
+    getTrafficState().recompute(message.nowMs, message.historyMinutes, message.hideGroundTargets);
   }
 
+  const state = getTrafficState();
   const airportData = packAirportData(message.sceneAirports);
   const wasmRenderResult = state.build_render_tracks(
     message.refLat,
