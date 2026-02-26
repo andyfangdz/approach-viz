@@ -26,6 +26,21 @@ pub const TRAFFIC_HISTORY_POINT_BYTES: usize = 20;
 pub const TRAFFIC_FLAG_HAS_ERROR: u32 = 1;
 
 // ---------------------------------------------------------------------------
+// Echo-top wire format (match services/runtime-rs/src/api/wire.rs encoder)
+// ---------------------------------------------------------------------------
+
+pub const ECHO_TOP_WIRE_MAGIC: [u8; 4] = *b"AVET";
+pub const ECHO_TOP_WIRE_VERSION: u16 = 1;
+/// Fixed header: 4 magic + 2 version + 2 header_bytes + 4 cell_count
+/// + 4 source_cell_count + 2 footprint_x_milli + 2 footprint_y_milli
+/// + 8 generated_at_ms + 8 scan_time_ms
+/// + 2 max_top18 + 2 max_top30 + 2 max_top50 + 2 max_top60
+/// + 24 reserved = 64 bytes
+pub const ECHO_TOP_WIRE_HEADER_BYTES: usize = 64;
+/// Per-cell record: f32 x_nm + f32 z_nm + u16 top18 + u16 top30 + u16 top50 + u16 top60 = 16 bytes
+pub const ECHO_TOP_WIRE_CELL_BYTES: usize = 16;
+
+// ---------------------------------------------------------------------------
 // Phase codes
 // ---------------------------------------------------------------------------
 
@@ -114,6 +129,28 @@ pub struct DecodedTrafficPayload {
     pub error: Option<String>,
 }
 
+/// Decoded echo-top from AVET wire format (SoA layout).
+#[derive(Debug, Clone)]
+pub struct DecodedEchoTop {
+    pub cell_count: u32,
+    pub source_cell_count: u32,
+    pub footprint_x_nm: f32,
+    pub footprint_y_nm: f32,
+    pub generated_at_ms: i64,
+    pub scan_time_ms: i64,
+    pub max_top18_feet: u16,
+    pub max_top30_feet: u16,
+    pub max_top50_feet: u16,
+    pub max_top60_feet: u16,
+    // SoA parallel arrays
+    pub x_nm: Vec<f32>,
+    pub z_nm: Vec<f32>,
+    pub top18_feet: Vec<u16>,
+    pub top30_feet: Vec<u16>,
+    pub top50_feet: Vec<u16>,
+    pub top60_feet: Vec<u16>,
+}
+
 /// Phase selection mode (mirrors TS NexradPhaseMode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhaseMode {
@@ -167,8 +204,10 @@ mod tests {
     fn wire_constants_match_runtime() {
         assert_eq!(MRMS_WIRE_MAGIC, *b"AVMR");
         assert_eq!(TRAFFIC_WIRE_MAGIC, *b"AVTR");
+        assert_eq!(ECHO_TOP_WIRE_MAGIC, *b"AVET");
         assert_eq!(MRMS_WIRE_HEADER_BYTES, 64);
         assert_eq!(TRAFFIC_WIRE_HEADER_BYTES, 64);
+        assert_eq!(ECHO_TOP_WIRE_HEADER_BYTES, 64);
     }
 
     #[test]

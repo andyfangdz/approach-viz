@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { decodePayload, decodeEchoTopPayload } from './nexrad-decode';
+import { decodePayload } from './nexrad-decode';
 import { MRMS_BINARY_MAGIC, MRMS_BINARY_VERSION } from './nexrad-types';
 
-test('MRMS Decoder - JSON fallback with new TypedArray structural format', () => {
+test('MRMS Decoder - JSON volume decode with TypedArray structural format', () => {
   const mockOldVoxel = [
     10.5, // xNm
     -5.2, // zNm

@@ -60,6 +60,30 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `reserved:u16`
 - v2 merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
 
+## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v1`)
+
+- Header magic: `AVET`
+- Version: `1`
+- Header size: `64` bytes (all little-endian)
+  - `[0..4]` magic `"AVET"`
+  - `[4..6]` version (u16) = 1
+  - `[6..8]` header_bytes (u16) = 64
+  - `[8..12]` cell_count (u32)
+  - `[12..16]` source_cell_count (u32)
+  - `[16..18]` footprint_x_milli (u16) — NM × 1000
+  - `[18..20]` footprint_y_milli (u16)
+  - `[20..28]` generated_at_ms (i64)
+  - `[28..36]` scan_time_ms (i64)
+  - `[36..38]` max_top18_feet (u16)
+  - `[38..40]` max_top30_feet (u16)
+  - `[40..42]` max_top50_feet (u16)
+  - `[42..44]` max_top60_feet (u16)
+  - `[44..64]` reserved (zero)
+- Cell record size: `16` bytes each
+  - `x_nm:f32`, `z_nm:f32`, `top18_feet:u16`, `top30_feet:u16`, `top50_feet:u16`, `top60_feet:u16`
+- Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v1` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
+- Decoder in `crates/approach-viz-core/src/echo_top_wire_codec.rs`, encoder in `services/runtime-rs/src/api/wire.rs`.
+
 ## Deployment
 
 ### 1. Create SNS/SQS wiring

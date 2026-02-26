@@ -11,10 +11,17 @@ export class WasmTrafficState {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * Build render-ready tracks projected to scene coordinates.
+     * Build render-ready tracks projected to scene coordinates (SoA return).
      *
-     * `airport_data`: flat Float64Array of `[lat, lon, elevation, lat, lon, elevation, ...]` triples.
-     * Returns `{ tracks: Array<RenderTrack>, hash: number }`.
+     * `airport_data`: flat Float64Array of `[lat, lon, elevation, ...]` triples.
+     *
+     * Returns a flat JS object with parallel typed arrays (SoA layout):
+     * `{ trackCount, markerPositions: Float32Array, headingDeg: Float32Array,
+     *    flags: Uint8Array, trailPointsFlat: Float32Array, trailOffsets: Uint32Array,
+     *    trailCounts: Uint32Array, hexes: string[], callsignLabels: (string|null)[],
+     *    hash: number }`
+     *
+     * `flags` bit layout: bit 0 = isCurrentlyPresent, bit 1 = isOnGround.
      */
     build_render_tracks(ref_lat: number, ref_lon: number, airport_data: Float64Array, vertical_scale: number, apply_earth_curvature: boolean, show_departed_trails: boolean): any;
     /**
@@ -65,6 +72,14 @@ export class WasmTrafficState {
  * Returns null if the cross-section cannot be built (empty volume).
  */
 export function build_mrms_cross_section(x_nm: Float32Array, z_nm: Float32Array, bottom_feet: Uint16Array, top_feet: Uint16Array, dbz_tenths: Int16Array, phase: Uint8Array, surface_phase: Uint8Array, footprint_x_span: Uint16Array, footprint_y_span: Uint16Array, footprint_x_nm: number, footprint_y_nm: number, layer_count: number, layer_voxel_counts: Uint32Array, valid_count: number, valid_indices: Int32Array, corrected_bottom_feet: Float32Array, corrected_top_feet: Float32Array, effective_phase_code: Uint8Array, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number): any;
+
+/**
+ * Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
+ *
+ * Returns `{ top18, top30, top50, summary }` where each top is an SoA typed-array
+ * object from `echo_top_cells_to_js` and `summary` contains passthrough metadata.
+ */
+export function decode_and_prepare_echo_top(data: Uint8Array, apply_earth_curvature: boolean, ref_lat: number): any;
 
 /**
  * Decode, filter, curvature-correct, declutter, and optionally build a
@@ -149,6 +164,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmtrafficstate_free: (a: number, b: number) => void;
     readonly build_mrms_cross_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number, c1: number, d1: number, e1: number, f1: number, g1: number, h1: number, i1: number, j1: number, k1: number, l1: number) => [number, number, number];
+    readonly decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly decode_mrms_volume: (a: number, b: number) => [number, number, number];
     readonly decode_traffic: (a: number, b: number) => [number, number, number];

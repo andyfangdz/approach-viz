@@ -80,5 +80,14 @@ pub const WIRE_MAX_SPAN_LOW_DBZ: u16 = 48;
 pub const WIRE_MAX_SPAN_HIGH_DBZ: u16 = 20;
 pub const WIRE_MAX_VERTICAL_SPAN: u16 = 4;
 
+// Echo-top wire format constants
+pub use approach_viz_core::types::{
+    ECHO_TOP_WIRE_MAGIC,
+    ECHO_TOP_WIRE_VERSION,
+    ECHO_TOP_WIRE_HEADER_BYTES,
+    ECHO_TOP_WIRE_CELL_BYTES,
+};
+pub const ECHO_TOP_BINARY_CONTENT_TYPE: &str = "application/vnd.approach-viz.echo-tops.v1";
+
 pub const SNAPSHOT_MAGIC: [u8; 4] = *b"AVSN";
 pub const SNAPSHOT_VERSION: u16 = 1;

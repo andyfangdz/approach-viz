@@ -161,16 +161,6 @@ pub fn decode_and_prepare_mrms(
     set_prop(&vp_obj, "xNm", &js_sys::Float32Array::from(&vol.x_nm[..]).into())?;
     set_prop(&vp_obj, "zNm", &js_sys::Float32Array::from(&vol.z_nm[..]).into())?;
 
-    // Convert bottomFeet/topFeet u16 -> f32
-    let mut bottom_feet_f32 = Vec::with_capacity(voxel_count);
-    let mut top_feet_f32 = Vec::with_capacity(voxel_count);
-    for i in 0..voxel_count {
-        bottom_feet_f32.push(vol.bottom_feet[i] as f32);
-        top_feet_f32.push(vol.top_feet[i] as f32);
-    }
-    set_prop(&vp_obj, "bottomFeet", &js_sys::Float32Array::from(&bottom_feet_f32[..]).into())?;
-    set_prop(&vp_obj, "topFeet", &js_sys::Float32Array::from(&top_feet_f32[..]).into())?;
-
     // Convert dbzTenths i16 -> f32 (whole dBZ)
     let mut dbz_f32 = Vec::with_capacity(voxel_count);
     for i in 0..voxel_count {
@@ -188,9 +178,8 @@ pub fn decode_and_prepare_mrms(
     set_prop(&vp_obj, "footprintXNm", &js_sys::Float32Array::from(&fp_x_nm[..]).into())?;
     set_prop(&vp_obj, "footprintYNm", &js_sys::Float32Array::from(&fp_y_nm[..]).into())?;
 
-    // Phase codes passed through
+    // Phase code passed through (surfacePhaseCode omitted — already in prepared.effectivePhaseCode)
     set_prop(&vp_obj, "phaseCode", &js_sys::Uint8Array::from(&vol.phase[..]).into())?;
-    set_prop(&vp_obj, "surfacePhaseCode", &js_sys::Uint8Array::from(&vol.surface_phase[..]).into())?;
 
     set_prop(&root, "volumePayload", &vp_obj.into())?;
 
@@ -550,6 +539,57 @@ fn echo_top_cells_to_js(
 }
 
 // ---------------------------------------------------------------------------
+// MRMS Echo-Top — binary decode + prepare (single boundary crossing)
+// ---------------------------------------------------------------------------
+
+/// Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
+///
+/// Returns `{ top18, top30, top50, summary }` where each top is an SoA typed-array
+/// object from `echo_top_cells_to_js` and `summary` contains passthrough metadata.
+#[wasm_bindgen]
+pub fn decode_and_prepare_echo_top(
+    data: &[u8],
+    apply_earth_curvature: bool,
+    ref_lat: f64,
+) -> Result<JsValue, JsValue> {
+    let decoded = crate::echo_top_wire_codec::decode_echo_top_binary(data)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    // Convert u16 feet to f32 for prepare_echo_top_surfaces
+    let top18_f32: Vec<f32> = decoded.top18_feet.iter().map(|&v| v as f32).collect();
+    let top30_f32: Vec<f32> = decoded.top30_feet.iter().map(|&v| v as f32).collect();
+    let top50_f32: Vec<f32> = decoded.top50_feet.iter().map(|&v| v as f32).collect();
+
+    let input = crate::mrms_preprocess::EchoTopInput {
+        x_nm: decoded.x_nm,
+        z_nm: decoded.z_nm,
+        top18_feet: top18_f32,
+        top30_feet: top30_f32,
+        top50_feet: top50_f32,
+        footprint_x_nm: decoded.footprint_x_nm,
+        footprint_y_nm: decoded.footprint_y_nm,
+    };
+
+    let surfaces =
+        crate::mrms_preprocess::prepare_echo_top_surfaces(&input, apply_earth_curvature, ref_lat);
+
+    let root = js_sys::Object::new();
+    set_prop(&root, "top18", &echo_top_cells_to_js(&surfaces.top18)?)?;
+    set_prop(&root, "top30", &echo_top_cells_to_js(&surfaces.top30)?)?;
+    set_prop(&root, "top50", &echo_top_cells_to_js(&surfaces.top50)?)?;
+
+    let summary_obj = js_sys::Object::new();
+    set_prop(&summary_obj, "sourceCellCount", &JsValue::from(decoded.source_cell_count))?;
+    set_prop(&summary_obj, "maxTop18Feet", &option_u16_to_js(decoded.max_top18_feet))?;
+    set_prop(&summary_obj, "maxTop30Feet", &option_u16_to_js(decoded.max_top30_feet))?;
+    set_prop(&summary_obj, "maxTop50Feet", &option_u16_to_js(decoded.max_top50_feet))?;
+    set_prop(&summary_obj, "maxTop60Feet", &option_u16_to_js(decoded.max_top60_feet))?;
+    set_prop(&root, "summary", &summary_obj.into())?;
+
+    Ok(root.into())
+}
+
+// ---------------------------------------------------------------------------
 // Traffic Merge State (stateful)
 // ---------------------------------------------------------------------------
 
@@ -847,10 +887,17 @@ impl WasmTrafficState {
         Ok(obj.into())
     }
 
-    /// Build render-ready tracks projected to scene coordinates.
+    /// Build render-ready tracks projected to scene coordinates (SoA return).
     ///
-    /// `airport_data`: flat Float64Array of `[lat, lon, elevation, lat, lon, elevation, ...]` triples.
-    /// Returns `{ tracks: Array<RenderTrack>, hash: number }`.
+    /// `airport_data`: flat Float64Array of `[lat, lon, elevation, ...]` triples.
+    ///
+    /// Returns a flat JS object with parallel typed arrays (SoA layout):
+    /// `{ trackCount, markerPositions: Float32Array, headingDeg: Float32Array,
+    ///    flags: Uint8Array, trailPointsFlat: Float32Array, trailOffsets: Uint32Array,
+    ///    trailCounts: Uint32Array, hexes: string[], callsignLabels: (string|null)[],
+    ///    hash: number }`
+    ///
+    /// `flags` bit layout: bit 0 = isCurrentlyPresent, bit 1 = isOnGround.
     pub fn build_render_tracks(
         &self,
         ref_lat: f64,
@@ -882,42 +929,59 @@ impl WasmTrafficState {
             show_departed_trails,
         );
 
-        let tracks_array = js_sys::Array::new_with_length(render_tracks.len() as u32);
+        let track_count = render_tracks.len();
+        let total_trail_points: usize = render_tracks.iter().map(|rt| rt.trail_points.len()).sum();
+
+        // Build SoA parallel arrays
+        let mut marker_positions = Vec::with_capacity(track_count * 3);
+        let mut heading_deg = Vec::with_capacity(track_count);
+        let mut flags = Vec::with_capacity(track_count);
+        let mut trail_offsets: Vec<u32> = Vec::with_capacity(track_count);
+        let mut trail_counts: Vec<u32> = Vec::with_capacity(track_count);
+        let mut trail_points_flat = Vec::with_capacity(total_trail_points * 3);
+        let hexes = js_sys::Array::new_with_length(track_count as u32);
+        let callsign_labels = js_sys::Array::new_with_length(track_count as u32);
+
+        let mut point_offset: u32 = 0;
         for (i, rt) in render_tracks.iter().enumerate() {
-            let rt_obj = js_sys::Object::new();
-            set_prop(&rt_obj, "hex", &JsValue::from_str(&rt.hex))?;
-            set_prop(&rt_obj, "isCurrentlyPresent", &JsValue::from(rt.is_currently_present))?;
-            set_prop(
-                &rt_obj,
-                "callsignLabel",
-                &match &rt.callsign_label {
+            marker_positions.push(rt.marker_position[0]);
+            marker_positions.push(rt.marker_position[1]);
+            marker_positions.push(rt.marker_position[2]);
+            heading_deg.push(rt.heading_deg as f32);
+            flags.push(
+                (if rt.is_currently_present { 1u8 } else { 0 })
+                    | (if rt.is_on_ground { 2u8 } else { 0 }),
+            );
+            trail_offsets.push(point_offset);
+            trail_counts.push(rt.trail_points.len() as u32);
+
+            for pt in &rt.trail_points {
+                trail_points_flat.push(pt[0]);
+                trail_points_flat.push(pt[1]);
+                trail_points_flat.push(pt[2]);
+            }
+            point_offset += rt.trail_points.len() as u32;
+
+            hexes.set(i as u32, JsValue::from_str(&rt.hex));
+            callsign_labels.set(
+                i as u32,
+                match &rt.callsign_label {
                     Some(s) => JsValue::from_str(s),
                     None => JsValue::NULL,
                 },
-            )?;
-            set_prop(&rt_obj, "isOnGround", &JsValue::from(rt.is_on_ground))?;
-            set_prop(&rt_obj, "headingDeg", &JsValue::from(rt.heading_deg))?;
-            set_prop(
-                &rt_obj,
-                "markerPosition",
-                &js_sys::Float32Array::from(&rt.marker_position[..]).into(),
-            )?;
-
-            // Trail points as flat Float32Array (x, y, z, x, y, z, ...)
-            let mut flat_trail = Vec::with_capacity(rt.trail_points.len() * 3);
-            for pt in &rt.trail_points {
-                flat_trail.push(pt[0]);
-                flat_trail.push(pt[1]);
-                flat_trail.push(pt[2]);
-            }
-            set_prop(&rt_obj, "trailPointsFlat", &js_sys::Float32Array::from(&flat_trail[..]).into())?;
-            set_prop(&rt_obj, "trailPointCount", &JsValue::from(rt.trail_points.len() as u32))?;
-
-            tracks_array.set(i as u32, rt_obj.into());
+            );
         }
 
         let obj = js_sys::Object::new();
-        set_prop(&obj, "tracks", &tracks_array.into())?;
+        set_prop(&obj, "trackCount", &JsValue::from(track_count as u32))?;
+        set_prop(&obj, "markerPositions", &js_sys::Float32Array::from(&marker_positions[..]).into())?;
+        set_prop(&obj, "headingDeg", &js_sys::Float32Array::from(&heading_deg[..]).into())?;
+        set_prop(&obj, "flags", &js_sys::Uint8Array::from(&flags[..]).into())?;
+        set_prop(&obj, "trailPointsFlat", &js_sys::Float32Array::from(&trail_points_flat[..]).into())?;
+        set_prop(&obj, "trailOffsets", &js_sys::Uint32Array::from(&trail_offsets[..]).into())?;
+        set_prop(&obj, "trailCounts", &js_sys::Uint32Array::from(&trail_counts[..]).into())?;
+        set_prop(&obj, "hexes", &hexes.into())?;
+        set_prop(&obj, "callsignLabels", &callsign_labels.into())?;
         set_prop(&obj, "hash", &JsValue::from(hash as f64))?;
 
         Ok(obj.into())
@@ -984,5 +1048,14 @@ fn option_f32_to_js(val: Option<f32>) -> JsValue {
     match val {
         Some(v) => JsValue::from(v),
         None => JsValue::NULL,
+    }
+}
+
+/// Convert u16 to JsValue (0 → null, otherwise f32).
+fn option_u16_to_js(val: u16) -> JsValue {
+    if val == 0 {
+        JsValue::NULL
+    } else {
+        JsValue::from(val as f32)
     }
 }

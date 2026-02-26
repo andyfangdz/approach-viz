@@ -4,10 +4,14 @@ import type {
   SceneAirport,
   TrafficInitSabRequest,
   TrafficWorkerRequestMessage,
-  TrafficWorkerResponseMessage,
-  WasmRenderTrafficTrack
+  TrafficWorkerResponseMessage
 } from './traffic-worker-types';
-import { createTrafficSabViews, type TrafficSabViews, writeTrafficSabResult } from './traffic-sab';
+import {
+  createTrafficSabViews,
+  type TrafficSabViews,
+  type TrafficSoAPayload,
+  writeTrafficSabResultSoA
+} from './traffic-sab';
 import {
   isTrafficBinaryContentType,
   type TrafficBinaryDecodedPayload
@@ -201,34 +205,19 @@ function packAirportData(airports: SceneAirport[]): Float64Array {
   return flat;
 }
 
-/** Convert WASM build_render_tracks output to WasmRenderTrafficTrack[]. */
-function unpackWasmRenderTracks(wasmResult: any): {
-  renderTracks: WasmRenderTrafficTrack[];
-  historyPointCount: number;
-  renderHash: number;
-} {
-  const tracks: any[] = wasmResult.tracks;
-  const renderTracks: WasmRenderTrafficTrack[] = new Array(tracks.length);
-  let historyPointCount = 0;
-  for (let i = 0; i < tracks.length; i++) {
-    const rt = tracks[i];
-    const pointCount = rt.trailPointCount as number;
-    historyPointCount += pointCount;
-    renderTracks[i] = {
-      hex: rt.hex as string,
-      isCurrentlyPresent: rt.isCurrentlyPresent as boolean,
-      callsignLabel: (rt.callsignLabel as string | null) ?? null,
-      isOnGround: rt.isOnGround as boolean,
-      headingDeg: rt.headingDeg as number,
-      markerPosition: rt.markerPosition as Float32Array,
-      trailPointsFlat: rt.trailPointsFlat as Float32Array,
-      trailPointCount: pointCount
-    };
-  }
+/** Unpack WASM SoA build_render_tracks result into TrafficSoAPayload. */
+function unpackWasmSoA(wasmResult: any): TrafficSoAPayload {
   return {
-    renderTracks,
-    historyPointCount,
-    renderHash: wasmResult.hash as number
+    trackCount: wasmResult.trackCount as number,
+    markerPositions: wasmResult.markerPositions as Float32Array,
+    headingDeg: wasmResult.headingDeg as Float32Array,
+    flags: wasmResult.flags as Uint8Array,
+    trailPointsFlat: wasmResult.trailPointsFlat as Float32Array,
+    trailOffsets: wasmResult.trailOffsets as Uint32Array,
+    trailCounts: wasmResult.trailCounts as Uint32Array,
+    hexes: wasmResult.hexes as string[],
+    callsignLabels: wasmResult.callsignLabels as (string | null)[],
+    hash: wasmResult.hash as number
   };
 }
 
@@ -323,14 +312,14 @@ async function handleMessage(
     message.showDepartedTrafficTrails
   ) as any;
 
-  const { renderTracks, historyPointCount, renderHash } = unpackWasmRenderTracks(wasmRenderResult);
+  const soa = unpackWasmSoA(wasmRenderResult);
+  const historyPointCount = Math.floor(soa.trailPointsFlat.length / 3);
   const workerProcessingMs = roundMs(performance.now() - startedAt);
 
-  const sabResult = writeTrafficSabResult(sabViews, message.requestId, {
-    renderTracks,
-    trackCount: state.track_count,
+  const sabResult = writeTrafficSabResultSoA(sabViews, message.requestId, {
+    soa,
+    storeTrackCount: state.track_count,
     historyPointCount,
-    renderHash,
     workerProcessingMs
   });
   if (sabResult.usedSab) {

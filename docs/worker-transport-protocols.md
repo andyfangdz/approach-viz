@@ -126,7 +126,7 @@ Operations:
 - Runtime-ingest metadata: `feedTransport` (`binary`/`json`), `fetchMs`, `parseMs`, `trackedHexes`, `returnedHistoryHexes`
 - Failure: `error`
 
-Worker does not return object payload track arrays anymore; SAB is authoritative.
+Worker does not return object payload track arrays anymore; SAB is authoritative. WASM `build_render_tracks` returns SoA typed arrays (parallel `Float32Array`/`Uint8Array`/`Uint32Array` + string arrays) instead of per-track JS objects, and `writeTrafficSabResultSoA` bulk-copies these into SAB without per-track property extraction.
 
 ### Overflow and Retry
 
@@ -158,7 +158,7 @@ Handshake:
 Request:
 
 - `poll-and-prepare` with `preferSab: true`, `sabChannelId`, runtime URLs (`volumeUrl`, `echoTopUrl`), and preprocess options (`minDbz`, `phaseMode`, `declutterMode`, cross-section settings, curvature settings).
-- Worker fetches MRMS volume/echo-top endpoints directly, decodes payloads, then runs volume/echo-top prepare in the same request.
+- Worker fetches MRMS volume/echo-top endpoints directly, decodes payloads, then runs volume/echo-top prepare in the same request. Echo-top fetch requests AVET binary wire format via `Accept: application/vnd.approach-viz.echo-tops.v1`.
 
 Response:
 

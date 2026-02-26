@@ -3,6 +3,7 @@
 export const memory: WebAssembly.Memory;
 export const __wbg_wasmtrafficstate_free: (a: number, b: number) => void;
 export const build_mrms_cross_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number, c1: number, d1: number, e1: number, f1: number, g1: number, h1: number, i1: number, j1: number, k1: number, l1: number) => [number, number, number];
+export const decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
 export const decode_mrms_volume: (a: number, b: number) => [number, number, number];
 export const decode_traffic: (a: number, b: number) => [number, number, number];

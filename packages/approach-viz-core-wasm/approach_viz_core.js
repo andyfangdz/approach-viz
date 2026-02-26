@@ -18,10 +18,17 @@ export class WasmTrafficState {
         wasm.__wbg_wasmtrafficstate_free(ptr, 0);
     }
     /**
-     * Build render-ready tracks projected to scene coordinates.
+     * Build render-ready tracks projected to scene coordinates (SoA return).
      *
-     * `airport_data`: flat Float64Array of `[lat, lon, elevation, lat, lon, elevation, ...]` triples.
-     * Returns `{ tracks: Array<RenderTrack>, hash: number }`.
+     * `airport_data`: flat Float64Array of `[lat, lon, elevation, ...]` triples.
+     *
+     * Returns a flat JS object with parallel typed arrays (SoA layout):
+     * `{ trackCount, markerPositions: Float32Array, headingDeg: Float32Array,
+     *    flags: Uint8Array, trailPointsFlat: Float32Array, trailOffsets: Uint32Array,
+     *    trailCounts: Uint32Array, hexes: string[], callsignLabels: (string|null)[],
+     *    hash: number }`
+     *
+     * `flags` bit layout: bit 0 = isCurrentlyPresent, bit 1 = isOnGround.
      * @param {number} ref_lat
      * @param {number} ref_lon
      * @param {Float64Array} airport_data
@@ -193,6 +200,26 @@ export function build_mrms_cross_section(x_nm, z_nm, bottom_feet, top_feet, dbz_
     const ptr13 = passArray8ToWasm0(effective_phase_code, wasm.__wbindgen_malloc);
     const len13 = WASM_VECTOR_LEN;
     const ret = wasm.build_mrms_cross_section(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, ptr8, len8, footprint_x_nm, footprint_y_nm, layer_count, ptr9, len9, valid_count, ptr10, len10, ptr11, len11, ptr12, len12, ptr13, len13, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
+ *
+ * Returns `{ top18, top30, top50, summary }` where each top is an SoA typed-array
+ * object from `echo_top_cells_to_js` and `summary` contains passthrough metadata.
+ * @param {Uint8Array} data
+ * @param {boolean} apply_earth_curvature
+ * @param {number} ref_lat
+ * @returns {any}
+ */
+export function decode_and_prepare_echo_top(data, apply_earth_curvature, ref_lat) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_and_prepare_echo_top(ptr0, len0, apply_earth_curvature, ref_lat);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }

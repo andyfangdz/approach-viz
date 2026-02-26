@@ -4,8 +4,10 @@ use std::cmp::min;
 
 use super::EchoTopCellRecord;
 use crate::constants::{
-    WIRE_DBZ_QUANT_STEP_TENTHS, WIRE_HEADER_BYTES, WIRE_MAGIC, WIRE_MAX_SPAN_HIGH_DBZ,
-    WIRE_MAX_SPAN_LOW_DBZ, WIRE_MAX_VERTICAL_SPAN, WIRE_RECORD_BYTES, WIRE_VERSION,
+    ECHO_TOP_WIRE_CELL_BYTES, ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
+    ECHO_TOP_WIRE_VERSION, WIRE_DBZ_QUANT_STEP_TENTHS, WIRE_HEADER_BYTES, WIRE_MAGIC,
+    WIRE_MAX_SPAN_HIGH_DBZ, WIRE_MAX_SPAN_LOW_DBZ, WIRE_MAX_VERTICAL_SPAN, WIRE_RECORD_BYTES,
+    WIRE_VERSION,
 };
 use crate::types::ScanSnapshot;
 use crate::utils::{
@@ -316,6 +318,49 @@ pub(super) fn build_echo_top_cells(
         });
     }
     cells
+}
+
+/// Build an AVET binary payload for echo-top cells.
+///
+/// Wire format matches `echo_top_wire_codec::decode_echo_top_binary` in approach-viz-core.
+pub(super) fn build_echo_top_wire(
+    scan: &ScanSnapshot,
+    window: &QueryWindow,
+    cells: &[EchoTopCellRecord],
+) -> Vec<u8> {
+    let cell_count = cells.len() as u32;
+    let body_size =
+        ECHO_TOP_WIRE_HEADER_BYTES + cells.len() * ECHO_TOP_WIRE_CELL_BYTES;
+    let mut body = vec![0_u8; ECHO_TOP_WIRE_HEADER_BYTES];
+    body.reserve(body_size - ECHO_TOP_WIRE_HEADER_BYTES);
+
+    // Header
+    body[0..4].copy_from_slice(&ECHO_TOP_WIRE_MAGIC);
+    body[4..6].copy_from_slice(&ECHO_TOP_WIRE_VERSION.to_le_bytes());
+    body[6..8].copy_from_slice(&(ECHO_TOP_WIRE_HEADER_BYTES as u16).to_le_bytes());
+    body[8..12].copy_from_slice(&cell_count.to_le_bytes());
+    body[12..16].copy_from_slice(&(scan.echo_tops.len() as u32).to_le_bytes());
+    body[16..18].copy_from_slice(&window.footprint_x_milli.to_le_bytes());
+    body[18..20].copy_from_slice(&window.footprint_y_milli.to_le_bytes());
+    body[20..28].copy_from_slice(&scan.generated_at_ms.to_le_bytes());
+    body[28..36].copy_from_slice(&scan.scan_time_ms.to_le_bytes());
+    body[36..38].copy_from_slice(&scan.echo_top_debug.max_top18_feet.unwrap_or(0).to_le_bytes());
+    body[38..40].copy_from_slice(&scan.echo_top_debug.max_top30_feet.unwrap_or(0).to_le_bytes());
+    body[40..42].copy_from_slice(&scan.echo_top_debug.max_top50_feet.unwrap_or(0).to_le_bytes());
+    body[42..44].copy_from_slice(&scan.echo_top_debug.max_top60_feet.unwrap_or(0).to_le_bytes());
+    // bytes 44..64 are reserved (already zero)
+
+    // Cell records
+    for cell in cells {
+        body.extend_from_slice(&cell.x_nm.to_le_bytes());
+        body.extend_from_slice(&cell.z_nm.to_le_bytes());
+        body.extend_from_slice(&cell.top18_feet.to_le_bytes());
+        body.extend_from_slice(&cell.top30_feet.to_le_bytes());
+        body.extend_from_slice(&cell.top50_feet.to_le_bytes());
+        body.extend_from_slice(&cell.top60_feet.to_le_bytes());
+    }
+
+    body
 }
 
 fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {

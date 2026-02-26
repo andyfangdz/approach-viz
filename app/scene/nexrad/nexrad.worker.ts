@@ -1,14 +1,5 @@
-import {
-  applyPhaseDebugValues,
-  decodeEchoTopPayload,
-  extractPhaseDebugHeaderValues
-} from './nexrad-decode';
-import {
-  buildCrossSectionData,
-  prepareEchoTopSurfaces,
-  prepareVolumeData
-} from './nexrad-preprocess';
-import type { EchoTopPayload, NexradVolumePayload, NexradLayerSummary } from './nexrad-types';
+import { applyPhaseDebugValues, extractPhaseDebugHeaderValues } from './nexrad-decode';
+import type { NexradVolumePayload, NexradLayerSummary } from './nexrad-types';
 import { MRMS_LEVEL_TAGS } from './nexrad-types';
 import type {
   DecodeEchoTopRequestMessage,
@@ -31,8 +22,9 @@ import { ensureWasm } from '../shared/wasm-loader';
 import {
   decode_mrms_volume,
   decode_and_prepare_mrms,
-  prepare_echo_top_surfaces as wasm_prepare_echo_top_surfaces
+  decode_and_prepare_echo_top
 } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+
 import type { NexradPhaseMode, NexradDeclutterMode } from '../../app-client/types';
 
 /**
@@ -121,6 +113,10 @@ type WorkerEndpoint = {
 };
 const prepareSabViewsByChannel = new Map<number, NexradPrepareSabViews>();
 
+/** Cached raw fetch buffers for re-prepare via WASM (avoids re-fetching). */
+let cachedVolumeRawBuffer: ArrayBuffer | null = null;
+let cachedEchoTopRawBuffer: ArrayBuffer | null = null;
+
 function errorResponseForRequest(
   message: Exclude<NexradWorkerRequestMessage, NexradInitSabRequestMessage>,
   error: unknown
@@ -161,28 +157,18 @@ function errorResponseForRequest(
 }
 
 function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
-  return [
+  const t: Transferable[] = [
     payload.xNm.buffer,
     payload.zNm.buffer,
-    payload.bottomFeet.buffer,
-    payload.topFeet.buffer,
     payload.dbz.buffer,
     payload.footprintXNm.buffer,
     payload.footprintYNm.buffer,
-    payload.phaseCode.buffer,
-    payload.surfacePhaseCode.buffer
+    payload.phaseCode.buffer
   ];
-}
-
-function echoTopTransferables(payload: EchoTopPayload): Transferable[] {
-  const transferables: Transferable[] = [];
-  if (payload.xNm) transferables.push(payload.xNm.buffer);
-  if (payload.zNm) transferables.push(payload.zNm.buffer);
-  if (payload.top18Feet) transferables.push(payload.top18Feet.buffer);
-  if (payload.top30Feet) transferables.push(payload.top30Feet.buffer);
-  if (payload.top50Feet) transferables.push(payload.top50Feet.buffer);
-  if (payload.top60Feet) transferables.push(payload.top60Feet.buffer);
-  return transferables;
+  if (payload.bottomFeet.byteLength > 0) t.push(payload.bottomFeet.buffer);
+  if (payload.topFeet.byteLength > 0) t.push(payload.topFeet.buffer);
+  if (payload.surfacePhaseCode.byteLength > 0) t.push(payload.surfacePhaseCode.buffer);
+  return t;
 }
 
 function roundMs(value: number): number {
@@ -213,10 +199,19 @@ function normalizeFetchUrl(url: string): string {
 }
 
 async function fetchArrayBuffer(
-  url: string
-): Promise<{ buffer: ArrayBuffer; headers: Headers; fetchMs: number }> {
+  url: string,
+  accept?: string
+): Promise<{
+  buffer: ArrayBuffer;
+  headers: Headers;
+  fetchMs: number;
+}> {
   const fetchStartedAt = performance.now();
-  const response = await fetch(normalizeFetchUrl(url), { cache: 'no-store' });
+  const fetchInit: RequestInit = { cache: 'no-store' };
+  if (accept) {
+    fetchInit.headers = { accept };
+  }
+  const response = await fetch(normalizeFetchUrl(url), fetchInit);
   const fetchMs = roundMs(performance.now() - fetchStartedAt);
   if (!response.ok) {
     throw new Error(`MRMS request failed (${response.status})`);
@@ -287,17 +282,24 @@ async function handleDecodeVolume(
   }
 }
 
-function handleDecodeEchoTop(endpoint: WorkerEndpoint, message: DecodeEchoTopRequestMessage): void {
+async function handleDecodeEchoTop(
+  endpoint: WorkerEndpoint,
+  message: DecodeEchoTopRequestMessage
+): Promise<void> {
   try {
-    const payload = decodeEchoTopPayload(message.buffer);
-    endpoint.postMessage(
-      {
-        type: 'decode-echo-top-result',
-        requestId: message.requestId,
-        payload
-      },
-      echoTopTransferables(payload)
-    );
+    await ensureWasm();
+    // Decode + prepare in single WASM call; returns { top18, top30, top50, summary }
+    const result = decode_and_prepare_echo_top(
+      new Uint8Array(message.buffer),
+      false, // no curvature for standalone decode
+      0
+    ) as any;
+    // Return the raw decoded payload shape (summary only — prepared surfaces not needed here)
+    endpoint.postMessage({
+      type: 'decode-echo-top-result',
+      requestId: message.requestId,
+      payload: result.summary
+    });
   } catch (error) {
     endpoint.postMessage({
       type: 'decode-echo-top-result',
@@ -307,26 +309,19 @@ function handleDecodeEchoTop(endpoint: WorkerEndpoint, message: DecodeEchoTopReq
   }
 }
 
-function handlePrepareVolume(endpoint: WorkerEndpoint, message: PrepareVolumeRequestMessage): void {
+async function handlePrepareVolume(
+  endpoint: WorkerEndpoint,
+  message: PrepareVolumeRequestMessage
+): Promise<void> {
   try {
-    const payload = prepareVolumeData({
-      payload: message.payload,
-      minDbz: message.minDbz,
-      phaseMode: message.phaseMode,
-      declutterMode: message.declutterMode,
-      applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-      refLat: message.refLat
-    });
-    const crossSectionData = message.includeCrossSection
-      ? buildCrossSectionData({
-          payload: message.payload,
-          volumeData: payload,
-          sliceAxis: message.sliceAxis,
-          slicePerpAxis: message.slicePerpAxis,
-          normalizedCrossSectionRange: message.normalizedCrossSectionRange,
-          crossSectionHalfWidthNm: message.crossSectionHalfWidthNm
-        })
-      : null;
+    if (!cachedVolumeRawBuffer) {
+      endpoint.postMessage({
+        type: 'prepare-volume-result',
+        requestId: message.requestId,
+        error: 'No cached volume data available for re-prepare.'
+      });
+      return;
+    }
     const prepareSabViews = prepareSabViewsByChannel.get(message.sabChannelId) ?? null;
     if (!prepareSabViews) {
       endpoint.postMessage({
@@ -336,10 +331,41 @@ function handlePrepareVolume(endpoint: WorkerEndpoint, message: PrepareVolumeReq
       });
       return;
     }
+    await ensureWasm();
+    const result = decode_and_prepare_mrms(
+      new Uint8Array(cachedVolumeRawBuffer),
+      Math.round(message.minDbz * 10),
+      encodePhaseMode(message.phaseMode),
+      encodeDeclutterMode(message.declutterMode),
+      message.applyEarthCurvatureCompensation,
+      message.refLat,
+      message.includeCrossSection,
+      message.sliceAxis.x,
+      message.sliceAxis.z,
+      message.slicePerpAxis.x,
+      message.slicePerpAxis.z,
+      message.normalizedCrossSectionRange,
+      message.crossSectionHalfWidthNm
+    ) as any;
+
+    const wasmPrepared = result.prepared;
+    const preparedVolume = {
+      validCount: wasmPrepared.validCount as number,
+      validIndices: wasmPrepared.validIndices as Int32Array,
+      yBase: wasmPrepared.yBase as Float32Array,
+      heightBase: wasmPrepared.heightBase as Float32Array,
+      correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
+      correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
+      effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
+      declutterIndices: wasmPrepared.declutterIndices as Int32Array,
+      declutterCount: wasmPrepared.declutterCount as number
+    };
+    const crossSectionData = result.crossSection ?? null;
+
     const sabResult = writeNexradPrepareSabResult(
       prepareSabViews,
       message.requestId,
-      payload,
+      preparedVolume,
       crossSectionData
     );
     if (sabResult.usedSab) {
@@ -368,19 +394,31 @@ function handlePrepareVolume(endpoint: WorkerEndpoint, message: PrepareVolumeReq
   }
 }
 
-function handlePrepareEchoTop(
+async function handlePrepareEchoTop(
   endpoint: WorkerEndpoint,
   message: PrepareEchoTopRequestMessage
-): void {
+): Promise<void> {
   try {
+    if (!cachedEchoTopRawBuffer) {
+      endpoint.postMessage({
+        type: 'prepare-echo-top-result',
+        requestId: message.requestId,
+        error: 'No cached echo-top data available for re-prepare.'
+      });
+      return;
+    }
+    await ensureWasm();
+    const result = decode_and_prepare_echo_top(
+      new Uint8Array(cachedEchoTopRawBuffer),
+      message.applyEarthCurvatureCompensation,
+      message.refLat
+    ) as any;
     endpoint.postMessage({
       type: 'prepare-echo-top-result',
       requestId: message.requestId,
-      ...prepareEchoTopSurfaces({
-        payload: message.payload,
-        applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-        refLat: message.refLat
-      })
+      echoTop18Cells: unpackEchoTopSoA(result.top18),
+      echoTop30Cells: unpackEchoTopSoA(result.top30),
+      echoTop50Cells: unpackEchoTopSoA(result.top50)
     });
   } catch (error) {
     endpoint.postMessage({
@@ -427,6 +465,7 @@ async function handlePollAndPrepare(
       return;
     }
     const volumeFetch = await fetchArrayBuffer(message.volumeUrl);
+    cachedVolumeRawBuffer = volumeFetch.buffer.slice(0); // cache a copy for re-prepare
     timings.volumeFetchMs = volumeFetch.fetchMs;
     const decodeAndPrepareStartedAt = performance.now();
     await ensureWasm();
@@ -502,13 +541,13 @@ async function handlePollAndPrepare(
         voxelCount: vp.voxelCount as number,
         xNm: vp.xNm as Float32Array,
         zNm: vp.zNm as Float32Array,
-        bottomFeet: vp.bottomFeet as Float32Array,
-        topFeet: vp.topFeet as Float32Array,
+        bottomFeet: new Float32Array(0),
+        topFeet: new Float32Array(0),
         dbz: vp.dbz as Float32Array,
         footprintXNm: vp.footprintXNm as Float32Array,
         footprintYNm: vp.footprintYNm as Float32Array,
         phaseCode: vp.phaseCode as Uint8Array,
-        surfacePhaseCode: vp.surfacePhaseCode as Uint8Array
+        surfacePhaseCode: new Uint8Array(0)
       },
       extractPhaseDebugHeaderValues(volumeFetch.headers)
     );
@@ -546,66 +585,40 @@ async function handlePollAndPrepare(
 
   if (message.includeEchoTop && message.echoTopUrl) {
     try {
-      const echoTopFetch = await fetchArrayBuffer(message.echoTopUrl);
+      const echoTopFetch = await fetchArrayBuffer(
+        message.echoTopUrl,
+        'application/vnd.approach-viz.echo-tops.v1'
+      );
+      cachedEchoTopRawBuffer = echoTopFetch.buffer.slice(0); // cache for re-prepare
       timings.echoTopFetchMs = echoTopFetch.fetchMs;
       const echoDecodeStartedAt = performance.now();
-      const echoTopPayload = decodeEchoTopPayload(echoTopFetch.buffer);
-      timings.echoTopDecodeMs = roundMs(performance.now() - echoDecodeStartedAt);
-      const echoTopPrepareStartedAt = performance.now();
 
-      // Use WASM echo-top prepare when typed arrays are available
-      if (
-        echoTopPayload.xNm &&
-        echoTopPayload.zNm &&
-        echoTopPayload.top18Feet &&
-        echoTopPayload.top30Feet &&
-        echoTopPayload.top50Feet &&
-        echoTopPayload.footprintXNm != null &&
-        echoTopPayload.footprintYNm != null
-      ) {
-        const wasmEchoTop = wasm_prepare_echo_top_surfaces(
-          echoTopPayload.xNm,
-          echoTopPayload.zNm,
-          echoTopPayload.top18Feet,
-          echoTopPayload.top30Feet,
-          echoTopPayload.top50Feet,
-          echoTopPayload.footprintXNm,
-          echoTopPayload.footprintYNm,
-          message.applyEarthCurvatureCompensation,
-          message.refLat
-        ) as any;
-        echoTop18Cells = unpackEchoTopSoA(wasmEchoTop.top18);
-        echoTop30Cells = unpackEchoTopSoA(wasmEchoTop.top30);
-        echoTop50Cells = unpackEchoTopSoA(wasmEchoTop.top50);
-      } else {
-        // Fallback to TS for payloads without typed arrays
-        const preparedEchoTop = prepareEchoTopSurfaces({
-          payload: echoTopPayload,
-          applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-          refLat: message.refLat
-        });
-        echoTop18Cells = preparedEchoTop.echoTop18Cells;
-        echoTop30Cells = preparedEchoTop.echoTop30Cells;
-        echoTop50Cells = preparedEchoTop.echoTop50Cells;
-      }
-      timings.echoTopPrepareMs = roundMs(performance.now() - echoTopPrepareStartedAt);
+      // Single WASM call: AVET binary decode + prepare surfaces
+      const result = decode_and_prepare_echo_top(
+        new Uint8Array(echoTopFetch.buffer),
+        message.applyEarthCurvatureCompensation,
+        message.refLat
+      ) as any;
+      echoTop18Cells = unpackEchoTopSoA(result.top18);
+      echoTop30Cells = unpackEchoTopSoA(result.top30);
+      echoTop50Cells = unpackEchoTopSoA(result.top50);
+
+      const summary = result.summary;
       echoTopSummary = {
-        sourceCellCount:
-          echoTopPayload.sourceCellCount ??
-          echoTopPayload.cellCount ??
-          echoTopPayload.xNm?.length ??
-          echoTopPayload.cells?.length ??
-          0,
-        maxTop18Feet: echoTopPayload.maxTop18Feet ?? null,
-        maxTop30Feet: echoTopPayload.maxTop30Feet ?? null,
-        maxTop50Feet: echoTopPayload.maxTop50Feet ?? null,
-        maxTop60Feet: echoTopPayload.maxTop60Feet ?? null,
-        top18Timestamp: echoTopPayload.top18Timestamp ?? null,
-        top30Timestamp: echoTopPayload.top30Timestamp ?? null,
-        top50Timestamp: echoTopPayload.top50Timestamp ?? null,
-        top60Timestamp: echoTopPayload.top60Timestamp ?? null,
-        error: echoTopPayload.error ?? null
+        sourceCellCount: summary.sourceCellCount ?? 0,
+        maxTop18Feet: summary.maxTop18Feet ?? null,
+        maxTop30Feet: summary.maxTop30Feet ?? null,
+        maxTop50Feet: summary.maxTop50Feet ?? null,
+        maxTop60Feet: summary.maxTop60Feet ?? null,
+        top18Timestamp: null,
+        top30Timestamp: null,
+        top50Timestamp: null,
+        top60Timestamp: null,
+        error: null
       };
+
+      timings.echoTopDecodeMs = roundMs(performance.now() - echoDecodeStartedAt);
+      timings.echoTopPrepareMs = 0; // included in decode timing
     } catch (error) {
       echoTopSummary = {
         sourceCellCount: 0,
@@ -655,15 +668,15 @@ async function handleMessage(
     return;
   }
   if (message.type === 'decode-echo-top') {
-    handleDecodeEchoTop(endpoint, message);
+    await handleDecodeEchoTop(endpoint, message);
     return;
   }
   if (message.type === 'prepare-volume') {
-    handlePrepareVolume(endpoint, message);
+    await handlePrepareVolume(endpoint, message);
     return;
   }
   if (message.type === 'prepare-echo-top') {
-    handlePrepareEchoTop(endpoint, message);
+    await handlePrepareEchoTop(endpoint, message);
     return;
   }
   await handlePollAndPrepare(endpoint, message);

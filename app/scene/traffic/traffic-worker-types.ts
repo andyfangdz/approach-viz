@@ -23,28 +23,6 @@ export interface LiveTrafficHistoryPoint {
   timestampMs: number;
 }
 
-export interface RenderTrafficTrack {
-  hex: string;
-  isCurrentlyPresent: boolean;
-  callsignLabel: string | null;
-  isOnGround: boolean;
-  headingDeg: number;
-  markerPosition: [number, number, number];
-  trailPoints: [number, number, number][];
-}
-
-/** Render track from WASM build_render_tracks — uses flat trail arrays. */
-export interface WasmRenderTrafficTrack {
-  hex: string;
-  isCurrentlyPresent: boolean;
-  callsignLabel: string | null;
-  isOnGround: boolean;
-  headingDeg: number;
-  markerPosition: Float32Array;
-  trailPointsFlat: Float32Array;
-  trailPointCount: number;
-}
-
 export interface TrafficSabBuffers {
   control: SharedArrayBuffer;
   markerPositions: SharedArrayBuffer;
