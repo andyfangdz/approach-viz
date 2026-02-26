@@ -211,9 +211,7 @@ class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMess
     const requestId = this.allocateRequestId();
     const sabChannelId = this.claimPrepareSabChannel(requestId);
     if (sabChannelId === null) {
-      return Promise.reject(
-        new Error('No MRMS SAB prepare channel was available for re-prepare.')
-      );
+      return Promise.reject(new Error('No MRMS SAB prepare channel was available for re-prepare.'));
     }
     this.overflowState.set(requestId, {
       sabChannelId,

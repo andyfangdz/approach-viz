@@ -41,7 +41,10 @@ function errorResponseForRequest(
   error: unknown
 ): NexradWorkerResponseMessage {
   const errorMessage = error instanceof Error ? error.message : 'MRMS worker request failed.';
-  const responseType = message.type === 're-prepare' ? 're-prepare-result' as const : 'poll-and-prepare-result' as const;
+  const responseType =
+    message.type === 're-prepare'
+      ? ('re-prepare-result' as const)
+      : ('poll-and-prepare-result' as const);
   return {
     type: responseType,
     requestId: message.requestId,

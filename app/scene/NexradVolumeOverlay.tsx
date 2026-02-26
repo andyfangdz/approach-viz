@@ -593,13 +593,7 @@ export function NexradVolumeOverlay({
       pollNowRef.current = null;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [
-    enabled,
-    refLat,
-    refLon,
-    maxRangeNm,
-    patchTimings
-  ]);
+  }, [enabled, refLat, refLon, maxRangeNm, patchTimings]);
 
   // Re-prepare effect: when prepare-only params change (declutter, phase, curvature,
   // cross-section geometry) and we already have data, reprocess the cached binary in
