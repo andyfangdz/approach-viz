@@ -187,103 +187,6 @@ pub fn decode_and_prepare_mrms(
 }
 
 // ---------------------------------------------------------------------------
-// Traffic Decode
-// ---------------------------------------------------------------------------
-
-/// Decode an AVTR binary payload into a JS object.
-///
-/// Uses serde-wasm-bindgen for the complex nested structure (aircraft array,
-/// history groups with nested point arrays).
-#[wasm_bindgen]
-pub fn decode_traffic(data: &[u8]) -> Result<JsValue, JsValue> {
-    let payload = crate::traffic_codec::decode_traffic_binary(data)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    // Build JS object manually to match expected TS shape.
-    let obj = js_sys::Object::new();
-
-    set_prop(&obj, "fetchedAtMs", &JsValue::from(payload.fetched_at_ms as f64))?;
-    set_prop(
-        &obj,
-        "source",
-        &match &payload.source {
-            Some(s) => JsValue::from_str(s),
-            None => JsValue::NULL,
-        },
-    )?;
-    set_prop(
-        &obj,
-        "error",
-        &match &payload.error {
-            Some(s) => JsValue::from_str(s),
-            None => JsValue::NULL,
-        },
-    )?;
-
-    // Aircraft array
-    let ac_array = js_sys::Array::new_with_length(payload.aircraft.len() as u32);
-    for (i, ac) in payload.aircraft.iter().enumerate() {
-        let ac_obj = js_sys::Object::new();
-        set_prop(&ac_obj, "hex", &JsValue::from_str(&ac.hex))?;
-        set_prop(
-            &ac_obj,
-            "flight",
-            &match &ac.flight {
-                Some(f) => JsValue::from_str(f),
-                None => JsValue::NULL,
-            },
-        )?;
-        set_prop(&ac_obj, "lat", &JsValue::from(ac.lat))?;
-        set_prop(&ac_obj, "lon", &JsValue::from(ac.lon))?;
-        set_prop(
-            &ac_obj,
-            "altitudeFeet",
-            &option_f32_to_js(ac.altitude_feet),
-        )?;
-        set_prop(
-            &ac_obj,
-            "groundSpeedKt",
-            &option_f32_to_js(ac.ground_speed_kt),
-        )?;
-        set_prop(
-            &ac_obj,
-            "trackDeg",
-            &option_f32_to_js(ac.track_deg),
-        )?;
-        set_prop(
-            &ac_obj,
-            "lastSeenSeconds",
-            &option_f32_to_js(ac.last_seen_seconds),
-        )?;
-        set_prop(&ac_obj, "isOnGround", &JsValue::from(ac.is_on_ground))?;
-        ac_array.set(i as u32, ac_obj.into());
-    }
-    set_prop(&obj, "aircraft", &ac_array.into())?;
-
-    // History groups
-    let hg_array = js_sys::Array::new_with_length(payload.history_groups.len() as u32);
-    for (i, group) in payload.history_groups.iter().enumerate() {
-        let group_obj = js_sys::Object::new();
-        set_prop(&group_obj, "hex", &JsValue::from_str(&group.hex))?;
-
-        let points_array = js_sys::Array::new_with_length(group.points.len() as u32);
-        for (j, pt) in group.points.iter().enumerate() {
-            let pt_obj = js_sys::Object::new();
-            set_prop(&pt_obj, "lat", &JsValue::from(pt.lat))?;
-            set_prop(&pt_obj, "lon", &JsValue::from(pt.lon))?;
-            set_prop(&pt_obj, "altitudeFeet", &JsValue::from(pt.altitude_feet))?;
-            set_prop(&pt_obj, "timestampMs", &JsValue::from(pt.timestamp_ms as f64))?;
-            points_array.set(j as u32, pt_obj.into());
-        }
-        set_prop(&group_obj, "points", &points_array.into())?;
-        hg_array.set(i as u32, group_obj.into());
-    }
-    set_prop(&obj, "historyGroups", &hg_array.into())?;
-
-    Ok(obj.into())
-}
-
-// ---------------------------------------------------------------------------
 // MRMS Preprocess — prepare_volume
 // ---------------------------------------------------------------------------
 
@@ -626,7 +529,7 @@ impl WasmTrafficState {
     /// `history_minutes`: how many minutes of history to keep.
     /// `hide_ground`: whether to exclude ground aircraft.
     ///
-    /// Returns a JS object with `{ trackCount: number, fetchedAtMs: number }`.
+    /// Returns a JS object with `{ trackCount, fetchedAtMs, source, error, trackedHexes, returnedHistoryHexes }`.
     pub fn merge(
         &mut self,
         data: &[u8],
@@ -707,6 +610,31 @@ impl WasmTrafficState {
             }
         }
 
+        // Collect tracked hexes (unique aircraft hex codes from primary payload)
+        let mut tracked_set = std::collections::HashSet::new();
+        let tracked_hexes = js_sys::Array::new();
+        for ac in &payload.aircraft {
+            if tracked_set.insert(ac.hex.as_str()) {
+                tracked_hexes.push(&JsValue::from_str(&ac.hex));
+            }
+        }
+
+        // Collect returned history hexes (unique hex codes from history groups in both payloads)
+        let mut history_set = std::collections::HashSet::new();
+        let returned_history_hexes = js_sys::Array::new();
+        for group in &payload.history_groups {
+            if history_set.insert(group.hex.clone()) {
+                returned_history_hexes.push(&JsValue::from_str(&group.hex));
+            }
+        }
+        if let Some(bp) = &backfill_payload {
+            for group in &bp.history_groups {
+                if history_set.insert(group.hex.clone()) {
+                    returned_history_hexes.push(&JsValue::from_str(&group.hex));
+                }
+            }
+        }
+
         self.inner
             .merge(&merge_aircraft, now_ms_i64, history_minutes, hide_ground, &backfill_history);
 
@@ -729,6 +657,8 @@ impl WasmTrafficState {
                 None => JsValue::NULL,
             },
         )?;
+        set_prop(&obj, "trackedHexes", &tracked_hexes)?;
+        set_prop(&obj, "returnedHistoryHexes", &returned_history_hexes)?;
 
         Ok(obj.into())
     }
@@ -1049,13 +979,6 @@ fn set_prop(obj: &js_sys::Object, key: &str, value: &JsValue) -> Result<(), JsVa
     Ok(())
 }
 
-/// Convert Option<f32> to JsValue (null if None).
-fn option_f32_to_js(val: Option<f32>) -> JsValue {
-    match val {
-        Some(v) => JsValue::from(v),
-        None => JsValue::NULL,
-    }
-}
 
 /// Convert u16 to JsValue (0 → null, otherwise f32).
 fn option_u16_to_js(val: u16) -> JsValue {
