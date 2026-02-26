@@ -55,7 +55,7 @@ export class WasmTrafficState {
      * `history_minutes`: how many minutes of history to keep.
      * `hide_ground`: whether to exclude ground aircraft.
      *
-     * Returns a JS object with `{ trackCount: number, fetchedAtMs: number }`.
+     * Returns a JS object with `{ trackCount, fetchedAtMs, source, error, trackedHexes, returnedHistoryHexes }`.
      * @param {Uint8Array} data
      * @param {number} now_ms
      * @param {number} history_minutes
@@ -281,24 +281,6 @@ export function decode_mrms_volume(data) {
 }
 
 /**
- * Decode an AVTR binary payload into a JS object.
- *
- * Uses serde-wasm-bindgen for the complex nested structure (aircraft array,
- * history groups with nested point arrays).
- * @param {Uint8Array} data
- * @returns {any}
- */
-export function decode_traffic(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_traffic(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
  * Build echo-top surfaces from typed echo-top input arrays.
  * @param {Float32Array} x_nm
  * @param {Float32Array} z_nm
@@ -508,6 +490,10 @@ function __wbg_get_imports() {
             const ret = arg0.length;
             return ret;
         },
+        __wbg_new_cbee8c0d5c479eac: function() {
+            const ret = new Array();
+            return ret;
+        },
         __wbg_new_ed69e637b553a997: function() {
             const ret = new Object();
             return ret;
@@ -542,6 +528,10 @@ function __wbg_get_imports() {
         },
         __wbg_new_with_length_51597651c65b2f13: function(arg0) {
             const ret = new Array(arg0 >>> 0);
+            return ret;
+        },
+        __wbg_push_a6f9488ffd3fae3b: function(arg0, arg1) {
+            const ret = arg0.push(arg1);
             return ret;
         },
         __wbg_set_4c81cfb5dc3a333c: function(arg0, arg1, arg2) {

@@ -1,7 +1,6 @@
 import type { NexradDeclutterMode, NexradPhaseMode } from '@/app/app-client/types';
 import type {
   CrossSectionData,
-  EchoTopPayload,
   EchoTopSurfaceCell,
   NexradPreparedVolumeData,
   NexradVolumePayload
@@ -10,8 +9,7 @@ import type {
   NexradWorkerRequestMessage,
   NexradWorkerResponseMessage,
   PollAndPrepareEchoTopSummary,
-  PollAndPrepareTimings,
-  PhaseDebugHeaderValues
+  PollAndPrepareTimings
 } from './nexrad-worker-types';
 import {
   createNexradPrepareSabBuffers,
@@ -37,12 +35,6 @@ import {
 } from '../shared/base-worker-client';
 
 const REQUEST_TIMEOUT_MS = 8000;
-const REQUEST_TIMEOUT_DECODE_VOLUME_MS_FLOOR = 20_000;
-const REQUEST_TIMEOUT_DECODE_VOLUME_MS_CEIL = 45_000;
-const REQUEST_TIMEOUT_DECODE_VOLUME_MS_PER_MB = 2000;
-const REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_FLOOR = 12_000;
-const REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_CEIL = 30_000;
-const REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_PER_MB = 1000;
 const MAX_PREPARE_SAB_OVERFLOW_RETRIES = 3;
 const PREPARE_SAB_INITIAL_CHANNEL_COUNT = 1;
 const PREPARE_SAB_MAX_CHANNEL_COUNT = 3;
@@ -50,7 +42,7 @@ const PREPARE_SAB_MAX_CHANNEL_COUNT = 3;
 type NexradWorkerRuntimeMode = 'worker' | 'worker-error';
 type NexradWorkerMode = 'worker';
 type NexradWorkerFailureStage = 'worker-init' | 'worker-request';
-type NexradDecodeTransport = 'sab' | 'post-message' | 'worker-error';
+type NexradDecodeTransport = 'sab' | 'worker-error';
 type NexradPrepareTransport = 'sab' | 'worker-error';
 
 export interface NexradWorkerDiagnostics {
@@ -75,11 +67,6 @@ export interface VolumePrepareOptions {
   crossSectionHalfWidthNm: number;
   sliceAxis: { x: number; z: number };
   slicePerpAxis: { x: number; z: number };
-}
-
-export interface EchoTopPrepareOptions {
-  applyEarthCurvatureCompensation: boolean;
-  refLat: number;
 }
 
 export interface NexradPollAndPrepareOptions extends VolumePrepareOptions {
@@ -138,25 +125,6 @@ function recordWorkerFailure(stage: NexradWorkerFailureStage, error: unknown): v
   console.warn(`[MRMS worker] ${stage}: ${message}`);
 }
 
-function timeoutForEchoTopDecode(bufferByteLength: number): number {
-  const perMbMs =
-    Math.ceil(Math.max(0, bufferByteLength) / 1_000_000) *
-    REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_PER_MB;
-  return Math.max(
-    REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_FLOOR,
-    Math.min(REQUEST_TIMEOUT_DECODE_ECHO_TOP_MS_CEIL, REQUEST_TIMEOUT_MS + perMbMs)
-  );
-}
-
-function timeoutForVolumeDecode(bufferByteLength: number): number {
-  const perMbMs =
-    Math.ceil(Math.max(0, bufferByteLength) / 1_000_000) * REQUEST_TIMEOUT_DECODE_VOLUME_MS_PER_MB;
-  return Math.max(
-    REQUEST_TIMEOUT_DECODE_VOLUME_MS_FLOOR,
-    Math.min(REQUEST_TIMEOUT_DECODE_VOLUME_MS_CEIL, REQUEST_TIMEOUT_MS + perMbMs)
-  );
-}
-
 function createDedicatedWorkerChannel(): WorkerLike {
   const worker = new Worker(new URL('./nexrad.worker.ts', import.meta.url), { type: 'module' });
   return {
@@ -201,87 +169,6 @@ class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMess
   }
 
   // --- Public API ---
-
-  async decodeVolume(
-    buffer: ArrayBuffer,
-    phaseDebug: PhaseDebugHeaderValues
-  ): Promise<NexradVolumePayload> {
-    const requestId = this.allocateRequestId();
-    return this.send<NexradVolumePayload>(
-      requestId,
-      { type: 'decode-volume', requestId, buffer, phaseDebug },
-      { timeoutMs: timeoutForVolumeDecode(buffer.byteLength), transferList: [buffer] }
-    );
-  }
-
-  async decodeEchoTop(buffer: ArrayBuffer): Promise<EchoTopPayload> {
-    const requestId = this.allocateRequestId();
-    return this.send<EchoTopPayload>(
-      requestId,
-      { type: 'decode-echo-top', requestId, buffer },
-      { timeoutMs: timeoutForEchoTopDecode(buffer.byteLength), transferList: [buffer] }
-    );
-  }
-
-  async prepareVolume(
-    payload: NexradVolumePayload,
-    options: VolumePrepareOptions
-  ): Promise<{ payload: NexradPreparedVolumeData; crossSectionData: CrossSectionData | null }> {
-    const requestId = this.allocateRequestId();
-    const sabChannelId = this.claimPrepareSabChannel(requestId);
-    if (sabChannelId === null) {
-      return Promise.reject(
-        new Error('No MRMS SAB prepare channel was available for this request.')
-      );
-    }
-    this.overflowState.set(requestId, {
-      sabChannelId,
-      requiredVoxelCapacity: this.prepareSabVoxelCapacityHint,
-      overflowRetryCount: 0,
-      resubmit: (rid, channelId) => {
-        this.worker.postMessage({
-          type: 'prepare-volume',
-          requestId: rid,
-          payload,
-          ...options,
-          preferSab: true as const,
-          sabChannelId: channelId
-        } satisfies NexradWorkerRequestMessage);
-      }
-    });
-    return this.send<{
-      payload: NexradPreparedVolumeData;
-      crossSectionData: CrossSectionData | null;
-    }>(requestId, {
-      type: 'prepare-volume',
-      requestId,
-      payload,
-      ...options,
-      preferSab: true as const,
-      sabChannelId
-    });
-  }
-
-  async prepareEchoTop(
-    payload: EchoTopPayload,
-    options: EchoTopPrepareOptions
-  ): Promise<{
-    echoTop18Cells: EchoTopSurfaceCell[];
-    echoTop30Cells: EchoTopSurfaceCell[];
-    echoTop50Cells: EchoTopSurfaceCell[];
-  }> {
-    const requestId = this.allocateRequestId();
-    return this.send<{
-      echoTop18Cells: EchoTopSurfaceCell[];
-      echoTop30Cells: EchoTopSurfaceCell[];
-      echoTop50Cells: EchoTopSurfaceCell[];
-    }>(requestId, {
-      type: 'prepare-echo-top',
-      requestId,
-      payload,
-      ...options
-    });
-  }
 
   async pollAndPrepare(options: NexradPollAndPrepareOptions): Promise<NexradPollAndPrepareResult> {
     const requestId = this.allocateRequestId();
@@ -389,8 +276,7 @@ class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMess
     response: NexradWorkerResponseMessage,
     requestId: number
   ): boolean {
-    // Only prepare-volume and poll-and-prepare can overflow.
-    if (response.type !== 'prepare-volume-result' && response.type !== 'poll-and-prepare-result') {
+    if (response.type !== 'poll-and-prepare-result') {
       return false;
     }
     if (!response.sabOverflow) return false;
@@ -450,44 +336,6 @@ class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMess
     const overflowState = this.overflowState.get(requestId);
     this.overflowState.delete(requestId);
 
-    if (response.type === 'decode-volume-result') {
-      this.releasePrepareSabChannel(requestId);
-      if (!response.payload) throw new Error('MRMS decode worker returned no volume payload.');
-      return response.payload;
-    }
-
-    if (response.type === 'decode-echo-top-result') {
-      this.releasePrepareSabChannel(requestId);
-      if (!response.payload) throw new Error('MRMS decode worker returned no echo-top payload.');
-      return response.payload;
-    }
-
-    if (response.type === 'prepare-volume-result') {
-      this.releasePrepareSabChannel(requestId);
-      if (!response.usedSab) {
-        throw new Error('MRMS worker returned non-SAB payload for SAB prepare request.');
-      }
-      const sabChannelId = overflowState?.sabChannelId ?? null;
-      if (sabChannelId === null) {
-        throw new Error('MRMS worker returned SAB payload without a SAB request.');
-      }
-      const sabChannel = this.getPrepareSabChannel(sabChannelId);
-      if (!sabChannel) {
-        throw new Error('MRMS worker returned SAB payload for an unknown SAB channel.');
-      }
-      recordPrepareTransport('sab');
-      return readNexradPrepareSabResult(sabChannel.views, requestId);
-    }
-
-    if (response.type === 'prepare-echo-top-result') {
-      this.releasePrepareSabChannel(requestId);
-      return {
-        echoTop18Cells: response.echoTop18Cells ?? [],
-        echoTop30Cells: response.echoTop30Cells ?? [],
-        echoTop50Cells: response.echoTop50Cells ?? []
-      };
-    }
-
     if (response.type === 'poll-and-prepare-result') {
       this.releasePrepareSabChannel(requestId);
       if (!response.usedSab) {
@@ -527,20 +375,13 @@ function supportsWorkers(): boolean {
 }
 
 let sharedClient: NexradDecodeWorkerClient | null = null;
-let prepareClient: NexradDecodeWorkerClient | null = null;
 let disableWorkerPath = false;
-let disablePrepareWorkerPath = false;
 let runtimeMode: NexradWorkerRuntimeMode = 'worker';
 let activePollPromise: Promise<NexradPollAndPrepareResult> | null = null;
 
 function disposeClient() {
   sharedClient?.dispose();
   sharedClient = null;
-}
-
-function disposePrepareClient() {
-  prepareClient?.dispose();
-  prepareClient = null;
 }
 
 function getDecodeWorkerClient(): NexradDecodeWorkerClient | null {
@@ -554,21 +395,6 @@ function getDecodeWorkerClient(): NexradDecodeWorkerClient | null {
     recordWorkerFailure('worker-init', error);
     disableWorkerPath = true;
     runtimeMode = 'worker-error';
-    return null;
-  }
-}
-
-function getPrepareWorkerClient(): NexradDecodeWorkerClient | null {
-  if (!supportsWorkers() || disableWorkerPath || disablePrepareWorkerPath || !supportsNexradSab()) {
-    return null;
-  }
-  if (prepareClient) return prepareClient;
-  try {
-    prepareClient = new NexradDecodeWorkerClient();
-    return prepareClient;
-  } catch (error) {
-    recordWorkerFailure('worker-init', error);
-    disablePrepareWorkerPath = true;
     return null;
   }
 }
@@ -613,66 +439,5 @@ export async function pollNexradWithWorker(
     if (activePollPromise === pollPromise) {
       activePollPromise = null;
     }
-  }
-}
-
-export async function decodeVolumePayload(
-  buffer: ArrayBuffer,
-  phaseDebug: PhaseDebugHeaderValues
-): Promise<NexradVolumePayload> {
-  const client = getDecodeWorkerClient();
-  if (!client) {
-    recordDecodeTransport('worker-error');
-    throw new Error('MRMS decode worker is unavailable.');
-  }
-  try {
-    const payload = await client.decodeVolume(buffer, phaseDebug);
-    recordDecodeTransport('post-message');
-    return payload;
-  } catch (error) {
-    recordWorkerFailure('worker-request', error);
-    if (sharedClient === client) disposeClient();
-    recordDecodeTransport('worker-error');
-    throw error instanceof Error ? error : new Error('MRMS decode worker failed.');
-  }
-}
-
-export async function prepareVolumeWithWorker(
-  payload: NexradVolumePayload,
-  options: VolumePrepareOptions
-): Promise<{ payload: NexradPreparedVolumeData; crossSectionData: CrossSectionData | null }> {
-  const client = getPrepareWorkerClient();
-  if (!client) {
-    recordPrepareTransport('worker-error');
-    throw new Error('MRMS volume prepare worker is unavailable.');
-  }
-  try {
-    return await client.prepareVolume(payload, options);
-  } catch (error) {
-    recordWorkerFailure('worker-request', error);
-    if (prepareClient === client) disposePrepareClient();
-    recordPrepareTransport('worker-error');
-    throw error instanceof Error ? error : new Error('MRMS volume prepare worker failed.');
-  }
-}
-
-export async function prepareEchoTopWithWorker(
-  payload: EchoTopPayload,
-  options: EchoTopPrepareOptions
-): Promise<{
-  echoTop18Cells: EchoTopSurfaceCell[];
-  echoTop30Cells: EchoTopSurfaceCell[];
-  echoTop50Cells: EchoTopSurfaceCell[];
-}> {
-  const client = getPrepareWorkerClient();
-  if (!client) {
-    throw new Error('MRMS echo-top prepare worker is unavailable.');
-  }
-  try {
-    return await client.prepareEchoTop(payload, options);
-  } catch (error) {
-    recordWorkerFailure('worker-request', error);
-    if (prepareClient === client) disposePrepareClient();
-    throw error instanceof Error ? error : new Error('MRMS echo-top prepare worker failed.');
   }
 }
