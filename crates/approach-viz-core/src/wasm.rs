@@ -839,27 +839,33 @@ impl WasmTrafficState {
                             js_sys::Reflect::get(&pt, &JsValue::from_str("lat"))
                                 .ok()
                                 .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0);
+                                .filter(|v| v.is_finite());
                         let lon =
                             js_sys::Reflect::get(&pt, &JsValue::from_str("lon"))
                                 .ok()
                                 .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0);
+                                .filter(|v| v.is_finite());
                         let altitude_feet =
                             js_sys::Reflect::get(&pt, &JsValue::from_str("altitudeFeet"))
                                 .ok()
                                 .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0);
+                                .filter(|v| v.is_finite());
                         let timestamp_ms =
                             js_sys::Reflect::get(&pt, &JsValue::from_str("timestampMs"))
                                 .ok()
                                 .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0) as i64;
+                                .filter(|v| v.is_finite());
+                        // Skip points with any missing/non-finite field (matches old TS behavior)
+                        let (Some(lat), Some(lon), Some(alt), Some(ts)) =
+                            (lat, lon, altitude_feet, timestamp_ms)
+                        else {
+                            continue;
+                        };
                         points.push(crate::traffic_merge::TrafficHistoryPoint {
                             lat,
                             lon,
-                            altitude_feet,
-                            timestamp_ms,
+                            altitude_feet: alt,
+                            timestamp_ms: ts as i64,
                         });
                     }
                     backfill_history.push(crate::traffic_merge::BackfillHistory {
