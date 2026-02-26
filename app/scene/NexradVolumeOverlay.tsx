@@ -20,12 +20,14 @@ import {
   MIN_CROSS_SECTION_HALF_WIDTH_NM,
   MAX_CROSS_SECTION_HALF_WIDTH_NM
 } from './nexrad/nexrad-types';
+import { MIN_NEXRAD_MIN_DBZ } from '@/app/app-client/constants';
 import { buildEchoTopRequestUrl, buildNexradRequestUrl } from './nexrad/nexrad-decode';
 import {
   getNexradWorkerDiagnostics,
   getNexradWorkerRuntimeMode,
   getNexradWorkerTransportDiagnostics,
-  pollNexradWithWorker
+  pollNexradWithWorker,
+  rePrepareNexradWithWorker
 } from './nexrad/nexrad-worker-client';
 import {
   dbzToAlpha,
@@ -166,7 +168,16 @@ export function NexradVolumeOverlay({
   showEchoTopsRef.current = showEchoTops;
   const showCrossSectionRef = useRef(showCrossSection);
   showCrossSectionRef.current = showCrossSection;
+  const minDbzRef = useRef(minDbz);
+  minDbzRef.current = minDbz;
+  const declutterModeRef = useRef(declutterMode);
+  declutterModeRef.current = declutterMode;
+  const phaseModeRef = useRef(phaseMode);
+  phaseModeRef.current = phaseMode;
+  const applyEarthCurvatureCompensationRef = useRef(applyEarthCurvatureCompensation);
+  applyEarthCurvatureCompensationRef.current = applyEarthCurvatureCompensation;
   const pollNowRef = useRef<(() => void) | null>(null);
+  const skipNextRePrepareRef = useRef(false);
   const meshDummy = useMemo(() => new THREE.Object3D(), []);
   const colorScratch = useMemo(() => new THREE.Color(), []);
   const payloadIndexScratchRef = useRef<Int32Array>(new Int32Array(0));
@@ -183,6 +194,14 @@ export function NexradVolumeOverlay({
     MAX_CROSS_SECTION_HALF_WIDTH_NM,
     Math.max(0, Math.min(1, (normalizedCrossSectionRange - 30) / (140 - 30)))
   );
+  const normalizedCrossSectionRangeRef = useRef(normalizedCrossSectionRange);
+  normalizedCrossSectionRangeRef.current = normalizedCrossSectionRange;
+  const crossSectionHalfWidthNmRef = useRef(crossSectionHalfWidthNm);
+  crossSectionHalfWidthNmRef.current = crossSectionHalfWidthNm;
+  const sliceAxisRef = useRef(sliceAxis);
+  sliceAxisRef.current = sliceAxis;
+  const slicePerpAxisRef = useRef(slicePerpAxis);
+  slicePerpAxisRef.current = slicePerpAxis;
   const [volumeData, setVolumeData] = useState<NexradPreparedVolumeData>(() =>
     emptyPreparedVolume()
   );
@@ -416,7 +435,7 @@ export function NexradVolumeOverlay({
       const volumeParams = new URLSearchParams();
       volumeParams.set('lat', refLat.toFixed(6));
       volumeParams.set('lon', refLon.toFixed(6));
-      volumeParams.set('minDbz', String(minDbz));
+      volumeParams.set('minDbz', String(MIN_NEXRAD_MIN_DBZ));
       volumeParams.set('maxRangeNm', String(maxRangeNm));
       const echoTopParams = new URLSearchParams();
       echoTopParams.set('lat', refLat.toFixed(6));
@@ -433,16 +452,16 @@ export function NexradVolumeOverlay({
             : undefined,
           includeVolume: shouldFetchVolume,
           includeEchoTop: shouldFetchEchoTops,
-          minDbz,
-          phaseMode,
-          declutterMode,
-          applyEarthCurvatureCompensation,
+          minDbz: minDbzRef.current,
+          phaseMode: phaseModeRef.current,
+          declutterMode: declutterModeRef.current,
+          applyEarthCurvatureCompensation: applyEarthCurvatureCompensationRef.current,
           refLat,
-          includeCrossSection: showCrossSection,
-          normalizedCrossSectionRange,
-          crossSectionHalfWidthNm,
-          sliceAxis,
-          slicePerpAxis
+          includeCrossSection: showCrossSectionRef.current,
+          normalizedCrossSectionRange: normalizedCrossSectionRangeRef.current,
+          crossSectionHalfWidthNm: crossSectionHalfWidthNmRef.current,
+          sliceAxis: sliceAxisRef.current,
+          slicePerpAxis: slicePerpAxisRef.current
         });
         volumeFetchMs = shouldFetchVolume ? (result.timings?.volumeFetchMs ?? null) : null;
         volumeDecodeMs = shouldFetchVolume ? (result.timings?.volumeDecodeMs ?? null) : null;
@@ -487,6 +506,7 @@ export function NexradVolumeOverlay({
               });
               setVolumeData(result.preparedVolume);
               setCrossSectionData(result.crossSectionData);
+              skipNextRePrepareRef.current = true;
             }
           } else if (!showVolumeRef.current && !showCrossSectionRef.current) {
             setPayload(null);
@@ -577,8 +597,59 @@ export function NexradVolumeOverlay({
     enabled,
     refLat,
     refLon,
-    minDbz,
     maxRangeNm,
+    patchTimings
+  ]);
+
+  // Re-prepare effect: when prepare-only params change (declutter, phase, curvature,
+  // cross-section geometry) and we already have data, reprocess the cached binary in
+  // the worker without a new HTTP fetch.
+  const hasPayload = payload !== null;
+  useEffect(() => {
+    if (!enabled || !hasPayload) return;
+    if (skipNextRePrepareRef.current) {
+      skipNextRePrepareRef.current = false;
+      return;
+    }
+
+    let cancelled = false;
+
+    const rePrepare = async () => {
+      try {
+        const result = await rePrepareNexradWithWorker({
+          minDbz,
+          phaseMode,
+          declutterMode,
+          applyEarthCurvatureCompensation,
+          refLat,
+          includeCrossSection: showCrossSection,
+          normalizedCrossSectionRange,
+          crossSectionHalfWidthNm,
+          sliceAxis,
+          slicePerpAxis
+        });
+        if (cancelled) return;
+        setVolumeData(result.preparedVolume);
+        setCrossSectionData(result.crossSectionData);
+        if (result.timings?.volumePrepareMs != null) {
+          patchTimings({ volumePrepareMs: result.timings.volumePrepareMs });
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.warn('[MRMS re-prepare] failed, will correct on next poll:', error);
+      }
+    };
+
+    void rePrepare();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    enabled,
+    hasPayload,
+    minDbz,
+    refLat,
     phaseMode,
     declutterMode,
     applyEarthCurvatureCompensation,

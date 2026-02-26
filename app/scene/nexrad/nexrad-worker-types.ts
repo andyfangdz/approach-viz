@@ -53,7 +53,27 @@ export interface PollAndPrepareRequestMessage {
   sabChannelId: number;
 }
 
-export type NexradWorkerRequestMessage = NexradInitSabRequestMessage | PollAndPrepareRequestMessage;
+export interface RePrepareRequestMessage {
+  type: 're-prepare';
+  requestId: number;
+  minDbz: number;
+  phaseMode: NexradPhaseMode;
+  declutterMode: NexradDeclutterMode;
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
+  includeCrossSection: boolean;
+  normalizedCrossSectionRange: number;
+  crossSectionHalfWidthNm: number;
+  sliceAxis: { x: number; z: number };
+  slicePerpAxis: { x: number; z: number };
+  preferSab: true;
+  sabChannelId: number;
+}
+
+export type NexradWorkerRequestMessage =
+  | NexradInitSabRequestMessage
+  | PollAndPrepareRequestMessage
+  | RePrepareRequestMessage;
 
 export interface NexradPrepareSabOverflow {
   voxelCapacity: number;
@@ -95,4 +115,13 @@ export interface PollAndPrepareResponseMessage {
   error?: string;
 }
 
-export type NexradWorkerResponseMessage = PollAndPrepareResponseMessage;
+export interface RePrepareResponseMessage {
+  type: 're-prepare-result';
+  requestId: number;
+  usedSab?: boolean;
+  sabOverflow?: NexradPrepareSabOverflow;
+  timings?: { volumePrepareMs: number | null };
+  error?: string;
+}
+
+export type NexradWorkerResponseMessage = PollAndPrepareResponseMessage | RePrepareResponseMessage;

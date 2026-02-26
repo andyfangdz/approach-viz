@@ -10,7 +10,8 @@ import type {
   NexradWorkerRequestMessage,
   NexradWorkerResponseMessage,
   PollAndPrepareRequestMessage,
-  PollAndPrepareResponseMessage
+  PollAndPrepareResponseMessage,
+  RePrepareRequestMessage
 } from './nexrad-worker-types';
 import {
   createNexradPrepareSabViews,
@@ -30,13 +31,19 @@ type WorkerEndpoint = {
 };
 const prepareSabViewsByChannel = new Map<number, NexradPrepareSabViews>();
 
+/** Cached raw binary ArrayBuffer from the most recent successful volume fetch. */
+let cachedVolumeBuffer: ArrayBuffer | null = null;
+/** Headers from the last successful volume fetch (for phase debug values). */
+let cachedVolumeHeaders: Headers | null = null;
+
 function errorResponseForRequest(
-  message: PollAndPrepareRequestMessage,
+  message: PollAndPrepareRequestMessage | RePrepareRequestMessage,
   error: unknown
 ): NexradWorkerResponseMessage {
   const errorMessage = error instanceof Error ? error.message : 'MRMS worker request failed.';
+  const responseType = message.type === 're-prepare' ? 're-prepare-result' as const : 'poll-and-prepare-result' as const;
   return {
-    type: 'poll-and-prepare-result',
+    type: responseType,
     requestId: message.requestId,
     error: errorMessage
   };
@@ -182,6 +189,8 @@ async function handlePollAndPrepare(
     }
     const volumeFetch = await fetchArrayBuffer(message.volumeUrl);
     timings.volumeFetchMs = volumeFetch.fetchMs;
+    cachedVolumeBuffer = volumeFetch.buffer;
+    cachedVolumeHeaders = volumeFetch.headers;
     const decodeAndPrepareStartedAt = performance.now();
 
     // Single WASM call: decode + prepare + cross-section
@@ -362,6 +371,90 @@ async function handlePollAndPrepare(
   );
 }
 
+async function handleRePrepare(
+  endpoint: WorkerEndpoint,
+  message: RePrepareRequestMessage
+): Promise<void> {
+  const prepareSabViews = prepareSabViewsByChannel.get(message.sabChannelId) ?? null;
+  if (!prepareSabViews) {
+    endpoint.postMessage({
+      type: 're-prepare-result',
+      requestId: message.requestId,
+      error: 'MRMS re-prepare SAB channel was not initialized.'
+    });
+    return;
+  }
+
+  if (!cachedVolumeBuffer) {
+    endpoint.postMessage({
+      type: 're-prepare-result',
+      requestId: message.requestId,
+      error: 'MRMS re-prepare called but no cached volume data available.'
+    });
+    return;
+  }
+
+  await ensureWasm();
+
+  const prepareStartedAt = performance.now();
+
+  const result = decode_and_prepare_mrms(
+    new Uint8Array(cachedVolumeBuffer),
+    Math.round(message.minDbz * 10),
+    encodePhaseMode(message.phaseMode),
+    encodeDeclutterMode(message.declutterMode),
+    message.applyEarthCurvatureCompensation,
+    message.refLat,
+    message.includeCrossSection,
+    message.sliceAxis.x,
+    message.sliceAxis.z,
+    message.slicePerpAxis.x,
+    message.slicePerpAxis.z,
+    message.normalizedCrossSectionRange,
+    message.crossSectionHalfWidthNm
+  ) as any;
+
+  const wasmPrepared = result.prepared;
+  const preparedVolume: NexradPreparedVolumeData = {
+    validCount: wasmPrepared.validCount as number,
+    validIndices: wasmPrepared.validIndices as Int32Array,
+    yBase: wasmPrepared.yBase as Float32Array,
+    heightBase: wasmPrepared.heightBase as Float32Array,
+    correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
+    correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
+    effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
+    declutterIndices: wasmPrepared.declutterIndices as Int32Array,
+    declutterCount: wasmPrepared.declutterCount as number
+  };
+  const crossSectionData = result.crossSection;
+
+  const prepareMs = roundMs(performance.now() - prepareStartedAt);
+
+  const sabResult = writeNexradPrepareSabResult(
+    prepareSabViews,
+    message.requestId,
+    preparedVolume,
+    crossSectionData
+  );
+
+  if (!sabResult.usedSab) {
+    endpoint.postMessage({
+      type: 're-prepare-result',
+      requestId: message.requestId,
+      usedSab: false,
+      sabOverflow: { voxelCapacity: sabResult.requiredVoxelCapacity }
+    });
+    return;
+  }
+
+  endpoint.postMessage({
+    type: 're-prepare-result',
+    requestId: message.requestId,
+    usedSab: true,
+    timings: { volumePrepareMs: prepareMs }
+  });
+}
+
 function handleInitSab(message: NexradInitSabRequestMessage): void {
   prepareSabViewsByChannel.set(message.channelId, createNexradPrepareSabViews(message.buffers));
 }
@@ -372,6 +465,10 @@ async function handleMessage(
 ): Promise<void> {
   if (message.type === 'init-sab') {
     handleInitSab(message);
+    return;
+  }
+  if (message.type === 're-prepare') {
+    await handleRePrepare(endpoint, message);
     return;
   }
   await handlePollAndPrepare(endpoint, message);

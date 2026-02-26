@@ -76,6 +76,12 @@ export interface NexradPollAndPrepareOptions extends VolumePrepareOptions {
   includeEchoTop: boolean;
 }
 
+export interface NexradRePrepareResult {
+  preparedVolume: NexradPreparedVolumeData;
+  crossSectionData: CrossSectionData | null;
+  timings: { volumePrepareMs: number | null } | null;
+}
+
 export interface NexradPollAndPrepareResult {
   volumePayload: NexradVolumePayload | null;
   preparedVolume: NexradPreparedVolumeData;
@@ -201,6 +207,37 @@ class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMess
     });
   }
 
+  async rePrepare(options: VolumePrepareOptions): Promise<NexradRePrepareResult> {
+    const requestId = this.allocateRequestId();
+    const sabChannelId = this.claimPrepareSabChannel(requestId);
+    if (sabChannelId === null) {
+      return Promise.reject(
+        new Error('No MRMS SAB prepare channel was available for re-prepare.')
+      );
+    }
+    this.overflowState.set(requestId, {
+      sabChannelId,
+      requiredVoxelCapacity: this.prepareSabVoxelCapacityHint,
+      overflowRetryCount: 0,
+      resubmit: (rid, channelId) => {
+        this.worker.postMessage({
+          type: 're-prepare',
+          requestId: rid,
+          ...options,
+          preferSab: true as const,
+          sabChannelId: channelId
+        } satisfies NexradWorkerRequestMessage);
+      }
+    });
+    return this.send<NexradRePrepareResult>(requestId, {
+      type: 're-prepare',
+      requestId,
+      ...options,
+      preferSab: true as const,
+      sabChannelId
+    });
+  }
+
   // --- SAB channel management ---
 
   private initializePrepareSab(): void {
@@ -276,7 +313,7 @@ class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMess
     response: NexradWorkerResponseMessage,
     requestId: number
   ): boolean {
-    if (response.type !== 'poll-and-prepare-result') {
+    if (response.type !== 'poll-and-prepare-result' && response.type !== 're-prepare-result') {
       return false;
     }
     if (!response.sabOverflow) return false;
@@ -364,6 +401,28 @@ class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMess
       } satisfies NexradPollAndPrepareResult;
     }
 
+    if (response.type === 're-prepare-result') {
+      this.releasePrepareSabChannel(requestId);
+      if (!response.usedSab) {
+        throw new Error('MRMS worker returned non-SAB payload for SAB re-prepare request.');
+      }
+      const sabChannelId = overflowState?.sabChannelId ?? null;
+      if (sabChannelId === null) {
+        throw new Error('MRMS worker returned SAB re-prepare payload without a SAB request.');
+      }
+      const sabChannel = this.getPrepareSabChannel(sabChannelId);
+      if (!sabChannel) {
+        throw new Error('MRMS worker returned SAB re-prepare payload for an unknown SAB channel.');
+      }
+      const decoded = readNexradPrepareSabResult(sabChannel.views, requestId);
+      recordPrepareTransport('sab');
+      return {
+        preparedVolume: decoded.payload,
+        crossSectionData: decoded.crossSectionData,
+        timings: response.timings ?? null
+      } satisfies NexradRePrepareResult;
+    }
+
     throw new Error('MRMS decode worker response type mismatch.');
   }
 }
@@ -439,5 +498,21 @@ export async function pollNexradWithWorker(
     if (activePollPromise === pollPromise) {
       activePollPromise = null;
     }
+  }
+}
+
+export async function rePrepareNexradWithWorker(
+  options: VolumePrepareOptions
+): Promise<NexradRePrepareResult> {
+  const client = getDecodeWorkerClient();
+  if (!client) {
+    throw new Error('MRMS re-prepare worker is unavailable.');
+  }
+  try {
+    return await client.rePrepare(options);
+  } catch (error) {
+    recordWorkerFailure('worker-request', error);
+    if (sharedClient === client) disposeClient();
+    throw error instanceof Error ? error : new Error('MRMS re-prepare worker failed.');
   }
 }
