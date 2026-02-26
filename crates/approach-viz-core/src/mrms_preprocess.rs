@@ -354,6 +354,25 @@ pub fn prepare_echo_top_surfaces(
 }
 
 // ---------------------------------------------------------------------------
+// 4. Echo-top summary metadata
+// ---------------------------------------------------------------------------
+
+/// Summary metadata from an echo-top payload (passed through to JS).
+#[derive(Debug, Clone)]
+pub struct EchoTopSummary {
+    pub source_cell_count: u32,
+    pub max_top18_feet: Option<f32>,
+    pub max_top30_feet: Option<f32>,
+    pub max_top50_feet: Option<f32>,
+    pub max_top60_feet: Option<f32>,
+    pub top18_timestamp: Option<String>,
+    pub top30_timestamp: Option<String>,
+    pub top50_timestamp: Option<String>,
+    pub top60_timestamp: Option<String>,
+    pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

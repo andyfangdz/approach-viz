@@ -637,24 +637,6 @@ export async function decodeVolumePayload(
   }
 }
 
-export async function decodeEchoTopPayloadWithWorker(buffer: ArrayBuffer): Promise<EchoTopPayload> {
-  const client = getDecodeWorkerClient();
-  if (!client) {
-    recordDecodeTransport('worker-error');
-    throw new Error('MRMS echo-top decode worker is unavailable.');
-  }
-  try {
-    const payload = await client.decodeEchoTop(buffer);
-    recordDecodeTransport('post-message');
-    return payload;
-  } catch (error) {
-    recordWorkerFailure('worker-request', error);
-    if (sharedClient === client) disposeClient();
-    recordDecodeTransport('worker-error');
-    throw error instanceof Error ? error : new Error('MRMS echo-top decode worker failed.');
-  }
-}
-
 export async function prepareVolumeWithWorker(
   payload: NexradVolumePayload,
   options: VolumePrepareOptions

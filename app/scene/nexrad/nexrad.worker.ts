@@ -1,14 +1,9 @@
-import {
-  applyPhaseDebugValues,
-  decodeEchoTopPayload,
-  extractPhaseDebugHeaderValues
-} from './nexrad-decode';
-import {
-  buildCrossSectionData,
-  prepareEchoTopSurfaces,
-  prepareVolumeData
-} from './nexrad-preprocess';
-import type { EchoTopPayload, NexradVolumePayload, NexradLayerSummary } from './nexrad-types';
+import { applyPhaseDebugValues, extractPhaseDebugHeaderValues } from './nexrad-decode';
+import type {
+  NexradVolumePayload,
+  NexradLayerSummary,
+  NexradPreparedVolumeData
+} from './nexrad-types';
 import { MRMS_LEVEL_TAGS } from './nexrad-types';
 import type {
   DecodeEchoTopRequestMessage,
@@ -28,20 +23,23 @@ import {
   writeNexradPrepareSabResult
 } from './nexrad-sab';
 import { ensureWasm } from '../shared/wasm-loader';
-import { decode_mrms_volume } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+import {
+  decode_mrms_volume,
+  decode_and_prepare_mrms,
+  decode_and_prepare_echo_top
+} from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+
+import type { NexradPhaseMode, NexradDeclutterMode } from '../../app-client/types';
 
 /**
  * Adapt the raw WASM `decode_mrms_volume` output to the `NexradVolumePayload`
  * shape that the rest of the TS pipeline expects.
  *
- * Key conversions:
- *  - dbzTenths (Int16Array) -> dbz (Float32Array, divide by 10)
- *  - bottomFeet / topFeet (Uint16Array) -> Float32Array
- *  - footprintXSpan / footprintYSpan + scalar footprintXNm/YNm -> per-voxel Float32Arrays
- *  - Reconstruct generatedAt, scanTime, layerSummaries from header fields
+ * Used only for the `decode-volume` message path (standalone decode without
+ * prepare). The `poll-and-prepare` path uses `decode_and_prepare_mrms` instead.
  */
 function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
-  const raw = decode_mrms_volume(new Uint8Array(buffer)) as any; // WASM returns untyped JS object
+  const raw = decode_mrms_volume(new Uint8Array(buffer)) as any;
 
   const voxelCount: number = raw.voxelCount;
   const dbzTenths: Int16Array = raw.dbzTenths;
@@ -56,13 +54,11 @@ function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
   const layerCount: number = raw.layerCount;
   const layerVoxelCounts: Uint32Array = raw.layerVoxelCounts;
 
-  // Convert dBZ tenths -> whole dBZ as Float32Array
   const dbz = new Float32Array(voxelCount);
   for (let i = 0; i < voxelCount; i++) {
     dbz[i] = dbzTenths[i] / 10;
   }
 
-  // Convert u16 feet -> Float32Array
   const bottomFeet = new Float32Array(voxelCount);
   const topFeet = new Float32Array(voxelCount);
   for (let i = 0; i < voxelCount; i++) {
@@ -70,7 +66,6 @@ function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
     topFeet[i] = rawTopFeet[i];
   }
 
-  // Per-voxel footprint NM = scalar * span (min 1)
   const footprintXNm = new Float32Array(voxelCount);
   const footprintYNm = new Float32Array(voxelCount);
   for (let i = 0; i < voxelCount; i++) {
@@ -78,7 +73,6 @@ function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
     footprintYNm[i] = scalarFootprintYNm * Math.max(1, footprintYSpan[i]);
   }
 
-  // Reconstruct ISO timestamps
   const generatedAt =
     Number.isFinite(generatedAtMs) && generatedAtMs > 0
       ? new Date(generatedAtMs).toISOString()
@@ -88,7 +82,6 @@ function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
       ? new Date(scanTimeMs).toISOString()
       : generatedAt;
 
-  // Build layer summaries
   const layerSummaries: NexradLayerSummary[] = [];
   for (let i = 0; i < layerCount; i++) {
     const levelTag = MRMS_LEVEL_TAGS[i] ?? `${i}`;
@@ -123,6 +116,10 @@ type WorkerEndpoint = {
   postMessage: (message: NexradWorkerResponseMessage, transfer?: Transferable[]) => void;
 };
 const prepareSabViewsByChannel = new Map<number, NexradPrepareSabViews>();
+
+/** Cached raw fetch buffers for re-prepare via WASM (avoids re-fetching). */
+let cachedVolumeRawBuffer: ArrayBuffer | null = null;
+let cachedEchoTopRawBuffer: ArrayBuffer | null = null;
 
 function errorResponseForRequest(
   message: Exclude<NexradWorkerRequestMessage, NexradInitSabRequestMessage>,
@@ -164,28 +161,18 @@ function errorResponseForRequest(
 }
 
 function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
-  return [
+  const t: Transferable[] = [
     payload.xNm.buffer,
     payload.zNm.buffer,
-    payload.bottomFeet.buffer,
-    payload.topFeet.buffer,
     payload.dbz.buffer,
     payload.footprintXNm.buffer,
     payload.footprintYNm.buffer,
-    payload.phaseCode.buffer,
-    payload.surfacePhaseCode.buffer
+    payload.phaseCode.buffer
   ];
-}
-
-function echoTopTransferables(payload: EchoTopPayload): Transferable[] {
-  const transferables: Transferable[] = [];
-  if (payload.xNm) transferables.push(payload.xNm.buffer);
-  if (payload.zNm) transferables.push(payload.zNm.buffer);
-  if (payload.top18Feet) transferables.push(payload.top18Feet.buffer);
-  if (payload.top30Feet) transferables.push(payload.top30Feet.buffer);
-  if (payload.top50Feet) transferables.push(payload.top50Feet.buffer);
-  if (payload.top60Feet) transferables.push(payload.top60Feet.buffer);
-  return transferables;
+  if (payload.bottomFeet.byteLength > 0) t.push(payload.bottomFeet.buffer);
+  if (payload.topFeet.byteLength > 0) t.push(payload.topFeet.buffer);
+  if (payload.surfacePhaseCode.byteLength > 0) t.push(payload.surfacePhaseCode.buffer);
+  return t;
 }
 
 function roundMs(value: number): number {
@@ -216,10 +203,19 @@ function normalizeFetchUrl(url: string): string {
 }
 
 async function fetchArrayBuffer(
-  url: string
-): Promise<{ buffer: ArrayBuffer; headers: Headers; fetchMs: number }> {
+  url: string,
+  accept?: string
+): Promise<{
+  buffer: ArrayBuffer;
+  headers: Headers;
+  fetchMs: number;
+}> {
   const fetchStartedAt = performance.now();
-  const response = await fetch(normalizeFetchUrl(url), { cache: 'no-store' });
+  const fetchInit: RequestInit = { cache: 'no-store' };
+  if (accept) {
+    fetchInit.headers = { accept };
+  }
+  const response = await fetch(normalizeFetchUrl(url), fetchInit);
   const fetchMs = roundMs(performance.now() - fetchStartedAt);
   if (!response.ok) {
     throw new Error(`MRMS request failed (${response.status})`);
@@ -229,6 +225,40 @@ async function fetchArrayBuffer(
     headers: response.headers,
     fetchMs
   };
+}
+
+/** Convert WASM SoA echo-top output to the EchoTopSurfaceCell[] shape. */
+function unpackEchoTopSoA(
+  soa: any
+): { x: number; z: number; yBase: number; footprintXNm: number; footprintYNm: number }[] {
+  const count: number = soa.count ?? 0;
+  const x: Float32Array = soa.x;
+  const z: Float32Array = soa.z;
+  const yBase: Float32Array = soa.yBase;
+  const fpX: Float32Array = soa.footprintXNm;
+  const fpY: Float32Array = soa.footprintYNm;
+  const cells = new Array(count);
+  for (let i = 0; i < count; i++) {
+    cells[i] = { x: x[i], z: z[i], yBase: yBase[i], footprintXNm: fpX[i], footprintYNm: fpY[i] };
+  }
+  return cells;
+}
+
+function encodePhaseMode(mode: NexradPhaseMode): number {
+  return mode === 'surface' ? 1 : 0;
+}
+
+function encodeDeclutterMode(mode: NexradDeclutterMode): number {
+  switch (mode) {
+    case 'low':
+      return 1;
+    case 'mid':
+      return 2;
+    case 'high':
+      return 3;
+    default:
+      return 0;
+  }
 }
 
 async function handleDecodeVolume(
@@ -256,17 +286,24 @@ async function handleDecodeVolume(
   }
 }
 
-function handleDecodeEchoTop(endpoint: WorkerEndpoint, message: DecodeEchoTopRequestMessage): void {
+async function handleDecodeEchoTop(
+  endpoint: WorkerEndpoint,
+  message: DecodeEchoTopRequestMessage
+): Promise<void> {
   try {
-    const payload = decodeEchoTopPayload(message.buffer);
-    endpoint.postMessage(
-      {
-        type: 'decode-echo-top-result',
-        requestId: message.requestId,
-        payload
-      },
-      echoTopTransferables(payload)
-    );
+    await ensureWasm();
+    // Decode + prepare in single WASM call; returns { top18, top30, top50, summary }
+    const result = decode_and_prepare_echo_top(
+      new Uint8Array(message.buffer),
+      false, // no curvature for standalone decode
+      0
+    ) as any;
+    // Return the raw decoded payload shape (summary only — prepared surfaces not needed here)
+    endpoint.postMessage({
+      type: 'decode-echo-top-result',
+      requestId: message.requestId,
+      payload: result.summary
+    });
   } catch (error) {
     endpoint.postMessage({
       type: 'decode-echo-top-result',
@@ -276,26 +313,19 @@ function handleDecodeEchoTop(endpoint: WorkerEndpoint, message: DecodeEchoTopReq
   }
 }
 
-function handlePrepareVolume(endpoint: WorkerEndpoint, message: PrepareVolumeRequestMessage): void {
+async function handlePrepareVolume(
+  endpoint: WorkerEndpoint,
+  message: PrepareVolumeRequestMessage
+): Promise<void> {
   try {
-    const payload = prepareVolumeData({
-      payload: message.payload,
-      minDbz: message.minDbz,
-      phaseMode: message.phaseMode,
-      declutterMode: message.declutterMode,
-      applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-      refLat: message.refLat
-    });
-    const crossSectionData = message.includeCrossSection
-      ? buildCrossSectionData({
-          payload: message.payload,
-          volumeData: payload,
-          sliceAxis: message.sliceAxis,
-          slicePerpAxis: message.slicePerpAxis,
-          normalizedCrossSectionRange: message.normalizedCrossSectionRange,
-          crossSectionHalfWidthNm: message.crossSectionHalfWidthNm
-        })
-      : null;
+    if (!cachedVolumeRawBuffer) {
+      endpoint.postMessage({
+        type: 'prepare-volume-result',
+        requestId: message.requestId,
+        error: 'No cached volume data available for re-prepare.'
+      });
+      return;
+    }
     const prepareSabViews = prepareSabViewsByChannel.get(message.sabChannelId) ?? null;
     if (!prepareSabViews) {
       endpoint.postMessage({
@@ -305,10 +335,41 @@ function handlePrepareVolume(endpoint: WorkerEndpoint, message: PrepareVolumeReq
       });
       return;
     }
+    await ensureWasm();
+    const result = decode_and_prepare_mrms(
+      new Uint8Array(cachedVolumeRawBuffer),
+      Math.round(message.minDbz * 10),
+      encodePhaseMode(message.phaseMode),
+      encodeDeclutterMode(message.declutterMode),
+      message.applyEarthCurvatureCompensation,
+      message.refLat,
+      message.includeCrossSection,
+      message.sliceAxis.x,
+      message.sliceAxis.z,
+      message.slicePerpAxis.x,
+      message.slicePerpAxis.z,
+      message.normalizedCrossSectionRange,
+      message.crossSectionHalfWidthNm
+    ) as any;
+
+    const wasmPrepared = result.prepared;
+    const preparedVolume = {
+      validCount: wasmPrepared.validCount as number,
+      validIndices: wasmPrepared.validIndices as Int32Array,
+      yBase: wasmPrepared.yBase as Float32Array,
+      heightBase: wasmPrepared.heightBase as Float32Array,
+      correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
+      correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
+      effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
+      declutterIndices: wasmPrepared.declutterIndices as Int32Array,
+      declutterCount: wasmPrepared.declutterCount as number
+    };
+    const crossSectionData = result.crossSection ?? null;
+
     const sabResult = writeNexradPrepareSabResult(
       prepareSabViews,
       message.requestId,
-      payload,
+      preparedVolume,
       crossSectionData
     );
     if (sabResult.usedSab) {
@@ -337,19 +398,31 @@ function handlePrepareVolume(endpoint: WorkerEndpoint, message: PrepareVolumeReq
   }
 }
 
-function handlePrepareEchoTop(
+async function handlePrepareEchoTop(
   endpoint: WorkerEndpoint,
   message: PrepareEchoTopRequestMessage
-): void {
+): Promise<void> {
   try {
+    if (!cachedEchoTopRawBuffer) {
+      endpoint.postMessage({
+        type: 'prepare-echo-top-result',
+        requestId: message.requestId,
+        error: 'No cached echo-top data available for re-prepare.'
+      });
+      return;
+    }
+    await ensureWasm();
+    const result = decode_and_prepare_echo_top(
+      new Uint8Array(cachedEchoTopRawBuffer),
+      message.applyEarthCurvatureCompensation,
+      message.refLat
+    ) as any;
     endpoint.postMessage({
       type: 'prepare-echo-top-result',
       requestId: message.requestId,
-      ...prepareEchoTopSurfaces({
-        payload: message.payload,
-        applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-        refLat: message.refLat
-      })
+      echoTop18Cells: unpackEchoTopSoA(result.top18),
+      echoTop30Cells: unpackEchoTopSoA(result.top30),
+      echoTop50Cells: unpackEchoTopSoA(result.top50)
     });
   } catch (error) {
     endpoint.postMessage({
@@ -384,6 +457,8 @@ async function handlePollAndPrepare(
   };
 
   let volumePayload: NexradVolumePayload | undefined;
+  let preparedVolume: NexradPreparedVolumeData = emptyPreparedVolume();
+  let crossSectionData = null;
   if (message.includeVolume) {
     if (!message.volumeUrl) {
       endpoint.postMessage({
@@ -394,41 +469,97 @@ async function handlePollAndPrepare(
       return;
     }
     const volumeFetch = await fetchArrayBuffer(message.volumeUrl);
+    cachedVolumeRawBuffer = volumeFetch.buffer.slice(0); // cache a copy for re-prepare
     timings.volumeFetchMs = volumeFetch.fetchMs;
-    const decodeStartedAt = performance.now();
+    const decodeAndPrepareStartedAt = performance.now();
     await ensureWasm();
-    const rawDecoded = decodeVolumeViaWasm(volumeFetch.buffer);
+
+    // Single WASM call: decode + prepare + cross-section
+    const result = decode_and_prepare_mrms(
+      new Uint8Array(volumeFetch.buffer),
+      Math.round(message.minDbz * 10),
+      encodePhaseMode(message.phaseMode),
+      encodeDeclutterMode(message.declutterMode),
+      message.applyEarthCurvatureCompensation,
+      message.refLat,
+      message.includeCrossSection,
+      message.sliceAxis.x,
+      message.sliceAxis.z,
+      message.slicePerpAxis.x,
+      message.slicePerpAxis.z,
+      message.normalizedCrossSectionRange,
+      message.crossSectionHalfWidthNm
+    ) as any;
+
+    // Unpack prepared volume
+    const wasmPrepared = result.prepared;
+    preparedVolume = {
+      validCount: wasmPrepared.validCount as number,
+      validIndices: wasmPrepared.validIndices as Int32Array,
+      yBase: wasmPrepared.yBase as Float32Array,
+      heightBase: wasmPrepared.heightBase as Float32Array,
+      correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
+      correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
+      effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
+      declutterIndices: wasmPrepared.declutterIndices as Int32Array,
+      declutterCount: wasmPrepared.declutterCount as number
+    };
+
+    // Cross-section (null if not requested or empty volume)
+    crossSectionData = result.crossSection;
+
+    // Build NexradVolumePayload from WASM-converted fields
+    const vp = result.volumePayload;
+    const generatedAtMs: number = vp.generatedAtMs;
+    const scanTimeMs: number = vp.scanTimeMs;
+    const layerCount: number = vp.layerCount;
+    const layerVoxelCounts: Uint32Array = vp.layerVoxelCounts;
+
+    const generatedAt =
+      Number.isFinite(generatedAtMs) && generatedAtMs > 0
+        ? new Date(generatedAtMs).toISOString()
+        : new Date().toISOString();
+    const scanTime =
+      Number.isFinite(scanTimeMs) && scanTimeMs > 0
+        ? new Date(scanTimeMs).toISOString()
+        : generatedAt;
+
+    const layerSummaries: NexradLayerSummary[] = [];
+    for (let i = 0; i < layerCount; i++) {
+      const levelTag = MRMS_LEVEL_TAGS[i] ?? `${i}`;
+      const elevation = Number(levelTag);
+      layerSummaries.push({
+        product: `MergedReflectivityQC_${levelTag}`,
+        elevationAngleDeg: Number.isFinite(elevation) ? elevation : i,
+        sourceKey: `mrms-binary://${scanTime}/${levelTag}`,
+        scanTime,
+        voxelCount: layerVoxelCounts[i] ?? 0
+      });
+    }
+
     volumePayload = applyPhaseDebugValues(
-      rawDecoded,
+      {
+        generatedAt,
+        radar: null,
+        layerSummaries,
+        voxelCount: vp.voxelCount as number,
+        xNm: vp.xNm as Float32Array,
+        zNm: vp.zNm as Float32Array,
+        bottomFeet: new Float32Array(0),
+        topFeet: new Float32Array(0),
+        dbz: vp.dbz as Float32Array,
+        footprintXNm: vp.footprintXNm as Float32Array,
+        footprintYNm: vp.footprintYNm as Float32Array,
+        phaseCode: vp.phaseCode as Uint8Array,
+        surfacePhaseCode: new Uint8Array(0)
+      },
       extractPhaseDebugHeaderValues(volumeFetch.headers)
     );
-    timings.volumeDecodeMs = roundMs(performance.now() - decodeStartedAt);
-  }
 
-  const prepareStartedAt = performance.now();
-  const preparedVolume =
-    message.includeVolume && volumePayload
-      ? prepareVolumeData({
-          payload: volumePayload,
-          minDbz: message.minDbz,
-          phaseMode: message.phaseMode,
-          declutterMode: message.declutterMode,
-          applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-          refLat: message.refLat
-        })
-      : emptyPreparedVolume();
-  const crossSectionData =
-    message.includeVolume && message.includeCrossSection && volumePayload
-      ? buildCrossSectionData({
-          payload: volumePayload,
-          volumeData: preparedVolume,
-          sliceAxis: message.sliceAxis,
-          slicePerpAxis: message.slicePerpAxis,
-          normalizedCrossSectionRange: message.normalizedCrossSectionRange,
-          crossSectionHalfWidthNm: message.crossSectionHalfWidthNm
-        })
-      : null;
-  timings.volumePrepareMs = roundMs(performance.now() - prepareStartedAt);
+    const elapsed = roundMs(performance.now() - decodeAndPrepareStartedAt);
+    timings.volumeDecodeMs = elapsed;
+    timings.volumePrepareMs = 0; // included in decode timing
+  }
 
   const sabResult = writeNexradPrepareSabResult(
     prepareSabViews,
@@ -456,38 +587,40 @@ async function handlePollAndPrepare(
 
   if (message.includeEchoTop && message.echoTopUrl) {
     try {
-      const echoTopFetch = await fetchArrayBuffer(message.echoTopUrl);
+      const echoTopFetch = await fetchArrayBuffer(
+        message.echoTopUrl,
+        'application/vnd.approach-viz.echo-tops.v1'
+      );
+      cachedEchoTopRawBuffer = echoTopFetch.buffer.slice(0); // cache for re-prepare
       timings.echoTopFetchMs = echoTopFetch.fetchMs;
-      const decodeStartedAt = performance.now();
-      const echoTopPayload = decodeEchoTopPayload(echoTopFetch.buffer);
-      timings.echoTopDecodeMs = roundMs(performance.now() - decodeStartedAt);
-      const prepareStartedAt = performance.now();
-      const preparedEchoTop = prepareEchoTopSurfaces({
-        payload: echoTopPayload,
-        applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-        refLat: message.refLat
-      });
-      timings.echoTopPrepareMs = roundMs(performance.now() - prepareStartedAt);
-      echoTop18Cells = preparedEchoTop.echoTop18Cells;
-      echoTop30Cells = preparedEchoTop.echoTop30Cells;
-      echoTop50Cells = preparedEchoTop.echoTop50Cells;
+      const echoDecodeStartedAt = performance.now();
+
+      // Single WASM call: AVET binary decode + prepare surfaces
+      const result = decode_and_prepare_echo_top(
+        new Uint8Array(echoTopFetch.buffer),
+        message.applyEarthCurvatureCompensation,
+        message.refLat
+      ) as any;
+      echoTop18Cells = unpackEchoTopSoA(result.top18);
+      echoTop30Cells = unpackEchoTopSoA(result.top30);
+      echoTop50Cells = unpackEchoTopSoA(result.top50);
+
+      const summary = result.summary;
       echoTopSummary = {
-        sourceCellCount:
-          echoTopPayload.sourceCellCount ??
-          echoTopPayload.cellCount ??
-          echoTopPayload.xNm?.length ??
-          echoTopPayload.cells?.length ??
-          0,
-        maxTop18Feet: echoTopPayload.maxTop18Feet ?? null,
-        maxTop30Feet: echoTopPayload.maxTop30Feet ?? null,
-        maxTop50Feet: echoTopPayload.maxTop50Feet ?? null,
-        maxTop60Feet: echoTopPayload.maxTop60Feet ?? null,
-        top18Timestamp: echoTopPayload.top18Timestamp ?? null,
-        top30Timestamp: echoTopPayload.top30Timestamp ?? null,
-        top50Timestamp: echoTopPayload.top50Timestamp ?? null,
-        top60Timestamp: echoTopPayload.top60Timestamp ?? null,
-        error: echoTopPayload.error ?? null
+        sourceCellCount: summary.sourceCellCount ?? 0,
+        maxTop18Feet: summary.maxTop18Feet ?? null,
+        maxTop30Feet: summary.maxTop30Feet ?? null,
+        maxTop50Feet: summary.maxTop50Feet ?? null,
+        maxTop60Feet: summary.maxTop60Feet ?? null,
+        top18Timestamp: null,
+        top30Timestamp: null,
+        top50Timestamp: null,
+        top60Timestamp: null,
+        error: null
       };
+
+      timings.echoTopDecodeMs = roundMs(performance.now() - echoDecodeStartedAt);
+      timings.echoTopPrepareMs = 0; // included in decode timing
     } catch (error) {
       echoTopSummary = {
         sourceCellCount: 0,
@@ -537,15 +670,15 @@ async function handleMessage(
     return;
   }
   if (message.type === 'decode-echo-top') {
-    handleDecodeEchoTop(endpoint, message);
+    await handleDecodeEchoTop(endpoint, message);
     return;
   }
   if (message.type === 'prepare-volume') {
-    handlePrepareVolume(endpoint, message);
+    await handlePrepareVolume(endpoint, message);
     return;
   }
   if (message.type === 'prepare-echo-top') {
-    handlePrepareEchoTop(endpoint, message);
+    await handlePrepareEchoTop(endpoint, message);
     return;
   }
   await handlePollAndPrepare(endpoint, message);

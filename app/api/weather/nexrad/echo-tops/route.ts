@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_RANGE_NM = 120;
+const ECHO_TOP_BINARY_CONTENT_TYPE = 'application/vnd.approach-viz.echo-tops.v1';
 const DEFAULT_UPSTREAM_BASE_URL =
   process.env.RUNTIME_UPSTREAM_BASE_URL ||
   process.env.MRMS_BINARY_UPSTREAM_BASE_URL ||
@@ -20,7 +21,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-async function fetchWithTimeout(url: string): Promise<Response> {
+async function fetchWithTimeout(url: string, accept: string): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -28,7 +29,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
       cache: 'no-store',
       signal: controller.signal,
       headers: {
-        accept: '*/*',
+        accept,
         'user-agent': 'approach-viz/1.0'
       }
     });
@@ -76,9 +77,15 @@ export async function GET(request: NextRequest) {
   );
 
   try {
-    let upstreamResponse = await fetchWithTimeout(upstreamEchoTopUrl(lat, lon, maxRangeNm));
+    let upstreamResponse = await fetchWithTimeout(
+      upstreamEchoTopUrl(lat, lon, maxRangeNm),
+      ECHO_TOP_BINARY_CONTENT_TYPE
+    );
     if (upstreamResponse.status === 404) {
-      upstreamResponse = await fetchWithTimeout(upstreamLegacyEchoTopUrl(lat, lon, maxRangeNm));
+      upstreamResponse = await fetchWithTimeout(
+        upstreamLegacyEchoTopUrl(lat, lon, maxRangeNm),
+        ECHO_TOP_BINARY_CONTENT_TYPE
+      );
     }
 
     if (!upstreamResponse.ok) {
@@ -97,20 +104,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const payload = await upstreamResponse.json();
+    const body = await upstreamResponse.arrayBuffer();
     const headers = new Headers();
     headers.set('Cache-Control', 'no-store');
-    headers.set('Content-Type', 'application/json');
+    headers.set('Content-Type', ECHO_TOP_BINARY_CONTENT_TYPE);
 
     const scanTime = upstreamResponse.headers.get('x-av-scan-time');
     if (scanTime) headers.set('X-AV-SCAN-TIME', scanTime);
     const generatedAt = upstreamResponse.headers.get('x-av-generated-at');
     if (generatedAt) headers.set('X-AV-GENERATED-AT', generatedAt);
 
-    return new NextResponse(JSON.stringify(payload), {
-      status: 200,
-      headers
-    });
+    return new NextResponse(body, { status: 200, headers });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown MRMS echo-top error';
     return NextResponse.json(

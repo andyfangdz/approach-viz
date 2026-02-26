@@ -23,16 +23,6 @@ export interface LiveTrafficHistoryPoint {
   timestampMs: number;
 }
 
-export interface RenderTrafficTrack {
-  hex: string;
-  isCurrentlyPresent: boolean;
-  callsignLabel: string | null;
-  isOnGround: boolean;
-  headingDeg: number;
-  markerPosition: [number, number, number];
-  trailPoints: [number, number, number][];
-}
-
 export interface TrafficSabBuffers {
   control: SharedArrayBuffer;
   markerPositions: SharedArrayBuffer;

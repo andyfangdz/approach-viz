@@ -7,10 +7,10 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use tracing::{field, instrument, warn};
 
-use self::wire::{build_echo_top_cells, build_query_window, build_volume_wire};
+use self::wire::{build_echo_top_cells, build_echo_top_wire, build_query_window, build_volume_wire};
 use crate::constants::{
-    DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, MAX_ALLOWED_DBZ, MAX_ALLOWED_RANGE_NM, MIN_ALLOWED_DBZ,
-    MIN_ALLOWED_RANGE_NM,
+    DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, ECHO_TOP_BINARY_CONTENT_TYPE, MAX_ALLOWED_DBZ,
+    MAX_ALLOWED_RANGE_NM, MIN_ALLOWED_DBZ, MIN_ALLOWED_RANGE_NM,
 };
 use crate::types::AppState;
 use crate::utils::{clamp, iso_from_ms};
@@ -364,6 +364,7 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
 
 pub async fn echo_tops(
     State(state): State<AppState>,
+    req_headers: HeaderMap,
     Query(query): Query<EchoTopsQuery>,
 ) -> Response {
     let span = tracing::info_span!(
@@ -405,23 +406,12 @@ pub async fn echo_tops(
     let window = build_query_window(scan, query.lat, query.lon, DEFAULT_MIN_DBZ, max_range_nm);
     let build_cells_span = tracing::info_span!("runtime.echo_tops.build_cells");
     let cells = build_cells_span.in_scope(|| build_echo_top_cells(scan, &window));
-    let body = EchoTopsResponse {
-        generated_at: iso_from_ms(scan.generated_at_ms),
-        scan_time: iso_from_ms(scan.scan_time_ms),
-        timestamp: scan.timestamp.clone(),
-        source_cell_count: scan.echo_tops.len(),
-        footprint_x_nm: f64::from(window.footprint_x_milli) / 1000.0,
-        footprint_y_nm: f64::from(window.footprint_y_milli) / 1000.0,
-        max_top18_feet: scan.echo_top_debug.max_top18_feet,
-        max_top30_feet: scan.echo_top_debug.max_top30_feet,
-        max_top50_feet: scan.echo_top_debug.max_top50_feet,
-        max_top60_feet: scan.echo_top_debug.max_top60_feet,
-        top18_timestamp: scan.echo_top_debug.top18_timestamp.clone(),
-        top30_timestamp: scan.echo_top_debug.top30_timestamp.clone(),
-        top50_timestamp: scan.echo_top_debug.top50_timestamp.clone(),
-        top60_timestamp: scan.echo_top_debug.top60_timestamp.clone(),
-        cells,
-    };
+
+    // Content negotiation: binary AVET if client accepts it, otherwise JSON
+    let wants_binary = req_headers
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .map_or(false, |v| v.contains(ECHO_TOP_BINARY_CONTENT_TYPE));
 
     let mut headers = HeaderMap::new();
     headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
@@ -435,5 +425,32 @@ pub async fn echo_tops(
             headers.insert("X-AV-GENERATED-AT", value);
         }
     }
-    (headers, Json(body)).into_response()
+
+    if wants_binary {
+        let wire_body = build_echo_top_wire(scan, &window, &cells);
+        headers.insert(
+            "Content-Type",
+            HeaderValue::from_static(ECHO_TOP_BINARY_CONTENT_TYPE),
+        );
+        (headers, wire_body).into_response()
+    } else {
+        let body = EchoTopsResponse {
+            generated_at: iso_from_ms(scan.generated_at_ms),
+            scan_time: iso_from_ms(scan.scan_time_ms),
+            timestamp: scan.timestamp.clone(),
+            source_cell_count: scan.echo_tops.len(),
+            footprint_x_nm: f64::from(window.footprint_x_milli) / 1000.0,
+            footprint_y_nm: f64::from(window.footprint_y_milli) / 1000.0,
+            max_top18_feet: scan.echo_top_debug.max_top18_feet,
+            max_top30_feet: scan.echo_top_debug.max_top30_feet,
+            max_top50_feet: scan.echo_top_debug.max_top50_feet,
+            max_top60_feet: scan.echo_top_debug.max_top60_feet,
+            top18_timestamp: scan.echo_top_debug.top18_timestamp.clone(),
+            top30_timestamp: scan.echo_top_debug.top30_timestamp.clone(),
+            top50_timestamp: scan.echo_top_debug.top50_timestamp.clone(),
+            top60_timestamp: scan.echo_top_debug.top60_timestamp.clone(),
+            cells,
+        };
+        (headers, Json(body)).into_response()
+    }
 }

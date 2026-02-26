@@ -1,4 +1,3 @@
-import type { RenderTrafficTrack } from './traffic-worker-types';
 import { createSharedArrayBuffer, tryGrowSharedArrayBuffer } from '../shared/growable-sab';
 
 const DEFAULT_TRACK_CAPACITY = 1024;
@@ -287,26 +286,40 @@ function roundTenths(value: number): number {
   return Math.round(value * 10);
 }
 
-export function writeTrafficSabResult(
+/** SoA payload returned directly from WASM build_render_tracks. */
+export interface TrafficSoAPayload {
+  trackCount: number;
+  markerPositions: Float32Array;
+  headingDeg: Float32Array;
+  flags: Uint8Array;
+  trailPointsFlat: Float32Array;
+  trailOffsets: Uint32Array;
+  trailCounts: Uint32Array;
+  hexes: string[];
+  callsignLabels: (string | null)[];
+  hash: number;
+}
+
+export function writeTrafficSabResultSoA(
   views: TrafficSabViews,
   requestId: number,
   payload: {
-    renderTracks: RenderTrafficTrack[];
-    trackCount: number;
+    soa: TrafficSoAPayload;
+    storeTrackCount: number;
     historyPointCount: number;
-    renderHash: number | null;
     workerProcessingMs: number | null;
   }
 ): { usedSab: true } | { usedSab: false; overflow: TrafficSabOverflow } {
   const capacities = describeTrafficSabCapacities(views);
-  const trackCount = payload.renderTracks.length;
-  let totalPointCount = 0;
-  let totalStringCount = 0;
+  const soa = payload.soa;
+  const trackCount = soa.trackCount;
+  const totalPointCount = Math.floor(soa.trailPointsFlat.length / 3);
 
-  for (const track of payload.renderTracks) {
-    totalPointCount += track.trailPoints.length;
-    totalStringCount += track.hex.length;
-    if (track.callsignLabel) totalStringCount += track.callsignLabel.length;
+  let totalStringCount = 0;
+  for (let i = 0; i < trackCount; i++) {
+    totalStringCount += soa.hexes[i].length;
+    const cs = soa.callsignLabels[i];
+    if (cs) totalStringCount += cs.length;
   }
 
   if (
@@ -331,40 +344,36 @@ export function writeTrafficSabResult(
     };
   }
 
-  let pointOffset = 0;
-  let stringOffset = 0;
-  for (let trackIndex = 0; trackIndex < trackCount; trackIndex += 1) {
-    const track = payload.renderTracks[trackIndex];
-    views.headingDeg[trackIndex] = track.headingDeg;
-    views.markerPositions[trackIndex * 3] = track.markerPosition[0];
-    views.markerPositions[trackIndex * 3 + 1] = track.markerPosition[1];
-    views.markerPositions[trackIndex * 3 + 2] = track.markerPosition[2];
-    views.flags[trackIndex] =
-      (track.isCurrentlyPresent ? FLAGS_IS_CURRENTLY_PRESENT : 0) |
-      (track.isOnGround ? FLAGS_IS_ON_GROUND : 0);
-    views.trailOffsets[trackIndex] = pointOffset;
-    views.trailCounts[trackIndex] = track.trailPoints.length;
+  // Bulk copy typed arrays from WASM SoA
+  views.markerPositions.set(soa.markerPositions.subarray(0, trackCount * 3));
+  views.headingDeg.set(soa.headingDeg.subarray(0, trackCount));
+  views.flags.set(soa.flags.subarray(0, trackCount));
+  views.points.set(soa.trailPointsFlat);
 
-    const hexEncoded = encodeString(views.strings, track.hex, stringOffset);
-    views.hexOffsets[trackIndex] = hexEncoded.offset;
-    views.hexLengths[trackIndex] = hexEncoded.length;
+  // Trail offsets/counts — Uint32 → Int32 views
+  for (let i = 0; i < trackCount; i++) {
+    views.trailOffsets[i] = soa.trailOffsets[i];
+    views.trailCounts[i] = soa.trailCounts[i];
+  }
+
+  // Strings (per-track encoding — unavoidable for SAB packing)
+  let stringOffset = 0;
+  for (let i = 0; i < trackCount; i++) {
+    const hex = soa.hexes[i];
+    const hexEncoded = encodeString(views.strings, hex, stringOffset);
+    views.hexOffsets[i] = hexEncoded.offset;
+    views.hexLengths[i] = hexEncoded.length;
     stringOffset = hexEncoded.nextOffset;
 
-    if (track.callsignLabel) {
-      const callsignEncoded = encodeString(views.strings, track.callsignLabel, stringOffset);
-      views.callsignOffsets[trackIndex] = callsignEncoded.offset;
-      views.callsignLengths[trackIndex] = callsignEncoded.length;
-      stringOffset = callsignEncoded.nextOffset;
+    const cs = soa.callsignLabels[i];
+    if (cs) {
+      const csEncoded = encodeString(views.strings, cs, stringOffset);
+      views.callsignOffsets[i] = csEncoded.offset;
+      views.callsignLengths[i] = csEncoded.length;
+      stringOffset = csEncoded.nextOffset;
     } else {
-      views.callsignOffsets[trackIndex] = -1;
-      views.callsignLengths[trackIndex] = 0;
-    }
-
-    for (const point of track.trailPoints) {
-      views.points[pointOffset * 3] = point[0];
-      views.points[pointOffset * 3 + 1] = point[1];
-      views.points[pointOffset * 3 + 2] = point[2];
-      pointOffset += 1;
+      views.callsignOffsets[i] = -1;
+      views.callsignLengths[i] = 0;
     }
   }
 
@@ -375,12 +384,12 @@ export function writeTrafficSabResult(
   Atomics.store(views.control, ControlIndex.TrackCount, trackCount);
   Atomics.store(views.control, ControlIndex.PointCount, totalPointCount);
   Atomics.store(views.control, ControlIndex.StringCount, totalStringCount);
-  Atomics.store(views.control, ControlIndex.TrackStoreCount, payload.trackCount);
+  Atomics.store(views.control, ControlIndex.TrackStoreCount, payload.storeTrackCount);
   Atomics.store(views.control, ControlIndex.HistoryPointCount, payload.historyPointCount);
   Atomics.store(
     views.control,
     ControlIndex.RenderHash,
-    typeof payload.renderHash === 'number' ? payload.renderHash >>> 0 : -1
+    typeof soa.hash === 'number' ? soa.hash >>> 0 : -1
   );
   Atomics.store(
     views.control,
