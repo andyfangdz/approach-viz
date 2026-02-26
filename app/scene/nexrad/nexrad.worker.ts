@@ -166,6 +166,8 @@ async function handlePollAndPrepare(
     echoTopPrepareMs: null
   };
 
+  await ensureWasm();
+
   let volumePayload: NexradVolumePayload | undefined;
   let preparedVolume: NexradPreparedVolumeData = emptyPreparedVolume();
   let crossSectionData = null;
@@ -181,7 +183,6 @@ async function handlePollAndPrepare(
     const volumeFetch = await fetchArrayBuffer(message.volumeUrl);
     timings.volumeFetchMs = volumeFetch.fetchMs;
     const decodeAndPrepareStartedAt = performance.now();
-    await ensureWasm();
 
     // Single WASM call: decode + prepare + cross-section
     const result = decode_and_prepare_mrms(
