@@ -49,6 +49,155 @@ pub fn decode_mrms_volume(data: &[u8]) -> Result<JsValue, JsValue> {
 }
 
 // ---------------------------------------------------------------------------
+// MRMS Decode + Prepare + Cross-Section (single boundary crossing)
+// ---------------------------------------------------------------------------
+
+/// Decode, filter, curvature-correct, declutter, and optionally build a
+/// cross-section from a raw AVMR binary payload — all in one WASM call.
+///
+/// Returns a JS object with three top-level keys:
+///   `prepared`  — NexradPreparedVolumeData (for SAB write)
+///   `crossSection` — CrossSectionData | null
+///   `volumePayload` — NexradVolumePayload fields (for transferable arrays)
+///
+/// This eliminates all intermediate JS<->WASM boundary crossings for the
+/// `poll-and-prepare` hot path.
+#[wasm_bindgen]
+pub fn decode_and_prepare_mrms(
+    data: &[u8],
+    // prepare params
+    min_dbz_tenths: i16,
+    phase_mode: u8,
+    declutter_mode: u8,
+    apply_earth_curvature: bool,
+    ref_lat: f64,
+    // cross-section params (pass include_cross_section=false to skip)
+    include_cross_section: bool,
+    slice_axis_x: f64,
+    slice_axis_z: f64,
+    slice_perp_x: f64,
+    slice_perp_z: f64,
+    normalized_range: f64,
+    half_width_nm: f64,
+) -> Result<JsValue, JsValue> {
+    // 1. Decode
+    let vol = crate::mrms_wire_codec::decode_mrms_binary(data)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    // 2. Prepare
+    let pm = match phase_mode {
+        1 => crate::types::PhaseMode::Surface,
+        _ => crate::types::PhaseMode::Altitude,
+    };
+    let dm = match declutter_mode {
+        1 => crate::types::DeclutterMode::Low,
+        2 => crate::types::DeclutterMode::Mid,
+        3 => crate::types::DeclutterMode::High,
+        _ => crate::types::DeclutterMode::All,
+    };
+
+    let prepared = crate::mrms_preprocess::prepare_volume(
+        &vol, min_dbz_tenths, pm, dm, apply_earth_curvature, ref_lat,
+    );
+
+    // 3. Cross-section (optional)
+    let cross_section = if include_cross_section {
+        crate::mrms_preprocess::build_cross_section(
+            &vol,
+            &prepared,
+            (slice_axis_x, slice_axis_z),
+            (slice_perp_x, slice_perp_z),
+            normalized_range,
+            half_width_nm,
+        )
+    } else {
+        None
+    };
+
+    // 4. Build result object
+    let root = js_sys::Object::new();
+
+    // -- prepared volume --
+    let prep_obj = js_sys::Object::new();
+    set_prop(&prep_obj, "validCount", &JsValue::from(prepared.valid_count as u32))?;
+    set_prop(&prep_obj, "validIndices", &js_sys::Int32Array::from(&prepared.valid_indices[..]).into())?;
+    set_prop(&prep_obj, "yBase", &js_sys::Float32Array::from(&prepared.y_base[..]).into())?;
+    set_prop(&prep_obj, "heightBase", &js_sys::Float32Array::from(&prepared.height_base[..]).into())?;
+    set_prop(&prep_obj, "correctedBottomFeet", &js_sys::Float32Array::from(&prepared.corrected_bottom_feet[..]).into())?;
+    set_prop(&prep_obj, "correctedTopFeet", &js_sys::Float32Array::from(&prepared.corrected_top_feet[..]).into())?;
+    set_prop(&prep_obj, "effectivePhaseCode", &js_sys::Uint8Array::from(&prepared.effective_phase_code[..]).into())?;
+    set_prop(&prep_obj, "declutterIndices", &js_sys::Int32Array::from(&prepared.declutter_indices[..]).into())?;
+    set_prop(&prep_obj, "declutterCount", &JsValue::from(prepared.declutter_count as u32))?;
+    set_prop(&root, "prepared", &prep_obj.into())?;
+
+    // -- cross-section --
+    match &cross_section {
+        None => {
+            set_prop(&root, "crossSection", &JsValue::NULL)?;
+        }
+        Some(cs) => {
+            let cs_obj = js_sys::Object::new();
+            set_prop(&cs_obj, "binsX", &JsValue::from(cs.bins_x as u32))?;
+            set_prop(&cs_obj, "binsY", &JsValue::from(cs.bins_y as u32))?;
+            set_prop(&cs_obj, "grid", &js_sys::Float32Array::from(&cs.grid[..]).into())?;
+            set_prop(&cs_obj, "phaseGrid", &js_sys::Int8Array::from(&cs.phase_grid[..]).into())?;
+            set_prop(&cs_obj, "topEnvelopeFeet", &js_sys::Float32Array::from(&cs.top_envelope_feet[..]).into())?;
+            set_prop(&cs_obj, "maxTopFeet", &JsValue::from(cs.max_top_feet))?;
+            set_prop(&root, "crossSection", &cs_obj.into())?;
+        }
+    }
+
+    // -- volume payload (converted fields for transferable arrays) --
+    let vp_obj = js_sys::Object::new();
+    let voxel_count = vol.voxel_count as usize;
+
+    set_prop(&vp_obj, "voxelCount", &JsValue::from(vol.voxel_count))?;
+    set_prop(&vp_obj, "generatedAtMs", &JsValue::from(vol.generated_at_ms as f64))?;
+    set_prop(&vp_obj, "scanTimeMs", &JsValue::from(vol.scan_time_ms as f64))?;
+    set_prop(&vp_obj, "layerCount", &JsValue::from(vol.layer_count))?;
+    set_prop(&vp_obj, "layerVoxelCounts", &js_sys::Uint32Array::from(&vol.layer_voxel_counts[..]).into())?;
+
+    // xNm, zNm passed through
+    set_prop(&vp_obj, "xNm", &js_sys::Float32Array::from(&vol.x_nm[..]).into())?;
+    set_prop(&vp_obj, "zNm", &js_sys::Float32Array::from(&vol.z_nm[..]).into())?;
+
+    // Convert bottomFeet/topFeet u16 -> f32
+    let mut bottom_feet_f32 = Vec::with_capacity(voxel_count);
+    let mut top_feet_f32 = Vec::with_capacity(voxel_count);
+    for i in 0..voxel_count {
+        bottom_feet_f32.push(vol.bottom_feet[i] as f32);
+        top_feet_f32.push(vol.top_feet[i] as f32);
+    }
+    set_prop(&vp_obj, "bottomFeet", &js_sys::Float32Array::from(&bottom_feet_f32[..]).into())?;
+    set_prop(&vp_obj, "topFeet", &js_sys::Float32Array::from(&top_feet_f32[..]).into())?;
+
+    // Convert dbzTenths i16 -> f32 (whole dBZ)
+    let mut dbz_f32 = Vec::with_capacity(voxel_count);
+    for i in 0..voxel_count {
+        dbz_f32.push(vol.dbz_tenths[i] as f32 / 10.0);
+    }
+    set_prop(&vp_obj, "dbz", &js_sys::Float32Array::from(&dbz_f32[..]).into())?;
+
+    // Per-voxel footprint NM = scalar * max(1, span)
+    let mut fp_x_nm = Vec::with_capacity(voxel_count);
+    let mut fp_y_nm = Vec::with_capacity(voxel_count);
+    for i in 0..voxel_count {
+        fp_x_nm.push(vol.footprint_x_nm * (vol.footprint_x_span[i].max(1) as f32));
+        fp_y_nm.push(vol.footprint_y_nm * (vol.footprint_y_span[i].max(1) as f32));
+    }
+    set_prop(&vp_obj, "footprintXNm", &js_sys::Float32Array::from(&fp_x_nm[..]).into())?;
+    set_prop(&vp_obj, "footprintYNm", &js_sys::Float32Array::from(&fp_y_nm[..]).into())?;
+
+    // Phase codes passed through
+    set_prop(&vp_obj, "phaseCode", &js_sys::Uint8Array::from(&vol.phase[..]).into())?;
+    set_prop(&vp_obj, "surfacePhaseCode", &js_sys::Uint8Array::from(&vol.surface_phase[..]).into())?;
+
+    set_prop(&root, "volumePayload", &vp_obj.into())?;
+
+    Ok(root.into())
+}
+
+// ---------------------------------------------------------------------------
 // Traffic Decode
 // ---------------------------------------------------------------------------
 
@@ -560,20 +709,169 @@ impl WasmTrafficState {
         Ok(obj.into())
     }
 
+    /// Merge pre-decoded aircraft + history into the state (for JSON/ingest paths).
+    ///
+    /// `aircraft_js`: JS Array of `{ hex, lat, lon, altitudeFeet?, groundSpeedKt?, trackDeg?, flight?, isOnGround, lastSeenSeconds? }`
+    /// `history_js`: JS object `Record<string, Array<{ lat, lon, altitudeFeet, timestampMs }>>` or null/undefined.
+    ///
+    /// Returns `{ trackCount: number }`.
+    pub fn merge_decoded(
+        &mut self,
+        aircraft_js: &JsValue,
+        history_js: &JsValue,
+        now_ms: f64,
+        history_minutes: f64,
+        hide_ground: bool,
+    ) -> Result<JsValue, JsValue> {
+        let now_ms_i64 = now_ms as i64;
+
+        // Convert aircraft JS array to Vec<MergeAircraft>.
+        let ac_array: js_sys::Array = aircraft_js.clone().dyn_into()
+            .map_err(|_| JsValue::from_str("aircraft must be an array"))?;
+        let mut merge_aircraft: Vec<crate::traffic_merge::MergeAircraft> =
+            Vec::with_capacity(ac_array.length() as usize);
+        for i in 0..ac_array.length() {
+            let ac = ac_array.get(i);
+            let hex = js_sys::Reflect::get(&ac, &JsValue::from_str("hex"))
+                .ok()
+                .and_then(|v| v.as_string())
+                .unwrap_or_default();
+            let lat = js_sys::Reflect::get(&ac, &JsValue::from_str("lat"))
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let lon = js_sys::Reflect::get(&ac, &JsValue::from_str("lon"))
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let altitude_feet = js_sys::Reflect::get(&ac, &JsValue::from_str("altitudeFeet"))
+                .ok()
+                .and_then(|v| v.as_f64());
+            let ground_speed_kt =
+                js_sys::Reflect::get(&ac, &JsValue::from_str("groundSpeedKt"))
+                    .ok()
+                    .and_then(|v| v.as_f64());
+            let track_deg = js_sys::Reflect::get(&ac, &JsValue::from_str("trackDeg"))
+                .ok()
+                .and_then(|v| v.as_f64());
+            let flight = js_sys::Reflect::get(&ac, &JsValue::from_str("flight"))
+                .ok()
+                .and_then(|v| v.as_string());
+            let is_on_ground =
+                js_sys::Reflect::get(&ac, &JsValue::from_str("isOnGround"))
+                    .ok()
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+            let last_seen_seconds =
+                js_sys::Reflect::get(&ac, &JsValue::from_str("lastSeenSeconds"))
+                    .ok()
+                    .and_then(|v| v.as_f64());
+
+            merge_aircraft.push(crate::traffic_merge::MergeAircraft {
+                hex,
+                lat,
+                lon,
+                altitude_feet,
+                ground_speed_kt,
+                track_deg,
+                flight,
+                is_on_ground,
+                last_seen_seconds,
+            });
+        }
+
+        // Convert history JS object to Vec<BackfillHistory>.
+        let mut backfill_history: Vec<crate::traffic_merge::BackfillHistory> = Vec::new();
+        if !history_js.is_null() && !history_js.is_undefined() {
+            let keys = js_sys::Object::keys(&history_js.clone().unchecked_into::<js_sys::Object>());
+            for i in 0..keys.length() {
+                let hex_key = keys.get(i);
+                let hex = hex_key.as_string().unwrap_or_default();
+                let points_js = js_sys::Reflect::get(history_js, &hex_key)
+                    .unwrap_or(JsValue::NULL);
+                if js_sys::Array::is_array(&points_js) {
+                    let points_array = js_sys::Array::from(&points_js);
+                    let mut points: Vec<crate::traffic_merge::TrafficHistoryPoint> =
+                        Vec::with_capacity(points_array.length() as usize);
+                    for j in 0..points_array.length() {
+                        let pt = points_array.get(j);
+                        let lat =
+                            js_sys::Reflect::get(&pt, &JsValue::from_str("lat"))
+                                .ok()
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+                        let lon =
+                            js_sys::Reflect::get(&pt, &JsValue::from_str("lon"))
+                                .ok()
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+                        let altitude_feet =
+                            js_sys::Reflect::get(&pt, &JsValue::from_str("altitudeFeet"))
+                                .ok()
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+                        let timestamp_ms =
+                            js_sys::Reflect::get(&pt, &JsValue::from_str("timestampMs"))
+                                .ok()
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0) as i64;
+                        points.push(crate::traffic_merge::TrafficHistoryPoint {
+                            lat,
+                            lon,
+                            altitude_feet,
+                            timestamp_ms,
+                        });
+                    }
+                    backfill_history.push(crate::traffic_merge::BackfillHistory {
+                        hex,
+                        points,
+                    });
+                }
+            }
+        }
+
+        self.inner.merge(
+            &merge_aircraft,
+            now_ms_i64,
+            history_minutes,
+            hide_ground,
+            &backfill_history,
+        );
+
+        let obj = js_sys::Object::new();
+        set_prop(
+            &obj,
+            "trackCount",
+            &JsValue::from(self.inner.track_count() as u32),
+        )?;
+        Ok(obj.into())
+    }
+
     /// Build render-ready tracks projected to scene coordinates.
     ///
+    /// `airport_data`: flat Float64Array of `[lat, lon, elevation, lat, lon, elevation, ...]` triples.
     /// Returns `{ tracks: Array<RenderTrack>, hash: number }`.
     pub fn build_render_tracks(
         &self,
         ref_lat: f64,
         ref_lon: f64,
+        airport_data: &[f64],
         vertical_scale: f64,
         apply_earth_curvature: bool,
         show_departed_trails: bool,
     ) -> Result<JsValue, JsValue> {
-        // No airport elevation data passed from JS for now — use empty slice.
-        // The TS worker already handles ground-elevation via its own airport data.
-        let airports: Vec<crate::traffic_merge::SceneAirport> = Vec::new();
+        // Unpack flat [lat, lon, elev, ...] triples into Vec<SceneAirport>.
+        let mut airports: Vec<crate::traffic_merge::SceneAirport> =
+            Vec::with_capacity(airport_data.len() / 3);
+        let mut i = 0;
+        while i + 2 < airport_data.len() {
+            airports.push(crate::traffic_merge::SceneAirport {
+                lat: airport_data[i],
+                lon: airport_data[i + 1],
+                elevation_feet: airport_data[i + 2],
+            });
+            i += 3;
+        }
 
         let (render_tracks, hash) = self.inner.build_render_tracks(
             ref_lat,

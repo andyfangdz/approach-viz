@@ -20,16 +20,20 @@ export class WasmTrafficState {
     /**
      * Build render-ready tracks projected to scene coordinates.
      *
+     * `airport_data`: flat Float64Array of `[lat, lon, elevation, lat, lon, elevation, ...]` triples.
      * Returns `{ tracks: Array<RenderTrack>, hash: number }`.
      * @param {number} ref_lat
      * @param {number} ref_lon
+     * @param {Float64Array} airport_data
      * @param {number} vertical_scale
      * @param {boolean} apply_earth_curvature
      * @param {boolean} show_departed_trails
      * @returns {any}
      */
-    build_render_tracks(ref_lat, ref_lon, vertical_scale, apply_earth_curvature, show_departed_trails) {
-        const ret = wasm.wasmtrafficstate_build_render_tracks(this.__wbg_ptr, ref_lat, ref_lon, vertical_scale, apply_earth_curvature, show_departed_trails);
+    build_render_tracks(ref_lat, ref_lon, airport_data, vertical_scale, apply_earth_curvature, show_departed_trails) {
+        const ptr0 = passArrayF64ToWasm0(airport_data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmtrafficstate_build_render_tracks(this.__wbg_ptr, ref_lat, ref_lon, ptr0, len0, vertical_scale, apply_earth_curvature, show_departed_trails);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -58,6 +62,27 @@ export class WasmTrafficState {
         const ptr1 = passArray8ToWasm0(backfill_data, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
         const ret = wasm.wasmtrafficstate_merge(this.__wbg_ptr, ptr0, len0, now_ms, history_minutes, hide_ground, ptr1, len1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Merge pre-decoded aircraft + history into the state (for JSON/ingest paths).
+     *
+     * `aircraft_js`: JS Array of `{ hex, lat, lon, altitudeFeet?, groundSpeedKt?, trackDeg?, flight?, isOnGround, lastSeenSeconds? }`
+     * `history_js`: JS object `Record<string, Array<{ lat, lon, altitudeFeet, timestampMs }>>` or null/undefined.
+     *
+     * Returns `{ trackCount: number }`.
+     * @param {any} aircraft_js
+     * @param {any} history_js
+     * @param {number} now_ms
+     * @param {number} history_minutes
+     * @param {boolean} hide_ground
+     * @returns {any}
+     */
+    merge_decoded(aircraft_js, history_js, now_ms, history_minutes, hide_ground) {
+        const ret = wasm.wasmtrafficstate_merge_decoded(this.__wbg_ptr, aircraft_js, history_js, now_ms, history_minutes, hide_ground);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -168,6 +193,42 @@ export function build_mrms_cross_section(x_nm, z_nm, bottom_feet, top_feet, dbz_
     const ptr13 = passArray8ToWasm0(effective_phase_code, wasm.__wbindgen_malloc);
     const len13 = WASM_VECTOR_LEN;
     const ret = wasm.build_mrms_cross_section(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, ptr8, len8, footprint_x_nm, footprint_y_nm, layer_count, ptr9, len9, valid_count, ptr10, len10, ptr11, len11, ptr12, len12, ptr13, len13, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Decode, filter, curvature-correct, declutter, and optionally build a
+ * cross-section from a raw AVMR binary payload — all in one WASM call.
+ *
+ * Returns a JS object with three top-level keys:
+ *   `prepared`  — NexradPreparedVolumeData (for SAB write)
+ *   `crossSection` — CrossSectionData | null
+ *   `volumePayload` — NexradVolumePayload fields (for transferable arrays)
+ *
+ * This eliminates all intermediate JS<->WASM boundary crossings for the
+ * `poll-and-prepare` hot path.
+ * @param {Uint8Array} data
+ * @param {number} min_dbz_tenths
+ * @param {number} phase_mode
+ * @param {number} declutter_mode
+ * @param {boolean} apply_earth_curvature
+ * @param {number} ref_lat
+ * @param {boolean} include_cross_section
+ * @param {number} slice_axis_x
+ * @param {number} slice_axis_z
+ * @param {number} slice_perp_x
+ * @param {number} slice_perp_z
+ * @param {number} normalized_range
+ * @param {number} half_width_nm
+ * @returns {any}
+ */
+export function decode_and_prepare_mrms(data, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_and_prepare_mrms(ptr0, len0, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -366,8 +427,59 @@ export function wasm_projection_scales(lat_deg) {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_boolean_get_18c4ed9422296fff: function(arg0) {
+            const v = arg0;
+            const ret = typeof(v) === 'boolean' ? v : undefined;
+            return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
+        },
+        __wbg___wbindgen_is_null_a2a19127c13e7126: function(arg0) {
+            const ret = arg0 === null;
+            return ret;
+        },
+        __wbg___wbindgen_is_undefined_c18285b9fc34cb7d: function(arg0) {
+            const ret = arg0 === undefined;
+            return ret;
+        },
+        __wbg___wbindgen_number_get_5854912275df1894: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'number' ? obj : undefined;
+            getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+        },
+        __wbg___wbindgen_string_get_3e5751597f39a112: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
         __wbg___wbindgen_throw_39bc967c0e5a9b58: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_from_d7e888a2e9063b32: function(arg0) {
+            const ret = Array.from(arg0);
+            return ret;
+        },
+        __wbg_get_18349afdb36339a9: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.get(arg0, arg1);
+            return ret;
+        }, arguments); },
+        __wbg_get_f09c3a16f8848381: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
+        __wbg_isArray_fad08a0d12828686: function(arg0) {
+            const ret = Array.isArray(arg0);
+            return ret;
+        },
+        __wbg_keys_e20e1368162303e0: function(arg0) {
+            const ret = Object.keys(arg0);
+            return ret;
+        },
+        __wbg_length_a31e05262e09b7f8: function(arg0) {
+            const ret = arg0.length;
+            return ret;
         },
         __wbg_new_ed69e637b553a997: function() {
             const ret = new Object();
@@ -488,6 +600,14 @@ function getArrayU8FromWasm0(ptr, len) {
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
 }
 
+let cachedDataViewMemory0 = null;
+function getDataViewMemory0() {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+    }
+    return cachedDataViewMemory0;
+}
+
 let cachedFloat32ArrayMemory0 = null;
 function getFloat32ArrayMemory0() {
     if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
@@ -566,6 +686,10 @@ function handleError(f, args) {
     }
 }
 
+function isLikeNone(x) {
+    return x === undefined || x === null;
+}
+
 function passArray16ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 2, 2) >>> 0;
     getUint16ArrayMemory0().set(arg, ptr / 2);
@@ -594,6 +718,50 @@ function passArrayF32ToWasm0(arg, malloc) {
     return ptr;
 }
 
+function passArrayF64ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 8, 8) >>> 0;
+    getFloat64ArrayMemory0().set(arg, ptr / 8);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passStringToWasm0(arg, malloc, realloc) {
+    if (realloc === undefined) {
+        const buf = cachedTextEncoder.encode(arg);
+        const ptr = malloc(buf.length, 1) >>> 0;
+        getUint8ArrayMemory0().subarray(ptr, ptr + buf.length).set(buf);
+        WASM_VECTOR_LEN = buf.length;
+        return ptr;
+    }
+
+    let len = arg.length;
+    let ptr = malloc(len, 1) >>> 0;
+
+    const mem = getUint8ArrayMemory0();
+
+    let offset = 0;
+
+    for (; offset < len; offset++) {
+        const code = arg.charCodeAt(offset);
+        if (code > 0x7F) break;
+        mem[ptr + offset] = code;
+    }
+    if (offset !== len) {
+        if (offset !== 0) {
+            arg = arg.slice(offset);
+        }
+        ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
+        const view = getUint8ArrayMemory0().subarray(ptr + offset, ptr + len);
+        const ret = cachedTextEncoder.encodeInto(arg, view);
+
+        offset += ret.written;
+        ptr = realloc(ptr, len, offset, 1) >>> 0;
+    }
+
+    WASM_VECTOR_LEN = offset;
+    return ptr;
+}
+
 function takeFromExternrefTable0(idx) {
     const value = wasm.__wbindgen_externrefs.get(idx);
     wasm.__externref_table_dealloc(idx);
@@ -614,12 +782,26 @@ function decodeText(ptr, len) {
     return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
+const cachedTextEncoder = new TextEncoder();
+
+if (!('encodeInto' in cachedTextEncoder)) {
+    cachedTextEncoder.encodeInto = function (arg, view) {
+        const buf = cachedTextEncoder.encode(arg);
+        view.set(buf);
+        return {
+            read: arg.length,
+            written: buf.length
+        };
+    };
+}
+
 let WASM_VECTOR_LEN = 0;
 
 let wasmModule, wasm;
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
+    cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
     cachedFloat64ArrayMemory0 = null;
     cachedInt16ArrayMemory0 = null;

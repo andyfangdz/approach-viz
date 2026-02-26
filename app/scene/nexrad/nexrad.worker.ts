@@ -28,20 +28,22 @@ import {
   writeNexradPrepareSabResult
 } from './nexrad-sab';
 import { ensureWasm } from '../shared/wasm-loader';
-import { decode_mrms_volume } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+import {
+  decode_mrms_volume,
+  decode_and_prepare_mrms,
+  prepare_echo_top_surfaces as wasm_prepare_echo_top_surfaces
+} from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+import type { NexradPhaseMode, NexradDeclutterMode } from '../../app-client/types';
 
 /**
  * Adapt the raw WASM `decode_mrms_volume` output to the `NexradVolumePayload`
  * shape that the rest of the TS pipeline expects.
  *
- * Key conversions:
- *  - dbzTenths (Int16Array) -> dbz (Float32Array, divide by 10)
- *  - bottomFeet / topFeet (Uint16Array) -> Float32Array
- *  - footprintXSpan / footprintYSpan + scalar footprintXNm/YNm -> per-voxel Float32Arrays
- *  - Reconstruct generatedAt, scanTime, layerSummaries from header fields
+ * Used only for the `decode-volume` message path (standalone decode without
+ * prepare). The `poll-and-prepare` path uses `decode_and_prepare_mrms` instead.
  */
 function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
-  const raw = decode_mrms_volume(new Uint8Array(buffer)) as any; // WASM returns untyped JS object
+  const raw = decode_mrms_volume(new Uint8Array(buffer)) as any;
 
   const voxelCount: number = raw.voxelCount;
   const dbzTenths: Int16Array = raw.dbzTenths;
@@ -56,13 +58,11 @@ function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
   const layerCount: number = raw.layerCount;
   const layerVoxelCounts: Uint32Array = raw.layerVoxelCounts;
 
-  // Convert dBZ tenths -> whole dBZ as Float32Array
   const dbz = new Float32Array(voxelCount);
   for (let i = 0; i < voxelCount; i++) {
     dbz[i] = dbzTenths[i] / 10;
   }
 
-  // Convert u16 feet -> Float32Array
   const bottomFeet = new Float32Array(voxelCount);
   const topFeet = new Float32Array(voxelCount);
   for (let i = 0; i < voxelCount; i++) {
@@ -70,7 +70,6 @@ function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
     topFeet[i] = rawTopFeet[i];
   }
 
-  // Per-voxel footprint NM = scalar * span (min 1)
   const footprintXNm = new Float32Array(voxelCount);
   const footprintYNm = new Float32Array(voxelCount);
   for (let i = 0; i < voxelCount; i++) {
@@ -78,7 +77,6 @@ function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
     footprintYNm[i] = scalarFootprintYNm * Math.max(1, footprintYSpan[i]);
   }
 
-  // Reconstruct ISO timestamps
   const generatedAt =
     Number.isFinite(generatedAtMs) && generatedAtMs > 0
       ? new Date(generatedAtMs).toISOString()
@@ -88,7 +86,6 @@ function decodeVolumeViaWasm(buffer: ArrayBuffer): NexradVolumePayload {
       ? new Date(scanTimeMs).toISOString()
       : generatedAt;
 
-  // Build layer summaries
   const layerSummaries: NexradLayerSummary[] = [];
   for (let i = 0; i < layerCount; i++) {
     const levelTag = MRMS_LEVEL_TAGS[i] ?? `${i}`;
@@ -229,6 +226,40 @@ async function fetchArrayBuffer(
     headers: response.headers,
     fetchMs
   };
+}
+
+/** Convert WASM SoA echo-top output to the EchoTopSurfaceCell[] shape. */
+function unpackEchoTopSoA(
+  soa: any
+): { x: number; z: number; yBase: number; footprintXNm: number; footprintYNm: number }[] {
+  const count: number = soa.count ?? 0;
+  const x: Float32Array = soa.x;
+  const z: Float32Array = soa.z;
+  const yBase: Float32Array = soa.yBase;
+  const fpX: Float32Array = soa.footprintXNm;
+  const fpY: Float32Array = soa.footprintYNm;
+  const cells = new Array(count);
+  for (let i = 0; i < count; i++) {
+    cells[i] = { x: x[i], z: z[i], yBase: yBase[i], footprintXNm: fpX[i], footprintYNm: fpY[i] };
+  }
+  return cells;
+}
+
+function encodePhaseMode(mode: NexradPhaseMode): number {
+  return mode === 'surface' ? 1 : 0;
+}
+
+function encodeDeclutterMode(mode: NexradDeclutterMode): number {
+  switch (mode) {
+    case 'low':
+      return 1;
+    case 'mid':
+      return 2;
+    case 'high':
+      return 3;
+    default:
+      return 0;
+  }
 }
 
 async function handleDecodeVolume(
@@ -384,6 +415,8 @@ async function handlePollAndPrepare(
   };
 
   let volumePayload: NexradVolumePayload | undefined;
+  let preparedVolume;
+  let crossSectionData = null;
   if (message.includeVolume) {
     if (!message.volumeUrl) {
       endpoint.postMessage({
@@ -395,40 +428,97 @@ async function handlePollAndPrepare(
     }
     const volumeFetch = await fetchArrayBuffer(message.volumeUrl);
     timings.volumeFetchMs = volumeFetch.fetchMs;
-    const decodeStartedAt = performance.now();
+    const decodeAndPrepareStartedAt = performance.now();
     await ensureWasm();
-    const rawDecoded = decodeVolumeViaWasm(volumeFetch.buffer);
+
+    // Single WASM call: decode + prepare + cross-section
+    const result = decode_and_prepare_mrms(
+      new Uint8Array(volumeFetch.buffer),
+      Math.round(message.minDbz * 10),
+      encodePhaseMode(message.phaseMode),
+      encodeDeclutterMode(message.declutterMode),
+      message.applyEarthCurvatureCompensation,
+      message.refLat,
+      message.includeCrossSection,
+      message.sliceAxis.x,
+      message.sliceAxis.z,
+      message.slicePerpAxis.x,
+      message.slicePerpAxis.z,
+      message.normalizedCrossSectionRange,
+      message.crossSectionHalfWidthNm
+    ) as any;
+
+    // Unpack prepared volume
+    const wasmPrepared = result.prepared;
+    preparedVolume = {
+      validCount: wasmPrepared.validCount as number,
+      validIndices: wasmPrepared.validIndices as Int32Array,
+      yBase: wasmPrepared.yBase as Float32Array,
+      heightBase: wasmPrepared.heightBase as Float32Array,
+      correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
+      correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
+      effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
+      declutterIndices: wasmPrepared.declutterIndices as Int32Array,
+      declutterCount: wasmPrepared.declutterCount as number
+    };
+
+    // Cross-section (null if not requested or empty volume)
+    crossSectionData = result.crossSection;
+
+    // Build NexradVolumePayload from WASM-converted fields
+    const vp = result.volumePayload;
+    const generatedAtMs: number = vp.generatedAtMs;
+    const scanTimeMs: number = vp.scanTimeMs;
+    const layerCount: number = vp.layerCount;
+    const layerVoxelCounts: Uint32Array = vp.layerVoxelCounts;
+
+    const generatedAt =
+      Number.isFinite(generatedAtMs) && generatedAtMs > 0
+        ? new Date(generatedAtMs).toISOString()
+        : new Date().toISOString();
+    const scanTime =
+      Number.isFinite(scanTimeMs) && scanTimeMs > 0
+        ? new Date(scanTimeMs).toISOString()
+        : generatedAt;
+
+    const layerSummaries: NexradLayerSummary[] = [];
+    for (let i = 0; i < layerCount; i++) {
+      const levelTag = MRMS_LEVEL_TAGS[i] ?? `${i}`;
+      const elevation = Number(levelTag);
+      layerSummaries.push({
+        product: `MergedReflectivityQC_${levelTag}`,
+        elevationAngleDeg: Number.isFinite(elevation) ? elevation : i,
+        sourceKey: `mrms-binary://${scanTime}/${levelTag}`,
+        scanTime,
+        voxelCount: layerVoxelCounts[i] ?? 0
+      });
+    }
+
     volumePayload = applyPhaseDebugValues(
-      rawDecoded,
+      {
+        generatedAt,
+        radar: null,
+        layerSummaries,
+        voxelCount: vp.voxelCount as number,
+        xNm: vp.xNm as Float32Array,
+        zNm: vp.zNm as Float32Array,
+        bottomFeet: vp.bottomFeet as Float32Array,
+        topFeet: vp.topFeet as Float32Array,
+        dbz: vp.dbz as Float32Array,
+        footprintXNm: vp.footprintXNm as Float32Array,
+        footprintYNm: vp.footprintYNm as Float32Array,
+        phaseCode: vp.phaseCode as Uint8Array,
+        surfacePhaseCode: vp.surfacePhaseCode as Uint8Array
+      },
       extractPhaseDebugHeaderValues(volumeFetch.headers)
     );
-    timings.volumeDecodeMs = roundMs(performance.now() - decodeStartedAt);
-  }
 
-  const prepareStartedAt = performance.now();
-  const preparedVolume =
-    message.includeVolume && volumePayload
-      ? prepareVolumeData({
-          payload: volumePayload,
-          minDbz: message.minDbz,
-          phaseMode: message.phaseMode,
-          declutterMode: message.declutterMode,
-          applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-          refLat: message.refLat
-        })
-      : emptyPreparedVolume();
-  const crossSectionData =
-    message.includeVolume && message.includeCrossSection && volumePayload
-      ? buildCrossSectionData({
-          payload: volumePayload,
-          volumeData: preparedVolume,
-          sliceAxis: message.sliceAxis,
-          slicePerpAxis: message.slicePerpAxis,
-          normalizedCrossSectionRange: message.normalizedCrossSectionRange,
-          crossSectionHalfWidthNm: message.crossSectionHalfWidthNm
-        })
-      : null;
-  timings.volumePrepareMs = roundMs(performance.now() - prepareStartedAt);
+    const elapsed = roundMs(performance.now() - decodeAndPrepareStartedAt);
+    timings.volumeDecodeMs = elapsed;
+    timings.volumePrepareMs = 0; // included in decode timing
+  } else {
+    preparedVolume = emptyPreparedVolume();
+  }
 
   const sabResult = writeNexradPrepareSabResult(
     prepareSabViews,
@@ -458,19 +548,47 @@ async function handlePollAndPrepare(
     try {
       const echoTopFetch = await fetchArrayBuffer(message.echoTopUrl);
       timings.echoTopFetchMs = echoTopFetch.fetchMs;
-      const decodeStartedAt = performance.now();
+      const echoDecodeStartedAt = performance.now();
       const echoTopPayload = decodeEchoTopPayload(echoTopFetch.buffer);
-      timings.echoTopDecodeMs = roundMs(performance.now() - decodeStartedAt);
-      const prepareStartedAt = performance.now();
-      const preparedEchoTop = prepareEchoTopSurfaces({
-        payload: echoTopPayload,
-        applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
-        refLat: message.refLat
-      });
-      timings.echoTopPrepareMs = roundMs(performance.now() - prepareStartedAt);
-      echoTop18Cells = preparedEchoTop.echoTop18Cells;
-      echoTop30Cells = preparedEchoTop.echoTop30Cells;
-      echoTop50Cells = preparedEchoTop.echoTop50Cells;
+      timings.echoTopDecodeMs = roundMs(performance.now() - echoDecodeStartedAt);
+      const echoTopPrepareStartedAt = performance.now();
+
+      // Use WASM echo-top prepare when typed arrays are available
+      if (
+        echoTopPayload.xNm &&
+        echoTopPayload.zNm &&
+        echoTopPayload.top18Feet &&
+        echoTopPayload.top30Feet &&
+        echoTopPayload.top50Feet &&
+        echoTopPayload.footprintXNm != null &&
+        echoTopPayload.footprintYNm != null
+      ) {
+        const wasmEchoTop = wasm_prepare_echo_top_surfaces(
+          echoTopPayload.xNm,
+          echoTopPayload.zNm,
+          echoTopPayload.top18Feet,
+          echoTopPayload.top30Feet,
+          echoTopPayload.top50Feet,
+          echoTopPayload.footprintXNm,
+          echoTopPayload.footprintYNm,
+          message.applyEarthCurvatureCompensation,
+          message.refLat
+        ) as any;
+        echoTop18Cells = unpackEchoTopSoA(wasmEchoTop.top18);
+        echoTop30Cells = unpackEchoTopSoA(wasmEchoTop.top30);
+        echoTop50Cells = unpackEchoTopSoA(wasmEchoTop.top50);
+      } else {
+        // Fallback to TS for payloads without typed arrays
+        const preparedEchoTop = prepareEchoTopSurfaces({
+          payload: echoTopPayload,
+          applyEarthCurvatureCompensation: message.applyEarthCurvatureCompensation,
+          refLat: message.refLat
+        });
+        echoTop18Cells = preparedEchoTop.echoTop18Cells;
+        echoTop30Cells = preparedEchoTop.echoTop30Cells;
+        echoTop50Cells = preparedEchoTop.echoTop50Cells;
+      }
+      timings.echoTopPrepareMs = roundMs(performance.now() - echoTopPrepareStartedAt);
       echoTopSummary = {
         sourceCellCount:
           echoTopPayload.sourceCellCount ??

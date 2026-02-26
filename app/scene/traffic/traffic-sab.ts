@@ -1,4 +1,4 @@
-import type { RenderTrafficTrack } from './traffic-worker-types';
+import type { RenderTrafficTrack, WasmRenderTrafficTrack } from './traffic-worker-types';
 import { createSharedArrayBuffer, tryGrowSharedArrayBuffer } from '../shared/growable-sab';
 
 const DEFAULT_TRACK_CAPACITY = 1024;
@@ -287,11 +287,39 @@ function roundTenths(value: number): number {
   return Math.round(value * 10);
 }
 
+/** Get trail point count from either TS or WASM render track. */
+function getTrailPointCount(track: RenderTrafficTrack | WasmRenderTrafficTrack): number {
+  if ('trailPointsFlat' in track) return track.trailPointCount;
+  return track.trailPoints.length;
+}
+
+/** Write trail points from either TS (nested tuples) or WASM (flat Float32Array) format. */
+function writeTrailPoints(
+  target: Float32Array,
+  track: RenderTrafficTrack | WasmRenderTrafficTrack,
+  pointOffset: number
+): number {
+  if ('trailPointsFlat' in track) {
+    // WASM flat format: copy directly
+    const count = track.trailPointCount;
+    target.set(track.trailPointsFlat.subarray(0, count * 3), pointOffset * 3);
+    return pointOffset + count;
+  }
+  // TS nested tuple format
+  for (const point of track.trailPoints) {
+    target[pointOffset * 3] = point[0];
+    target[pointOffset * 3 + 1] = point[1];
+    target[pointOffset * 3 + 2] = point[2];
+    pointOffset += 1;
+  }
+  return pointOffset;
+}
+
 export function writeTrafficSabResult(
   views: TrafficSabViews,
   requestId: number,
   payload: {
-    renderTracks: RenderTrafficTrack[];
+    renderTracks: (RenderTrafficTrack | WasmRenderTrafficTrack)[];
     trackCount: number;
     historyPointCount: number;
     renderHash: number | null;
@@ -304,7 +332,7 @@ export function writeTrafficSabResult(
   let totalStringCount = 0;
 
   for (const track of payload.renderTracks) {
-    totalPointCount += track.trailPoints.length;
+    totalPointCount += getTrailPointCount(track);
     totalStringCount += track.hex.length;
     if (track.callsignLabel) totalStringCount += track.callsignLabel.length;
   }
@@ -343,7 +371,7 @@ export function writeTrafficSabResult(
       (track.isCurrentlyPresent ? FLAGS_IS_CURRENTLY_PRESENT : 0) |
       (track.isOnGround ? FLAGS_IS_ON_GROUND : 0);
     views.trailOffsets[trackIndex] = pointOffset;
-    views.trailCounts[trackIndex] = track.trailPoints.length;
+    views.trailCounts[trackIndex] = getTrailPointCount(track);
 
     const hexEncoded = encodeString(views.strings, track.hex, stringOffset);
     views.hexOffsets[trackIndex] = hexEncoded.offset;
@@ -360,12 +388,7 @@ export function writeTrafficSabResult(
       views.callsignLengths[trackIndex] = 0;
     }
 
-    for (const point of track.trailPoints) {
-      views.points[pointOffset * 3] = point[0];
-      views.points[pointOffset * 3 + 1] = point[1];
-      views.points[pointOffset * 3 + 2] = point[2];
-      pointOffset += 1;
-    }
+    pointOffset = writeTrailPoints(views.points, track, pointOffset);
   }
 
   Atomics.store(views.control, ControlIndex.TrackCapacity, capacities.trackCapacity);

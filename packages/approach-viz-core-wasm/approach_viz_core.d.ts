@@ -13,9 +13,10 @@ export class WasmTrafficState {
     /**
      * Build render-ready tracks projected to scene coordinates.
      *
+     * `airport_data`: flat Float64Array of `[lat, lon, elevation, lat, lon, elevation, ...]` triples.
      * Returns `{ tracks: Array<RenderTrack>, hash: number }`.
      */
-    build_render_tracks(ref_lat: number, ref_lon: number, vertical_scale: number, apply_earth_curvature: boolean, show_departed_trails: boolean): any;
+    build_render_tracks(ref_lat: number, ref_lon: number, airport_data: Float64Array, vertical_scale: number, apply_earth_curvature: boolean, show_departed_trails: boolean): any;
     /**
      * Merge incoming traffic binary data + optional backfill history into the state.
      *
@@ -28,6 +29,15 @@ export class WasmTrafficState {
      * Returns a JS object with `{ trackCount: number, fetchedAtMs: number }`.
      */
     merge(data: Uint8Array, now_ms: number, history_minutes: number, hide_ground: boolean, backfill_data: Uint8Array): any;
+    /**
+     * Merge pre-decoded aircraft + history into the state (for JSON/ingest paths).
+     *
+     * `aircraft_js`: JS Array of `{ hex, lat, lon, altitudeFeet?, groundSpeedKt?, trackDeg?, flight?, isOnGround, lastSeenSeconds? }`
+     * `history_js`: JS object `Record<string, Array<{ lat, lon, altitudeFeet, timestampMs }>>` or null/undefined.
+     *
+     * Returns `{ trackCount: number }`.
+     */
+    merge_decoded(aircraft_js: any, history_js: any, now_ms: number, history_minutes: number, hide_ground: boolean): any;
     /**
      * Create a new empty traffic state.
      */
@@ -55,6 +65,20 @@ export class WasmTrafficState {
  * Returns null if the cross-section cannot be built (empty volume).
  */
 export function build_mrms_cross_section(x_nm: Float32Array, z_nm: Float32Array, bottom_feet: Uint16Array, top_feet: Uint16Array, dbz_tenths: Int16Array, phase: Uint8Array, surface_phase: Uint8Array, footprint_x_span: Uint16Array, footprint_y_span: Uint16Array, footprint_x_nm: number, footprint_y_nm: number, layer_count: number, layer_voxel_counts: Uint32Array, valid_count: number, valid_indices: Int32Array, corrected_bottom_feet: Float32Array, corrected_top_feet: Float32Array, effective_phase_code: Uint8Array, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number): any;
+
+/**
+ * Decode, filter, curvature-correct, declutter, and optionally build a
+ * cross-section from a raw AVMR binary payload — all in one WASM call.
+ *
+ * Returns a JS object with three top-level keys:
+ *   `prepared`  — NexradPreparedVolumeData (for SAB write)
+ *   `crossSection` — CrossSectionData | null
+ *   `volumePayload` — NexradVolumePayload fields (for transferable arrays)
+ *
+ * This eliminates all intermediate JS<->WASM boundary crossings for the
+ * `poll-and-prepare` hot path.
+ */
+export function decode_and_prepare_mrms(data: Uint8Array, min_dbz_tenths: number, phase_mode: number, declutter_mode: number, apply_earth_curvature: boolean, ref_lat: number, include_cross_section: boolean, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number): any;
 
 /**
  * Decode an AVMR binary payload into a JS object matching NexradVolumePayload shape.
@@ -125,6 +149,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmtrafficstate_free: (a: number, b: number) => void;
     readonly build_mrms_cross_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number, c1: number, d1: number, e1: number, f1: number, g1: number, h1: number, i1: number, j1: number, k1: number, l1: number) => [number, number, number];
+    readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly decode_mrms_volume: (a: number, b: number) => [number, number, number];
     readonly decode_traffic: (a: number, b: number) => [number, number, number];
     readonly prepare_echo_top_surfaces: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
@@ -134,16 +159,18 @@ export interface InitOutput {
     readonly wasm_geocentric_radius_nm: (a: number) => number;
     readonly wasm_lat_lon_to_local: (a: number, b: number, c: number, d: number) => [number, number];
     readonly wasm_projection_scales: (a: number) => [number, number];
-    readonly wasmtrafficstate_build_render_tracks: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly wasmtrafficstate_build_render_tracks: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly wasmtrafficstate_merge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly wasmtrafficstate_merge_decoded: (a: number, b: any, c: any, d: number, e: number, f: number) => [number, number, number];
     readonly wasmtrafficstate_new: () => number;
     readonly wasmtrafficstate_prune_for_error: (a: number, b: number, c: number) => void;
     readonly wasmtrafficstate_recompute: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly wasmtrafficstate_track_count: (a: number) => number;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
