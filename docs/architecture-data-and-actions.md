@@ -54,11 +54,11 @@
 - Phase resolution is thermo-first: ingest builds per-voxel rain/mixed/snow evidence from `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, bright-band heights, and optional RQI, then applies weighted dual-pol correction (`MergedZdr`, `MergedRhoHV`) with staleness and quality penalties.
 - Dual-pol auxiliaries are attempted at the exact reflectivity timestamp first; if aux coverage lags (or is sparse/incompatible), ingest uses the latest available dual-pol cycle, marks fallback telemetry (`aux_fallback=yes`), and down-weights dual-pol corrections to avoid stale mixed/rain artifacts.
 - Pending ingest retries are scheduled by earliest-due timestamp (not newest-first) so delayed aux cycles are not starved by newer precip arrivals; startup bootstrap now enqueues a deeper recent-key window to recover the newest complete cycle after restarts.
-- Query endpoint (`/v1/weather/volume`, with legacy `/v1/volume` alias) loads latest snapshot in memory and performs fast request-origin filtering (`lat/lon/minDbz/maxRangeNm`) with tile-indexed voxel subsets before serializing compact binary v2 responses.
-- Echo-top endpoint (`/v1/weather/echo-tops`, with legacy `/v1/echo-tops` alias) filters direct MRMS echo-top cells (`lat/lon/maxRangeNm`) from in-memory snapshots and returns thresholded top heights for 18/30/50/60 dBZ products.
-- v2 serialization performs adaptive brick merging (same phase + quantized dBZ + contiguous spans) so broad precip regions ship as fewer records while retaining full area coverage.
-- Next.js routes `app/api/weather/nexrad/route.ts` and `app/api/weather/nexrad/echo-tops/route.ts` are thin proxies to Rust endpoints (`RUNTIME_UPSTREAM_BASE_URL`, legacy alias `MRMS_BINARY_UPSTREAM_BASE_URL`, defaulting to the OCI Tailscale Funnel URL).
-- Client overlay decodes binary reflectivity wire payloads plus JSON echo-top payloads directly, with JSON fallback only for error payloads.
+- Query endpoint (`/v1/weather/volume`, with legacy `/v1/volume` alias) loads latest snapshot in memory and performs fast request-origin filtering (`lat/lon/minDbz/maxRangeNm`) with tile-indexed voxel subsets before serializing compact binary v3 responses.
+- Echo-top endpoint (`/v1/weather/echo-tops`, with legacy `/v1/echo-tops` alias) filters direct MRMS echo-top cells (`lat/lon/maxRangeNm`) from in-memory snapshots and returns thresholded top heights for 18/30/50/60 dBZ products (JSON by default, AVET binary when requested via `Accept`).
+- Serialization performs adaptive brick merging (same phase + quantized dBZ + contiguous spans) so broad precip regions ship as fewer records while retaining full area coverage.
+- Next.js routes `app/api/weather/nexrad/route.ts` and `app/api/weather/nexrad/echo-tops/route.ts` are thin proxies to Rust endpoints (`RUNTIME_UPSTREAM_BASE_URL`, legacy alias `MRMS_BINARY_UPSTREAM_BASE_URL`, defaulting to `https://approach-runtime.andyfang.app`).
+- Client overlay decodes binary reflectivity and binary AVET echo-top payloads directly; JSON error payloads are surfaced as worker request failures.
 - Snapshot retention is byte-capped (`RUNTIME_MRMS_RETENTION_BYTES=5 GB`, legacy alias `MRMS_RETENTION_BYTES`) with oldest-first pruning.
 
 ## ProbSevere Storm-Cell Access

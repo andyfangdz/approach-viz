@@ -15,7 +15,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 2. SQS queue receives those messages (`RawMessageDelivery=true`).
 3. Rust runtime service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, and ingests GRIB2 fields through `grib` with a shared parse-concurrency limiter while overlapping independent bundles (reflectivity, dual-pol, thermo aux, echo tops). Reflectivity decode maps values directly into `dbz_tenths` in one pass, and gzip payload buffers are pre-sized from the trailer ISIZE hint to reduce allocation churn before snapshot assembly/storage.
 4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the runtime service `v1/weather/volume` endpoint (legacy alias `v1/volume`), and `app/api/weather/nexrad/echo-tops/route.ts` proxies `v1/weather/echo-tops` (legacy alias `v1/echo-tops`).
-5. Client decodes compact binary reflectivity payloads and JSON echo-top payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
+5. Client decodes compact binary reflectivity payloads and AVET binary echo-top payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 
 ## Phase Methodology
 
@@ -35,18 +35,19 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - ADS-B spatial indexing path: ring-slot and live-track `R*Tree` tables are trigger-maintained (`INSERT`/`UPDATE`/`DELETE`), startup reconciliation backfills any missing index rows, and `/v1/traffic/adsbx` uses `R*Tree` joins for live candidate and history-target discovery.
 - ADS-B WAL maintenance: low-priority writer maintenance runs periodic `wal_checkpoint(PASSIVE)` and only attempts `wal_checkpoint(TRUNCATE)` when WAL size is above threshold and truncate cooldown has elapsed.
 
-## Wire Format (`application/vnd.approach-viz.mrms.v2`)
+## Wire Format (`application/vnd.approach-viz.mrms.v3`)
 
 - Header magic: `AVMR`
-- Version: `2` (v2-only wire format)
+- Version: `3`
 - Header includes:
-  - source voxel count (pre-merge, v2)
-  - encoded record count
+  - source voxel count (pre-merge)
+  - encoded brick count
   - layer count + per-layer voxel counts
   - per-record byte size
   - scan timestamp + generated timestamp
   - global X/Y voxel footprint
-- v2 record size: `20` bytes per merged brick
+  - query context (`min_dbz`, `max_range`, tile size, origin lat/lon in microdegrees)
+- v3 record size: `20` bytes per merged brick
   - `xCentiNm:i16`
   - `zCentiNm:i16`
   - `bottomFeet:u16`
@@ -57,8 +58,9 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `spanX:u16` (grid-cell width multiplier)
   - `spanY:u16` (grid-cell depth multiplier)
   - `spanZ:u16` (merged vertical levels)
-  - `reserved:u16`
-- v2 merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
+  - `surfacePhase:u8`
+  - `reserved:u8`
+- Merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
 
 ## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v1`)
 
@@ -164,9 +166,9 @@ ps -ef | grep '[d]dprof'
 
 - `GET /healthz` -> `ok`
 - `GET /v1/meta` -> readiness + scan stats
-- `GET /v1/weather/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v2`)
+- `GET /v1/weather/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v3`)
 - `GET /v1/volume?...` -> legacy weather alias
-- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> JSON echo-top cells (`EchoTop_18/30/50/60`)
+- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> echo-top cells (`EchoTop_18/30/50/60`), JSON by default or AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v1` is provided
 - `GET /v1/echo-tops?...` -> legacy echo-top alias
 - `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>&format=<json|binary>` -> default JSON aircraft + optional trail history, or compact binary payload (`format=binary`, `application/vnd.approach-viz.traffic.v1`) served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
 

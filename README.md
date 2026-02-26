@@ -58,14 +58,14 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 
 ### MRMS 3D Volumetric Weather
 
-- Enabled by default — renders NOAA MRMS multi-radar merged reflectivity as stacked 3D voxels across 33 altitude slices
-- Phase-aware coloring (rain / mixed / snow) using thermodynamic-first resolver with dual-pol correction
-- User-adjustable reflectivity threshold (5–60 dBZ) and opacity (20–100%)
+- Optional layer (`MRMS 3D Precip`) — renders NOAA MRMS multi-radar merged reflectivity as stacked 3D voxels across 33 altitude slices
+- Phase-aware coloring (rain / mixed / snow) with selectable phase mode (`Surface Precip Type` default, `Thermodynamic` optional)
+- User-adjustable reflectivity threshold (5–60 dBZ) and opacity (5–100%)
 - Declutter modes (`All/Low/Mid/High`)
 - Direct echo-top caps (`18/30/50/60 dBZ`) from MRMS `EchoTop_*` products (can render without 3D volume)
 - 5,000-ft altitude guide bands for altitude reference
 - Vertical cross-section plane/panel with altitude Y-axis and echo-top maxima
-- Server-side merged-brick binary payloads (v2) reduce draw count without dropping weather coverage
+- Server-side merged-brick binary payloads (v3) reduce draw count without dropping weather coverage
 - Soft-edge dual-pass shading keeps the merged volume visually smooth (aurora-like)
 - Resilient polling: retains last good payload on transient errors, clears on airport change
 - Powered by a Rust runtime service (`services/runtime-rs`) with compact binary wire format
@@ -80,12 +80,13 @@ All settings persist to `localStorage`:
 - **Use Parsed Climb Gradient** — toggle between published FAA missed-climb requirements and standard gradient
 - **Live ADS-B Traffic** — toggle overlay (on by default)
 - **Hide Ground Traffic** / **Show Traffic Callsigns** / **Traffic History** (1–30 min)
-- **MRMS 3D Precip** — toggle overlay (on by default)
-- **MRMS Threshold** (5–60 dBZ) / **MRMS Opacity** (20–100%)
+- **MRMS 3D Precip** — toggle overlay (off by default)
+- **MRMS Threshold** (5–60 dBZ) / **MRMS Opacity** (5–100%)
 - **MRMS Declutter** — All / Low / Mid / High (also cycles with `V` key)
 - **MRMS Echo Tops** — direct MRMS echo-top overlay (independent of 3D volume)
 - **MRMS Altitude Guides** — 5,000-ft horizontal bands
 - **MRMS Vertical Cross-Section** — slice plane with heading/range sliders
+- **Retina Rendering (2x)** — higher-quality rendering mode with higher GPU cost
 
 ### Mobile and PWA
 
@@ -125,9 +126,11 @@ npm run format             # format with Prettier
 npm run format:check       # verify formatting
 
 # Testing
-npm run test               # all tests (parser + geometry)
+npm run test               # all tests (parser + geometry + layers + MRMS)
 npm run test:parser        # CIFP parser fixture tests
 npm run test:geometry      # geometry unit tests
+npm run test:layers        # layer URL parse/serialize tests
+npm run test:mrms          # MRMS request/decode helper tests
 npm run test:integration:runtime # live runtime integration checks (requires internet)
 
 # Rust runtime service
@@ -147,8 +150,8 @@ The Rust runtime service (`services/runtime-rs`) handles both MRMS weather and A
 | --------------------------- | ------------------------------------------------------------- |
 | `GET /healthz`              | Health check                                                  |
 | `GET /v1/meta`              | Readiness + scan stats                                        |
-| `GET /v1/weather/volume`    | Binary voxel payload (`application/vnd.approach-viz.mrms.v2`) |
-| `GET /v1/weather/echo-tops` | JSON echo-top cells (`EchoTop_18/30/50/60`)                   |
+| `GET /v1/weather/volume`    | Binary voxel payload (`application/vnd.approach-viz.mrms.v3`) |
+| `GET /v1/weather/echo-tops` | Echo-top cells (`EchoTop_18/30/50/60`), JSON or AVET binary   |
 | `GET /v1/traffic/adsbx`     | JSON aircraft + optional trail backfill                       |
 
 Legacy aliases `/v1/volume` and `/v1/echo-tops` are still supported.
@@ -164,33 +167,36 @@ Legacy aliases `/v1/volume` and `/v1/echo-tops` are still supported.
 
 ## Environment Variables
 
-| Variable                                        | Purpose                                                         |
-| ----------------------------------------------- | --------------------------------------------------------------- |
-| `RUNTIME_UPSTREAM_BASE_URL`                     | Rust runtime service base URL (used by Next.js proxy routes)    |
-| `MRMS_BINARY_UPSTREAM_BASE_URL`                 | Legacy alias for above                                          |
-| `NEXT_PUBLIC_MRMS_BINARY_BASE_URL`              | Optional: client-side direct fetch (skips Next.js proxy)        |
-| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`               | Google 3D Tiles (Satellite / 3D Plate modes)                    |
-| `RUNTIME_ADSBX_TAR1090_BASE_URL`                | tar1090 host (default: `globe.adsbexchange.com`)                |
-| `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS`      | Comma-separated fallback tar1090 hosts                          |
-| `RUNTIME_MRMS_SQS_QUEUE_URL`                    | SNS/SQS queue URL for MRMS ingest (runtime service)             |
-| `RUNTIME_MRMS_RETENTION_BYTES`                  | Snapshot retention cap (default: 5 GB)                          |
-| `RUNTIME_INTEGRATION_BASE_URL`                  | Override runtime base URL for integration tests                 |
-| `DD_API_KEY`                                    | Datadog API key (used by local Datadog agent)                   |
-| `RUNTIME_DD_TRACE_ENABLED`                      | Enable Rust runtime OTLP trace export (`true`/`false`)          |
-| `RUNTIME_DD_TRACE_OTLP_ENDPOINT`                | Optional explicit OTLP gRPC endpoint for runtime trace export   |
-| `RUNTIME_DD_AGENT_HOST`                         | Runtime Datadog agent host (default: `127.0.0.1`)               |
-| `RUNTIME_DD_TRACE_OTLP_PORT`                    | Runtime Datadog OTLP gRPC port (default: `4317`)                |
-| `RUNTIME_DD_SERVICE`                            | Runtime trace service name (default: `approach-viz-runtime-rs`) |
-| `RUNTIME_DD_ENV`                                | Runtime trace environment tag (fallback: `DD_ENV`)              |
-| `RUNTIME_DD_VERSION`                            | Runtime trace version tag (fallback: `DD_VERSION`)              |
-| `NEXT_PUBLIC_DD_RUM_APPLICATION_ID`             | Datadog RUM app ID (enables browser RUM when set)               |
-| `NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN`               | Datadog RUM client token                                        |
-| `NEXT_PUBLIC_DD_SITE`                           | Datadog site for browser RUM (default: `datadoghq.com`)         |
-| `NEXT_PUBLIC_DD_RUM_SERVICE`                    | Browser RUM service name (default: `approach-viz-web`)          |
-| `NEXT_PUBLIC_DD_RUM_ENV`                        | Browser RUM environment tag                                     |
-| `NEXT_PUBLIC_DD_RUM_VERSION`                    | Browser RUM version tag (commit SHA fallback)                   |
-| `NEXT_PUBLIC_DD_RUM_SESSION_SAMPLE_RATE`        | Browser RUM session sample rate `0..100` (default: `100`)       |
-| `NEXT_PUBLIC_DD_RUM_SESSION_REPLAY_SAMPLE_RATE` | Browser RUM replay sample rate `0..100` (default: `0`)          |
+| Variable                                        | Purpose                                                                 |
+| ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `RUNTIME_UPSTREAM_BASE_URL`                     | Rust runtime service base URL (used by Next.js proxy routes)            |
+| `MRMS_BINARY_UPSTREAM_BASE_URL`                 | Legacy alias for above                                                  |
+| `NEXT_PUBLIC_MRMS_BINARY_BASE_URL`              | Optional: client-side direct fetch (skips Next.js proxy)                |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`               | Google 3D Tiles (Satellite / 3D Plate modes)                            |
+| `RUNTIME_ADSBX_TAR1090_BASE_URL`                | tar1090 host (default: `globe.adsbexchange.com`)                        |
+| `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS`      | Comma-separated fallback tar1090 hosts                                  |
+| `RUNTIME_MRMS_SQS_QUEUE_URL`                    | SNS/SQS queue URL for MRMS ingest (runtime service)                     |
+| `RUNTIME_MRMS_RETENTION_BYTES`                  | Snapshot retention cap (default: 5 GB)                                  |
+| `RUNTIME_INTEGRATION_BASE_URL`                  | Override runtime base URL for integration tests                         |
+| `DD_API_KEY`                                    | Datadog API key (used by local Datadog agent)                           |
+| `RUNTIME_DD_TRACE_ENABLED`                      | Enable Rust runtime OTLP trace export (`true`/`false`)                  |
+| `RUNTIME_DD_TRACE_OTLP_ENDPOINT`                | Optional explicit OTLP gRPC endpoint for runtime trace export           |
+| `RUNTIME_DD_AGENT_HOST`                         | Runtime Datadog agent host (default: `127.0.0.1`)                       |
+| `RUNTIME_DD_TRACE_OTLP_PORT`                    | Runtime Datadog OTLP gRPC port (default: `4317`)                        |
+| `RUNTIME_DD_SERVICE`                            | Runtime trace service name (default: `approach-viz-runtime-rs`)         |
+| `RUNTIME_DD_ENV`                                | Runtime trace environment tag (fallback: `DD_ENV`)                      |
+| `RUNTIME_DD_VERSION`                            | Runtime trace version tag (fallback: `DD_VERSION`)                      |
+| `NEXT_PUBLIC_DD_RUM_APPLICATION_ID`             | Datadog RUM app ID (enables browser RUM when set)                       |
+| `NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN`               | Datadog RUM client token                                                |
+| `NEXT_PUBLIC_DD_SITE`                           | Datadog site for browser RUM (default: `datadoghq.com`)                 |
+| `NEXT_PUBLIC_DD_RUM_SERVICE`                    | Browser RUM service name (default: `approach-viz-web`)                  |
+| `NEXT_PUBLIC_DD_RUM_ENV`                        | Browser RUM environment tag                                             |
+| `NEXT_PUBLIC_DD_RUM_VERSION`                    | Browser RUM version tag (commit SHA fallback)                           |
+| `NEXT_PUBLIC_DD_RUM_SESSION_SAMPLE_RATE`        | Browser RUM session sample rate `0..100` (default: `100`)               |
+| `NEXT_PUBLIC_DD_RUM_SESSION_REPLAY_SAMPLE_RATE` | Browser RUM replay sample rate `0..100` (default: `0`)                  |
+| `NEXT_PUBLIC_DD_RUM_PROXY_PATH`                 | Optional Datadog RUM proxy path override (default: `/api/datadog/rum`)  |
+| `DISABLE_CROSS_ORIGIN_ISOLATION`                | Set to `1` to disable COOP/COEP headers (disables SAB/Atomics features) |
+| `CROSS_ORIGIN_EMBEDDER_POLICY`                  | Optional COEP override (`credentialless` or default `require-corp`)     |
 
 ## Data Sources
 

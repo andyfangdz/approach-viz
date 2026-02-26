@@ -5,7 +5,7 @@ Discrete convective storm-cell objects render as an optional weather overlay.
 ## Overview
 
 - Storm cells are an independent layer (`ProbSevere` / `probsevere`) and can be shown with or without MRMS volume/echo-top layers.
-- Layer default is off.
+- Layer default is on.
 - Source product is NOAA MRMS ProbSevere object JSON (`ProbSevere 3.0` feature collection).
 
 ## Data Path

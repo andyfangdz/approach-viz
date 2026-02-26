@@ -10,7 +10,7 @@ Run in order after any parser/render/data change:
 2. `npm run lint` — ESLint parse/lint checks.
 3. `npm run typecheck` — TypeScript compile checks without emit.
 4. `npm run prepare-data` — download fresh FAA/CIFP + airspace + minimums data and rebuild SQLite.
-5. `npm run test` — full test suite (parser + geometry).
+5. `npm run test` — full test suite (parser + geometry + layers + MRMS decode helpers).
 6. `npm run test:parser` — especially after `lib/cifp/parser.ts` changes.
 7. `npm run test:geometry` — for path/curve/runway/coordinate geometry changes.
 8. `npm run build` — production build (also refreshes data).

@@ -6,8 +6,8 @@ This document defines the server-side voxel phase resolver (`rain`, `mixed`, `sn
 
 Two phase detection modes are supported. Both are pre-computed at ingest time and stored per-voxel; the client selects which to use for rendering.
 
-- **Thermodynamic** (default): Per-voxel per-altitude resolution using the full scoring pipeline described below.
-- **Surface Precip Type**: Uses the MRMS `PrecipFlag_00.00` surface product to assign a single phase to the entire vertical column at each grid cell. When PrecipFlag is missing or unavailable (codes -3, 0, or absent), falls back to rain. This mode matches the single-precip-type presentation used by official NWS radar products and avoids the "surprise snow" effect in tall CB towers.
+- **Surface Precip Type** (default): Uses the MRMS `PrecipFlag_00.00` surface product to assign a single phase to the entire vertical column at each grid cell. When PrecipFlag is missing or unavailable (codes -3, 0, or absent), falls back to rain. This mode matches the single-precip-type presentation used by official NWS radar products and avoids the "surprise snow" effect in tall CB towers.
+- **Thermodynamic**: Per-voxel per-altitude resolution using the full scoring pipeline described below.
 
 The remainder of this document describes the thermodynamic resolver.
 
