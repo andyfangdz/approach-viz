@@ -33,7 +33,7 @@ export class WasmTrafficState {
      * `history_minutes`: how many minutes of history to keep.
      * `hide_ground`: whether to exclude ground aircraft.
      *
-     * Returns a JS object with `{ trackCount: number, fetchedAtMs: number }`.
+     * Returns a JS object with `{ trackCount, fetchedAtMs, source, error, trackedHexes, returnedHistoryHexes }`.
      */
     merge(data: Uint8Array, now_ms: number, history_minutes: number, hide_ground: boolean, backfill_data: Uint8Array): any;
     /**
@@ -104,14 +104,6 @@ export function decode_and_prepare_mrms(data: Uint8Array, min_dbz_tenths: number
 export function decode_mrms_volume(data: Uint8Array): any;
 
 /**
- * Decode an AVTR binary payload into a JS object.
- *
- * Uses serde-wasm-bindgen for the complex nested structure (aircraft array,
- * history groups with nested point arrays).
- */
-export function decode_traffic(data: Uint8Array): any;
-
-/**
  * Build echo-top surfaces from typed echo-top input arrays.
  */
 export function prepare_echo_top_surfaces(x_nm: Float32Array, z_nm: Float32Array, top18_feet: Float32Array, top30_feet: Float32Array, top50_feet: Float32Array, footprint_x_nm: number, footprint_y_nm: number, apply_earth_curvature: boolean, ref_lat: number): any;
@@ -167,7 +159,6 @@ export interface InitOutput {
     readonly decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly decode_mrms_volume: (a: number, b: number) => [number, number, number];
-    readonly decode_traffic: (a: number, b: number) => [number, number, number];
     readonly prepare_echo_top_surfaces: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly prepare_mrms_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number) => [number, number, number];
     readonly wasm_alt_to_y: (a: number, b: number) => number;
