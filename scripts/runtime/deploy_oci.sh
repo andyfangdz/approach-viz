@@ -98,7 +98,7 @@ build_local_cross_binary() {
       ;;
   esac
 
-  local built_binary="$SERVICE_DIR/target/$LOCAL_CROSS_TARGET/release/approach-viz-runtime"
+  local built_binary="$ROOT_DIR/target/$LOCAL_CROSS_TARGET/release/approach-viz-runtime"
   if [[ ! -x "$built_binary" ]]; then
     echo "Local cross-compiled binary not found at $built_binary" >&2
     exit 1
