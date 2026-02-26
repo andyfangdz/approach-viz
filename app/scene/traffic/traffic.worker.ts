@@ -12,42 +12,9 @@ import {
   type TrafficSoAPayload,
   writeTrafficSabResultSoA
 } from './traffic-sab';
-import {
-  isTrafficBinaryContentType,
-  type TrafficBinaryDecodedPayload
-} from './traffic-binary-protocol';
+import { isTrafficBinaryContentType } from './traffic-binary-protocol';
 import { ensureWasm } from '../shared/wasm-loader';
-import {
-  decode_traffic,
-  WasmTrafficState
-} from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
-
-/**
- * Adapt the WASM `decode_traffic` output to the `TrafficBinaryDecodedPayload`
- * shape that the TS merge pipeline expects.
- *
- * The WASM function returns `{ aircraft, historyGroups, fetchedAtMs, source, error }`,
- * while TS expects `{ aircraftList, historyByHex, fetchedAtMs, source, error }`.
- */
-function decodeTrafficViaWasm(buffer: ArrayBuffer): TrafficBinaryDecodedPayload {
-  const result = decode_traffic(new Uint8Array(buffer)) as any; // WASM returns untyped JS object
-  const historyByHex: Record<string, LiveTrafficHistoryPoint[]> = {};
-  if (Array.isArray(result.historyGroups)) {
-    for (const group of result.historyGroups as {
-      hex: string;
-      points: LiveTrafficHistoryPoint[];
-    }[]) {
-      historyByHex[group.hex as string] = group.points as LiveTrafficHistoryPoint[];
-    }
-  }
-  return {
-    fetchedAtMs: result.fetchedAtMs as number,
-    source: (result.source as string | null) ?? null,
-    error: (result.error as string | null) ?? null,
-    aircraftList: result.aircraft as LiveTrafficAircraft[],
-    historyByHex: Object.keys(historyByHex).length > 0 ? historyByHex : undefined
-  };
-}
+import { WasmTrafficState } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
 function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
@@ -113,85 +80,106 @@ interface LiveTrafficFeed {
   error?: string;
 }
 
-interface RuntimeTrafficFetchResult {
+interface RuntimeBinaryFetchResult {
+  kind: 'binary';
+  primaryBuffer: ArrayBuffer;
+  backfillBuffer: ArrayBuffer | null;
+  fetchMs: number;
+}
+
+interface RuntimeJsonFetchResult {
+  kind: 'json';
   aircraftList: LiveTrafficAircraft[];
   historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined;
   trackedHexes: string[];
   returnedHistoryHexes: string[];
-  feedTransport: 'binary' | 'json';
   fetchMs: number;
   parseMs: number;
 }
 
-async function fetchTrafficRuntimePayload(url: string): Promise<RuntimeTrafficFetchResult> {
+type RuntimeTrafficFetchResult = RuntimeBinaryFetchResult | RuntimeJsonFetchResult;
+
+async function fetchTrafficRuntimeRaw(
+  url: string
+): Promise<{ buffer: ArrayBuffer; isBinary: boolean; fetchMs: number }> {
   const fetchStartedAt = performance.now();
   const response = await fetch(normalizeFetchUrl(url), { cache: 'no-store' });
   const fetchMs = roundMs(performance.now() - fetchStartedAt);
   if (!response.ok) {
     throw new Error(`Traffic feed request failed (${response.status})`);
   }
-
-  const parseStartedAt = performance.now();
   const contentType = response.headers.get('content-type');
-  if (isTrafficBinaryContentType(contentType)) {
-    const payloadBuffer = await response.arrayBuffer();
-    await ensureWasm();
-    const decoded = decodeTrafficViaWasm(payloadBuffer);
-    return {
-      aircraftList: decoded.aircraftList,
-      historyByHex: decoded.historyByHex,
-      trackedHexes: trackedHexesFromAircraft(decoded.aircraftList),
-      returnedHistoryHexes: historyHexesFromMap(decoded.historyByHex),
-      feedTransport: 'binary',
-      fetchMs,
-      parseMs: roundMs(performance.now() - parseStartedAt)
-    };
-  }
-
-  const payload = (await response.json()) as LiveTrafficFeed;
-  const aircraftList = Array.isArray(payload.aircraft) ? payload.aircraft : [];
-  const historyByHex =
-    payload.historyByHex && typeof payload.historyByHex === 'object'
-      ? payload.historyByHex
-      : undefined;
-  return {
-    aircraftList,
-    historyByHex,
-    trackedHexes: trackedHexesFromAircraft(aircraftList),
-    returnedHistoryHexes: historyHexesFromMap(historyByHex),
-    feedTransport: 'json',
-    fetchMs,
-    parseMs: roundMs(performance.now() - parseStartedAt)
-  };
+  const buffer = await response.arrayBuffer();
+  return { buffer, isBinary: isTrafficBinaryContentType(contentType), fetchMs };
 }
 
 async function fetchRuntimeIngestData(
   primaryUrl: string,
   followupUrl?: string
 ): Promise<RuntimeTrafficFetchResult> {
-  const primary = await fetchTrafficRuntimePayload(primaryUrl);
-  if (!followupUrl) {
-    return primary;
+  const primary = await fetchTrafficRuntimeRaw(primaryUrl);
+
+  if (primary.isBinary) {
+    let backfillBuffer: ArrayBuffer | null = null;
+    let backfillFetchMs = 0;
+    if (followupUrl) {
+      try {
+        const followup = await fetchTrafficRuntimeRaw(followupUrl);
+        backfillBuffer = followup.buffer;
+        backfillFetchMs = followup.fetchMs;
+      } catch (error) {
+        console.warn('Traffic history backfill follow-up failed.', error);
+      }
+    }
+    return {
+      kind: 'binary',
+      primaryBuffer: primary.buffer,
+      backfillBuffer,
+      fetchMs: roundMs(primary.fetchMs + backfillFetchMs)
+    };
   }
 
-  try {
-    const followup = await fetchTrafficRuntimePayload(followupUrl);
-    return {
-      aircraftList: primary.aircraftList,
-      historyByHex: mergeRemoteHistoryMaps(primary.historyByHex, followup.historyByHex),
-      trackedHexes: primary.trackedHexes,
-      returnedHistoryHexes: dedupeHexes([
-        ...primary.returnedHistoryHexes,
-        ...followup.returnedHistoryHexes
-      ]),
-      feedTransport: primary.feedTransport,
-      fetchMs: roundMs(primary.fetchMs + followup.fetchMs),
-      parseMs: roundMs(primary.parseMs + followup.parseMs)
-    };
-  } catch (error) {
-    console.warn('Traffic history backfill follow-up failed.', error);
-    return primary;
+  // JSON path — decode and merge in JS
+  const parseStartedAt = performance.now();
+  const payload = JSON.parse(new TextDecoder().decode(primary.buffer)) as LiveTrafficFeed;
+  const aircraftList = Array.isArray(payload.aircraft) ? payload.aircraft : [];
+  let historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined =
+    payload.historyByHex && typeof payload.historyByHex === 'object'
+      ? payload.historyByHex
+      : undefined;
+  let returnedHistoryHexes = historyHexesFromMap(historyByHex);
+  let totalFetchMs = primary.fetchMs;
+
+  if (followupUrl) {
+    try {
+      const followup = await fetchTrafficRuntimeRaw(followupUrl);
+      totalFetchMs = roundMs(totalFetchMs + followup.fetchMs);
+      const followupPayload = JSON.parse(
+        new TextDecoder().decode(followup.buffer)
+      ) as LiveTrafficFeed;
+      const followupHistory =
+        followupPayload.historyByHex && typeof followupPayload.historyByHex === 'object'
+          ? followupPayload.historyByHex
+          : undefined;
+      historyByHex = mergeRemoteHistoryMaps(historyByHex, followupHistory);
+      returnedHistoryHexes = dedupeHexes([
+        ...returnedHistoryHexes,
+        ...historyHexesFromMap(followupHistory)
+      ]);
+    } catch (error) {
+      console.warn('Traffic history backfill follow-up failed.', error);
+    }
   }
+
+  return {
+    kind: 'json',
+    aircraftList,
+    historyByHex,
+    trackedHexes: trackedHexesFromAircraft(aircraftList),
+    returnedHistoryHexes,
+    fetchMs: totalFetchMs,
+    parseMs: roundMs(performance.now() - parseStartedAt)
+  };
 }
 
 /** Pack SceneAirport[] into flat Float64Array [lat, lon, elev, ...] for WASM. */
@@ -262,41 +250,52 @@ async function handleMessage(
     );
   } else if (message.type === 'ingest-binary') {
     const state = getTrafficState();
-    // Decode AVTR binary, then merge via decoded path (avoids double decode)
-    const decoded = decodeTrafficViaWasm(message.payloadBuffer);
-    const supplementalHistory = message.historyPayloadBuffer
-      ? decodeTrafficViaWasm(message.historyPayloadBuffer).historyByHex
-      : undefined;
-    const mergedHistory = mergeRemoteHistoryMaps(decoded.historyByHex, supplementalHistory);
-    state.merge_decoded(
-      decoded.aircraftList,
-      mergedHistory ?? null,
+    // Direct binary merge — single WASM call, no JS intermediate
+    const mergeResult = state.merge(
+      new Uint8Array(message.payloadBuffer),
       message.nowMs,
       message.historyMinutes,
-      message.hideGroundTargets
-    );
-    trackedHexes = trackedHexesFromAircraft(decoded.aircraftList);
-    returnedHistoryHexes = dedupeHexes([
-      ...historyHexesFromMap(decoded.historyByHex),
-      ...historyHexesFromMap(supplementalHistory)
-    ]);
+      message.hideGroundTargets,
+      message.historyPayloadBuffer
+        ? new Uint8Array(message.historyPayloadBuffer)
+        : new Uint8Array(0)
+    ) as {
+      trackedHexes: string[];
+      returnedHistoryHexes: string[];
+    };
+    trackedHexes = mergeResult.trackedHexes;
+    returnedHistoryHexes = mergeResult.returnedHistoryHexes;
     feedTransport = 'binary';
   } else if (message.type === 'ingest-runtime') {
     const state = getTrafficState();
     const runtimeData = await fetchRuntimeIngestData(message.primaryUrl, message.followupUrl);
-    // Use merge_decoded since fetchRuntimeIngestData returns decoded JS objects
-    state.merge_decoded(
-      runtimeData.aircraftList,
-      runtimeData.historyByHex ?? null,
-      message.nowMs,
-      message.historyMinutes,
-      message.hideGroundTargets
-    );
-    trackedHexes = runtimeData.trackedHexes;
-    returnedHistoryHexes = runtimeData.returnedHistoryHexes;
-    feedTransport = runtimeData.feedTransport;
     fetchMs = runtimeData.fetchMs;
-    parseMs = runtimeData.parseMs;
+    if (runtimeData.kind === 'binary') {
+      // Direct binary merge — single WASM call, no JS intermediate
+      const mergeResult = state.merge(
+        new Uint8Array(runtimeData.primaryBuffer),
+        message.nowMs,
+        message.historyMinutes,
+        message.hideGroundTargets,
+        runtimeData.backfillBuffer ? new Uint8Array(runtimeData.backfillBuffer) : new Uint8Array(0)
+      ) as { trackedHexes: string[]; returnedHistoryHexes: string[] };
+      trackedHexes = mergeResult.trackedHexes;
+      returnedHistoryHexes = mergeResult.returnedHistoryHexes;
+      feedTransport = 'binary';
+    } else {
+      // JSON path — already decoded in JS
+      state.merge_decoded(
+        runtimeData.aircraftList,
+        runtimeData.historyByHex ?? null,
+        message.nowMs,
+        message.historyMinutes,
+        message.hideGroundTargets
+      );
+      trackedHexes = runtimeData.trackedHexes;
+      returnedHistoryHexes = runtimeData.returnedHistoryHexes;
+      feedTransport = 'json';
+      parseMs = runtimeData.parseMs;
+    }
   } else if (message.type === 'prune-error') {
     getTrafficState().prune_for_error(message.nowMs, message.historyMinutes);
   } else {
