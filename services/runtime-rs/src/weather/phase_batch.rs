@@ -8,6 +8,7 @@ use crate::constants::{
     PHASE_ZDR_RAIN_HIGH_CONF_MIN_DB, PHASE_ZDR_SNOW_HIGH_CONF_MAX_DB,
     THERMO_STRONG_COLD_WET_BULB_C, THERMO_STRONG_WARM_WET_BULB_C,
 };
+use wide::{f32x4, CmpEq, CmpGe, CmpGt, CmpLe, CmpLt};
 
 // f32 versions of f64 constants from constants.rs
 const FEET_PER_METER_F32: f32 = 3.28084;
@@ -25,14 +26,18 @@ pub struct BatchPhaseResult {
     pub forced_precip_snow: Vec<bool>,
 }
 
-/// Branchless batch phase scoring on flat f32 arrays.
+/// Vectorized batch phase scoring using `wide::f32x4` to process 4 voxels per iteration.
 ///
 /// Replicates the full scalar pipeline: `resolve_thermo_phase` + `resolve_dual_pol_evidence`
 /// + `resolve_phase_from_evidence`. Produces identical phase assignments for all inputs.
 ///
-/// Uses branchless predicated arithmetic for continuous score accumulation to enable
-/// LLVM auto-vectorization. Discrete code matching (precip flags, dual-pol branches)
-/// uses normal branches since those are not the hot compute path.
+/// Stages 1-5 (precip flag, freezing level, wet bulb, surface temp, bright band) and
+/// stage 6 (RQI normalization) are fully vectorized using f32x4 SIMD operations.
+/// Stages 7-13 (thermo ranking, dual-pol evidence, dual-pol integration, mixed promotion,
+/// final ranking, forced precip override, surface phase + transition candidate) use scalar
+/// extraction per lane because their deeply nested discrete logic does not map to SIMD.
+/// The scalar `score_single_voxel` function is preserved for the n%4 tail loop and
+/// equivalence tests.
 #[inline(never)] // Preserve as named function for LLVM remarks + CI vectorization checks
 #[allow(clippy::too_many_arguments)]
 pub fn compute_phase_scores_branchless(
@@ -67,7 +72,388 @@ pub fn compute_phase_scores_branchless(
     let mut suppressed_mixed_out = vec![false; n];
     let mut forced_precip_snow_out = vec![false; n];
 
-    for i in 0..n {
+    // Loop-invariant constants broadcast to f32x4
+    let voxel4 = f32x4::splat(voxel_mid_feet);
+    let fpm4 = f32x4::splat(FEET_PER_METER_F32);
+    let near_freeze4 = f32x4::splat(THERMO_NEAR_FREEZING_FEET_F32);
+    let fl_trans4 = f32x4::splat(FREEZING_LEVEL_TRANSITION_FEET_F32);
+    let neg_fl_trans4 = f32x4::splat(-FREEZING_LEVEL_TRANSITION_FEET_F32);
+    let strong_cold_wb4 = f32x4::splat(THERMO_STRONG_COLD_WET_BULB_C);
+    let strong_warm_wb4 = f32x4::splat(THERMO_STRONG_WARM_WET_BULB_C);
+    let low_level_weight_scalar = (8_000.0_f32 - voxel_mid_feet).max(0.0) / 8_000.0_f32;
+    let low_level_weight4 = f32x4::splat(low_level_weight_scalar);
+    let low_level_positive = low_level_weight_scalar > 0.0;
+
+    let chunks = n / 4;
+    let remainder = n % 4;
+
+    // ── SIMD main loop: 4 voxels per iteration ─────────────────────────
+    for chunk in 0..chunks {
+        let base = chunk * 4;
+
+        // Load 4 voxels for each input field
+        let pf4 = f32x4::from(unsafe { *(precip_flag.as_ptr().add(base) as *const [f32; 4]) });
+        let fl4 = f32x4::from(unsafe { *(freezing_level.as_ptr().add(base) as *const [f32; 4]) });
+        let wb4 = f32x4::from(unsafe { *(wet_bulb.as_ptr().add(base) as *const [f32; 4]) });
+        let st4 = f32x4::from(unsafe { *(surface_temp.as_ptr().add(base) as *const [f32; 4]) });
+        let bbt4 = f32x4::from(unsafe { *(bright_band_top.as_ptr().add(base) as *const [f32; 4]) });
+        let bbb4 = f32x4::from(unsafe { *(bright_band_bottom.as_ptr().add(base) as *const [f32; 4]) });
+        let rqi4 = f32x4::from(unsafe { *(rqi.as_ptr().add(base) as *const [f32; 4]) });
+
+        // Initialize scores
+        let mut rain4 = f32x4::splat(1.0);
+        let mut mixed4 = f32x4::splat(0.7);
+        let mut snow4 = f32x4::splat(1.0);
+        let mut sig_count4 = f32x4::ZERO;
+        let mut near_trans4 = f32x4::ZERO; // mask: all-bits-set = true
+
+        // ── Stage 1: Precip flag (vectorized discrete code matching) ────
+        // Validity: finite precip flag
+        let pf_finite = pf4.is_finite();
+        let pf_rounded = pf4.round();
+
+        // Code matches — precip flag codes that map to each phase
+        let is_code_3 = pf_rounded.simd_eq(f32x4::splat(3.0));     // SNOW
+        let is_code_7 = pf_rounded.simd_eq(f32x4::splat(7.0));     // MIXED
+        let is_code_1 = pf_rounded.simd_eq(f32x4::splat(1.0));     // RAIN
+        let is_code_6 = pf_rounded.simd_eq(f32x4::splat(6.0));     // RAIN
+        let is_code_10 = pf_rounded.simd_eq(f32x4::splat(10.0));   // RAIN
+        let is_code_91 = pf_rounded.simd_eq(f32x4::splat(91.0));   // RAIN
+        let is_code_96 = pf_rounded.simd_eq(f32x4::splat(96.0));   // RAIN
+
+        let is_rain_code = is_code_1 | is_code_6 | is_code_10 | is_code_91 | is_code_96;
+        let is_snow_code = is_code_3;
+        let is_mixed_code = is_code_7;
+        let has_precip_phase = pf_finite & (is_rain_code | is_snow_code | is_mixed_code);
+
+        // Count signal where precip flag maps to a phase
+        sig_count4 += has_precip_phase & f32x4::ONE;
+
+        // Score additions (masked by validity AND code match)
+        snow4 += pf_finite & is_snow_code & f32x4::splat(3.2);
+        rain4 += pf_finite & is_rain_code & f32x4::splat(3.0);
+        // Mixed code adds to both mixed and rain
+        mixed4 += pf_finite & is_mixed_code & f32x4::splat(1.8);
+        rain4 += pf_finite & is_mixed_code & f32x4::splat(0.8);
+
+        // ── Stage 2: Freezing level (fully vectorized arithmetic) ───────
+        let fl_valid = fl4.is_finite() & fl4.simd_gt(f32x4::ZERO);
+        let fmask4 = fl_valid & f32x4::ONE; // 0.0 or 1.0
+
+        sig_count4 += fl_valid & f32x4::ONE;
+
+        let freezing_feet = fl4 * fpm4;
+        let delta_feet = voxel4 - freezing_feet;
+
+        // Near-transition: |delta| <= 1500
+        let abs_delta = delta_feet.abs();
+        let near_freeze_mask = fl_valid & abs_delta.simd_le(near_freeze4);
+        near_trans4 = near_trans4 | near_freeze_mask;
+
+        // Phase from freezing level
+        let fl_above = delta_feet.simd_ge(fl_trans4) & f32x4::ONE;
+        let fl_below = delta_feet.simd_le(neg_fl_trans4) & f32x4::ONE;
+        snow4 += fmask4 * (fl_above * f32x4::splat(0.6));
+        rain4 += fmask4 * (fl_below * f32x4::splat(0.6));
+        mixed4 += fmask4 * ((f32x4::ONE - fl_above - fl_below) * f32x4::splat(0.6));
+
+        // Altitude-based scoring
+        let very_cold = delta_feet.simd_ge(f32x4::splat(2500.0)) & f32x4::ONE;
+        let cold_raw = delta_feet.simd_ge(near_freeze4) & f32x4::ONE;
+        let cold = cold_raw * (f32x4::ONE - very_cold);
+        let very_warm = delta_feet.simd_le(f32x4::splat(-2500.0)) & f32x4::ONE;
+        let warm_raw = delta_feet.simd_le(-near_freeze4) & f32x4::ONE;
+        let warm = warm_raw * (f32x4::ONE - very_warm);
+        let middle = f32x4::ONE - very_cold - cold - very_warm - warm;
+        let mid_cold = delta_feet.simd_ge(f32x4::ZERO) & f32x4::ONE;
+
+        snow4 += fmask4 * (very_cold * f32x4::splat(2.4) + cold * f32x4::splat(1.8) + middle * mid_cold * f32x4::splat(0.8));
+        rain4 += fmask4 * (very_warm * f32x4::splat(2.4) + warm * f32x4::splat(1.8) + middle * (f32x4::ONE - mid_cold) * f32x4::splat(0.8));
+        mixed4 += fmask4 * (cold * f32x4::splat(0.5) + warm * f32x4::splat(0.5) + middle * f32x4::splat(1.6));
+
+        // ── Stage 3: Wet bulb temperature (vectorized) ──────────────────
+        // normalize_temperature_celsius: valid if finite && ((-90..=70) || (150..=340 → subtract 273.15))
+        let wb_finite = wb4.is_finite();
+        let wb_celsius_range = wb_finite & wb4.simd_ge(f32x4::splat(-90.0)) & wb4.simd_le(f32x4::splat(70.0));
+        let wb_kelvin_range = wb_finite & wb4.simd_ge(f32x4::splat(150.0)) & wb4.simd_le(f32x4::splat(340.0));
+        let wb_valid = wb_celsius_range | wb_kelvin_range;
+        // Convert: if kelvin range, subtract 273.15; otherwise use as-is
+        let wb_converted = wb_kelvin_range.blend(wb4 - f32x4::splat(273.15), wb4);
+
+        sig_count4 += wb_valid & f32x4::ONE;
+
+        // Strong cold: wb <= -1.5 → snow += 2.4
+        let wb_strong_cold = wb_valid & wb_converted.simd_le(strong_cold_wb4);
+        snow4 += wb_strong_cold & f32x4::splat(2.4);
+
+        // Cool: wb <= 0.5 but not strong cold → near_transition, mixed += 1.1, snow += 1.0
+        let wb_cool = wb_valid & wb_converted.simd_le(f32x4::splat(0.5)) & !wb_strong_cold;
+        near_trans4 = near_trans4 | wb_cool;
+        mixed4 += wb_cool & f32x4::splat(1.1);
+        snow4 += wb_cool & f32x4::splat(1.0);
+
+        // Strong warm: wb >= 2.0 → rain += 2.2
+        let wb_strong_warm = wb_valid & wb_converted.simd_ge(strong_warm_wb4);
+        rain4 += wb_strong_warm & f32x4::splat(2.2);
+
+        // Mild: valid but not strong_cold, not cool, not strong_warm → near_transition, mixed += 1.1, rain += 1.0
+        let wb_mild = wb_valid & !wb_strong_cold & !wb_cool & !wb_strong_warm;
+        near_trans4 = near_trans4 | wb_mild;
+        mixed4 += wb_mild & f32x4::splat(1.1);
+        rain4 += wb_mild & f32x4::splat(1.0);
+
+        // ── Stage 4: Surface temperature (vectorized) ───────────────────
+        // normalize_temperature_celsius for surface_temp
+        let st_finite = st4.is_finite();
+        let st_celsius_range = st_finite & st4.simd_ge(f32x4::splat(-90.0)) & st4.simd_le(f32x4::splat(70.0));
+        let st_kelvin_range = st_finite & st4.simd_ge(f32x4::splat(150.0)) & st4.simd_le(f32x4::splat(340.0));
+        let st_valid = st_celsius_range | st_kelvin_range;
+        let st_converted = st_kelvin_range.blend(st4 - f32x4::splat(273.15), st4);
+
+        // Count signal for any valid surface temp (even if low_level_weight == 0)
+        sig_count4 += st_valid & f32x4::ONE;
+
+        // Only add scores if low_level_weight > 0 (loop-invariant)
+        if low_level_positive {
+
+            // st <= -0.5 → snow += 1.2 * weight
+            let st_cold = st_valid & st_converted.simd_le(f32x4::splat(-0.5));
+            snow4 += st_cold & (f32x4::splat(1.2) * low_level_weight4);
+
+            // st >= 2.0 → rain += 1.2 * weight
+            let st_warm = st_valid & st_converted.simd_ge(f32x4::splat(2.0));
+            rain4 += st_warm & (f32x4::splat(1.2) * low_level_weight4);
+
+            // middle range: not cold, not warm → near_transition, mixed += 0.8*w
+            let st_mid = st_valid & !st_cold & !st_warm;
+            near_trans4 = near_trans4 | st_mid;
+            mixed4 += st_mid & (f32x4::splat(0.8) * low_level_weight4);
+
+            // within middle: st <= 0.5 → snow += 0.4*w, else rain += 0.4*w
+            let st_mid_cold = st_mid & st_converted.simd_le(f32x4::splat(0.5));
+            let st_mid_warm = st_mid & !st_mid_cold;
+            snow4 += st_mid_cold & (f32x4::splat(0.4) * low_level_weight4);
+            rain4 += st_mid_warm & (f32x4::splat(0.4) * low_level_weight4);
+        }
+
+        // ── Stage 5: Bright band (vectorized) ──────────────────────────
+        // normalize_height_meters: finite && > 0, then if < 50 multiply by 1000, then must be in [100, 30000]
+        let bbt_finite = bbt4.is_finite();
+        let bbt_pos = bbt4.simd_gt(f32x4::ZERO);
+        let bbt_needs_scale = bbt4.simd_lt(f32x4::splat(50.0));
+        let bbt_scaled = bbt_needs_scale.blend(bbt4 * f32x4::splat(1000.0), bbt4);
+        let bbt_in_range = bbt_scaled.simd_ge(f32x4::splat(100.0)) & bbt_scaled.simd_le(f32x4::splat(30000.0));
+        let bbt_valid = bbt_finite & bbt_pos & bbt_in_range;
+        let bbt_meters = bbt_valid.blend(bbt_scaled, f32x4::ZERO);
+
+        let bbb_finite = bbb4.is_finite();
+        let bbb_pos = bbb4.simd_gt(f32x4::ZERO);
+        let bbb_needs_scale = bbb4.simd_lt(f32x4::splat(50.0));
+        let bbb_scaled = bbb_needs_scale.blend(bbb4 * f32x4::splat(1000.0), bbb4);
+        let bbb_in_range = bbb_scaled.simd_ge(f32x4::splat(100.0)) & bbb_scaled.simd_le(f32x4::splat(30000.0));
+        let bbb_valid = bbb_finite & bbb_pos & bbb_in_range;
+        let bbb_meters = bbb_valid.blend(bbb_scaled, f32x4::ZERO);
+
+        // Both must be valid AND top >= bottom
+        let bb_both_valid = bbt_valid & bbb_valid & bbt_meters.simd_ge(bbb_meters);
+
+        sig_count4 += bb_both_valid & f32x4::ONE;
+
+        let top_feet = bbt_meters * fpm4;
+        let bottom_feet = bbb_meters * fpm4;
+
+        // In bright band: voxel >= bottom-400 && voxel <= top+400
+        let bb_in_band = bb_both_valid
+            & voxel4.simd_ge(bottom_feet - f32x4::splat(400.0))
+            & voxel4.simd_le(top_feet + f32x4::splat(400.0));
+        near_trans4 = near_trans4 | bb_in_band;
+        mixed4 += bb_in_band & f32x4::splat(2.0);
+
+        // Above bright band: voxel > top+800
+        let bb_above = bb_both_valid & !bb_in_band & voxel4.simd_gt(top_feet + f32x4::splat(800.0));
+        snow4 += bb_above & f32x4::splat(1.2);
+
+        // Below bright band: voxel < bottom-800
+        let bb_below = bb_both_valid & !bb_in_band & voxel4.simd_lt(bottom_feet - f32x4::splat(800.0));
+        rain4 += bb_below & f32x4::splat(1.2);
+
+        // ── Stage 6: RQI normalization (vectorized) ─────────────────────
+        // finite && >= 0 && (<=1.05 → clamp(0,1)) || (<=100 → /100 clamp(0,1))
+        let rqi_finite = rqi4.is_finite();
+        let rqi_non_neg = rqi4.simd_ge(f32x4::ZERO);
+        let rqi_base_valid = rqi_finite & rqi_non_neg;
+        let rqi_direct = rqi_base_valid & rqi4.simd_le(f32x4::splat(1.05));
+        let rqi_scaled = rqi_base_valid & !rqi_direct & rqi4.simd_le(f32x4::splat(100.0));
+        let rqi_any_valid = rqi_direct | rqi_scaled;
+
+        // Compute normalized value: direct → clamp(value, 0, 1), scaled → clamp(value/100, 0, 1)
+        let rqi_direct_val = rqi4.max(f32x4::ZERO).min(f32x4::ONE);
+        let rqi_scaled_val = (rqi4 * f32x4::splat(0.01)).max(f32x4::ZERO).min(f32x4::ONE);
+        let rqi_norm4 = rqi_direct.blend(rqi_direct_val, rqi_scaled.blend(rqi_scaled_val, f32x4::ZERO));
+
+        // ── Stages 7-13: Extract to scalar for complex discrete logic ───
+        // Extract accumulated scores and flags per lane
+        let rain_arr = rain4.to_array();
+        let mixed_arr = mixed4.to_array();
+        let snow_arr = snow4.to_array();
+        let sig_arr = sig_count4.to_array();
+        let near_trans_arr = near_trans4.to_array();
+        let rqi_norm_arr = rqi_norm4.to_array();
+        let rqi_valid_arr = rqi_any_valid.to_array();
+
+        // Precip flag phase per lane (for scalar stages)
+        let pf_arr = pf4.to_array();
+        let zdr_arr_raw: [f32; 4] = unsafe { *(zdr.as_ptr().add(base) as *const [f32; 4]) };
+        let rhohv_arr_raw: [f32; 4] = unsafe { *(rhohv.as_ptr().add(base) as *const [f32; 4]) };
+
+        for lane in 0..4 {
+            let idx = base + lane;
+            let mut rain_s = rain_arr[lane];
+            let mut mixed_s = mixed_arr[lane];
+            let mut snow_s = snow_arr[lane];
+            let signal_count = sig_arr[lane] as u8;
+            let near_transition = near_trans_arr[lane].to_bits() != 0;
+
+            // Recover precip_flag_phase for this lane
+            let precip_flag_phase = score_precip_flag(pf_arr[lane]);
+
+            // RQI normalized as Option<f32>
+            let rqi_normalized = if rqi_valid_arr[lane].to_bits() != 0 {
+                Some(rqi_norm_arr[lane])
+            } else {
+                None
+            };
+
+            // ── Stage 7: Thermo ranking ─────────────────────────────────
+            let thermo_ranked = rank_phase_scores_f32(rain_s, mixed_s, snow_s);
+            let thermo_phase = thermo_ranked[0].0;
+            let best_thermo = thermo_ranked[0].1.max(0.0);
+            let second_thermo = thermo_ranked[1].1.max(0.0);
+            let thermo_confidence = if best_thermo + second_thermo > 0.0 {
+                ((best_thermo - second_thermo) / (best_thermo + second_thermo)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+
+            // ── Stage 8: Dual-pol evidence (scalar — deeply nested) ─────
+            let dual_evidence = resolve_dual_pol_evidence_f32(zdr_arr_raw[lane], rhohv_arr_raw[lane]);
+
+            // ── Stage 9: Dual-pol integration ───────────────────────────
+            let mut used_dual = false;
+            let mut suppressed_dual = false;
+            let mut suppressed_mixed = false;
+
+            let dual_mixed_support = dual_evidence
+                .map_or(false, |(phase, confidence)| {
+                    phase == PHASE_MIXED && confidence >= MIXED_DUAL_SUPPORT_CONFIDENCE_MIN
+                });
+
+            if let Some((dual_phase, dual_confidence)) = dual_evidence {
+                let stale_weight: f32 = if use_aux_fallback { 0.22 } else { 0.58 };
+                let rqi_weight = rqi_normalized
+                    .map(|v| (0.35 + 0.65 * v).clamp(0.25, 1.0))
+                    .unwrap_or(0.85);
+                let mut dual_weight = stale_weight * rqi_weight * dual_confidence;
+
+                if dual_phase == PHASE_MIXED && !near_transition {
+                    dual_weight *= 0.55;
+                }
+
+                if dual_phase == PHASE_RAIN
+                    && thermo_phase == PHASE_SNOW
+                    && thermo_confidence >= 0.35
+                    && precip_flag_phase == Some(PHASE_SNOW)
+                {
+                    dual_weight *= 0.2;
+                }
+
+                if dual_weight >= 0.08 {
+                    add_score(&mut rain_s, &mut mixed_s, &mut snow_s, dual_phase, dual_weight * 2.2);
+                    used_dual = true;
+                } else {
+                    suppressed_dual = true;
+                }
+            }
+
+            // ── Stage 10: Mixed promotion ───────────────────────────────
+            let rain_snow_competing = rain_s >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
+                && snow_s >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
+                && (rain_s - snow_s).abs() <= MIXED_COMPETING_RAIN_SNOW_DELTA_MAX;
+            let rain_snow_promotion = rain_s >= MIXED_COMPETING_PROMOTION_MIN_SCORE
+                && snow_s >= MIXED_COMPETING_PROMOTION_MIN_SCORE
+                && (rain_s - snow_s).abs() <= MIXED_COMPETING_RAIN_SNOW_DELTA_MAX;
+            if rain_snow_promotion
+                && (near_transition || dual_mixed_support || signal_count >= 2)
+            {
+                let rain_snow_peak = rain_s.max(snow_s);
+                let mixed_gap = rain_snow_peak - mixed_s;
+                if mixed_gap.is_finite()
+                    && mixed_gap > 0.0
+                    && mixed_gap <= MIXED_COMPETING_PROMOTION_GAP_MAX
+                {
+                    mixed_s += mixed_gap + MIXED_COMPETING_PROMOTION_MARGIN;
+                }
+            }
+
+            // ── Stage 11: Final ranking ─────────────────────────────────
+            let ranked = rank_phase_scores_f32(rain_s, mixed_s, snow_s);
+            let mut phase = ranked[0].0;
+
+            if phase == PHASE_MIXED {
+                let best_non_mixed = if ranked[1].0 == PHASE_MIXED {
+                    ranked[2]
+                } else {
+                    ranked[1]
+                };
+                let mixed_advantage = ranked[0].1 - best_non_mixed.1;
+                let transition_like = near_transition || rain_snow_competing || dual_mixed_support;
+                let required_margin = if transition_like {
+                    MIXED_SELECTION_MARGIN_TRANSITION
+                } else {
+                    MIXED_SELECTION_MARGIN
+                };
+
+                if mixed_advantage < required_margin {
+                    phase = best_non_mixed.0;
+                    suppressed_mixed = true;
+                }
+            }
+
+            // ── Stage 12: Forced precip-snow override ───────────────────
+            let mut forced_precip_snow = false;
+            if precip_flag_phase == Some(PHASE_SNOW) && phase != PHASE_SNOW {
+                if thermo_phase == PHASE_SNOW || near_transition {
+                    phase = PHASE_SNOW;
+                    forced_precip_snow = true;
+                }
+            }
+
+            // ── Stage 13: Surface phase + transition candidate ──────────
+            let surface_phase = precip_flag_phase.unwrap_or(PHASE_RAIN);
+
+            let thermo_competing_candidate = rain_s >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
+                && snow_s >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
+                && (rain_s - snow_s).abs() <= MIXED_COMPETING_RAIN_SNOW_DELTA_MAX + 0.45;
+            let dual_mixed_candidate = dual_evidence
+                .map_or(false, |(p, c)| p == PHASE_MIXED && c >= 0.35);
+            let transition_candidate = !forced_precip_snow
+                && (near_transition || thermo_competing_candidate || dual_mixed_candidate);
+
+            // Write outputs
+            phase_out[idx] = phase;
+            surface_phase_out[idx] = surface_phase;
+            transition_candidate_out[idx] = transition_candidate;
+            signal_count_out[idx] = signal_count;
+            used_dual_out[idx] = used_dual;
+            suppressed_dual_out[idx] = suppressed_dual;
+            suppressed_mixed_out[idx] = suppressed_mixed;
+            forced_precip_snow_out[idx] = forced_precip_snow;
+        }
+    }
+
+    // ── Scalar tail loop for n%4 remainder ──────────────────────────────
+    let tail_start = chunks * 4;
+    for i in tail_start..n {
         let (
             phase,
             surface_phase,
@@ -100,6 +486,8 @@ pub fn compute_phase_scores_branchless(
         suppressed_mixed_out[i] = suppressed_mixed;
         forced_precip_snow_out[i] = forced_precip_snow;
     }
+
+    let _ = remainder; // suppress unused variable warning
 
     BatchPhaseResult {
         phase: phase_out,
