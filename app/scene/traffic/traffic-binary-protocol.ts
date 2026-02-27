@@ -3,11 +3,11 @@ import type { LiveTrafficAircraft, LiveTrafficHistoryPoint } from './traffic-wor
 export const TRAFFIC_BINARY_CONTENT_TYPE = 'application/vnd.approach-viz.traffic.v1';
 
 const TRAFFIC_BINARY_MAGIC = 'AVTR';
-const TRAFFIC_BINARY_VERSION = 1;
+const TRAFFIC_BINARY_VERSION = 2;
 const TRAFFIC_BINARY_HEADER_BYTES = 64;
 const TRAFFIC_BINARY_FLAG_HAS_ERROR = 1 << 0;
-const TRAFFIC_BINARY_AIRCRAFT_RECORD_BYTES = 40;
-const TRAFFIC_BINARY_HISTORY_GROUP_RECORD_BYTES = 16;
+const TRAFFIC_BINARY_AIRCRAFT_RECORD_BYTES = 38;
+const TRAFFIC_BINARY_HISTORY_GROUP_RECORD_BYTES = 14;
 const TRAFFIC_BINARY_HISTORY_POINT_RECORD_BYTES = 20;
 const TRAFFIC_BINARY_NONE_OFFSET = 0xffffffff;
 
@@ -167,24 +167,40 @@ function normalizeOptionalNumber(value: number): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Parse aircraft hex strings from the SoA aircraft section.
+ *
+ * SoA column layout (each column is a contiguous array):
+ *   col0: u32[a] hex_str_offset   — starts at base
+ *   col1: u16[a] hex_str_length   — starts at base + a*4
+ */
 function parseAircraftHexes(view: DataView, header: TrafficBinaryHeader): string[] {
-  const hexes = new Array<string>(header.aircraftCount);
-  for (let index = 0; index < header.aircraftCount; index += 1) {
-    const offset = header.aircraftOffset + index * TRAFFIC_BINARY_AIRCRAFT_RECORD_BYTES;
-    const hexOffset = view.getUint32(offset, true);
-    const hexLength = view.getUint16(offset + 4, true);
-    hexes[index] = readString(view, header, hexOffset, hexLength);
+  const a = header.aircraftCount;
+  const base = header.aircraftOffset;
+  const hexes = new Array<string>(a);
+  for (let i = 0; i < a; i += 1) {
+    const hexOffset = view.getUint32(base + i * 4, true);
+    const hexLength = view.getUint16(base + a * 4 + i * 2, true);
+    hexes[i] = readString(view, header, hexOffset, hexLength);
   }
   return hexes;
 }
 
+/**
+ * Parse history group hex strings from the SoA history group section.
+ *
+ * SoA column layout:
+ *   col0: u32[g] hex_str_offset   — starts at base
+ *   col1: u16[g] hex_str_length   — starts at base + g*4
+ */
 function parseHistoryHexes(view: DataView, header: TrafficBinaryHeader): string[] {
-  const hexes = new Array<string>(header.historyGroupCount);
-  for (let index = 0; index < header.historyGroupCount; index += 1) {
-    const offset = header.historyGroupOffset + index * TRAFFIC_BINARY_HISTORY_GROUP_RECORD_BYTES;
-    const hexOffset = view.getUint32(offset, true);
-    const hexLength = view.getUint16(offset + 4, true);
-    hexes[index] = readString(view, header, hexOffset, hexLength);
+  const g = header.historyGroupCount;
+  const base = header.historyGroupOffset;
+  const hexes = new Array<string>(g);
+  for (let i = 0; i < g; i += 1) {
+    const hexOffset = view.getUint32(base + i * 4, true);
+    const hexLength = view.getUint16(base + g * 4 + i * 2, true);
+    hexes[i] = readString(view, header, hexOffset, hexLength);
   }
   return hexes;
 }
@@ -207,6 +223,37 @@ export function inspectTrafficBinaryPayload(buffer: ArrayBuffer): TrafficBinaryP
   };
 }
 
+/**
+ * Decode an AVTR v2 binary payload (SoA layout) into a TrafficBinaryDecodedPayload.
+ *
+ * Aircraft section SoA column layout (a = aircraftCount, base = aircraftOffset):
+ *   col0:  u32[a] hex_str_offset    — base
+ *   col1:  u16[a] hex_str_length    — base + a*4
+ *   col2:  u32[a] flight_str_offset — base + a*6
+ *   col3:  u16[a] flight_str_length — base + a*10
+ *   col4:  u16[a] flags             — base + a*12
+ *   col5:  f32[a] lat               — base + a*14
+ *   col6:  f32[a] lon               — base + a*18
+ *   col7:  f32[a] altitude          — base + a*22
+ *   col8:  f32[a] speed             — base + a*26
+ *   col9:  f32[a] track             — base + a*30
+ *   col10: f32[a] last_seen         — base + a*34
+ *   Total: a*38 bytes
+ *
+ * History group section SoA (g = historyGroupCount, base = historyGroupOffset):
+ *   col0: u32[g] hex_str_offset — base
+ *   col1: u16[g] hex_str_length — base + g*4
+ *   col2: u32[g] point_start    — base + g*6
+ *   col3: u32[g] point_count    — base + g*10
+ *   Total: g*14 bytes
+ *
+ * History point section SoA (p = historyPointCount, base = historyPointOffset):
+ *   col0: f32[p] lat            — base
+ *   col1: f32[p] lon            — base + p*4
+ *   col2: f32[p] altitude       — base + p*8
+ *   col3: i64[p] timestamp      — base + p*12
+ *   Total: p*20 bytes
+ */
 export function decodeTrafficBinaryPayload(buffer: ArrayBuffer): TrafficBinaryDecodedPayload {
   const { view, header } = parseHeader(buffer);
   const source = readOptionalString(view, header, header.sourceOffset, header.sourceLength);
@@ -215,54 +262,81 @@ export function decodeTrafficBinaryPayload(buffer: ArrayBuffer): TrafficBinaryDe
       ? readOptionalString(view, header, header.errorOffset, header.errorLength)
       : null;
 
-  const aircraftList = new Array<LiveTrafficAircraft>(header.aircraftCount);
-  for (let index = 0; index < header.aircraftCount; index += 1) {
-    const offset = header.aircraftOffset + index * TRAFFIC_BINARY_AIRCRAFT_RECORD_BYTES;
-    const hexOffset = view.getUint32(offset, true);
-    const hexLength = view.getUint16(offset + 4, true);
-    const flags = view.getUint16(offset + 6, true);
-    const flightOffset = view.getUint32(offset + 8, true);
-    const flightLength = view.getUint16(offset + 12, true);
-    const lat = view.getFloat32(offset + 16, true);
-    const lon = view.getFloat32(offset + 20, true);
+  // --- Aircraft SoA column offsets ---
+  const a = header.aircraftCount;
+  const acBase = header.aircraftOffset;
+  const acColHexOffset = acBase;
+  const acColHexLength = acColHexOffset + a * 4;
+  const acColFlightOffset = acColHexLength + a * 2;
+  const acColFlightLength = acColFlightOffset + a * 4;
+  const acColFlags = acColFlightLength + a * 2;
+  const acColLat = acColFlags + a * 2;
+  const acColLon = acColLat + a * 4;
+  const acColAltitude = acColLon + a * 4;
+  const acColSpeed = acColAltitude + a * 4;
+  const acColTrack = acColSpeed + a * 4;
+  const acColLastSeen = acColTrack + a * 4;
+
+  const aircraftList = new Array<LiveTrafficAircraft>(a);
+  for (let i = 0; i < a; i += 1) {
+    const hexOffset = view.getUint32(acColHexOffset + i * 4, true);
+    const hexLength = view.getUint16(acColHexLength + i * 2, true);
+    const flightOffset = view.getUint32(acColFlightOffset + i * 4, true);
+    const flightLength = view.getUint16(acColFlightLength + i * 2, true);
+    const flags = view.getUint16(acColFlags + i * 2, true);
+    const lat = view.getFloat32(acColLat + i * 4, true);
+    const lon = view.getFloat32(acColLon + i * 4, true);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      throw new Error(`Traffic binary aircraft record ${index} has invalid coordinates.`);
+      throw new Error(`Traffic binary aircraft record ${i} has invalid coordinates.`);
     }
     const flight = readOptionalString(view, header, flightOffset, flightLength);
-    aircraftList[index] = {
+    aircraftList[i] = {
       hex: readString(view, header, hexOffset, hexLength),
       flight,
       lat,
       lon,
       isOnGround: (flags & 1) !== 0,
-      altitudeFeet: normalizeOptionalNumber(view.getFloat32(offset + 24, true)),
-      groundSpeedKt: normalizeOptionalNumber(view.getFloat32(offset + 28, true)),
-      trackDeg: normalizeOptionalNumber(view.getFloat32(offset + 32, true)),
-      lastSeenSeconds: normalizeOptionalNumber(view.getFloat32(offset + 36, true))
+      altitudeFeet: normalizeOptionalNumber(view.getFloat32(acColAltitude + i * 4, true)),
+      groundSpeedKt: normalizeOptionalNumber(view.getFloat32(acColSpeed + i * 4, true)),
+      trackDeg: normalizeOptionalNumber(view.getFloat32(acColTrack + i * 4, true)),
+      lastSeenSeconds: normalizeOptionalNumber(view.getFloat32(acColLastSeen + i * 4, true))
     };
   }
 
+  // --- History group SoA column offsets ---
+  const g = header.historyGroupCount;
+  const hgBase = header.historyGroupOffset;
+  const hgColHexOffset = hgBase;
+  const hgColHexLength = hgColHexOffset + g * 4;
+  const hgColPointStart = hgColHexLength + g * 2;
+  const hgColPointCount = hgColPointStart + g * 4;
+
+  // --- History point SoA column offsets ---
+  const p = header.historyPointCount;
+  const hpBase = header.historyPointOffset;
+  const hpColLat = hpBase;
+  const hpColLon = hpColLat + p * 4;
+  const hpColAltitude = hpColLon + p * 4;
+  const hpColTimestamp = hpColAltitude + p * 4;
+
   const historyByHex: Record<string, LiveTrafficHistoryPoint[]> = {};
-  for (let index = 0; index < header.historyGroupCount; index += 1) {
-    const offset = header.historyGroupOffset + index * TRAFFIC_BINARY_HISTORY_GROUP_RECORD_BYTES;
-    const hexOffset = view.getUint32(offset, true);
-    const hexLength = view.getUint16(offset + 4, true);
-    const pointStart = view.getUint32(offset + 8, true);
-    const pointCount = view.getUint32(offset + 12, true);
+  for (let i = 0; i < g; i += 1) {
+    const hexOffset = view.getUint32(hgColHexOffset + i * 4, true);
+    const hexLength = view.getUint16(hgColHexLength + i * 2, true);
+    const pointStart = view.getUint32(hgColPointStart + i * 4, true);
+    const pointCount = view.getUint32(hgColPointCount + i * 4, true);
     if (pointStart + pointCount > header.historyPointCount) {
-      throw new Error(`Traffic binary history group ${index} points exceed history point section.`);
+      throw new Error(`Traffic binary history group ${i} points exceed history point section.`);
     }
     const hex = readString(view, header, hexOffset, hexLength);
     const points = new Array<LiveTrafficHistoryPoint>(pointCount);
-    for (let pointIndex = 0; pointIndex < pointCount; pointIndex += 1) {
-      const absolutePointIndex = pointStart + pointIndex;
-      const pointOffset =
-        header.historyPointOffset + absolutePointIndex * TRAFFIC_BINARY_HISTORY_POINT_RECORD_BYTES;
-      points[pointIndex] = {
-        lat: view.getFloat32(pointOffset, true),
-        lon: view.getFloat32(pointOffset + 4, true),
-        altitudeFeet: view.getFloat32(pointOffset + 8, true),
-        timestampMs: readInt64AsNumber(view, pointOffset + 12)
+    for (let j = 0; j < pointCount; j += 1) {
+      const idx = pointStart + j;
+      points[j] = {
+        lat: view.getFloat32(hpColLat + idx * 4, true),
+        lon: view.getFloat32(hpColLon + idx * 4, true),
+        altitudeFeet: view.getFloat32(hpColAltitude + idx * 4, true),
+        timestampMs: readInt64AsNumber(view, hpColTimestamp + idx * 8)
       };
     }
     historyByHex[hex] = points;
