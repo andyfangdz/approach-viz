@@ -3,6 +3,7 @@ mod encoding;
 mod grib;
 mod ingest;
 mod phase;
+mod phase_batch;
 mod processor;
 mod projection;
 mod sources;
@@ -14,6 +15,7 @@ pub use self::storage::load_latest_snapshot;
 
 // Re-exports for benchmarks
 pub use phase::{resolve_thermo_phase, DualPolEvidence, PhaseScores, ThermoPhaseEvidence};
+pub use phase_batch::{compute_phase_scores_branchless, BatchPhaseResult};
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
