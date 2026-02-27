@@ -6,6 +6,7 @@ mod phase;
 mod phase_batch;
 mod processor;
 mod projection;
+mod simd_lut;
 mod sources;
 mod storage;
 
