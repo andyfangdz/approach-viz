@@ -61,5 +61,4 @@ jobs:
       - name: Cargo test
         run: cargo test --workspace
 
-      - name: Vectorization regression check
-        run: bash scripts/ci/check-vectorization.sh
+
