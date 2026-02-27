@@ -78,7 +78,7 @@ This allows concurrent requests while minimizing over-allocation.
 ## Traffic Runtime Wire Format
 
 - Runtime endpoint `/v1/traffic/adsbx` accepts `format=binary` and emits `application/vnd.approach-viz.traffic.v1`.
-- Payload layout: fixed 64-byte header (`AVTR` magic + version + section offsets/counts), fixed-width aircraft records, fixed-width history-group records, fixed-width history-point records, and a trailing UTF-8 string table.
+- Payload layout (AVTR v2, SoA): fixed 64-byte header (`AVTR` magic + version + section offsets/counts), followed by contiguous per-field column arrays for aircraft (38 bytes/ac, 11 columns), history groups (14 bytes/group, 4 columns), history points (20 bytes/point, 4 columns), and a trailing UTF-8 string table.
 - Worker uses `decodeTrafficBinaryPayload(...)` to deserialize full aircraft/history payloads before merge/prune/projection.
 - Main thread now only constructs URLs/backfill policy; worker performs network fetch + decode for `ingest-runtime`.
 

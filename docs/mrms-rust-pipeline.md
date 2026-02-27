@@ -35,40 +35,39 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - ADS-B spatial indexing path: ring-slot and live-track `R*Tree` tables are trigger-maintained (`INSERT`/`UPDATE`/`DELETE`), startup reconciliation backfills any missing index rows, and `/v1/traffic/adsbx` uses `R*Tree` joins for live candidate and history-target discovery.
 - ADS-B WAL maintenance: low-priority writer maintenance runs periodic `wal_checkpoint(PASSIVE)` and only attempts `wal_checkpoint(TRUNCATE)` when WAL size is above threshold and truncate cooldown has elapsed.
 
-## Wire Format (`application/vnd.approach-viz.mrms.v3`)
+## Wire Format (`application/vnd.approach-viz.mrms.v3`, AVMR v4)
 
 - Header magic: `AVMR`
-- Version: `3`
+- Version: `4` (content-type string kept at `.v3` for backwards-compatible Accept headers)
 - Header includes:
   - source voxel count (pre-merge)
   - encoded brick count
   - layer count + per-layer voxel counts
-  - per-record byte size
+  - record_bytes = `0` (SoA marker; field not meaningful for column layout)
   - scan timestamp + generated timestamp
   - global X/Y voxel footprint
   - query context (`min_dbz`, `max_range`, tile size, origin lat/lon in microdegrees)
-- v3 record size: `20` bytes per merged brick
-  - `xCentiNm:i16`
-  - `zCentiNm:i16`
-  - `bottomFeet:u16`
-  - `topFeet:u16`
-  - `dbzTenths:i16` (5 dBZ quantized for merge grouping)
-  - `phase:u8`
-  - `levelStart:u8`
-  - `spanX:u16` (grid-cell width multiplier)
-  - `spanY:u16` (grid-cell depth multiplier)
-  - `spanZ:u16` (merged vertical levels)
-  - `surfacePhase:u8`
-  - `reserved:u8`
+- v4 SoA layout: `18` bytes per merged brick across 10 contiguous column arrays:
+  - `xCentiNm:i16[n]`
+  - `zCentiNm:i16[n]`
+  - `bottomFeet:u16[n]`
+  - `topFeet:u16[n]`
+  - `dbzTenths:i16[n]` (5 dBZ quantized for merge grouping)
+  - `phase:u8[n]`
+  - `surfacePhase:u8[n]`
+  - `spanX:u16[n]` (grid-cell width multiplier)
+  - `spanY:u16[n]` (grid-cell depth multiplier)
+  - `spanZ:u16[n]` (merged vertical levels)
+- Dropped from v3: `levelStart:u8` and `reserved:u8` (20→18 bytes/brick)
 - Merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
 
-## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v1`)
+## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v1`, AVET v2)
 
 - Header magic: `AVET`
-- Version: `1`
+- Version: `2` (content-type string kept at `.v1` for backwards-compatible Accept headers)
 - Header size: `64` bytes (all little-endian)
   - `[0..4]` magic `"AVET"`
-  - `[4..6]` version (u16) = 1
+  - `[4..6]` version (u16) = 2
   - `[6..8]` header_bytes (u16) = 64
   - `[8..12]` cell_count (u32)
   - `[12..16]` source_cell_count (u32)
@@ -81,10 +80,10 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `[40..42]` max_top50_feet (u16)
   - `[42..44]` max_top60_feet (u16)
   - `[44..64]` reserved (zero)
-- Cell record size: `16` bytes each
-  - `x_nm:f32`, `z_nm:f32`, `top18_feet:u16`, `top30_feet:u16`, `top50_feet:u16`, `top60_feet:u16`
+- v2 SoA layout: `16` bytes per cell across 6 contiguous column arrays:
+  - `x_nm:f32[n]`, `z_nm:f32[n]`, `top18_feet:u16[n]`, `top30_feet:u16[n]`, `top50_feet:u16[n]`, `top60_feet:u16[n]`
 - Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v1` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
-- Decoder in `crates/approach-viz-core/src/echo_top_wire_codec.rs`, encoder in `services/runtime-rs/src/api/wire.rs`.
+- Decoder in `crates/approach-viz-core/src/echo_top_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`.
 
 ## Deployment
 
