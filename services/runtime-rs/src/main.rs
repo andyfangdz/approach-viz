@@ -6,7 +6,7 @@ mod grib;
 mod http_client;
 mod ingest;
 mod storage;
-mod traffic_api;
+mod traffic;
 mod types;
 mod utils;
 
@@ -29,7 +29,7 @@ use crate::api::{echo_tops, healthz, meta, volume};
 use crate::config::Config;
 use crate::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
 use crate::storage::load_latest_snapshot;
-use crate::traffic_api::{spawn_traffic_cache_worker, traffic_adsbx};
+use crate::traffic::{spawn_traffic_cache_worker, traffic_adsbx, TrafficStore};
 use crate::types::AppState;
 use crate::utils::{init_tracing, shutdown_tracing};
 
@@ -48,6 +48,11 @@ async fn main() -> Result<()> {
         .build()
         .context("Failed to build reqwest client")?;
 
+    let traffic_store = Arc::new(
+        TrafficStore::new(cfg.traffic_db_file())
+            .map_err(|error| anyhow::anyhow!("Failed to create traffic store: {error}"))?,
+    );
+
     let latest = Arc::new(RwLock::new(load_latest_snapshot(&cfg).await?));
     let state = AppState {
         cfg: cfg.clone(),
@@ -56,6 +61,7 @@ async fn main() -> Result<()> {
         pending: Arc::new(Mutex::new(HashMap::new())),
         recent_timestamps: Arc::new(Mutex::new(HashSet::new())),
         ingest_parse_limiter: Arc::new(Semaphore::new(cfg.ingest_parse_concurrency as usize)),
+        traffic_store,
     };
 
     if let Some(timestamp) = state.cfg.ingest_profile_timestamp.clone() {
