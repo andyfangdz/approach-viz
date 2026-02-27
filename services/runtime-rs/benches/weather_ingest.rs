@@ -1,5 +1,7 @@
 mod fixtures;
-use approach_viz_runtime::weather::{compute_phase_scores_branchless, resolve_thermo_phase};
+use approach_viz_runtime::weather::{
+    compute_phase_scores_branchless, filter_voxels_by_threshold, resolve_thermo_phase,
+};
 use criterion::{criterion_group, criterion_main, Criterion};
 
 fn bench_filter_pass(c: &mut Criterion) {
@@ -9,11 +11,18 @@ fn bench_filter_pass(c: &mut Criterion) {
     c.bench_function("filter_pass_baseline", |b| {
         b.iter(|| {
             let mut valid = Vec::with_capacity(data.dbz_tenths.len() / 3);
-            for (i, &dbz) in data.dbz_tenths.iter().enumerate() {
-                if dbz >= threshold {
+            for (i, dbz) in data.dbz_tenths.iter().enumerate() {
+                if *dbz >= threshold {
                     valid.push(i as u32);
                 }
             }
+            std::hint::black_box(valid.len())
+        })
+    });
+
+    c.bench_function("filter_pass_simd", |b| {
+        b.iter(|| {
+            let valid = filter_voxels_by_threshold(&data.dbz_tenths, threshold);
             std::hint::black_box(valid.len())
         })
     });
@@ -29,7 +38,7 @@ fn bench_phase_scoring(c: &mut Criterion) {
         .dbz_tenths
         .iter()
         .enumerate()
-        .filter(|(_, &d)| d >= threshold)
+        .filter(|&(_, d)| *d >= threshold)
         .map(|(i, _)| i)
         .collect();
 
@@ -77,7 +86,7 @@ fn bench_phase_scoring_branchless(c: &mut Criterion) {
         .dbz_tenths
         .iter()
         .enumerate()
-        .filter(|(_, &d)| d >= threshold)
+        .filter(|&(_, d)| *d >= threshold)
         .map(|(i, _)| i)
         .collect();
 

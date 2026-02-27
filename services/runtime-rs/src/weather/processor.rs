@@ -5,8 +5,11 @@ use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use tracing::warn;
 
+use wide::{i16x8, CmpEq, CmpGt};
+
 use super::phase::{promote_mixed_transition_edges, LevelPhaseVoxel};
 use super::phase_batch::compute_phase_scores_branchless;
+use super::simd_lut::COMPRESS_LUT;
 use super::sources::{
     build_level_key, fetch_aux_field_at_timestamp, fetch_level_aux_field_at_timestamp,
     fetch_mrms_key_bytes, find_latest_aux_timestamp_at_or_before,
@@ -29,18 +32,47 @@ use crate::utils::{parse_timestamp_utc, round_u16, to_lon360};
 
 /// Pass 1: Scan dbz_tenths and collect indices of voxels at or above threshold.
 ///
-/// Designed for auto-vectorization: single contiguous array, simple comparison,
-/// no branches in the hot path. LLVM should vectorize the comparison to 8×i16
-/// on NEON (aarch64) or 16×i16 on AVX2 (x86_64).
+/// Uses explicit SIMD via `wide::i16x8`: compares 8 i16 lanes per iteration,
+/// extracts a bitmask, and uses `COMPRESS_LUT` to gather matching indices
+/// without per-element branches. Scalar tail loop handles `n % 8` remainder.
 #[inline(never)] // Preserve as named function for LLVM remarks + asm inspection
-pub(crate) fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> Vec<u32> {
-    let mut valid = Vec::with_capacity(dbz_tenths.len() / 3);
-    for (i, &dbz) in dbz_tenths.iter().enumerate() {
-        if dbz >= threshold {
-            valid.push(i as u32);
+pub fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> Vec<u32> {
+    let n = dbz_tenths.len();
+    let mut out = Vec::with_capacity(n / 3);
+
+    let threshold_v = i16x8::splat(threshold);
+    let chunks = n / 8;
+
+    for chunk_idx in 0..chunks {
+        let base = chunk_idx * 8;
+        // Safety: base + 8 <= chunks * 8 <= n, so slice is in bounds.
+        let chunk: [i16; 8] = dbz_tenths[base..base + 8].try_into().unwrap();
+        let vals = i16x8::new(chunk);
+
+        // a >= b  <==>  (a > b) | (a == b)
+        let mask_vec = vals.simd_gt(threshold_v) | vals.simd_eq(threshold_v);
+        let mask = mask_vec.to_bitmask() as usize;
+
+        if mask == 0 {
+            continue;
+        }
+
+        let (positions, count) = COMPRESS_LUT[mask];
+        let base_u32 = base as u32;
+        for i in 0..count as usize {
+            out.push(base_u32 + positions[i] as u32);
         }
     }
-    valid
+
+    // Scalar tail for remaining n % 8 elements
+    let tail_start = chunks * 8;
+    for i in tail_start..n {
+        if dbz_tenths[i] >= threshold {
+            out.push(i as u32);
+        }
+    }
+
+    out
 }
 
 /// Flat f32 arrays of aux field values for valid voxel indices.
@@ -1154,6 +1186,33 @@ fn bool_label(value: bool) -> &'static str {
 #[cfg(test)]
 mod filter_tests {
     use super::*;
+    use wide::{i16x8, CmpEq, CmpGt};
+
+    // --- API discovery ---
+
+    #[test]
+    fn wide_i16x8_api_discovery() {
+        let a = i16x8::new([10, 20, 30, 40, 50, 60, 70, 80]);
+        let b = i16x8::splat(50);
+        // i16x8 has CmpGt + CmpEq but NOT CmpGe; combine with bitor.
+        let cmp = a.simd_gt(b) | a.simd_eq(b);
+        let arr = cmp.to_array();
+        // True lanes are all-bits-set (-1 for i16), false lanes are 0.
+        assert_eq!(arr[0], 0); // 10 < 50
+        assert_eq!(arr[1], 0); // 20 < 50
+        assert_eq!(arr[2], 0); // 30 < 50
+        assert_eq!(arr[3], 0); // 40 < 50
+        assert_eq!(arr[4], -1); // 50 >= 50
+        assert_eq!(arr[5], -1); // 60 >= 50
+        assert_eq!(arr[6], -1); // 70 >= 50
+        assert_eq!(arr[7], -1); // 80 >= 50
+
+        // to_bitmask extracts one bit per lane (sign bit)
+        let mask = cmp.to_bitmask();
+        assert_eq!(mask, 0b11110000);
+    }
+
+    // --- Original tests ---
 
     #[test]
     fn filter_voxels_by_threshold_selects_above_threshold() {
@@ -1181,6 +1240,44 @@ mod filter_tests {
         let dbz = vec![50_i16, 60, 70, 80];
         let result = filter_voxels_by_threshold(&dbz, 50);
         assert_eq!(result, vec![0_u32, 1, 2, 3]);
+    }
+
+    // --- SIMD equivalence tests ---
+
+    fn filter_scalar_reference(data: &[i16], threshold: i16) -> Vec<u32> {
+        data.iter()
+            .enumerate()
+            .filter(|&(_, v)| *v >= threshold)
+            .map(|(i, _)| i as u32)
+            .collect()
+    }
+
+    #[test]
+    fn simd_filter_matches_scalar() {
+        for n in [0, 1, 7, 8, 9, 15, 16, 100, 1000] {
+            let data: Vec<i16> = (0..n).map(|i| ((i * 7 + 3) % 200 - 50) as i16).collect();
+            let threshold = 50i16;
+            let expected = filter_scalar_reference(&data, threshold);
+            let actual = filter_voxels_by_threshold(&data, threshold);
+            assert_eq!(actual, expected, "mismatch at n={n}");
+        }
+    }
+
+    #[test]
+    fn simd_filter_empty() {
+        assert!(filter_voxels_by_threshold(&[], 50).is_empty());
+    }
+
+    #[test]
+    fn simd_filter_all_pass() {
+        let data = vec![100i16; 17];
+        assert_eq!(filter_voxels_by_threshold(&data, 50).len(), 17);
+    }
+
+    #[test]
+    fn simd_filter_none_pass() {
+        let data = vec![10i16; 17];
+        assert!(filter_voxels_by_threshold(&data, 50).is_empty());
     }
 }
 

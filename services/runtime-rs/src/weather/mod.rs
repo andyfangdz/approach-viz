@@ -19,6 +19,8 @@ pub use self::storage::load_latest_snapshot;
 pub use phase::{resolve_thermo_phase, DualPolEvidence, PhaseScores, ThermoPhaseEvidence};
 #[allow(unused_imports)]
 pub use phase_batch::{compute_phase_scores_branchless, BatchPhaseResult};
+#[allow(unused_imports)]
+pub use processor::filter_voxels_by_threshold;
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
