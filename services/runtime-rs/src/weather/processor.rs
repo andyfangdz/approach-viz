@@ -1254,7 +1254,7 @@ mod filter_tests {
 
     #[test]
     fn simd_filter_matches_scalar() {
-        for n in [0, 1, 7, 8, 9, 15, 16, 100, 1000] {
+        for n in [0, 1, 7, 8, 9, 15, 16, 100, 1000, 12_250_000] {
             let data: Vec<i16> = (0..n).map(|i| ((i * 7 + 3) % 200 - 50) as i16).collect();
             let threshold = 50i16;
             let expected = filter_scalar_reference(&data, threshold);
