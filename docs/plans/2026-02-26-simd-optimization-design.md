@@ -22,21 +22,21 @@ auto-vectorization cannot reach.
 
 ### Runtime (services/runtime-rs/)
 
-| Hotspot | File | Loop scale | Primary blocker |
-|---------|------|-----------|-----------------|
-| Voxel grid processing | `weather/processor.rs:332-413` | 20-60M iter/scan | Data-dependent `continue`; Option chains; 8+ branches in phase scoring |
-| Volume wire voxel filter | `weather/encoding.rs:220-266` | 50-200K voxels/query | 4 branch conditions; Vec push; quantization branch |
-| Echo-top cell filter | `weather/encoding.rs:87-118` | 1-50K cells/query | 3 branch conditions; Vec push |
-| Thermo phase scoring | `weather/phase.rs:163-305` | 20-60M calls/scan | Deep Option nesting; f64/f32 mixing; conditional score accumulation |
+| Hotspot                  | File                           | Loop scale           | Primary blocker                                                        |
+| ------------------------ | ------------------------------ | -------------------- | ---------------------------------------------------------------------- |
+| Voxel grid processing    | `weather/processor.rs:332-413` | 20-60M iter/scan     | Data-dependent `continue`; Option chains; 8+ branches in phase scoring |
+| Volume wire voxel filter | `weather/encoding.rs:220-266`  | 50-200K voxels/query | 4 branch conditions; Vec push; quantization branch                     |
+| Echo-top cell filter     | `weather/encoding.rs:87-118`   | 1-50K cells/query    | 3 branch conditions; Vec push                                          |
+| Thermo phase scoring     | `weather/phase.rs:163-305`     | 20-60M calls/scan    | Deep Option nesting; f64/f32 mixing; conditional score accumulation    |
 
 ### WASM Core (crates/approach-viz-core/)
 
-| Hotspot | File | Loop scale | Primary blocker |
-|---------|------|-----------|-----------------|
-| MRMS voxel decode | `mrms_wire_codec.rs:146-186` | 10-200K records | 8 Vec::push per iter; 20-byte stride gather |
-| Echo-top cell decode | `echo_top_wire_codec.rs:138-154` | 1-50K records | 6 Vec::push per iter; 16-byte stride |
-| Volume preprocessing | `mrms_preprocess.rs:83-129` | 10-200K voxels | 3 early exits; f32→f64→f32 round-trip; function call in loop |
-| Batch lat_lon_to_local | `coords.rs:55-74` | 1-50K calls/frame | Scalar function; 6-level FP dependency chain |
+| Hotspot                | File                             | Loop scale        | Primary blocker                                              |
+| ---------------------- | -------------------------------- | ----------------- | ------------------------------------------------------------ |
+| MRMS voxel decode      | `mrms_wire_codec.rs:146-186`     | 10-200K records   | 8 Vec::push per iter; 20-byte stride gather                  |
+| Echo-top cell decode   | `echo_top_wire_codec.rs:138-154` | 1-50K records     | 6 Vec::push per iter; 16-byte stride                         |
+| Volume preprocessing   | `mrms_preprocess.rs:83-129`      | 10-200K voxels    | 3 early exits; f32→f64→f32 round-trip; function call in loop |
+| Batch lat_lon_to_local | `coords.rs:55-74`                | 1-50K calls/frame | Scalar function; 6-level FP dependency chain                 |
 
 ## Auto-Vectorization Blockers (Common Patterns)
 
@@ -159,12 +159,12 @@ Eliminates repeated capacity checks.
 
 ### Expected Gains
 
-| Component | Change | Expected gain |
-|-----------|--------|---------------|
-| Voxel filter loop | Multi-pass batch | 1.5-2x |
-| Echo-top filter | Multi-pass batch | ~1.5x |
-| Brick merging | Unchanged | — |
-| Wire serialization | Pre-allocate | 1.1-1.2x |
+| Component          | Change           | Expected gain |
+| ------------------ | ---------------- | ------------- |
+| Voxel filter loop  | Multi-pass batch | 1.5-2x        |
+| Echo-top filter    | Multi-pass batch | ~1.5x         |
+| Brick merging      | Unchanged        | —             |
+| Wire serialization | Pre-allocate     | 1.1-1.2x      |
 
 ## Vectorization Verification
 

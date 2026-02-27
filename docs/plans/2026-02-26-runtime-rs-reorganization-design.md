@@ -68,26 +68,31 @@ src/
 ### `traffic/` — ADS-B Traffic Domain
 
 **`traffic/mod.rs`** — Public API surface only:
+
 - `pub async fn traffic_adsbx(...)` HTTP handler (request parsing, format dispatch, response building)
 - `pub fn spawn_traffic_cache_worker(...)`
 - Re-exports what `main.rs` / `server/` need
 
 **`traffic/store.rs`** — `TrafficStore` struct and SQLite operations:
+
 - `TrafficStore::new()` — DB creation, schema, connection pools
 - Read/write channel-based pool (`mpsc`/`oneshot` pattern)
 - WAL maintenance
 - **Key change:** `TrafficStore` becomes a field on `AppState`, replacing the static `OnceLock`/`Mutex` globals
 
 **`traffic/cache_worker.rs`** — Background fetch loop:
+
 - `cache_poll_loop(...)` — fetches from ADSBx API, writes to store
 - Retention sweep logic
 - `US_FETCH_BOXES` constant (only used by the fetcher)
 
 **`traffic/encoding.rs`** — AVTR binary format builder:
+
 - `build_traffic_binary(...)` — serializes payload to wire format
 - Binary constants (`TRAFFIC_BINARY_MAGIC`, record sizes, etc.)
 
 **`traffic/types.rs`** — Domain types and query constants:
+
 - `TrafficQuery`, `TrafficAircraft`, `TrafficHistoryPoint`
 - `TrafficSuccessPayload`, `TrafficErrorPayload`, `TrafficBinaryPayload`
 - `BoundingBox`, `TrafficResponseFormat`
@@ -96,15 +101,18 @@ src/
 ### `weather/` — MRMS Weather Domain
 
 **`weather/mod.rs`** — HTTP handlers:
+
 - `pub async fn volume(...)`, `echo_tops(...)`, `meta(...)`, `healthz(...)`
 - Moved from `api/mod.rs`
 
 **`weather/ingest.rs`** — Orchestration only (no processing):
+
 - `spawn_background_workers()` — spawns SQS, bootstrap, and scheduler loops
 - `sqs_loop()`, `bootstrap_loop()`, `ingest_scheduler_loop()`
 - `enqueue_latest_from_s3()`, `run_ingest_profile()`
 
 **`weather/processor.rs`** — Extracted `ingest_timestamp()`:
+
 - The core function that fetches GRIB levels, resolves phase, assembles `ScanSnapshot`
 - Currently buried in `ingest/mod.rs` starting around line 200
 
@@ -113,10 +121,12 @@ src/
 **`weather/sources.rs`** — Moved from `ingest/sources.rs`, unchanged.
 
 **`weather/encoding.rs`** — Merged from `api/wire.rs`:
+
 - `build_volume_wire()` / `build_volume_wire_impl()` (AVMR encoder)
 - `build_echo_top_wire()` / `build_echo_top_cells()` (AVET encoder)
 
 **`weather/projection.rs`** — Extracted from `api/wire.rs`:
+
 - `QueryWindow`, `QueryProjection`, `build_query_window()`
 - Spatial filtering (row/col bounds, distance checks)
 
@@ -129,6 +139,7 @@ src/
 ### `server/` — HTTP Server Setup
 
 **`server/mod.rs`** — Router and middleware:
+
 - `pub fn build_router(state: AppState) -> Router`
 - Route definitions wiring `weather::*` and `traffic::*` handlers
 - CORS, compression, telemetry layers

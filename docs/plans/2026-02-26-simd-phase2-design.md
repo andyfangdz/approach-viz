@@ -27,15 +27,15 @@ Both workstreams also include a Rust edition 2024 upgrade.
 
 ## Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| SIMD abstraction | `wide` v1.1.1 | Stable Rust, zero transitive deps, aarch64 + wasm32 |
-| Filter compress | LUT (256-entry, 8-bit mask) | Avoids branch mispredictions at 30% pass rate |
-| Phase scoring | Full f32x4 vectorization | All stages branchless via compare + blend |
-| Wire format | Custom SoA | Zero-copy decode, we control both ends, minimal overhead |
-| Backwards compat | None | Clean version bump, coordinated deploy |
-| Edition | 2024 | Stricter `unsafe_op_in_unsafe_fn` scoping |
-| Arrow / FlatBuffers | Rejected | Schemas are fixed + simple; dependency weight and WASM bundle size not justified |
+| Decision            | Choice                      | Rationale                                                                        |
+| ------------------- | --------------------------- | -------------------------------------------------------------------------------- |
+| SIMD abstraction    | `wide` v1.1.1               | Stable Rust, zero transitive deps, aarch64 + wasm32                              |
+| Filter compress     | LUT (256-entry, 8-bit mask) | Avoids branch mispredictions at 30% pass rate                                    |
+| Phase scoring       | Full f32x4 vectorization    | All stages branchless via compare + blend                                        |
+| Wire format         | Custom SoA                  | Zero-copy decode, we control both ends, minimal overhead                         |
+| Backwards compat    | None                        | Clean version bump, coordinated deploy                                           |
+| Edition             | 2024                        | Stricter `unsafe_op_in_unsafe_fn` scoping                                        |
+| Arrow / FlatBuffers | Rejected                    | Schemas are fixed + simple; dependency weight and WASM bundle size not justified |
 
 ## Dependencies
 
@@ -177,11 +177,11 @@ With SoA layout, most decoding becomes zero-copy slice reinterpretation via
 `bytemuck::cast_slice`. Both wasm32 and aarch64 are little-endian, so no
 byte-swapping is needed.
 
-| Decoder | SIMD Work | Non-SIMD Work |
-|---------|-----------|---------------|
-| Echo-Top | None (zero-copy) | Header validation |
-| MRMS Voxel | i16 -> f32 scaling (x, z coords) | Header validation |
-| Traffic History | None (zero-copy) | Header validation |
+| Decoder          | SIMD Work                           | Non-SIMD Work       |
+| ---------------- | ----------------------------------- | ------------------- |
+| Echo-Top         | None (zero-copy)                    | Header validation   |
+| MRMS Voxel       | i16 -> f32 scaling (x, z coords)    | Header validation   |
+| Traffic History  | None (zero-copy)                    | Header validation   |
 | Traffic Aircraft | f32 NaN detection (optional fields) | String table lookup |
 
 The MRMS i16-to-f32 conversion processes 8 values per iteration: `i16x8` widen
@@ -199,21 +199,20 @@ so encoding SoA is simpler than the current AoS packing.
 
 ## Edition 2024 Upgrade
 
-Both crates (`runtime-rs` and `approach-viz-core`) upgrade from edition 2021 to
-2024. The main effect is `unsafe_op_in_unsafe_fn` becoming `deny` by default,
+Both crates (`runtime-rs` and `approach-viz-core`) upgrade from edition 2021 to 2024. The main effect is `unsafe_op_in_unsafe_fn` becoming `deny` by default,
 which enforces explicit `unsafe {}` blocks inside `unsafe fn` bodies. Low risk:
 neither crate currently has `unsafe fn` definitions.
 
 ## Expected Performance
 
-| Component | Current | Target | Mechanism |
-|-----------|---------|--------|-----------|
-| filter_voxels_by_threshold | 30ms | 5-10ms | i16x8 + LUT compress |
-| compute_phase_scores_branchless | 300ms | 75-100ms | Full f32x4 vectorization |
-| Echo-top decode (WASM) | O(n) loop | O(1) cast | SoA zero-copy |
-| MRMS voxel decode (WASM) | O(n) loop | O(n/8) SIMD | SoA + vectorized scaling |
-| Traffic history decode (WASM) | O(n) loop | O(1) cast | SoA zero-copy |
-| Traffic aircraft decode (WASM) | O(n) loop | ~O(1) + strings | SoA zero-copy |
+| Component                       | Current   | Target          | Mechanism                |
+| ------------------------------- | --------- | --------------- | ------------------------ |
+| filter_voxels_by_threshold      | 30ms      | 5-10ms          | i16x8 + LUT compress     |
+| compute_phase_scores_branchless | 300ms     | 75-100ms        | Full f32x4 vectorization |
+| Echo-top decode (WASM)          | O(n) loop | O(1) cast       | SoA zero-copy            |
+| MRMS voxel decode (WASM)        | O(n) loop | O(n/8) SIMD     | SoA + vectorized scaling |
+| Traffic history decode (WASM)   | O(n) loop | O(1) cast       | SoA zero-copy            |
+| Traffic aircraft decode (WASM)  | O(n) loop | ~O(1) + strings | SoA zero-copy            |
 
 ## Testing Strategy
 

@@ -15,17 +15,20 @@
 ### Task 1: Upgrade Both Crates to Rust Edition 2024
 
 **Files:**
+
 - Modify: `services/runtime-rs/Cargo.toml:4` — change `edition = "2021"` to `edition = "2024"`
 - Modify: `crates/approach-viz-core/Cargo.toml:4` — change `edition = "2021"` to `edition = "2024"`
 
 **Step 1: Change edition in both Cargo.toml files**
 
 In `services/runtime-rs/Cargo.toml`, line 4:
+
 ```toml
 edition = "2024"
 ```
 
 In `crates/approach-viz-core/Cargo.toml`, line 4:
+
 ```toml
 edition = "2024"
 ```
@@ -33,6 +36,7 @@ edition = "2024"
 **Step 2: Check for new warnings/errors**
 
 Run:
+
 ```bash
 cargo check -p approach-viz-runtime 2>&1
 cargo check -p approach-viz-core 2>&1
@@ -43,6 +47,7 @@ Expected: clean compile (no `unsafe fn` in either crate). If there are warnings 
 **Step 3: Run all tests**
 
 Run:
+
 ```bash
 cargo test --workspace 2>&1
 ```
@@ -61,17 +66,20 @@ git commit -m "build: upgrade both crates to Rust edition 2024"
 ### Task 2: Add `wide` and `bytemuck` Dependencies
 
 **Files:**
+
 - Modify: `services/runtime-rs/Cargo.toml` — add `wide = "1.1.1"` to `[dependencies]`
 - Modify: `crates/approach-viz-core/Cargo.toml` — add `wide = "1.1.1"` and `bytemuck = { version = "1", features = ["derive"] }` to `[dependencies]`
 
 **Step 1: Add dependencies**
 
 In `services/runtime-rs/Cargo.toml`, add to `[dependencies]`:
+
 ```toml
 wide = "1.1.1"
 ```
 
 In `crates/approach-viz-core/Cargo.toml`, add to `[dependencies]`:
+
 ```toml
 wide = "1.1.1"
 bytemuck = { version = "1", features = ["derive"] }
@@ -80,6 +88,7 @@ bytemuck = { version = "1", features = ["derive"] }
 **Step 2: Verify they compile for all targets**
 
 Run:
+
 ```bash
 cargo check -p approach-viz-runtime 2>&1
 cargo check -p approach-viz-core --target wasm32-unknown-unknown 2>&1
@@ -100,6 +109,7 @@ git commit -m "build: add wide and bytemuck dependencies for SIMD"
 ### Task 3: Build Filter LUT (Compile-Time Lookup Table)
 
 **Files:**
+
 - Create: `services/runtime-rs/src/weather/simd_lut.rs`
 - Modify: `services/runtime-rs/src/weather/mod.rs` — add `mod simd_lut;`
 
@@ -194,6 +204,7 @@ mod tests {
 **Step 2: Register the module**
 
 In `services/runtime-rs/src/weather/mod.rs`, add alongside the other module declarations:
+
 ```rust
 mod simd_lut;
 ```
@@ -201,6 +212,7 @@ mod simd_lut;
 **Step 3: Run tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-runtime simd_lut 2>&1
 ```
@@ -219,6 +231,7 @@ git commit -m "feat(runtime): add compile-time compress LUT for SIMD filter"
 ### Task 4: SIMD Filter with LUT Compress
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/weather/processor.rs` — replace `filter_voxels_by_threshold` body
 - Test: existing tests + new SIMD-specific tests in `processor.rs`
 
@@ -279,6 +292,7 @@ mod tests {
 **Step 2: Run tests to verify they pass with the current scalar implementation**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-runtime -- tests::simd_filter 2>&1
 ```
@@ -343,6 +357,7 @@ pub(crate) fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> 
 ```
 
 **Important notes for the implementer:**
+
 - `wide::i16x8` comparison methods return an `i16x8` with all-bits-set for true lanes. Check the actual API — the method may be `cmp_ge()` or `simd_ge()`. Consult `wide` docs.
 - `move_mask()` extracts one bit per lane into a `u32`. Verify this exists on `i16x8` — if not, convert to `i8x16` or use an alternative approach to extract the bitmask.
 - If `wide` doesn't support `move_mask()` on `i16x8`, use `to_array()` and build the mask manually: `let arr = cmp.to_array(); let mask = ((arr[0] != 0) as usize) | ((arr[1] != 0) as usize) << 1 | ...`.
@@ -350,6 +365,7 @@ pub(crate) fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> 
 **Step 4: Run tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-runtime -- tests::simd_filter 2>&1
 ```
@@ -359,6 +375,7 @@ Expected: all 4 tests pass.
 **Step 5: Run full test suite**
 
 Run:
+
 ```bash
 cargo test --workspace 2>&1
 ```
@@ -368,6 +385,7 @@ Expected: all tests pass (the function signature is unchanged, so all callers wo
 **Step 6: Run benchmark**
 
 Run:
+
 ```bash
 cargo bench -p approach-viz-runtime -- filter_pass 2>&1
 ```
@@ -386,6 +404,7 @@ git commit -m "perf(runtime): SIMD filter with i16x8 compare + LUT compress"
 ### Task 5: Fully Vectorize Phase Scoring — Core f32x4 Loop
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/weather/phase_batch.rs` — rewrite `compute_phase_scores_branchless` to use `wide::f32x4`
 
 **Context:** The current function calls `score_single_voxel` per element. Replace the main loop with a `score_4_voxels` function that processes 4 elements at a time using `f32x4`. Keep the scalar `score_single_voxel` for the tail loop (last `n % 4` elements) and for equivalence testing.
@@ -395,6 +414,7 @@ This is the largest single task. The approach: convert every stage of `score_sin
 **Step 1: Understand the scoring stages**
 
 Read `services/runtime-rs/src/weather/phase_batch.rs` in full. The stages are:
+
 1. Precip flag scoring (lines 141-153) — match on discrete codes
 2. Freezing level scoring (lines 155-189) — already branchless f32 arithmetic
 3. Wet bulb scoring (lines 192-208) — 4-way branch on temperature ranges
@@ -414,17 +434,20 @@ Read `services/runtime-rs/src/weather/phase_batch.rs` in full. The stages are:
 Add a new function `score_4_voxels` that takes `f32x4` inputs and returns vectorized outputs. The key patterns:
 
 **NaN validity mask:** Replace `value.is_finite()` with:
+
 ```rust
 use wide::f32x4;
 let valid = value.is_finite(); // returns f32x4 with all-bits-set or 0
 ```
 
 **Predicated score accumulation:** Replace `if valid { score += weight }` with:
+
 ```rust
 score += valid & f32x4::splat(weight); // bitwise AND: 0.0 if invalid, weight if valid
 ```
 
 **Discrete code matching:** Replace `match code { 3 => ..., 7 => ... }` with:
+
 ```rust
 let is_snow = precip.cmp_eq(f32x4::splat(3.0));
 let is_mixed = precip.cmp_eq(f32x4::splat(7.0));
@@ -439,6 +462,7 @@ rain_score += is_rain & f32x4::splat(3.0);
 ```
 
 **Range branching:** Replace `if wb <= -2.0 { ... } else if wb <= 0.5 { ... }` with:
+
 ```rust
 let strong_cold = wb_valid & wb.cmp_le(f32x4::splat(STRONG_COLD));
 let cold = wb_valid & wb.cmp_le(f32x4::splat(0.5)) & !strong_cold;
@@ -450,6 +474,7 @@ mixed_score += (cold | warm) & f32x4::splat(1.1);
 ```
 
 **3-value ranking:** Replace the sort-3 with:
+
 ```rust
 // Find max of rain/mixed/snow scores
 let rm_max = rain_score.max(mixed_score);
@@ -461,6 +486,7 @@ let is_best_snow = snow_score.cmp_eq(best) & !mixed_score.cmp_eq(best);
 ```
 
 **Output conversion:** After the f32x4 loop, convert accumulated f32 values to u8/bool and write to output vectors:
+
 ```rust
 let arr = phase_f32.to_array();
 phase_out[base] = arr[0] as u8;
@@ -504,6 +530,7 @@ for i in (chunks * 4)..n {
 **Step 4: Run equivalence tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-runtime phase_batch 2>&1
 ```
@@ -515,6 +542,7 @@ Expected: both `branchless_matches_scalar` (10,000 voxels) and `branchless_match
 **Step 5: Run full test suite**
 
 Run:
+
 ```bash
 cargo test --workspace 2>&1
 ```
@@ -524,6 +552,7 @@ Expected: all tests pass.
 **Step 6: Run benchmark**
 
 Run:
+
 ```bash
 cargo bench -p approach-viz-runtime -- phase_scoring 2>&1
 ```
@@ -538,6 +567,7 @@ git commit -m "perf(runtime): fully vectorize phase scoring with f32x4"
 ```
 
 **Implementation notes for the engineer:**
+
 - The `wide` crate comparison and bitwise methods may have different names than shown. Check `wide` docs — methods might be `cmp_ge`, `simd_ge`, or operator overloads.
 - Keep `score_single_voxel` intact — it's used by the scalar tail loop and by equivalence tests.
 - The `signal_count` accumulator can be tracked as f32x4 (adding 1.0 per valid signal) and converted to u8 at the end.
@@ -549,6 +579,7 @@ git commit -m "perf(runtime): fully vectorize phase scoring with f32x4"
 ### Task 6: AVET v2 SoA Encoder (Echo-Tops)
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/weather/encoding.rs:123-161` — rewrite `build_echo_top_wire`
 - Modify: `services/runtime-rs/src/constants.rs` — update AVET version constant
 
@@ -592,6 +623,7 @@ In `services/runtime-rs/src/weather/mod.rs`, find the content type header for ec
 **Step 4: Run runtime tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-runtime 2>&1
 ```
@@ -610,6 +642,7 @@ git commit -m "feat(runtime): AVET v2 SoA echo-top encoder"
 ### Task 7: AVET v2 SoA Decoder (Echo-Tops)
 
 **Files:**
+
 - Modify: `crates/approach-viz-core/src/echo_top_wire_codec.rs` — rewrite decode loop
 - Modify: `crates/approach-viz-core/src/types.rs:33` — update `ECHO_TOP_WIRE_VERSION` to 2
 
@@ -618,6 +651,7 @@ git commit -m "feat(runtime): AVET v2 SoA echo-top encoder"
 **Step 1: Update version constant**
 
 In `crates/approach-viz-core/src/types.rs`, change:
+
 ```rust
 pub const ECHO_TOP_WIRE_VERSION: u16 = 2;
 ```
@@ -682,6 +716,7 @@ mod tests {
 **Step 3: Run test to verify it fails**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-core echo_top 2>&1
 ```
@@ -728,6 +763,7 @@ let top60_feet: Vec<u16> = bytemuck::cast_slice(&data[top60_offset..total_needed
 **Step 5: Run tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-core echo_top 2>&1
 ```
@@ -746,12 +782,14 @@ git commit -m "feat(core): AVET v2 SoA echo-top decoder with zero-copy reads"
 ### Task 8: AVMR v4 SoA Encoder (MRMS Volume)
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/weather/encoding.rs:205-370` — change brick record writing in `build_volume_wire_impl`
 - Modify: `services/runtime-rs/src/constants.rs` — update AVMR version
 
 **Context:** The AVMR encoder is more complex than AVET — it filters, merges bricks, quantizes dBZ, then writes records. The SoA change only affects the final record-writing stage (lines ~347-360). Instead of writing 20-byte records, write contiguous arrays.
 
 The header + level_bounds section stays the same. After level_bounds, write SoA arrays:
+
 - `i16[brick_count]` x_hundredths
 - `i16[brick_count]` z_hundredths
 - `u16[brick_count]` bottom_feet
@@ -770,6 +808,7 @@ Change `WIRE_VERSION` from 3 to 4 in `services/runtime-rs/src/constants.rs`.
 **Step 2: Refactor record writing to SoA**
 
 The current code iterates bricks and writes 20-byte records inline. Refactor to:
+
 1. First pass: collect all brick field values into temporary SoA vectors
 2. Second pass: write each field array contiguously to the output buffer
 
@@ -797,6 +836,7 @@ The `record_bytes` field at offset 18 is no longer meaningful with SoA layout. S
 **Step 4: Run tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-runtime 2>&1
 ```
@@ -815,6 +855,7 @@ git commit -m "feat(runtime): AVMR v4 SoA volume encoder"
 ### Task 9: AVMR v4 SoA Decoder + SIMD i16→f32 Scaling
 
 **Files:**
+
 - Modify: `crates/approach-viz-core/src/mrms_wire_codec.rs` — rewrite decode loop for SoA
 - Modify: `crates/approach-viz-core/src/types.rs:11` — update `MRMS_WIRE_VERSION` to 4
 
@@ -888,6 +929,7 @@ for v in &mut footprint_x_span {
 **Step 4: Run tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-core mrms 2>&1
 ```
@@ -906,12 +948,14 @@ git commit -m "feat(core): AVMR v4 SoA decoder with SIMD i16-to-f32 scaling"
 ### Task 10: AVTR v2 SoA Encoder (Traffic)
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/traffic/encoding.rs` — rewrite `encode_traffic_binary_payload` for SoA layout
 - Update version constant in same file
 
 **Context:** Traffic encoding has 3 sections (aircraft, history groups, history points) + string table. Each section converts to SoA independently. The string table stays as-is (variable-length strings can't be SoA).
 
 **SoA layout for aircraft section:**
+
 ```
 u32[a] hex_str_offset
 u16[a] hex_str_length
@@ -927,6 +971,7 @@ f32[a] last_seen_seconds
 ```
 
 **SoA layout for history group section:**
+
 ```
 u32[g] hex_str_offset
 u16[g] hex_str_length
@@ -935,6 +980,7 @@ u32[g] point_count
 ```
 
 **SoA layout for history point section:**
+
 ```
 f32[p] lat
 f32[p] lon
@@ -957,6 +1003,7 @@ The header structure stays the same (section offsets are still needed to locate 
 **Step 3: Run tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-runtime 2>&1
 ```
@@ -973,6 +1020,7 @@ git commit -m "feat(runtime): AVTR v2 SoA traffic encoder"
 ### Task 11: AVTR v2 SoA Decoder (Traffic)
 
 **Files:**
+
 - Modify: `crates/approach-viz-core/src/traffic_codec.rs` — rewrite decode for SoA
 - Modify: `crates/approach-viz-core/src/types.rs:21` — update `TRAFFIC_WIRE_VERSION` to 2
 
@@ -1021,6 +1069,7 @@ for i in 0..aircraft_count {
 **Step 4: Run tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-core traffic 2>&1
 ```
@@ -1039,9 +1088,11 @@ git commit -m "feat(core): AVTR v2 SoA traffic decoder"
 ### Task 12: Update WASM Bindings
 
 **Files:**
+
 - Modify: `crates/approach-viz-core/src/wasm.rs` — update any code that depends on wire format internals
 
 **Context:** The WASM bindings call `decode_mrms_binary`, `decode_echo_top_binary`, `decode_traffic_binary`. Since those function signatures and output structs are unchanged, the WASM layer should work without changes. However, verify:
+
 1. `decode_and_prepare_echo_top` still works end-to-end
 2. `decode_and_prepare_mrms` still works end-to-end
 3. `WasmTrafficState::merge` still works end-to-end
@@ -1051,6 +1102,7 @@ git commit -m "feat(core): AVTR v2 SoA traffic decoder"
 Search `wasm.rs` for any hardcoded offsets, record sizes, or version numbers that need updating.
 
 Run:
+
 ```bash
 grep -n "WIRE\|RECORD\|VERSION\|HEADER_BYTES\|CELL_BYTES" crates/approach-viz-core/src/wasm.rs
 ```
@@ -1060,6 +1112,7 @@ If any hits reference old constants, update them.
 **Step 2: Build WASM**
 
 Run:
+
 ```bash
 npm run build:wasm 2>&1
 ```
@@ -1069,6 +1122,7 @@ Expected: clean build.
 **Step 3: Run core tests**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-core 2>&1
 ```
@@ -1087,6 +1141,7 @@ git commit -m "refactor(core): update WASM bindings for SoA wire formats"
 ### Task 13: Update Benchmarks and CI
 
 **Files:**
+
 - Modify: `services/runtime-rs/benches/weather_ingest.rs` — add SIMD vs scalar benchmark comparisons
 - Modify: `services/runtime-rs/vectorization-manifest.toml` — add `[[expect]]` entries if applicable
 - Modify: `.github/workflows/parser-tests.yml` — ensure CI runs new tests
@@ -1115,6 +1170,7 @@ If the `wide`-based functions emit LLVM vectorization remarks (they may, since `
 **Step 3: Run full CI validation locally**
 
 Run:
+
 ```bash
 cargo test --workspace 2>&1
 cargo bench -p approach-viz-runtime 2>&1
@@ -1135,6 +1191,7 @@ git commit -m "bench(runtime): update benchmarks and CI for SIMD Phase 2"
 ### Task 14: Integration Tests and WASM Smoke Tests
 
 **Files:**
+
 - No new files — run existing integration test suites
 
 **Context:** The wire format changes affect the runtime↔client boundary. Integration tests verify the full pipeline.
@@ -1142,6 +1199,7 @@ git commit -m "bench(runtime): update benchmarks and CI for SIMD Phase 2"
 **Step 1: Build everything**
 
 Run:
+
 ```bash
 cargo build -p approach-viz-runtime --release 2>&1
 npm run build:wasm 2>&1
@@ -1155,6 +1213,7 @@ Expected: all clean.
 Start the runtime, then run integration tests:
 
 Run:
+
 ```bash
 npm run test:integration:runtime 2>&1
 ```
@@ -1166,6 +1225,7 @@ Expected: 3/3 pass (if runtime is running). These tests exercise the volume, ech
 Start the dev server, then run WASM smoke tests:
 
 Run:
+
 ```bash
 npm run test:smoke 2>&1
 ```
@@ -1175,6 +1235,7 @@ Expected: pass. These test WASM decode paths in the browser.
 **Step 4: Run all TS tests**
 
 Run:
+
 ```bash
 npm run test 2>&1
 ```
@@ -1192,6 +1253,7 @@ If integration tests revealed issues, fix and commit.
 **Step 1: Run complete test suite**
 
 Run:
+
 ```bash
 cargo test --workspace 2>&1
 npm run test 2>&1
@@ -1204,17 +1266,20 @@ Expected: all pass.
 **Step 2: Capture final benchmark numbers**
 
 Run:
+
 ```bash
 cargo bench -p approach-viz-runtime 2>&1
 ```
 
 Record the numbers for:
+
 - `filter_pass_baseline` — target: 5-10ms (was 30ms)
 - `phase_scoring_branchless` — target: 75-100ms (was 300ms)
 
 **Step 3: Update AGENTS.md if needed**
 
 If wire format version numbers are documented in `AGENTS.md`, update them:
+
 - `application/vnd.approach-viz.mrms.v3` → `v4` (or note new version)
 - Any other version references
 

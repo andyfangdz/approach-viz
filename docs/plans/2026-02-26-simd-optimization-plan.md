@@ -17,6 +17,7 @@
 ### Task 1: Add criterion dependency and benchmark harness
 
 **Files:**
+
 - Modify: `services/runtime-rs/Cargo.toml`
 - Create: `services/runtime-rs/benches/weather_ingest.rs`
 
@@ -55,9 +56,11 @@ criterion_main!(benches);
 **Step 3: Verify harness builds and runs**
 
 Run:
+
 ```bash
 cd services/runtime-rs && cargo bench --bench weather_ingest -- --quick
 ```
+
 Expected: builds cleanly, runs placeholder benchmark, prints timing.
 
 **Step 4: Commit**
@@ -72,6 +75,7 @@ git commit -m "build(runtime): add criterion benchmark harness"
 ### Task 2: Write synthetic data generator for benchmarks
 
 **Files:**
+
 - Create: `services/runtime-rs/benches/fixtures.rs`
 - Modify: `services/runtime-rs/benches/weather_ingest.rs`
 
@@ -79,6 +83,7 @@ git commit -m "build(runtime): add criterion benchmark harness"
 
 Create `services/runtime-rs/benches/fixtures.rs`. This generates deterministic
 test data matching real MRMS dimensions. Key parameters:
+
 - Grid: 3500×3500 (matches MRMS CONUS grid)
 - ~30% fill rate for dbz_tenths >= STORE_MIN_DBZ_TENTHS (50)
 - Seeded RNG for reproducibility
@@ -86,6 +91,7 @@ test data matching real MRMS dimensions. Key parameters:
 - ZDR/RhoHV: 2 flat f32 arrays per level with ~90% coverage
 
 The generator should produce:
+
 - `dbz_tenths: Vec<i16>` — length nx×ny, values seeded with ~30% above threshold
 - `zdr_values: Vec<f32>` — length nx×ny, 90% finite values in [-2.0, 3.0], 10% NaN
 - `rhohv_values: Vec<f32>` — length nx×ny, 90% finite values in [0.85, 1.01], 10% NaN
@@ -152,9 +158,11 @@ criterion_main!(benches);
 **Step 3: Run benchmark to capture baseline**
 
 Run:
+
 ```bash
 cd services/runtime-rs && cargo bench --bench weather_ingest
 ```
+
 Expected: prints timing for `filter_pass_baseline`. Record the number.
 
 **Step 4: Commit**
@@ -169,6 +177,7 @@ git commit -m "bench(runtime): add synthetic grid generator and filter pass base
 ### Task 3: Add phase scoring baseline benchmark
 
 **Files:**
+
 - Modify: `services/runtime-rs/benches/weather_ingest.rs`
 
 **Step 1: Add benchmark for current scalar phase scoring**
@@ -202,6 +211,7 @@ pub(super) fn resolve_thermo_phase(...) -> ThermoPhaseEvidence {
 ```
 
 Actually, the simpler approach: just change `pub(super)` to `pub(crate)` on:
+
 - `resolve_thermo_phase`
 - `resolve_dual_pol_evidence`
 - `resolve_phase_from_evidence`
@@ -262,9 +272,11 @@ fn nan_to_option(v: f32) -> Option<f32> {
 **Step 3: Run and record baseline**
 
 Run:
+
 ```bash
 cd services/runtime-rs && cargo bench --bench weather_ingest
 ```
+
 Record `phase_scoring_baseline` timing.
 
 **Step 4: Commit**
@@ -279,6 +291,7 @@ git commit -m "bench(runtime): add phase scoring baseline benchmark"
 ### Task 4: Create CI vectorization check scaffold
 
 **Files:**
+
 - Create: `services/runtime-rs/vectorization-manifest.toml`
 - Create: `scripts/ci/check-vectorization.sh`
 
@@ -387,10 +400,12 @@ fi
 **Step 3: Make script executable and verify it runs (no-op with empty manifest)**
 
 Run:
+
 ```bash
 chmod +x scripts/ci/check-vectorization.sh
 bash scripts/ci/check-vectorization.sh
 ```
+
 Expected: prints "No vectorization expectations in manifest — skipping check." and exits 0.
 
 **Step 4: Commit**
@@ -405,6 +420,7 @@ git commit -m "ci: add vectorization regression check scaffold"
 ### Task 5: Add vectorization check to CI workflow
 
 **Files:**
+
 - Modify: `.github/workflows/parser-tests.yml`
 
 **Step 1: Add Rust toolchain and vectorization check job**
@@ -413,41 +429,43 @@ Add a new job to `.github/workflows/parser-tests.yml` after the existing
 `checks` job:
 
 ```yaml
-  rust-checks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+rust-checks:
+  runs-on: ubuntu-latest
+  timeout-minutes: 30
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Cargo check
-        run: cargo check --workspace
+    - name: Cargo check
+      run: cargo check --workspace
 
-      - name: Cargo test
-        run: cargo test --workspace
+    - name: Cargo test
+      run: cargo test --workspace
 
-      - name: Vectorization regression check
-        run: bash scripts/ci/check-vectorization.sh
+    - name: Vectorization regression check
+      run: bash scripts/ci/check-vectorization.sh
 ```
 
 **Step 2: Verify CI config is valid YAML**
 
 Run:
+
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/parser-tests.yml'))" && echo "YAML valid"
 ```
+
 Expected: "YAML valid"
 
 **Step 3: Commit**
@@ -464,6 +482,7 @@ git commit -m "ci: add Rust checks and vectorization regression job"
 ### Task 6: Extract filter pass function
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/weather/processor.rs`
 
 **Step 1: Write a test for the filter pass**
@@ -502,9 +521,11 @@ mod filter_tests {
 **Step 2: Run to verify it fails**
 
 Run:
+
 ```bash
 cd services/runtime-rs && cargo test filter_voxels_by_threshold
 ```
+
 Expected: FAIL — function doesn't exist yet.
 
 **Step 3: Implement filter_voxels_by_threshold**
@@ -536,9 +557,11 @@ not in a tight inner loop, so preventing inlining has no performance cost.
 **Step 4: Run tests**
 
 Run:
+
 ```bash
 cd services/runtime-rs && cargo test filter_voxels_by_threshold
 ```
+
 Expected: all 3 tests PASS.
 
 **Step 5: Commit**
@@ -553,6 +576,7 @@ git commit -m "feat(runtime): extract filter_voxels_by_threshold (Pass 1)"
 ### Task 7: Extract gather pass function
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/weather/processor.rs`
 
 **Step 1: Define GatheredAuxFields struct and write tests**
@@ -575,6 +599,7 @@ pub(crate) struct GatheredAuxFields {
 ```
 
 Test:
+
 ```rust
 #[test]
 fn gather_aux_fields_uses_nan_for_missing() {
@@ -670,6 +695,7 @@ git commit -m "feat(runtime): extract gather_aux_fields (Pass 2)"
 ### Task 8: Implement branchless phase scoring (Pass 3)
 
 **Files:**
+
 - Create: `services/runtime-rs/src/weather/phase_batch.rs`
 - Modify: `services/runtime-rs/src/weather/mod.rs`
 
@@ -824,6 +850,7 @@ compiler can vectorize multiplications and additions without branches.
 ```bash
 cd services/runtime-rs && cargo test branchless_matches_scalar
 ```
+
 Expected: PASS — branchless and scalar produce identical phase codes.
 
 **Step 4: Add to benchmark**
@@ -861,6 +888,7 @@ fn bench_phase_scoring_branchless(c: &mut Criterion) {
 ```bash
 cd services/runtime-rs && cargo bench --bench weather_ingest
 ```
+
 Expected: `phase_scoring_branchless` should be faster than `phase_scoring_baseline`.
 
 **Step 6: Commit**
@@ -875,6 +903,7 @@ git commit -m "feat(runtime): add branchless batch phase scoring (Pass 3)"
 ### Task 9: Verify auto-vectorization with LLVM remarks
 
 **Files:**
+
 - Modify: `services/runtime-rs/vectorization-manifest.toml`
 
 **Step 1: Run build with LLVM remarks**
@@ -897,6 +926,7 @@ grep -A2 "filter_voxels_by_threshold\|compute_phase_scores_branchless" target/ve
 Expected: both functions appear with vectorization remarks showing width >= 4.
 
 If a function is NOT vectorized, investigate:
+
 - Check for remaining branches in the hot loop
 - Look for type conversions (i16→f32 in same expression)
 - Check if `#[inline(never)]` is preventing vectorization of the loop body
@@ -933,6 +963,7 @@ description = "f32 predicated phase scoring in processor.rs Pass 3"
 ```bash
 bash scripts/ci/check-vectorization.sh
 ```
+
 Expected: 2 passed, 0 failed.
 
 **Step 6: Commit**
@@ -947,6 +978,7 @@ git commit -m "ci: populate vectorization manifest with Phase 1 expectations"
 ### Task 10: Wire the multi-pass pipeline into ingest_timestamp
 
 **Files:**
+
 - Modify: `services/runtime-rs/src/weather/processor.rs`
 
 **Step 1: Replace the monolithic loop**
@@ -1012,6 +1044,7 @@ for (out_i, &idx) in valid_indices.iter().enumerate() {
 ```bash
 cd services/runtime-rs && cargo test
 ```
+
 Expected: all 21 tests pass. The phase tests in phase.rs validate the scalar
 path which is still used by the equivalence test.
 
@@ -1020,6 +1053,7 @@ path which is still used by the equivalence test.
 ```bash
 cd services/runtime-rs && cargo bench --bench weather_ingest
 ```
+
 Compare `filter_pass_baseline` and `phase_scoring_branchless` vs baselines.
 
 **Step 4: Run integration tests against deployed service**
@@ -1030,6 +1064,7 @@ AGENTS.md. After deploy:
 ```bash
 npm run test:integration:runtime
 ```
+
 Expected: 3/3 pass.
 
 **Step 5: Commit**
