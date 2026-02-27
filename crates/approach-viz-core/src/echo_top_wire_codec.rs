@@ -10,7 +10,7 @@ use crate::types::{
     DecodedEchoTop, ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
     ECHO_TOP_WIRE_VERSION,
 };
-use crate::wire_helpers::{read_f32_le, read_i64_le, read_u16_le, read_u32_le};
+use crate::wire_helpers::{bulk_read_column, read_i64_le, read_u16_le, read_u32_le};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -149,21 +149,12 @@ pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDeco
     let off_t50 = off_t30 + n * 2;
     let off_t60 = off_t50 + n * 2;
 
-    let mut x_nm = Vec::with_capacity(n);
-    let mut z_nm = Vec::with_capacity(n);
-    let mut top18_feet = Vec::with_capacity(n);
-    let mut top30_feet = Vec::with_capacity(n);
-    let mut top50_feet = Vec::with_capacity(n);
-    let mut top60_feet = Vec::with_capacity(n);
-
-    for i in 0..n {
-        x_nm.push(read_f32_le(data, off_x + i * 4));
-        z_nm.push(read_f32_le(data, off_z + i * 4));
-        top18_feet.push(read_u16_le(data, off_t18 + i * 2));
-        top30_feet.push(read_u16_le(data, off_t30 + i * 2));
-        top50_feet.push(read_u16_le(data, off_t50 + i * 2));
-        top60_feet.push(read_u16_le(data, off_t60 + i * 2));
-    }
+    let x_nm = bulk_read_column::<f32>(data, off_x, n);
+    let z_nm = bulk_read_column::<f32>(data, off_z, n);
+    let top18_feet = bulk_read_column::<u16>(data, off_t18, n);
+    let top30_feet = bulk_read_column::<u16>(data, off_t30, n);
+    let top50_feet = bulk_read_column::<u16>(data, off_t50, n);
+    let top60_feet = bulk_read_column::<u16>(data, off_t60, n);
 
     Ok(DecodedEchoTop {
         cell_count,

@@ -10,7 +10,7 @@ use crate::types::{
     DecodedMrmsVolume, MRMS_WIRE_HEADER_BYTES, MRMS_WIRE_MAGIC,
     MRMS_WIRE_VERSION,
 };
-use crate::wire_helpers::{read_i16_le, read_i64_le, read_u16_le, read_u32_le};
+use crate::wire_helpers::{bulk_read_column, read_i64_le, read_u16_le, read_u32_le};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -158,47 +158,31 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
     // total_needed = off_sz + n * 2 == needed_bytes (already validated)
     debug_assert_eq!(off_sz + n * 2, needed_bytes);
 
-    // --- Voxel records (SoA) ---
-    let mut x_nm = Vec::with_capacity(n);
-    let mut z_nm = Vec::with_capacity(n);
-    let mut bottom_feet = Vec::with_capacity(n);
-    let mut top_feet = Vec::with_capacity(n);
-    let mut dbz_tenths = Vec::with_capacity(n);
-    let mut phase = Vec::with_capacity(n);
-    let mut surface_phase = Vec::with_capacity(n);
-    let mut footprint_x_span = Vec::with_capacity(n);
-    let mut footprint_y_span = Vec::with_capacity(n);
-
     let footprint_x_nm = footprint_x_thousandths as f32 / 1000.0;
     let footprint_y_nm = footprint_y_thousandths as f32 / 1000.0;
 
-    for i in 0..n {
-        x_nm.push(read_i16_le(data, off_x + i * 2) as f32 / 100.0);
-    }
-    for i in 0..n {
-        z_nm.push(read_i16_le(data, off_z + i * 2) as f32 / 100.0);
-    }
-    for i in 0..n {
-        bottom_feet.push(read_u16_le(data, off_bottom + i * 2));
-    }
-    for i in 0..n {
-        top_feet.push(read_u16_le(data, off_top + i * 2));
-    }
-    for i in 0..n {
-        dbz_tenths.push(read_i16_le(data, off_dbz + i * 2));
-    }
-    for i in 0..n {
-        phase.push(data[off_phase + i]);
-    }
-    for i in 0..n {
-        surface_phase.push(data[off_surface + i]);
-    }
-    for i in 0..n {
-        footprint_x_span.push(read_u16_le(data, off_sx + i * 2).max(1));
-    }
-    for i in 0..n {
-        footprint_y_span.push(read_u16_le(data, off_sy + i * 2).max(1));
-    }
+    // --- Voxel records (SoA) — bulk zero-copy where possible ---
+    let x_nm: Vec<f32> = bulk_read_column::<i16>(data, off_x, n)
+        .iter()
+        .map(|&v| v as f32 / 100.0)
+        .collect();
+    let z_nm: Vec<f32> = bulk_read_column::<i16>(data, off_z, n)
+        .iter()
+        .map(|&v| v as f32 / 100.0)
+        .collect();
+    let bottom_feet = bulk_read_column::<u16>(data, off_bottom, n);
+    let top_feet = bulk_read_column::<u16>(data, off_top, n);
+    let dbz_tenths = bulk_read_column::<i16>(data, off_dbz, n);
+    let phase = data[off_phase..off_phase + n].to_vec();
+    let surface_phase = data[off_surface..off_surface + n].to_vec();
+    let footprint_x_span: Vec<u16> = bulk_read_column::<u16>(data, off_sx, n)
+        .iter()
+        .map(|&v| v.max(1))
+        .collect();
+    let footprint_y_span: Vec<u16> = bulk_read_column::<u16>(data, off_sy, n)
+        .iter()
+        .map(|&v| v.max(1))
+        .collect();
     // Note: span_z is written by the encoder but not consumed by the decoder's
     // output struct (DecodedMrmsVolume has no span_z field). The bytes are
     // validated by the size check above but intentionally skipped here.
