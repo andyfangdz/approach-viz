@@ -10,7 +10,7 @@ use crate::types::{
     DecodedTrafficAircraft, DecodedTrafficHistoryGroup, DecodedTrafficHistoryPoint,
     DecodedTrafficPayload, TRAFFIC_WIRE_HEADER_BYTES, TRAFFIC_WIRE_MAGIC, TRAFFIC_WIRE_VERSION,
 };
-use crate::wire_helpers::{read_f32_le, read_i64_le, read_u16_le, read_u32_le};
+use crate::wire_helpers::{bulk_read_column, read_f32_le, read_i64_le, read_u16_le, read_u32_le};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -228,39 +228,44 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
     let off_flight_length = off_hex_length + a * 2;
     let off_flags = off_flight_length + a * 2;
 
+    // Bulk-read typed columns for zero-copy decoding
+    let col_hex_offsets = bulk_read_column::<u32>(data, off_hex_offset, a);
+    let col_flight_offsets = bulk_read_column::<u32>(data, off_flight_offset, a);
+    let col_lats = bulk_read_column::<f32>(data, off_lat, a);
+    let col_lons = bulk_read_column::<f32>(data, off_lon, a);
+    let col_altitudes = bulk_read_column::<f32>(data, off_altitude, a);
+    let col_speeds = bulk_read_column::<f32>(data, off_speed, a);
+    let col_tracks = bulk_read_column::<f32>(data, off_track, a);
+    let col_last_seen = bulk_read_column::<f32>(data, off_last_seen, a);
+    let col_hex_lengths = bulk_read_column::<u16>(data, off_hex_length, a);
+    let col_flight_lengths = bulk_read_column::<u16>(data, off_flight_length, a);
+    let col_flags = bulk_read_column::<u16>(data, off_flags, a);
+
     let mut aircraft = Vec::with_capacity(a);
     for i in 0..a {
-        let hex_str_offset = read_u32_le(data, off_hex_offset + i * 4);
-        let hex_str_length = read_u16_le(data, off_hex_length + i * 2);
-        let flight_str_offset = read_u32_le(data, off_flight_offset + i * 4);
-        let flight_str_length = read_u16_le(data, off_flight_length + i * 2);
-        let ac_flags = read_u16_le(data, off_flags + i * 2);
-        let lat = read_f32_le(data, off_lat + i * 4);
-        let lon = read_f32_le(data, off_lon + i * 4);
-        let altitude_feet_raw = read_f32_le(data, off_altitude + i * 4);
-        let ground_speed_kt_raw = read_f32_le(data, off_speed + i * 4);
-        let track_deg_raw = read_f32_le(data, off_track + i * 4);
-        let last_seen_seconds_raw = read_f32_le(data, off_last_seen + i * 4);
-
-        let hex =
-            read_string(data, strings_section_offset, hex_str_offset, hex_str_length as u32)?;
+        let hex = read_string(
+            data,
+            strings_section_offset,
+            col_hex_offsets[i],
+            col_hex_lengths[i] as u32,
+        )?;
         let flight = read_optional_string(
             data,
             strings_section_offset,
-            flight_str_offset,
-            flight_str_length as u32,
+            col_flight_offsets[i],
+            col_flight_lengths[i] as u32,
         )?;
 
         aircraft.push(DecodedTrafficAircraft {
             hex,
             flight,
-            lat,
-            lon,
-            altitude_feet: nan_to_option(altitude_feet_raw),
-            ground_speed_kt: nan_to_option(ground_speed_kt_raw),
-            track_deg: nan_to_option(track_deg_raw),
-            last_seen_seconds: nan_to_option(last_seen_seconds_raw),
-            is_on_ground: (ac_flags & 1) != 0,
+            lat: col_lats[i],
+            lon: col_lons[i],
+            altitude_feet: nan_to_option(col_altitudes[i]),
+            ground_speed_kt: nan_to_option(col_speeds[i]),
+            track_deg: nan_to_option(col_tracks[i]),
+            last_seen_seconds: nan_to_option(col_last_seen[i]),
+            is_on_ground: (col_flags[i] & 1) != 0,
         });
     }
 
