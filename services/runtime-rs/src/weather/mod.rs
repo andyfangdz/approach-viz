@@ -3,8 +3,6 @@ mod encoding;
 mod grib;
 mod ingest;
 mod phase;
-// Consumed by benchmarks; wired into ingest_timestamp in Task 10.
-#[allow(dead_code)]
 mod phase_batch;
 mod processor;
 mod projection;

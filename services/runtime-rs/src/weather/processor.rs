@@ -5,10 +5,8 @@ use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use tracing::warn;
 
-use super::phase::{
-    promote_mixed_transition_edges, resolve_dual_pol_evidence, resolve_phase_from_evidence,
-    resolve_thermo_phase, LevelPhaseVoxel,
-};
+use super::phase::{promote_mixed_transition_edges, LevelPhaseVoxel};
+use super::phase_batch::compute_phase_scores_branchless;
 use super::sources::{
     build_level_key, fetch_aux_field_at_timestamp, fetch_level_aux_field_at_timestamp,
     fetch_mrms_key_bytes, find_latest_aux_timestamp_at_or_before,
@@ -16,14 +14,12 @@ use super::sources::{
     timestamp_age_seconds,
 };
 use crate::constants::{
-    DUAL_POL_STALE_THRESHOLD_SECONDS, FEET_PER_KM, LEVEL_TAGS,
-    MIXED_COMPETING_RAIN_SNOW_DELTA_MAX, MIXED_COMPETING_RAIN_SNOW_MIN_SCORE,
-    MRMS_BASE_LEVEL_TAG, MRMS_BRIGHT_BAND_BOTTOM_PRODUCT, MRMS_BRIGHT_BAND_TOP_PRODUCT,
-    MRMS_ECHO_TOP_18_PRODUCT, MRMS_ECHO_TOP_30_PRODUCT, MRMS_ECHO_TOP_50_PRODUCT,
-    MRMS_ECHO_TOP_60_PRODUCT, MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_MODEL_SURFACE_TEMP_PRODUCT,
+    DUAL_POL_STALE_THRESHOLD_SECONDS, FEET_PER_KM, LEVEL_TAGS, MRMS_BASE_LEVEL_TAG,
+    MRMS_BRIGHT_BAND_BOTTOM_PRODUCT, MRMS_BRIGHT_BAND_TOP_PRODUCT, MRMS_ECHO_TOP_18_PRODUCT,
+    MRMS_ECHO_TOP_30_PRODUCT, MRMS_ECHO_TOP_50_PRODUCT, MRMS_ECHO_TOP_60_PRODUCT,
+    MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_MODEL_SURFACE_TEMP_PRODUCT,
     MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_PRODUCT_PREFIX,
-    MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX, PHASE_MIXED, PHASE_RAIN,
-    STORE_MIN_DBZ_TENTHS,
+    MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX, STORE_MIN_DBZ_TENTHS,
 };
 use crate::types::{
     AppState, EchoTopDebugMetadata, GridDef, LevelBounds, ParsedAuxField, ParsedReflectivityField,
@@ -432,88 +428,85 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
             timestamp,
         );
 
-        for row in 0..parsed.grid.ny as usize {
-            let row_offset = row * parsed.grid.nx as usize;
+        // Pass 1: Filter
+        let valid_indices = filter_voxels_by_threshold(&parsed.dbz_tenths, STORE_MIN_DBZ_TENTHS);
 
-            for col in 0..parsed.grid.nx as usize {
-                let value_idx = row_offset + col;
-                let dbz_tenths = parsed.dbz_tenths[value_idx];
-                if dbz_tenths < STORE_MIN_DBZ_TENTHS {
-                    continue;
-                }
+        // Pass 2: Gather aux fields into flat f32 arrays
+        let gathered = gather_aux_fields(
+            &valid_indices,
+            parsed.grid.nx,
+            zdr_values,
+            rhohv_values,
+            &precip_sampler,
+            &freezing_sampler,
+            &wet_bulb_sampler,
+            &surface_temp_sampler,
+            &bright_band_top_sampler,
+            &bright_band_bottom_sampler,
+            &rqi_sampler,
+        );
 
-                let dual_evidence = resolve_dual_pol_evidence(
-                    zdr_values.and_then(|values| values.get(value_idx).copied()),
-                    rhohv_values.and_then(|values| values.get(value_idx).copied()),
-                );
-                if dual_evidence.is_none() {
-                    dual_missing_voxel_count += 1;
-                }
+        // Pass 3: Batch phase scoring
+        let voxel_mid_feet_f32 = voxel_mid_feet as f32;
+        let batch_result = compute_phase_scores_branchless(
+            voxel_mid_feet_f32,
+            &gathered.precip_flag,
+            &gathered.freezing_level,
+            &gathered.wet_bulb,
+            &gathered.surface_temp,
+            &gathered.bright_band_top,
+            &gathered.bright_band_bottom,
+            &gathered.rqi,
+            &gathered.zdr,
+            &gathered.rhohv,
+            use_aux_fallback,
+        );
 
-                let precip_value = precip_sampler.sample(value_idx, row, col);
-                let freezing_value = freezing_sampler.sample(value_idx, row, col);
-                let wet_bulb_value = wet_bulb_sampler.sample(value_idx, row, col);
-                let surface_temp_value = surface_temp_sampler.sample(value_idx, row, col);
-                let bright_band_top_value = bright_band_top_sampler.sample(value_idx, row, col);
-                let bright_band_bottom_value =
-                    bright_band_bottom_sampler.sample(value_idx, row, col);
-                let rqi_value = rqi_sampler.sample(value_idx, row, col);
-                let thermo_evidence = resolve_thermo_phase(
-                    voxel_mid_feet,
-                    precip_value,
-                    freezing_value,
-                    wet_bulb_value,
-                    surface_temp_value,
-                    bright_band_top_value,
-                    bright_band_bottom_value,
-                    rqi_value,
-                );
-                if thermo_evidence.signal_count > 0 {
-                    thermo_signal_voxel_count += 1;
-                } else {
-                    thermo_no_signal_voxel_count += 1;
-                }
+        // Pass 4: Tally + Pack
+        let nx = parsed.grid.nx as usize;
+        for (out_i, &idx) in valid_indices.iter().enumerate() {
+            let value_idx = idx as usize;
+            let row = (value_idx / nx) as u16;
+            let col = (value_idx % nx) as u16;
 
-                let resolution =
-                    resolve_phase_from_evidence(thermo_evidence, dual_evidence, use_aux_fallback);
-                if resolution.used_dual {
-                    dual_adjusted_voxel_count += 1;
-                    if use_aux_fallback {
-                        stale_dual_adjusted_voxel_count += 1;
-                    }
+            if batch_result.used_dual[out_i] {
+                dual_adjusted_voxel_count += 1;
+                if use_aux_fallback {
+                    stale_dual_adjusted_voxel_count += 1;
                 }
-                if resolution.suppressed_dual {
-                    dual_suppressed_voxel_count += 1;
-                }
-                if resolution.suppressed_mixed {
-                    mixed_suppressed_voxel_count += 1;
-                }
-                if resolution.forced_precip_snow {
-                    precip_snow_forced_voxel_count += 1;
-                }
-                let thermo_competing = thermo_evidence.scores.rain
-                    >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
-                    && thermo_evidence.scores.snow >= MIXED_COMPETING_RAIN_SNOW_MIN_SCORE
-                    && (thermo_evidence.scores.rain - thermo_evidence.scores.snow).abs()
-                        <= MIXED_COMPETING_RAIN_SNOW_DELTA_MAX + 0.45;
-                let dual_mixed_candidate = dual_evidence
-                    .is_some_and(|sample| sample.phase == PHASE_MIXED && sample.confidence >= 0.35);
-                let transition_candidate = !resolution.forced_precip_snow
-                    && (thermo_evidence.near_transition
-                        || thermo_competing
-                        || dual_mixed_candidate);
-                let surface_phase = thermo_evidence.precip_flag_phase.unwrap_or(PHASE_RAIN);
-
-                level_voxels.push(LevelPhaseVoxel {
-                    row: row as u16,
-                    col: col as u16,
-                    dbz_tenths,
-                    phase: resolution.phase,
-                    surface_phase,
-                    transition_candidate,
-                });
             }
+            if batch_result.suppressed_dual[out_i] {
+                dual_suppressed_voxel_count += 1;
+            }
+            if batch_result.suppressed_mixed[out_i] {
+                mixed_suppressed_voxel_count += 1;
+            }
+            if batch_result.forced_precip_snow[out_i] {
+                precip_snow_forced_voxel_count += 1;
+            }
+            if batch_result.signal_count[out_i] > 0 {
+                thermo_signal_voxel_count += 1;
+            } else {
+                thermo_no_signal_voxel_count += 1;
+            }
+
+            level_voxels.push(LevelPhaseVoxel {
+                row,
+                col,
+                dbz_tenths: parsed.dbz_tenths[value_idx],
+                phase: batch_result.phase[out_i],
+                surface_phase: batch_result.surface_phase[out_i],
+                transition_candidate: batch_result.transition_candidate[out_i],
+            });
         }
+
+        // dual_missing = valid voxels with no dual evidence (neither used nor suppressed)
+        let dual_has_evidence_count: u64 = valid_indices
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| batch_result.used_dual[i] || batch_result.suppressed_dual[i])
+            .count() as u64;
+        dual_missing_voxel_count += valid_indices.len() as u64 - dual_has_evidence_count;
 
         mixed_edge_promoted_voxel_count +=
             promote_mixed_transition_edges(&mut level_voxels, parsed.grid.nx, parsed.grid.ny);
