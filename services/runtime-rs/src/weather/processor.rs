@@ -478,6 +478,11 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
             if batch_result.suppressed_dual[out_i] {
                 dual_suppressed_voxel_count += 1;
             }
+            // Dual evidence was missing when neither used nor suppressed
+            // (batch scorer only sets these when resolve_dual_pol_evidence returns Some)
+            if !batch_result.used_dual[out_i] && !batch_result.suppressed_dual[out_i] {
+                dual_missing_voxel_count += 1;
+            }
             if batch_result.suppressed_mixed[out_i] {
                 mixed_suppressed_voxel_count += 1;
             }
@@ -499,14 +504,6 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
                 transition_candidate: batch_result.transition_candidate[out_i],
             });
         }
-
-        // dual_missing = valid voxels with no dual evidence (neither used nor suppressed)
-        let dual_has_evidence_count: u64 = valid_indices
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| batch_result.used_dual[i] || batch_result.suppressed_dual[i])
-            .count() as u64;
-        dual_missing_voxel_count += valid_indices.len() as u64 - dual_has_evidence_count;
 
         mixed_edge_promoted_voxel_count +=
             promote_mixed_transition_edges(&mut level_voxels, parsed.grid.nx, parsed.grid.ny);

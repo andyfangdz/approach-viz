@@ -67,6 +67,9 @@ pub(super) struct LevelPhaseVoxel {
     pub(super) transition_candidate: bool,
 }
 
+// Scalar pipeline below is retained for equivalence testing against phase_batch.rs.
+// Production code now uses compute_phase_scores_branchless in phase_batch.rs.
+#[allow(dead_code)]
 pub(super) fn resolve_dual_pol_evidence(
     zdr_value: Option<f32>,
     rhohv_value: Option<f32>,
@@ -159,6 +162,7 @@ pub(super) fn resolve_dual_pol_evidence(
     }
 }
 
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_thermo_phase(
     voxel_mid_feet: f64,
@@ -304,6 +308,7 @@ pub fn resolve_thermo_phase(
     }
 }
 
+#[allow(dead_code)]
 pub(super) fn resolve_phase_from_evidence(
     thermo: ThermoPhaseEvidence,
     dual: Option<DualPolEvidence>,
