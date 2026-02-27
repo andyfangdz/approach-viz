@@ -30,15 +30,13 @@ pub const TRAFFIC_FLAG_HAS_ERROR: u32 = 1;
 // ---------------------------------------------------------------------------
 
 pub const ECHO_TOP_WIRE_MAGIC: [u8; 4] = *b"AVET";
-pub const ECHO_TOP_WIRE_VERSION: u16 = 1;
+pub const ECHO_TOP_WIRE_VERSION: u16 = 2;
 /// Fixed header: 4 magic + 2 version + 2 header_bytes + 4 cell_count
 /// + 4 source_cell_count + 2 footprint_x_milli + 2 footprint_y_milli
 /// + 8 generated_at_ms + 8 scan_time_ms
 /// + 2 max_top18 + 2 max_top30 + 2 max_top50 + 2 max_top60
 /// + 24 reserved = 64 bytes
 pub const ECHO_TOP_WIRE_HEADER_BYTES: usize = 64;
-/// Per-cell record: f32 x_nm + f32 z_nm + u16 top18 + u16 top30 + u16 top50 + u16 top60 = 16 bytes
-pub const ECHO_TOP_WIRE_CELL_BYTES: usize = 16;
 
 // ---------------------------------------------------------------------------
 // Phase codes

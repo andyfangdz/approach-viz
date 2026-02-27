@@ -4,7 +4,7 @@
 // into a `DecodedEchoTop` (SoA layout).
 
 use crate::types::{
-    DecodedEchoTop, ECHO_TOP_WIRE_CELL_BYTES, ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
+    DecodedEchoTop, ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
     ECHO_TOP_WIRE_VERSION,
 };
 use crate::wire_helpers::{read_f32_le, read_i64_le, read_u16_le, read_u32_le};
@@ -54,12 +54,12 @@ impl std::error::Error for EchoTopDecodeError {}
 // Decoder
 // ---------------------------------------------------------------------------
 
-/// Decode an AVET binary payload into a `DecodedEchoTop`.
+/// Decode an AVET v2 binary payload into a `DecodedEchoTop`.
 ///
 /// Wire format (all little-endian):
 ///   Header (64 bytes):
 ///     [0..4]   magic "AVET"
-///     [4..6]   version (u16) = 1
+///     [4..6]   version (u16) = 2
 ///     [6..8]   header_bytes (u16) = 64
 ///     [8..12]  cell_count (u32)
 ///     [12..16] source_cell_count (u32)
@@ -72,13 +72,13 @@ impl std::error::Error for EchoTopDecodeError {}
 ///     [40..42] max_top50_feet (u16)
 ///     [42..44] max_top60_feet (u16)
 ///     [44..64] reserved (zero)
-///   Cell records (16 bytes each):
-///     [0..4]   x_nm (f32)
-///     [4..8]   z_nm (f32)
-///     [8..10]  top18_feet (u16)
-///     [10..12] top30_feet (u16)
-///     [12..14] top50_feet (u16)
-///     [14..16] top60_feet (u16)
+///   SoA arrays (contiguous per field):
+///     n * 4 bytes: x_nm (f32 LE)
+///     n * 4 bytes: z_nm (f32 LE)
+///     n * 2 bytes: top18_feet (u16 LE)
+///     n * 2 bytes: top30_feet (u16 LE)
+///     n * 2 bytes: top50_feet (u16 LE)
+///     n * 2 bytes: top60_feet (u16 LE)
 pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDecodeError> {
     if data.len() < ECHO_TOP_WIRE_HEADER_BYTES {
         return Err(EchoTopDecodeError::TooShort {
@@ -111,7 +111,10 @@ pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDeco
     let max_top60_feet = read_u16_le(data, 42);
 
     let records_offset = header_bytes.max(ECHO_TOP_WIRE_HEADER_BYTES);
-    let needed_bytes = records_offset + (cell_count as usize) * ECHO_TOP_WIRE_CELL_BYTES;
+    let n = cell_count as usize;
+    // SoA: 2 * f32 arrays (4 bytes each) + 4 * u16 arrays (2 bytes each) = 16 bytes per cell
+    let soa_bytes_per_cell: usize = 4 + 4 + 2 + 2 + 2 + 2;
+    let needed_bytes = records_offset + n * soa_bytes_per_cell;
 
     if data.len() < records_offset {
         return Err(EchoTopDecodeError::TooShort {
@@ -121,7 +124,7 @@ pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDeco
     }
 
     let available = data.len() - records_offset;
-    if (cell_count as usize) * ECHO_TOP_WIRE_CELL_BYTES > available {
+    if n * soa_bytes_per_cell > available {
         return Err(EchoTopDecodeError::CellOverflow {
             claimed: cell_count,
             available,
@@ -135,7 +138,14 @@ pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDeco
         });
     }
 
-    let n = cell_count as usize;
+    // SoA offsets: x_nm[], z_nm[], top18[], top30[], top50[], top60[]
+    let off_x = records_offset;
+    let off_z = off_x + n * 4;
+    let off_t18 = off_z + n * 4;
+    let off_t30 = off_t18 + n * 2;
+    let off_t50 = off_t30 + n * 2;
+    let off_t60 = off_t50 + n * 2;
+
     let mut x_nm = Vec::with_capacity(n);
     let mut z_nm = Vec::with_capacity(n);
     let mut top18_feet = Vec::with_capacity(n);
@@ -144,13 +154,12 @@ pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDeco
     let mut top60_feet = Vec::with_capacity(n);
 
     for i in 0..n {
-        let offset = records_offset + i * ECHO_TOP_WIRE_CELL_BYTES;
-        x_nm.push(read_f32_le(data, offset));
-        z_nm.push(read_f32_le(data, offset + 4));
-        top18_feet.push(read_u16_le(data, offset + 8));
-        top30_feet.push(read_u16_le(data, offset + 10));
-        top50_feet.push(read_u16_le(data, offset + 12));
-        top60_feet.push(read_u16_le(data, offset + 14));
+        x_nm.push(read_f32_le(data, off_x + i * 4));
+        z_nm.push(read_f32_le(data, off_z + i * 4));
+        top18_feet.push(read_u16_le(data, off_t18 + i * 2));
+        top30_feet.push(read_u16_le(data, off_t30 + i * 2));
+        top50_feet.push(read_u16_le(data, off_t50 + i * 2));
+        top60_feet.push(read_u16_le(data, off_t60 + i * 2));
     }
 
     Ok(DecodedEchoTop {
@@ -181,7 +190,7 @@ pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDeco
 mod tests {
     use super::*;
 
-    /// Build a minimal valid AVET header. Caller appends cell records.
+    /// Build a minimal valid AVET v2 header. Caller appends SoA cell arrays.
     fn build_test_header(
         cell_count: u32,
         source_cell_count: u32,
@@ -211,23 +220,36 @@ mod tests {
         buf
     }
 
-    /// Build a single 16-byte cell record.
-    fn build_cell_record(
+    /// Cell data for building SoA test payloads.
+    struct TestCell {
         x_nm: f32,
         z_nm: f32,
         top18: u16,
         top30: u16,
         top50: u16,
         top60: u16,
-    ) -> [u8; 16] {
-        let mut rec = [0u8; 16];
-        rec[0..4].copy_from_slice(&x_nm.to_le_bytes());
-        rec[4..8].copy_from_slice(&z_nm.to_le_bytes());
-        rec[8..10].copy_from_slice(&top18.to_le_bytes());
-        rec[10..12].copy_from_slice(&top30.to_le_bytes());
-        rec[12..14].copy_from_slice(&top50.to_le_bytes());
-        rec[14..16].copy_from_slice(&top60.to_le_bytes());
-        rec
+    }
+
+    /// Append SoA cell arrays to a header buffer.
+    fn append_soa_cells(buf: &mut Vec<u8>, cells: &[TestCell]) {
+        for c in cells {
+            buf.extend_from_slice(&c.x_nm.to_le_bytes());
+        }
+        for c in cells {
+            buf.extend_from_slice(&c.z_nm.to_le_bytes());
+        }
+        for c in cells {
+            buf.extend_from_slice(&c.top18.to_le_bytes());
+        }
+        for c in cells {
+            buf.extend_from_slice(&c.top30.to_le_bytes());
+        }
+        for c in cells {
+            buf.extend_from_slice(&c.top50.to_le_bytes());
+        }
+        for c in cells {
+            buf.extend_from_slice(&c.top60.to_le_bytes());
+        }
     }
 
     #[test]
@@ -278,8 +300,9 @@ mod tests {
         let gen_at: i64 = 1_700_000_000_000;
         let scan_time: i64 = 1_699_999_990_000;
         let mut buf = build_test_header(1, 100, 50, 60, gen_at, scan_time, 45000, 40000, 35000, 30000);
-        let rec = build_cell_record(5.5, -3.2, 12000, 10000, 8000, 6000);
-        buf.extend_from_slice(&rec);
+        append_soa_cells(&mut buf, &[TestCell {
+            x_nm: 5.5, z_nm: -3.2, top18: 12000, top30: 10000, top50: 8000, top60: 6000,
+        }]);
 
         let et = decode_echo_top_binary(&buf).unwrap();
         assert_eq!(et.cell_count, 1);
@@ -304,17 +327,15 @@ mod tests {
     #[test]
     fn decode_multiple_cells() {
         let mut buf = build_test_header(3, 300, 100, 100, 0, 0, 50000, 45000, 40000, 35000);
-        for i in 0..3 {
-            let rec = build_cell_record(
-                i as f32 * 10.0,
-                i as f32 * -5.0,
-                (i + 1) * 5000,
-                (i + 1) * 4000,
-                (i + 1) * 3000,
-                (i + 1) * 2000,
-            );
-            buf.extend_from_slice(&rec);
-        }
+        let cells: Vec<TestCell> = (0..3u16).map(|i| TestCell {
+            x_nm: i as f32 * 10.0,
+            z_nm: i as f32 * -5.0,
+            top18: (i + 1) * 5000,
+            top30: (i + 1) * 4000,
+            top50: (i + 1) * 3000,
+            top60: (i + 1) * 2000,
+        }).collect();
+        append_soa_cells(&mut buf, &cells);
 
         let et = decode_echo_top_binary(&buf).unwrap();
         assert_eq!(et.cell_count, 3);
@@ -326,15 +347,16 @@ mod tests {
     #[test]
     fn cell_overflow_detected() {
         let mut buf = build_test_header(1000, 1000, 50, 50, 0, 0, 0, 0, 0, 0);
-        // Only append 1 cell record instead of 1000
-        let rec = build_cell_record(1.0, 2.0, 100, 200, 300, 400);
-        buf.extend_from_slice(&rec);
+        // Only append 1 cell worth of SoA data instead of 1000
+        append_soa_cells(&mut buf, &[TestCell {
+            x_nm: 1.0, z_nm: 2.0, top18: 100, top30: 200, top50: 300, top60: 400,
+        }]);
 
         let err = decode_echo_top_binary(&buf).unwrap_err();
         match err {
             EchoTopDecodeError::CellOverflow { claimed, available } => {
                 assert_eq!(claimed, 1000);
-                assert_eq!(available, 16); // 1 cell = 16 bytes
+                assert_eq!(available, 16); // 1 cell SoA = 4+4+2+2+2+2 = 16 bytes
             }
             other => panic!("Expected CellOverflow, got {other:?}"),
         }

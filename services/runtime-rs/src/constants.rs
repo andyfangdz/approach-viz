@@ -85,7 +85,6 @@ pub use approach_viz_core::types::{
     ECHO_TOP_WIRE_MAGIC,
     ECHO_TOP_WIRE_VERSION,
     ECHO_TOP_WIRE_HEADER_BYTES,
-    ECHO_TOP_WIRE_CELL_BYTES,
 };
 pub const ECHO_TOP_BINARY_CONTENT_TYPE: &str = "application/vnd.approach-viz.echo-tops.v1";
 

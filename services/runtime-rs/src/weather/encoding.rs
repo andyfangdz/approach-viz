@@ -5,7 +5,7 @@ use std::cmp::min;
 use super::projection::{QueryProjection, QueryWindow};
 use super::EchoTopCellRecord;
 use crate::constants::{
-    ECHO_TOP_WIRE_CELL_BYTES, ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
+    ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
     ECHO_TOP_WIRE_VERSION, WIRE_DBZ_QUANT_STEP_TENTHS, WIRE_HEADER_BYTES, WIRE_MAGIC,
     WIRE_MAX_SPAN_HIGH_DBZ, WIRE_MAX_SPAN_LOW_DBZ, WIRE_MAX_VERTICAL_SPAN, WIRE_RECORD_BYTES,
     WIRE_VERSION,
@@ -117,21 +117,30 @@ pub(crate) fn build_echo_top_cells(
     cells
 }
 
-/// Build an AVET binary payload for echo-top cells.
+/// Build an AVET v2 binary payload for echo-top cells (SoA layout).
 ///
 /// Wire format matches `echo_top_wire_codec::decode_echo_top_binary` in approach-viz-core.
+///
+/// SoA layout after 64-byte header:
+///   n * 4 bytes: x_nm (f32 LE)
+///   n * 4 bytes: z_nm (f32 LE)
+///   n * 2 bytes: top18_feet (u16 LE)
+///   n * 2 bytes: top30_feet (u16 LE)
+///   n * 2 bytes: top50_feet (u16 LE)
+///   n * 2 bytes: top60_feet (u16 LE)
 pub(crate) fn build_echo_top_wire(
     scan: &ScanSnapshot,
     window: &QueryWindow,
     cells: &[EchoTopCellRecord],
 ) -> Vec<u8> {
     let cell_count = cells.len() as u32;
-    let body_size =
-        ECHO_TOP_WIRE_HEADER_BYTES + cells.len() * ECHO_TOP_WIRE_CELL_BYTES;
+    let n = cells.len();
+    // SoA: 2 * f32 arrays + 4 * u16 arrays
+    let body_size = ECHO_TOP_WIRE_HEADER_BYTES + n * (4 + 4 + 2 + 2 + 2 + 2);
     let mut body = vec![0_u8; ECHO_TOP_WIRE_HEADER_BYTES];
     body.reserve(body_size - ECHO_TOP_WIRE_HEADER_BYTES);
 
-    // Header
+    // Header (64 bytes)
     body[0..4].copy_from_slice(&ECHO_TOP_WIRE_MAGIC);
     body[4..6].copy_from_slice(&ECHO_TOP_WIRE_VERSION.to_le_bytes());
     body[6..8].copy_from_slice(&(ECHO_TOP_WIRE_HEADER_BYTES as u16).to_le_bytes());
@@ -147,13 +156,23 @@ pub(crate) fn build_echo_top_wire(
     body[42..44].copy_from_slice(&scan.echo_top_debug.max_top60_feet.unwrap_or(0).to_le_bytes());
     // bytes 44..64 are reserved (already zero)
 
-    // Cell records
+    // SoA layout: contiguous arrays per field
     for cell in cells {
         body.extend_from_slice(&cell.x_nm.to_le_bytes());
+    }
+    for cell in cells {
         body.extend_from_slice(&cell.z_nm.to_le_bytes());
+    }
+    for cell in cells {
         body.extend_from_slice(&cell.top18_feet.to_le_bytes());
+    }
+    for cell in cells {
         body.extend_from_slice(&cell.top30_feet.to_le_bytes());
+    }
+    for cell in cells {
         body.extend_from_slice(&cell.top50_feet.to_le_bytes());
+    }
+    for cell in cells {
         body.extend_from_slice(&cell.top60_feet.to_le_bytes());
     }
 
