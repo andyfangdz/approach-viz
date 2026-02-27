@@ -7,12 +7,9 @@ use axum::Json;
 
 const TRAFFIC_BINARY_CONTENT_TYPE: &str = "application/vnd.approach-viz.traffic.v1";
 const TRAFFIC_BINARY_MAGIC: &[u8; 4] = b"AVTR";
-const TRAFFIC_BINARY_VERSION: u16 = 1;
+const TRAFFIC_BINARY_VERSION: u16 = 2;
 const TRAFFIC_BINARY_HEADER_BYTES: u16 = 64;
 const TRAFFIC_BINARY_FLAG_HAS_ERROR: u32 = 1 << 0;
-const TRAFFIC_BINARY_AIRCRAFT_RECORD_BYTES: usize = 40;
-const TRAFFIC_BINARY_HISTORY_GROUP_RECORD_BYTES: usize = 16;
-const TRAFFIC_BINARY_HISTORY_POINT_RECORD_BYTES: usize = 20;
 
 pub(crate) fn traffic_binary_response(payload: TrafficBinaryPayload) -> Response {
     match encode_traffic_binary_payload(&payload) {
@@ -46,10 +43,23 @@ fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u
         .map(|error| append_traffic_string(&mut strings, error))
         .transpose()?;
 
-    let aircraft_count = u32::try_from(payload.aircraft.len())
+    // --- Aircraft SoA ---
+    let ac_count = payload.aircraft.len();
+    let aircraft_count = u32::try_from(ac_count)
         .map_err(|_| "Traffic aircraft count exceeds binary format limit".to_string())?;
-    let mut aircraft_records =
-        Vec::<u8>::with_capacity(payload.aircraft.len() * TRAFFIC_BINARY_AIRCRAFT_RECORD_BYTES);
+
+    let mut ac_hex_offsets: Vec<u32> = Vec::with_capacity(ac_count);
+    let mut ac_hex_lengths: Vec<u16> = Vec::with_capacity(ac_count);
+    let mut ac_flight_offsets: Vec<u32> = Vec::with_capacity(ac_count);
+    let mut ac_flight_lengths: Vec<u16> = Vec::with_capacity(ac_count);
+    let mut ac_flags: Vec<u16> = Vec::with_capacity(ac_count);
+    let mut ac_lats: Vec<f32> = Vec::with_capacity(ac_count);
+    let mut ac_lons: Vec<f32> = Vec::with_capacity(ac_count);
+    let mut ac_altitudes: Vec<f32> = Vec::with_capacity(ac_count);
+    let mut ac_speeds: Vec<f32> = Vec::with_capacity(ac_count);
+    let mut ac_tracks: Vec<f32> = Vec::with_capacity(ac_count);
+    let mut ac_last_seen: Vec<f32> = Vec::with_capacity(ac_count);
+
     for aircraft in &payload.aircraft {
         let (hex_offset, hex_len_u32) = append_traffic_string(&mut strings, &aircraft.hex)?;
         let hex_len = u16::try_from(hex_len_u32).map_err(|_| {
@@ -69,31 +79,33 @@ fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u
             None => (u32::MAX, 0),
         };
         let flags = if aircraft.is_on_ground { 1_u16 } else { 0_u16 };
-        push_u32_le(&mut aircraft_records, hex_offset);
-        push_u16_le(&mut aircraft_records, hex_len);
-        push_u16_le(&mut aircraft_records, flags);
-        push_u32_le(&mut aircraft_records, flight_offset);
-        push_u16_le(&mut aircraft_records, flight_len);
-        push_u16_le(&mut aircraft_records, 0);
-        push_f32_le(&mut aircraft_records, aircraft.lat as f32);
-        push_f32_le(&mut aircraft_records, aircraft.lon as f32);
-        push_f32_le(
-            &mut aircraft_records,
-            aircraft.altitude_feet.map(|value| value as f32).unwrap_or(f32::NAN),
+
+        ac_hex_offsets.push(hex_offset);
+        ac_hex_lengths.push(hex_len);
+        ac_flight_offsets.push(flight_offset);
+        ac_flight_lengths.push(flight_len);
+        ac_flags.push(flags);
+        ac_lats.push(aircraft.lat as f32);
+        ac_lons.push(aircraft.lon as f32);
+        ac_altitudes.push(
+            aircraft
+                .altitude_feet
+                .map(|value| value as f32)
+                .unwrap_or(f32::NAN),
         );
-        push_f32_le(
-            &mut aircraft_records,
+        ac_speeds.push(
             aircraft
                 .ground_speed_kt
                 .map(|value| value as f32)
                 .unwrap_or(f32::NAN),
         );
-        push_f32_le(
-            &mut aircraft_records,
-            aircraft.track_deg.map(|value| value as f32).unwrap_or(f32::NAN),
+        ac_tracks.push(
+            aircraft
+                .track_deg
+                .map(|value| value as f32)
+                .unwrap_or(f32::NAN),
         );
-        push_f32_le(
-            &mut aircraft_records,
+        ac_last_seen.push(
             aircraft
                 .last_seen_seconds
                 .map(|value| value as f32)
@@ -101,20 +113,66 @@ fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u
         );
     }
 
+    // Write SoA aircraft section: 38 bytes per aircraft
+    let ac_soa_bytes = ac_count * 38;
+    let mut aircraft_records = Vec::<u8>::with_capacity(ac_soa_bytes);
+    for &v in &ac_hex_offsets {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_hex_lengths {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_flight_offsets {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_flight_lengths {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_flags {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_lats {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_lons {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_altitudes {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_speeds {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_tracks {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &ac_last_seen {
+        aircraft_records.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // --- History groups SoA ---
     let mut history_entries = payload.history_by_hex.iter().collect::<Vec<_>>();
     history_entries.sort_by(|(left_hex, _), (right_hex, _)| left_hex.cmp(right_hex));
-    let history_group_count = u32::try_from(history_entries.len())
+    let hg_count = history_entries.len();
+    let history_group_count = u32::try_from(hg_count)
         .map_err(|_| "Traffic history group count exceeds binary format limit".to_string())?;
-    let mut history_group_records = Vec::<u8>::with_capacity(
-        history_entries.len() * TRAFFIC_BINARY_HISTORY_GROUP_RECORD_BYTES,
-    );
+
+    let mut hg_hex_offsets: Vec<u32> = Vec::with_capacity(hg_count);
+    let mut hg_hex_lengths: Vec<u16> = Vec::with_capacity(hg_count);
+    let mut hg_point_starts: Vec<u32> = Vec::with_capacity(hg_count);
+    let mut hg_point_counts: Vec<u32> = Vec::with_capacity(hg_count);
+
     let total_history_points = payload
         .history_by_hex
         .values()
         .map(std::vec::Vec::len)
         .sum::<usize>();
-    let mut history_point_records =
-        Vec::<u8>::with_capacity(total_history_points * TRAFFIC_BINARY_HISTORY_POINT_RECORD_BYTES);
+
+    let mut hp_lats: Vec<f32> = Vec::with_capacity(total_history_points);
+    let mut hp_lons: Vec<f32> = Vec::with_capacity(total_history_points);
+    let mut hp_altitudes: Vec<f32> = Vec::with_capacity(total_history_points);
+    let mut hp_timestamps: Vec<i64> = Vec::with_capacity(total_history_points);
+
     let mut history_point_count = 0_u32;
 
     for (hex, points) in history_entries {
@@ -128,20 +186,53 @@ fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u
             .checked_add(point_count)
             .ok_or_else(|| "Traffic history point count overflow".to_string())?;
 
-        push_u32_le(&mut history_group_records, hex_offset);
-        push_u16_le(&mut history_group_records, hex_len);
-        push_u16_le(&mut history_group_records, 0);
-        push_u32_le(&mut history_group_records, point_start);
-        push_u32_le(&mut history_group_records, point_count);
+        hg_hex_offsets.push(hex_offset);
+        hg_hex_lengths.push(hex_len);
+        hg_point_starts.push(point_start);
+        hg_point_counts.push(point_count);
 
         for point in points {
-            push_f32_le(&mut history_point_records, point.lat as f32);
-            push_f32_le(&mut history_point_records, point.lon as f32);
-            push_f32_le(&mut history_point_records, point.altitude_feet as f32);
-            push_i64_le(&mut history_point_records, point.timestamp_ms);
+            hp_lats.push(point.lat as f32);
+            hp_lons.push(point.lon as f32);
+            hp_altitudes.push(point.altitude_feet as f32);
+            hp_timestamps.push(point.timestamp_ms);
         }
     }
 
+    // Write SoA history group section: 14 bytes per group
+    let hg_soa_bytes = hg_count * 14;
+    let mut history_group_records = Vec::<u8>::with_capacity(hg_soa_bytes);
+    for &v in &hg_hex_offsets {
+        history_group_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &hg_hex_lengths {
+        history_group_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &hg_point_starts {
+        history_group_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &hg_point_counts {
+        history_group_records.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // Write SoA history point section: 20 bytes per point
+    let hp_count = history_point_count as usize;
+    let hp_soa_bytes = hp_count * 20;
+    let mut history_point_records = Vec::<u8>::with_capacity(hp_soa_bytes);
+    for &v in &hp_lats {
+        history_point_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &hp_lons {
+        history_point_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &hp_altitudes {
+        history_point_records.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &hp_timestamps {
+        history_point_records.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // --- Compute section offsets ---
     let aircraft_offset = usize::from(TRAFFIC_BINARY_HEADER_BYTES);
     let history_group_offset = aircraft_offset
         .checked_add(aircraft_records.len())
@@ -171,6 +262,7 @@ fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u
         flags |= TRAFFIC_BINARY_FLAG_HAS_ERROR;
     }
 
+    // --- Write final payload ---
     let mut bytes = Vec::<u8>::with_capacity(total_len);
     bytes.extend_from_slice(TRAFFIC_BINARY_MAGIC);
     push_u16_le(&mut bytes, TRAFFIC_BINARY_VERSION);
@@ -180,10 +272,22 @@ fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u
     push_u32_le(&mut bytes, history_group_count);
     push_u32_le(&mut bytes, history_point_count);
     push_i64_le(&mut bytes, payload.fetched_at_ms);
-    push_u32_le(&mut bytes, source_meta.map(|(offset, _)| offset).unwrap_or(u32::MAX));
-    push_u32_le(&mut bytes, source_meta.map(|(_, len)| len).unwrap_or(0));
-    push_u32_le(&mut bytes, error_meta.map(|(offset, _)| offset).unwrap_or(u32::MAX));
-    push_u32_le(&mut bytes, error_meta.map(|(_, len)| len).unwrap_or(0));
+    push_u32_le(
+        &mut bytes,
+        source_meta.map(|(offset, _)| offset).unwrap_or(u32::MAX),
+    );
+    push_u32_le(
+        &mut bytes,
+        source_meta.map(|(_, len)| len).unwrap_or(0),
+    );
+    push_u32_le(
+        &mut bytes,
+        error_meta.map(|(offset, _)| offset).unwrap_or(u32::MAX),
+    );
+    push_u32_le(
+        &mut bytes,
+        error_meta.map(|(_, len)| len).unwrap_or(0),
+    );
     push_u32_le(
         &mut bytes,
         u32::try_from(aircraft_offset)

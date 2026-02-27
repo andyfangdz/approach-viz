@@ -1,13 +1,11 @@
-// AVTR binary wire-format decoder.
+// AVTR v2 binary wire-format decoder (SoA layout).
 //
-// Decodes the binary payload produced by `services/runtime-rs/src/traffic_api.rs`
+// Decodes the binary payload produced by `services/runtime-rs/src/traffic/encoding.rs`
 // into a `DecodedTrafficPayload`.
 
 use crate::types::{
     DecodedTrafficAircraft, DecodedTrafficHistoryGroup, DecodedTrafficHistoryPoint,
-    DecodedTrafficPayload, TRAFFIC_AIRCRAFT_RECORD_BYTES, TRAFFIC_HISTORY_GROUP_BYTES,
-    TRAFFIC_HISTORY_POINT_BYTES, TRAFFIC_WIRE_HEADER_BYTES, TRAFFIC_WIRE_MAGIC,
-    TRAFFIC_WIRE_VERSION,
+    DecodedTrafficPayload, TRAFFIC_WIRE_HEADER_BYTES, TRAFFIC_WIRE_MAGIC, TRAFFIC_WIRE_VERSION,
 };
 use crate::wire_helpers::{read_f32_le, read_i64_le, read_u16_le, read_u32_le};
 
@@ -68,6 +66,11 @@ fn nan_to_option(v: f32) -> Option<f32> {
 
 const NONE_OFFSET: u32 = u32::MAX;
 
+// SoA sizes per element
+const AC_SOA_BYTES_PER: usize = 4 + 2 + 4 + 2 + 2 + 4 + 4 + 4 + 4 + 4 + 4; // 38
+const HG_SOA_BYTES_PER: usize = 4 + 2 + 4 + 4; // 14
+const HP_SOA_BYTES_PER: usize = 4 + 4 + 4 + 8; // 20
+
 // ---------------------------------------------------------------------------
 // String reading
 // ---------------------------------------------------------------------------
@@ -115,10 +118,10 @@ fn read_optional_string(
 // Decoder
 // ---------------------------------------------------------------------------
 
-/// Decode an AVTR binary payload into a `DecodedTrafficPayload`.
+/// Decode an AVTR v2 binary payload (SoA layout) into a `DecodedTrafficPayload`.
 ///
 /// The wire format is documented in the task spec and produced by
-/// `services/runtime-rs/src/traffic_api.rs`.
+/// `services/runtime-rs/src/traffic/encoding.rs`.
 pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, TrafficDecodeError> {
     // --- Header validation ---
     if data.len() < TRAFFIC_WIRE_HEADER_BYTES {
@@ -156,9 +159,8 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
     let history_point_section_offset = read_u32_le(data, 56) as usize;
     let strings_section_offset = read_u32_le(data, 60) as usize;
 
-    // --- Validate section bounds ---
-    let aircraft_section_end =
-        aircraft_section_offset + aircraft_count * TRAFFIC_AIRCRAFT_RECORD_BYTES;
+    // --- Validate section bounds (SoA sizes) ---
+    let aircraft_section_end = aircraft_section_offset + aircraft_count * AC_SOA_BYTES_PER;
     if aircraft_section_end > data.len() {
         return Err(TrafficDecodeError::TooShort {
             needed: aircraft_section_end,
@@ -167,7 +169,7 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
     }
 
     let history_group_section_end =
-        history_group_section_offset + history_group_count * TRAFFIC_HISTORY_GROUP_BYTES;
+        history_group_section_offset + history_group_count * HG_SOA_BYTES_PER;
     if history_group_section_end > data.len() {
         return Err(TrafficDecodeError::TooShort {
             needed: history_group_section_end,
@@ -176,7 +178,7 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
     }
 
     let history_point_section_end =
-        history_point_section_offset + history_point_count * TRAFFIC_HISTORY_POINT_BYTES;
+        history_point_section_offset + history_point_count * HP_SOA_BYTES_PER;
     if history_point_section_end > data.len() {
         return Err(TrafficDecodeError::TooShort {
             needed: history_point_section_end,
@@ -185,7 +187,6 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
     }
 
     // --- Parse source and error strings ---
-    // Source/error length fields are u32 in the header, read the full u32
     let source_length_u32 = read_u32_le(data, 36);
     let error_length_u32 = read_u32_le(data, 44);
 
@@ -207,26 +208,39 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
         None
     };
 
-    // --- Parse aircraft records ---
-    let mut aircraft = Vec::with_capacity(aircraft_count);
-    for i in 0..aircraft_count {
-        let offset = aircraft_section_offset + i * TRAFFIC_AIRCRAFT_RECORD_BYTES;
+    // --- Parse aircraft records (SoA layout) ---
+    let a = aircraft_count;
+    let ac_start = aircraft_section_offset;
 
-        let hex_str_offset = read_u32_le(data, offset);
-        let hex_str_length = read_u16_le(data, offset + 4);
-        let ac_flags = read_u16_le(data, offset + 6);
-        let flight_str_offset = read_u32_le(data, offset + 8);
-        let flight_str_length = read_u16_le(data, offset + 12);
-        // offset + 14..16: reserved
+    // Compute column offsets within the aircraft section
+    let off_hex_offset = ac_start;
+    let off_hex_length = off_hex_offset + a * 4;
+    let off_flight_offset = off_hex_length + a * 2;
+    let off_flight_length = off_flight_offset + a * 4;
+    let off_flags = off_flight_length + a * 2;
+    let off_lat = off_flags + a * 2;
+    let off_lon = off_lat + a * 4;
+    let off_altitude = off_lon + a * 4;
+    let off_speed = off_altitude + a * 4;
+    let off_track = off_speed + a * 4;
+    let off_last_seen = off_track + a * 4;
 
-        let lat = read_f32_le(data, offset + 16);
-        let lon = read_f32_le(data, offset + 20);
-        let altitude_feet_raw = read_f32_le(data, offset + 24);
-        let ground_speed_kt_raw = read_f32_le(data, offset + 28);
-        let track_deg_raw = read_f32_le(data, offset + 32);
-        let last_seen_seconds_raw = read_f32_le(data, offset + 36);
+    let mut aircraft = Vec::with_capacity(a);
+    for i in 0..a {
+        let hex_str_offset = read_u32_le(data, off_hex_offset + i * 4);
+        let hex_str_length = read_u16_le(data, off_hex_length + i * 2);
+        let flight_str_offset = read_u32_le(data, off_flight_offset + i * 4);
+        let flight_str_length = read_u16_le(data, off_flight_length + i * 2);
+        let ac_flags = read_u16_le(data, off_flags + i * 2);
+        let lat = read_f32_le(data, off_lat + i * 4);
+        let lon = read_f32_le(data, off_lon + i * 4);
+        let altitude_feet_raw = read_f32_le(data, off_altitude + i * 4);
+        let ground_speed_kt_raw = read_f32_le(data, off_speed + i * 4);
+        let track_deg_raw = read_f32_le(data, off_track + i * 4);
+        let last_seen_seconds_raw = read_f32_le(data, off_last_seen + i * 4);
 
-        let hex = read_string(data, strings_section_offset, hex_str_offset, hex_str_length as u32)?;
+        let hex =
+            read_string(data, strings_section_offset, hex_str_offset, hex_str_length as u32)?;
         let flight = read_optional_string(
             data,
             strings_section_offset,
@@ -247,18 +261,33 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
         });
     }
 
-    // --- Parse history groups ---
-    let mut history_groups = Vec::with_capacity(history_group_count);
-    for i in 0..history_group_count {
-        let offset = history_group_section_offset + i * TRAFFIC_HISTORY_GROUP_BYTES;
+    // --- Parse history groups (SoA layout) ---
+    let g = history_group_count;
+    let hg_start = history_group_section_offset;
 
-        let hex_str_offset = read_u32_le(data, offset);
-        let hex_str_length = read_u16_le(data, offset + 4);
-        // offset + 6..8: reserved
-        let point_start = read_u32_le(data, offset + 8) as usize;
-        let point_count = read_u32_le(data, offset + 12) as usize;
+    let hg_off_hex_offset = hg_start;
+    let hg_off_hex_length = hg_off_hex_offset + g * 4;
+    let hg_off_point_start = hg_off_hex_length + g * 2;
+    let hg_off_point_count = hg_off_point_start + g * 4;
 
-        let hex = read_string(data, strings_section_offset, hex_str_offset, hex_str_length as u32)?;
+    // --- Parse history points (SoA layout) ---
+    let p = history_point_count;
+    let hp_start = history_point_section_offset;
+
+    let hp_off_lat = hp_start;
+    let hp_off_lon = hp_off_lat + p * 4;
+    let hp_off_altitude = hp_off_lon + p * 4;
+    let hp_off_timestamp = hp_off_altitude + p * 4;
+
+    let mut history_groups = Vec::with_capacity(g);
+    for i in 0..g {
+        let hex_str_offset = read_u32_le(data, hg_off_hex_offset + i * 4);
+        let hex_str_length = read_u16_le(data, hg_off_hex_length + i * 2);
+        let point_start = read_u32_le(data, hg_off_point_start + i * 4) as usize;
+        let point_count = read_u32_le(data, hg_off_point_count + i * 4) as usize;
+
+        let hex =
+            read_string(data, strings_section_offset, hex_str_offset, hex_str_length as u32)?;
 
         // Bounds check: ensure point range is within the declared total
         if point_start as u64 + point_count as u64 > history_point_count as u64 {
@@ -269,18 +298,15 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
             });
         }
 
-        // Parse points for this group
+        // Parse points for this group from the SoA point arrays
         let mut points = Vec::with_capacity(point_count);
         for j in 0..point_count {
-            let abs_point_index = point_start + j;
-            let pt_offset =
-                history_point_section_offset + abs_point_index * TRAFFIC_HISTORY_POINT_BYTES;
-
+            let idx = point_start + j;
             points.push(DecodedTrafficHistoryPoint {
-                lat: read_f32_le(data, pt_offset),
-                lon: read_f32_le(data, pt_offset + 4),
-                altitude_feet: read_f32_le(data, pt_offset + 8),
-                timestamp_ms: read_i64_le(data, pt_offset + 12),
+                lat: read_f32_le(data, hp_off_lat + idx * 4),
+                lon: read_f32_le(data, hp_off_lon + idx * 4),
+                altitude_feet: read_f32_le(data, hp_off_altitude + idx * 4),
+                timestamp_ms: read_i64_le(data, hp_off_timestamp + idx * 8),
             });
         }
 
@@ -346,68 +372,114 @@ mod tests {
         buf[60..64].copy_from_slice(&strings_section_offset.to_le_bytes());
     }
 
-    /// Build an aircraft record (40 bytes).
-    fn build_aircraft_record(
-        hex_offset: u32,
-        hex_length: u16,
-        flags: u16,
-        flight_offset: u32,
-        flight_length: u16,
-        lat: f32,
-        lon: f32,
-        altitude_feet: f32,
-        ground_speed_kt: f32,
-        track_deg: f32,
-        last_seen_seconds: f32,
-    ) -> [u8; 40] {
-        let mut rec = [0u8; 40];
-        rec[0..4].copy_from_slice(&hex_offset.to_le_bytes());
-        rec[4..6].copy_from_slice(&hex_length.to_le_bytes());
-        rec[6..8].copy_from_slice(&flags.to_le_bytes());
-        rec[8..12].copy_from_slice(&flight_offset.to_le_bytes());
-        rec[12..14].copy_from_slice(&flight_length.to_le_bytes());
-        rec[14..16].copy_from_slice(&0u16.to_le_bytes()); // reserved
-        rec[16..20].copy_from_slice(&lat.to_le_bytes());
-        rec[20..24].copy_from_slice(&lon.to_le_bytes());
-        rec[24..28].copy_from_slice(&altitude_feet.to_le_bytes());
-        rec[28..32].copy_from_slice(&ground_speed_kt.to_le_bytes());
-        rec[32..36].copy_from_slice(&track_deg.to_le_bytes());
-        rec[36..40].copy_from_slice(&last_seen_seconds.to_le_bytes());
-        rec
+    /// Build the SoA aircraft section for a single aircraft.
+    /// Returns the bytes for the aircraft section in SoA layout.
+    fn build_soa_aircraft_section(
+        records: &[(
+            u32,  // hex_offset
+            u16,  // hex_length
+            u32,  // flight_offset
+            u16,  // flight_length
+            u16,  // flags
+            f32,  // lat
+            f32,  // lon
+            f32,  // altitude_feet
+            f32,  // ground_speed_kt
+            f32,  // track_deg
+            f32,  // last_seen_seconds
+        )],
+    ) -> Vec<u8> {
+        let a = records.len();
+        let mut buf = Vec::with_capacity(a * 38);
+        for r in records {
+            buf.extend_from_slice(&r.0.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.1.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.2.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.3.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.4.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.5.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.6.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.7.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.8.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.9.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.10.to_le_bytes());
+        }
+        buf
     }
 
-    /// Build a history group record (16 bytes).
-    fn build_history_group_record(
-        hex_offset: u32,
-        hex_length: u16,
-        point_start: u32,
-        point_count: u32,
-    ) -> [u8; 16] {
-        let mut rec = [0u8; 16];
-        rec[0..4].copy_from_slice(&hex_offset.to_le_bytes());
-        rec[4..6].copy_from_slice(&hex_length.to_le_bytes());
-        rec[6..8].copy_from_slice(&0u16.to_le_bytes()); // reserved
-        rec[8..12].copy_from_slice(&point_start.to_le_bytes());
-        rec[12..16].copy_from_slice(&point_count.to_le_bytes());
-        rec
+    /// Build the SoA history group section.
+    fn build_soa_history_group_section(
+        records: &[(
+            u32, // hex_offset
+            u16, // hex_length
+            u32, // point_start
+            u32, // point_count
+        )],
+    ) -> Vec<u8> {
+        let g = records.len();
+        let mut buf = Vec::with_capacity(g * 14);
+        for r in records {
+            buf.extend_from_slice(&r.0.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.1.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.2.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.3.to_le_bytes());
+        }
+        buf
     }
 
-    /// Build a history point record (20 bytes).
-    fn build_history_point_record(
-        lat: f32,
-        lon: f32,
-        altitude_feet: f32,
-        timestamp_ms: i64,
-    ) -> [u8; 20] {
-        let mut rec = [0u8; 20];
-        rec[0..4].copy_from_slice(&lat.to_le_bytes());
-        rec[4..8].copy_from_slice(&lon.to_le_bytes());
-        rec[8..12].copy_from_slice(&altitude_feet.to_le_bytes());
-        rec[12..20].copy_from_slice(&timestamp_ms.to_le_bytes());
-        rec
+    /// Build the SoA history point section.
+    fn build_soa_history_point_section(
+        records: &[(
+            f32, // lat
+            f32, // lon
+            f32, // altitude_feet
+            i64, // timestamp_ms
+        )],
+    ) -> Vec<u8> {
+        let p = records.len();
+        let mut buf = Vec::with_capacity(p * 20);
+        for r in records {
+            buf.extend_from_slice(&r.0.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.1.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.2.to_le_bytes());
+        }
+        for r in records {
+            buf.extend_from_slice(&r.3.to_le_bytes());
+        }
+        buf
     }
 
-    /// Build a complete minimal payload with the given sections and strings.
+    /// Build a complete minimal payload with the given SoA sections and strings.
     fn build_payload(
         aircraft_records: &[u8],
         history_group_records: &[u8],
@@ -523,22 +595,22 @@ mod tests {
         // String table: "a1b2c3" at offset 0, "UAL123" at offset 6
         let string_table = b"a1b2c3UAL123";
 
-        let ac_rec = build_aircraft_record(
-            0,     // hex_offset -> "a1b2c3"
-            6,     // hex_length
-            0,     // flags (not on ground)
-            6,     // flight_offset -> "UAL123"
-            6,     // flight_length
-            33.9425, // lat
+        let ac_section = build_soa_aircraft_section(&[(
+            0,        // hex_offset -> "a1b2c3"
+            6,        // hex_length
+            6,        // flight_offset -> "UAL123"
+            6,        // flight_length
+            0,        // flags (not on ground)
+            33.9425,  // lat
             -118.4081, // lon
             12500.0,  // altitude_feet
             450.0,    // ground_speed_kt
             270.0,    // track_deg
             2.5,      // last_seen_seconds
-        );
+        )]);
 
         let buf = build_payload(
-            &ac_rec,
+            &ac_section,
             &[],
             &[],
             string_table,
@@ -571,11 +643,11 @@ mod tests {
     #[test]
     fn nan_altitude_becomes_none() {
         let string_table = b"abc123";
-        let ac_rec = build_aircraft_record(
+        let ac_section = build_soa_aircraft_section(&[(
             0,
             6,
-            0,
             NONE_OFFSET,
+            0,
             0,
             40.0,
             -74.0,
@@ -583,10 +655,10 @@ mod tests {
             200.0,
             180.0,
             1.0,
-        );
+        )]);
 
         let buf = build_payload(
-            &ac_rec,
+            &ac_section,
             &[],
             &[],
             string_table,
@@ -612,22 +684,22 @@ mod tests {
     #[test]
     fn is_on_ground_flag() {
         let string_table = b"abc123";
-        let ac_rec = build_aircraft_record(
+        let ac_section = build_soa_aircraft_section(&[(
             0,
             6,
-            1, // flags bit 0 = is_on_ground
             NONE_OFFSET,
             0,
+            1, // flags bit 0 = is_on_ground
             40.0,
             -74.0,
             0.0,
             5.0,
             90.0,
             0.0,
-        );
+        )]);
 
         let buf = build_payload(
-            &ac_rec,
+            &ac_section,
             &[],
             &[],
             string_table,
@@ -651,26 +723,24 @@ mod tests {
         // String table: "abc123" at offset 0
         let string_table = b"abc123";
 
-        // Two history points
-        let pt1 = build_history_point_record(34.0, -118.0, 5000.0, 1_700_000_000_000);
-        let pt2 = build_history_point_record(34.1, -118.1, 5500.0, 1_700_000_001_000);
-
-        let mut history_points = Vec::new();
-        history_points.extend_from_slice(&pt1);
-        history_points.extend_from_slice(&pt2);
+        // Two history points in SoA layout
+        let hp_section = build_soa_history_point_section(&[
+            (34.0, -118.0, 5000.0, 1_700_000_000_000),
+            (34.1, -118.1, 5500.0, 1_700_000_001_000),
+        ]);
 
         // One history group referencing both points
-        let hg_rec = build_history_group_record(
+        let hg_section = build_soa_history_group_section(&[(
             0, // hex_offset -> "abc123"
             6, // hex_length
             0, // point_start
             2, // point_count
-        );
+        )]);
 
         let buf = build_payload(
             &[],
-            &hg_rec,
-            &history_points,
+            &hg_section,
+            &hp_section,
             string_table,
             0,
             1,
@@ -731,11 +801,11 @@ mod tests {
     fn absent_strings() {
         // All optional strings absent (u32::MAX offset)
         let string_table = b"abc123";
-        let ac_rec = build_aircraft_record(
+        let ac_section = build_soa_aircraft_section(&[(
             0,
             6,
-            0,
             NONE_OFFSET, // flight absent
+            0,
             0,
             40.0,
             -74.0,
@@ -743,10 +813,10 @@ mod tests {
             300.0,
             90.0,
             1.0,
-        );
+        )]);
 
         let buf = build_payload(
-            &ac_rec,
+            &ac_section,
             &[],
             &[],
             string_table,

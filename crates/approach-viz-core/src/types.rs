@@ -17,11 +17,8 @@ pub const MRMS_WIRE_DBZ_QUANT_STEP_TENTHS: i16 = 50;
 // ---------------------------------------------------------------------------
 
 pub const TRAFFIC_WIRE_MAGIC: [u8; 4] = *b"AVTR";
-pub const TRAFFIC_WIRE_VERSION: u16 = 1;
+pub const TRAFFIC_WIRE_VERSION: u16 = 2;
 pub const TRAFFIC_WIRE_HEADER_BYTES: usize = 64;
-pub const TRAFFIC_AIRCRAFT_RECORD_BYTES: usize = 40;
-pub const TRAFFIC_HISTORY_GROUP_BYTES: usize = 16;
-pub const TRAFFIC_HISTORY_POINT_BYTES: usize = 20;
 pub const TRAFFIC_FLAG_HAS_ERROR: u32 = 1;
 
 // ---------------------------------------------------------------------------
