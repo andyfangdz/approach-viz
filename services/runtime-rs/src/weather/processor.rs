@@ -47,6 +47,93 @@ pub(crate) fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> 
     valid
 }
 
+/// Flat f32 arrays of aux field values for valid voxel indices.
+/// NaN indicates missing/unavailable values.
+pub(crate) struct GatheredAuxFields {
+    pub(crate) zdr: Vec<f32>,
+    pub(crate) rhohv: Vec<f32>,
+    pub(crate) precip_flag: Vec<f32>,
+    pub(crate) freezing_level: Vec<f32>,
+    pub(crate) wet_bulb: Vec<f32>,
+    pub(crate) surface_temp: Vec<f32>,
+    pub(crate) bright_band_top: Vec<f32>,
+    pub(crate) bright_band_bottom: Vec<f32>,
+    pub(crate) rqi: Vec<f32>,
+}
+
+/// Pass 2: Gather aux field values for valid voxel indices into flat f32 arrays.
+///
+/// Uses NaN as sentinel for missing values. This separates the Option-chain
+/// indirection (AuxFieldSampler lookup) from the compute pass, so the compute
+/// pass can operate on flat arrays without branches.
+#[inline(never)] // Preserve as named function for LLVM remarks + asm inspection
+pub(crate) fn gather_aux_fields(
+    valid_indices: &[u32],
+    nx: u32,
+    zdr_values: Option<&[f32]>,
+    rhohv_values: Option<&[f32]>,
+    precip_sampler: &AuxFieldSampler,
+    freezing_sampler: &AuxFieldSampler,
+    wet_bulb_sampler: &AuxFieldSampler,
+    surface_temp_sampler: &AuxFieldSampler,
+    bright_band_top_sampler: &AuxFieldSampler,
+    bright_band_bottom_sampler: &AuxFieldSampler,
+    rqi_sampler: &AuxFieldSampler,
+) -> GatheredAuxFields {
+    let n = valid_indices.len();
+    let mut out = GatheredAuxFields {
+        zdr: vec![f32::NAN; n],
+        rhohv: vec![f32::NAN; n],
+        precip_flag: vec![f32::NAN; n],
+        freezing_level: vec![f32::NAN; n],
+        wet_bulb: vec![f32::NAN; n],
+        surface_temp: vec![f32::NAN; n],
+        bright_band_top: vec![f32::NAN; n],
+        bright_band_bottom: vec![f32::NAN; n],
+        rqi: vec![f32::NAN; n],
+    };
+
+    for (out_i, &idx) in valid_indices.iter().enumerate() {
+        let value_idx = idx as usize;
+        let row = value_idx / nx as usize;
+        let col = value_idx % nx as usize;
+
+        if let Some(vals) = zdr_values {
+            if let Some(&v) = vals.get(value_idx) {
+                out.zdr[out_i] = v;
+            }
+        }
+        if let Some(vals) = rhohv_values {
+            if let Some(&v) = vals.get(value_idx) {
+                out.rhohv[out_i] = v;
+            }
+        }
+        if let Some(v) = precip_sampler.sample(value_idx, row, col) {
+            out.precip_flag[out_i] = v;
+        }
+        if let Some(v) = freezing_sampler.sample(value_idx, row, col) {
+            out.freezing_level[out_i] = v;
+        }
+        if let Some(v) = wet_bulb_sampler.sample(value_idx, row, col) {
+            out.wet_bulb[out_i] = v;
+        }
+        if let Some(v) = surface_temp_sampler.sample(value_idx, row, col) {
+            out.surface_temp[out_i] = v;
+        }
+        if let Some(v) = bright_band_top_sampler.sample(value_idx, row, col) {
+            out.bright_band_top[out_i] = v;
+        }
+        if let Some(v) = bright_band_bottom_sampler.sample(value_idx, row, col) {
+            out.bright_band_bottom[out_i] = v;
+        }
+        if let Some(v) = rqi_sampler.sample(value_idx, row, col) {
+            out.rqi[out_i] = v;
+        }
+    }
+
+    out
+}
+
 pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanSnapshot>> {
     let date_part = timestamp
         .split('-')
@@ -1104,5 +1191,102 @@ mod filter_tests {
         let dbz = vec![50_i16, 60, 70, 80];
         let result = filter_voxels_by_threshold(&dbz, 50);
         assert_eq!(result, vec![0_u32, 1, 2, 3]);
+    }
+}
+
+#[cfg(test)]
+mod gather_tests {
+    use super::*;
+
+    #[test]
+    fn gather_uses_nan_for_missing_zdr() {
+        let valid_indices = vec![0_u32, 2, 5];
+        let zdr = vec![1.0_f32, f32::NAN, 2.0, 3.0, 4.0, 5.0];
+        // Empty samplers (no direct values, no lookup)
+        let empty_sampler = AuxFieldSampler {
+            direct_values: None,
+            sampled_lookup: None,
+        };
+
+        let result = gather_aux_fields(
+            &valid_indices,
+            6,
+            Some(&zdr),
+            None,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+        );
+
+        assert_eq!(result.zdr[0], 1.0);
+        assert_eq!(result.zdr[1], 2.0);
+        assert_eq!(result.zdr[2], 5.0);
+        // All other fields should be NaN
+        assert!(result.rhohv[0].is_nan());
+        assert!(result.precip_flag[0].is_nan());
+    }
+
+    #[test]
+    fn gather_empty_indices_returns_empty_vecs() {
+        let empty_sampler = AuxFieldSampler {
+            direct_values: None,
+            sampled_lookup: None,
+        };
+
+        let result = gather_aux_fields(
+            &[],
+            6,
+            None,
+            None,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+        );
+
+        assert!(result.zdr.is_empty());
+        assert!(result.rhohv.is_empty());
+        assert!(result.precip_flag.is_empty());
+    }
+
+    #[test]
+    fn gather_direct_values_sampler() {
+        let precip_data = vec![10.0_f32, 20.0, 30.0, 40.0, 50.0, 60.0];
+        let precip_sampler = AuxFieldSampler {
+            direct_values: Some(&precip_data),
+            sampled_lookup: None,
+        };
+        let empty_sampler = AuxFieldSampler {
+            direct_values: None,
+            sampled_lookup: None,
+        };
+
+        let valid_indices = vec![1_u32, 3, 5];
+        let result = gather_aux_fields(
+            &valid_indices,
+            6,
+            None,
+            None,
+            &precip_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+            &empty_sampler,
+        );
+
+        assert_eq!(result.precip_flag[0], 20.0);
+        assert_eq!(result.precip_flag[1], 40.0);
+        assert_eq!(result.precip_flag[2], 60.0);
+        // zdr should be NaN since no zdr_values provided
+        assert!(result.zdr[0].is_nan());
     }
 }
