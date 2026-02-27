@@ -3,6 +3,8 @@ mod encoding;
 mod grib;
 mod ingest;
 mod phase;
+// Consumed by benchmarks; wired into ingest_timestamp in Task 10.
+#[allow(dead_code)]
 mod phase_batch;
 mod processor;
 mod projection;
@@ -13,8 +15,10 @@ mod storage;
 pub use self::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
 pub use self::storage::load_latest_snapshot;
 
-// Re-exports for benchmarks
+// Re-exports for benchmarks (not consumed by the binary itself)
+#[allow(unused_imports)]
 pub use phase::{resolve_thermo_phase, DualPolEvidence, PhaseScores, ThermoPhaseEvidence};
+#[allow(unused_imports)]
 pub use phase_batch::{compute_phase_scores_branchless, BatchPhaseResult};
 
 use axum::extract::{Query, State};
