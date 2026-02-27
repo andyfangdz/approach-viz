@@ -1,0 +1,14 @@
+# Vectorization expectations for CI regression detection.
+#
+# Each [[expect]] entry declares a function that MUST be auto-vectorized.
+# CI fails if LLVM optimization remarks don't show vectorization for any
+# listed function.
+#
+# Fields:
+#   function    — Rust symbol substring to match in LLVM remark output
+#   min_width   — minimum vectorization width (f32=4, i16=8, f64=2 on NEON)
+#   description — human-readable note for failure messages
+#
+# Add new entries in the same PR that adds the vectorized code.
+
+# (empty — entries added in Phase 1)
