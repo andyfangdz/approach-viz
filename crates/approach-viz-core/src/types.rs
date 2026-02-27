@@ -17,7 +17,7 @@ pub const MRMS_WIRE_DBZ_QUANT_STEP_TENTHS: i16 = 50;
 // ---------------------------------------------------------------------------
 
 pub const TRAFFIC_WIRE_MAGIC: [u8; 4] = *b"AVTR";
-pub const TRAFFIC_WIRE_VERSION: u16 = 2;
+pub const TRAFFIC_WIRE_VERSION: u16 = 3;
 pub const TRAFFIC_WIRE_HEADER_BYTES: usize = 64;
 pub const TRAFFIC_FLAG_HAS_ERROR: u32 = 1;
 

@@ -3,7 +3,7 @@ import type { LiveTrafficAircraft, LiveTrafficHistoryPoint } from './traffic-wor
 export const TRAFFIC_BINARY_CONTENT_TYPE = 'application/vnd.approach-viz.traffic.v1';
 
 const TRAFFIC_BINARY_MAGIC = 'AVTR';
-const TRAFFIC_BINARY_VERSION = 2;
+const TRAFFIC_BINARY_VERSION = 3;
 const TRAFFIC_BINARY_HEADER_BYTES = 64;
 const TRAFFIC_BINARY_FLAG_HAS_ERROR = 1 << 0;
 const TRAFFIC_BINARY_AIRCRAFT_RECORD_BYTES = 38;
@@ -170,9 +170,10 @@ function normalizeOptionalNumber(value: number): number | null {
 /**
  * Parse aircraft hex strings from the SoA aircraft section.
  *
- * SoA column layout (each column is a contiguous array):
+ * SoA column layout (v3, each column is a contiguous array):
  *   col0: u32[a] hex_str_offset   — starts at base
- *   col1: u16[a] hex_str_length   — starts at base + a*4
+ *   ...8 u32/f32 columns...
+ *   col8: u16[a] hex_str_length   — starts at base + a*32
  */
 function parseAircraftHexes(view: DataView, header: TrafficBinaryHeader): string[] {
   const a = header.aircraftCount;
@@ -180,7 +181,7 @@ function parseAircraftHexes(view: DataView, header: TrafficBinaryHeader): string
   const hexes = new Array<string>(a);
   for (let i = 0; i < a; i += 1) {
     const hexOffset = view.getUint32(base + i * 4, true);
-    const hexLength = view.getUint16(base + a * 4 + i * 2, true);
+    const hexLength = view.getUint16(base + a * 32 + i * 2, true);
     hexes[i] = readString(view, header, hexOffset, hexLength);
   }
   return hexes;
@@ -189,9 +190,11 @@ function parseAircraftHexes(view: DataView, header: TrafficBinaryHeader): string
 /**
  * Parse history group hex strings from the SoA history group section.
  *
- * SoA column layout:
+ * SoA column layout (v3):
  *   col0: u32[g] hex_str_offset   — starts at base
- *   col1: u16[g] hex_str_length   — starts at base + g*4
+ *   col1: u32[g] point_start      — starts at base + g*4
+ *   col2: u32[g] point_count      — starts at base + g*8
+ *   col3: u16[g] hex_str_length   — starts at base + g*12
  */
 function parseHistoryHexes(view: DataView, header: TrafficBinaryHeader): string[] {
   const g = header.historyGroupCount;
@@ -199,7 +202,7 @@ function parseHistoryHexes(view: DataView, header: TrafficBinaryHeader): string[
   const hexes = new Array<string>(g);
   for (let i = 0; i < g; i += 1) {
     const hexOffset = view.getUint32(base + i * 4, true);
-    const hexLength = view.getUint16(base + g * 4 + i * 2, true);
+    const hexLength = view.getUint16(base + g * 12 + i * 2, true);
     hexes[i] = readString(view, header, hexOffset, hexLength);
   }
   return hexes;
@@ -224,34 +227,34 @@ export function inspectTrafficBinaryPayload(buffer: ArrayBuffer): TrafficBinaryP
 }
 
 /**
- * Decode an AVTR v2 binary payload (SoA layout) into a TrafficBinaryDecodedPayload.
+ * Decode an AVTR v3 binary payload (SoA layout) into a TrafficBinaryDecodedPayload.
  *
  * Aircraft section SoA column layout (a = aircraftCount, base = aircraftOffset):
  *   col0:  u32[a] hex_str_offset    — base
- *   col1:  u16[a] hex_str_length    — base + a*4
- *   col2:  u32[a] flight_str_offset — base + a*6
- *   col3:  u16[a] flight_str_length — base + a*10
- *   col4:  u16[a] flags             — base + a*12
- *   col5:  f32[a] lat               — base + a*14
- *   col6:  f32[a] lon               — base + a*18
- *   col7:  f32[a] altitude          — base + a*22
- *   col8:  f32[a] speed             — base + a*26
- *   col9:  f32[a] track             — base + a*30
- *   col10: f32[a] last_seen         — base + a*34
+ *   col1:  u32[a] flight_str_offset — base + a*4
+ *   col2:  f32[a] lat               — base + a*8
+ *   col3:  f32[a] lon               — base + a*12
+ *   col4:  f32[a] altitude          — base + a*16
+ *   col5:  f32[a] speed             — base + a*20
+ *   col6:  f32[a] track             — base + a*24
+ *   col7:  f32[a] last_seen         — base + a*28
+ *   col8:  u16[a] hex_str_length    — base + a*32
+ *   col9:  u16[a] flight_str_length — base + a*34
+ *   col10: u16[a] flags             — base + a*36
  *   Total: a*38 bytes
  *
  * History group section SoA (g = historyGroupCount, base = historyGroupOffset):
  *   col0: u32[g] hex_str_offset — base
- *   col1: u16[g] hex_str_length — base + g*4
- *   col2: u32[g] point_start    — base + g*6
- *   col3: u32[g] point_count    — base + g*10
+ *   col1: u32[g] point_start    — base + g*4
+ *   col2: u32[g] point_count    — base + g*8
+ *   col3: u16[g] hex_str_length — base + g*12
  *   Total: g*14 bytes
  *
  * History point section SoA (p = historyPointCount, base = historyPointOffset):
- *   col0: f32[p] lat            — base
- *   col1: f32[p] lon            — base + p*4
- *   col2: f32[p] altitude       — base + p*8
- *   col3: i64[p] timestamp      — base + p*12
+ *   col0: i64[p] timestamp      — base
+ *   col1: f32[p] lat            — base + p*8
+ *   col2: f32[p] lon            — base + p*12
+ *   col3: f32[p] altitude       — base + p*16
  *   Total: p*20 bytes
  */
 export function decodeTrafficBinaryPayload(buffer: ArrayBuffer): TrafficBinaryDecodedPayload {
@@ -265,17 +268,18 @@ export function decodeTrafficBinaryPayload(buffer: ArrayBuffer): TrafficBinaryDe
   // --- Aircraft SoA column offsets ---
   const a = header.aircraftCount;
   const acBase = header.aircraftOffset;
+  // v3: widest-first column order (u32/f32 before u16)
   const acColHexOffset = acBase;
-  const acColHexLength = acColHexOffset + a * 4;
-  const acColFlightOffset = acColHexLength + a * 2;
-  const acColFlightLength = acColFlightOffset + a * 4;
-  const acColFlags = acColFlightLength + a * 2;
-  const acColLat = acColFlags + a * 2;
+  const acColFlightOffset = acColHexOffset + a * 4;
+  const acColLat = acColFlightOffset + a * 4;
   const acColLon = acColLat + a * 4;
   const acColAltitude = acColLon + a * 4;
   const acColSpeed = acColAltitude + a * 4;
   const acColTrack = acColSpeed + a * 4;
   const acColLastSeen = acColTrack + a * 4;
+  const acColHexLength = acColLastSeen + a * 4;
+  const acColFlightLength = acColHexLength + a * 2;
+  const acColFlags = acColFlightLength + a * 2;
 
   const aircraftList = new Array<LiveTrafficAircraft>(a);
   for (let i = 0; i < a; i += 1) {
@@ -306,18 +310,20 @@ export function decodeTrafficBinaryPayload(buffer: ArrayBuffer): TrafficBinaryDe
   // --- History group SoA column offsets ---
   const g = header.historyGroupCount;
   const hgBase = header.historyGroupOffset;
+  // v3: widest-first column order
   const hgColHexOffset = hgBase;
-  const hgColHexLength = hgColHexOffset + g * 4;
-  const hgColPointStart = hgColHexLength + g * 2;
+  const hgColPointStart = hgColHexOffset + g * 4;
   const hgColPointCount = hgColPointStart + g * 4;
+  const hgColHexLength = hgColPointCount + g * 4;
 
   // --- History point SoA column offsets ---
   const p = header.historyPointCount;
   const hpBase = header.historyPointOffset;
-  const hpColLat = hpBase;
+  // v3: widest-first column order (i64 before f32)
+  const hpColTimestamp = hpBase;
+  const hpColLat = hpColTimestamp + p * 8;
   const hpColLon = hpColLat + p * 4;
   const hpColAltitude = hpColLon + p * 4;
-  const hpColTimestamp = hpColAltitude + p * 4;
 
   const historyByHex: Record<string, LiveTrafficHistoryPoint[]> = {};
   for (let i = 0; i < g; i += 1) {
