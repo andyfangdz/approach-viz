@@ -1,7 +1,7 @@
 [package]
 name = "approach-viz-runtime"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 approach-viz-core = { path = "../../crates/approach-viz-core" }
