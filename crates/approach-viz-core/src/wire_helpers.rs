@@ -13,11 +13,6 @@ pub fn read_u32_le(data: &[u8], offset: usize) -> u32 {
 }
 
 #[inline]
-pub fn read_f32_le(data: &[u8], offset: usize) -> f32 {
-    f32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-}
-
-#[inline]
 pub fn read_i64_le(data: &[u8], offset: usize) -> i64 {
     i64::from_le_bytes([
         data[offset],

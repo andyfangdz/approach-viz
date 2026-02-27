@@ -69,7 +69,7 @@
 - Runtime endpoints:
   - `GET /v1/weather/volume` -> `application/vnd.approach-viz.mrms.v3` content-type (wire format AVMR v4, SoA layout) (legacy alias `/v1/volume`)
   - `GET /v1/weather/echo-tops` -> JSON by default; AVET binary with `Accept: application/vnd.approach-viz.echo-tops.v1` content-type (wire format AVET v2, SoA layout) (legacy alias `/v1/echo-tops`)
-  - `GET /v1/traffic/adsbx` -> JSON or binary (`format=binary`, `application/vnd.approach-viz.traffic.v1` content-type, wire format AVTR v2, SoA layout)
+  - `GET /v1/traffic/adsbx` -> JSON or binary (`format=binary`, `application/vnd.approach-viz.traffic.v1` content-type, wire format AVTR v3, SoA layout, widest-first column order with inter-section alignment padding)
 - Worker-first execution: approach geometry, MRMS decode/prepare, traffic ingest/merge/recompute, and selector filtering run in workers; no synchronous compute fallback.
 - Layer defaults (`DEFAULT_LAYER_STATE`): `approach`, `airspace`, `adsb`, `probsevere`, `guides` = on; `mrms`, `echotops`, `slice` = off.
 - MRMS phase-mode default is `surface` (`Surface Precip Type`); `thermo` is optional.

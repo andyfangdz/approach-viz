@@ -10,7 +10,7 @@ use crate::types::{
     DecodedTrafficAircraft, DecodedTrafficHistoryGroup, DecodedTrafficHistoryPoint,
     DecodedTrafficPayload, TRAFFIC_WIRE_HEADER_BYTES, TRAFFIC_WIRE_MAGIC, TRAFFIC_WIRE_VERSION,
 };
-use crate::wire_helpers::{bulk_read_column, read_f32_le, read_i64_le, read_u16_le, read_u32_le};
+use crate::wire_helpers::{bulk_read_column, read_i64_le, read_u16_le, read_u32_le};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -287,15 +287,29 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
     let hp_off_lon = hp_off_lat + p * 4;
     let hp_off_altitude = hp_off_lon + p * 4;
 
+    // Bulk-read history group columns
+    let hg_col_hex_offsets = bulk_read_column::<u32>(data, hg_off_hex_offset, g);
+    let hg_col_point_starts = bulk_read_column::<u32>(data, hg_off_point_start, g);
+    let hg_col_point_counts = bulk_read_column::<u32>(data, hg_off_point_count, g);
+    let hg_col_hex_lengths = bulk_read_column::<u16>(data, hg_off_hex_length, g);
+
+    // Bulk-read history point columns
+    let hp_col_timestamps = bulk_read_column::<i64>(data, hp_off_timestamp, p);
+    let hp_col_lats = bulk_read_column::<f32>(data, hp_off_lat, p);
+    let hp_col_lons = bulk_read_column::<f32>(data, hp_off_lon, p);
+    let hp_col_altitudes = bulk_read_column::<f32>(data, hp_off_altitude, p);
+
     let mut history_groups = Vec::with_capacity(g);
     for i in 0..g {
-        let hex_str_offset = read_u32_le(data, hg_off_hex_offset + i * 4);
-        let hex_str_length = read_u16_le(data, hg_off_hex_length + i * 2);
-        let point_start = read_u32_le(data, hg_off_point_start + i * 4) as usize;
-        let point_count = read_u32_le(data, hg_off_point_count + i * 4) as usize;
+        let hex = read_string(
+            data,
+            strings_section_offset,
+            hg_col_hex_offsets[i],
+            hg_col_hex_lengths[i] as u32,
+        )?;
 
-        let hex =
-            read_string(data, strings_section_offset, hex_str_offset, hex_str_length as u32)?;
+        let point_start = hg_col_point_starts[i] as usize;
+        let point_count = hg_col_point_counts[i] as usize;
 
         // Bounds check: ensure point range is within the declared total
         if point_start as u64 + point_count as u64 > history_point_count as u64 {
@@ -306,15 +320,15 @@ pub fn decode_traffic_binary(data: &[u8]) -> Result<DecodedTrafficPayload, Traff
             });
         }
 
-        // Parse points for this group from the SoA point arrays
+        // Build points from bulk-read SoA columns
         let mut points = Vec::with_capacity(point_count);
         for j in 0..point_count {
             let idx = point_start + j;
             points.push(DecodedTrafficHistoryPoint {
-                lat: read_f32_le(data, hp_off_lat + idx * 4),
-                lon: read_f32_le(data, hp_off_lon + idx * 4),
-                altitude_feet: read_f32_le(data, hp_off_altitude + idx * 4),
-                timestamp_ms: read_i64_le(data, hp_off_timestamp + idx * 8),
+                lat: hp_col_lats[idx],
+                lon: hp_col_lons[idx],
+                altitude_feet: hp_col_altitudes[idx],
+                timestamp_ms: hp_col_timestamps[idx],
             });
         }
 
