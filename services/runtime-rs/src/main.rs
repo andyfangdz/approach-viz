@@ -1,14 +1,10 @@
-mod api;
 mod config;
 mod constants;
-mod discovery;
-mod grib;
 mod http_client;
-mod ingest;
-mod storage;
 mod traffic;
 mod types;
 mod utils;
+mod weather;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -25,11 +21,12 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
-use crate::api::{echo_tops, healthz, meta, volume};
 use crate::config::Config;
-use crate::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
-use crate::storage::load_latest_snapshot;
 use crate::traffic::{spawn_traffic_cache_worker, traffic_adsbx, TrafficStore};
+use crate::weather::{
+    echo_tops, enqueue_latest_from_s3, healthz, load_latest_snapshot, meta, run_ingest_profile,
+    spawn_background_workers, volume,
+};
 use crate::types::AppState;
 use crate::utils::{init_tracing, shutdown_tracing};
 

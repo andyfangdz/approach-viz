@@ -2,6 +2,7 @@ use anyhow::Result;
 use rustc_hash::FxHashMap;
 use std::cmp::min;
 
+use super::projection::{QueryProjection, QueryWindow};
 use super::EchoTopCellRecord;
 use crate::constants::{
     ECHO_TOP_WIRE_CELL_BYTES, ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
@@ -10,86 +11,17 @@ use crate::constants::{
     WIRE_VERSION,
 };
 use crate::types::ScanSnapshot;
-use crate::utils::{
-    clamp_i64, projection_scales_nm_per_degree, round_i16, round_u16, shortest_lon_delta_degrees,
-    to_lon360,
-};
+use crate::utils::{round_i16, round_u16, shortest_lon_delta_degrees, to_lon360};
 
-pub(super) fn build_volume_wire(
+pub(crate) fn build_volume_wire(
     scan: &ScanSnapshot,
     origin_lat: f64,
     origin_lon: f64,
     min_dbz: f64,
     max_range_nm: f64,
 ) -> Result<Vec<u8>> {
-    let window = build_query_window(scan, origin_lat, origin_lon, min_dbz, max_range_nm);
+    let window = super::projection::build_query_window(scan, origin_lat, origin_lon, min_dbz, max_range_nm);
     Ok(build_volume_wire_impl(scan, &window))
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct QueryWindow {
-    min_dbz_tenths: i16,
-    origin_lat: f64,
-    origin_lon: f64,
-    origin_lon360: f64,
-    max_range_nm: f64,
-    max_range_squared_nm: f64,
-    east_nm_per_lon_deg_safe: f64,
-    north_nm_per_lat_deg_safe: f64,
-    row_start: u32,
-    row_end: u32,
-    col_start: u32,
-    col_end: u32,
-    lon_wrapped: bool,
-    tile_row_start: u32,
-    tile_row_end: u32,
-    tile_col_start: u32,
-    tile_col_end: u32,
-    pub(super) footprint_x_milli: u16,
-    pub(super) footprint_y_milli: u16,
-}
-
-struct QueryProjection {
-    row_start: u32,
-    col_start: u32,
-    row_z_nm: Vec<f64>,
-    col_x_nm: Vec<f64>,
-}
-
-impl QueryProjection {
-    fn new(scan: &ScanSnapshot, window: &QueryWindow) -> Self {
-        let row_count = (window.row_end.saturating_sub(window.row_start) + 1) as usize;
-        let col_count = (window.col_end.saturating_sub(window.col_start) + 1) as usize;
-
-        let mut row_z_nm = Vec::with_capacity(row_count);
-        for row in window.row_start..=window.row_end {
-            let lat_deg = scan.grid.la1_deg + row as f64 * scan.grid.lat_step_deg;
-            row_z_nm.push(-(lat_deg - window.origin_lat) * window.north_nm_per_lat_deg_safe);
-        }
-
-        let mut col_x_nm = Vec::with_capacity(col_count);
-        for col in window.col_start..=window.col_end {
-            let lon_deg360 = to_lon360(scan.grid.lo1_deg360 + col as f64 * scan.grid.lon_step_deg);
-            let delta_lon_deg = shortest_lon_delta_degrees(lon_deg360, window.origin_lon360);
-            col_x_nm.push(delta_lon_deg * window.east_nm_per_lon_deg_safe);
-        }
-
-        Self {
-            row_start: window.row_start,
-            col_start: window.col_start,
-            row_z_nm,
-            col_x_nm,
-        }
-    }
-
-    #[inline]
-    fn project_cell_nm(&self, row: u32, col: u32) -> (f64, f64) {
-        debug_assert!(row >= self.row_start);
-        debug_assert!(col >= self.col_start);
-        let row_idx = (row - self.row_start) as usize;
-        let col_idx = (col - self.col_start) as usize;
-        (self.col_x_nm[col_idx], self.row_z_nm[row_idx])
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -152,97 +84,80 @@ struct BrickCandidate {
     surface_phase: u8,
 }
 
-pub(super) fn build_query_window(
+pub(crate) fn build_echo_top_cells(
     scan: &ScanSnapshot,
-    origin_lat: f64,
-    origin_lon: f64,
-    min_dbz: f64,
-    max_range_nm: f64,
-) -> QueryWindow {
-    let min_dbz_tenths = (min_dbz * 10.0).round() as i16;
-    let max_range_squared_nm = max_range_nm * max_range_nm;
+    window: &QueryWindow,
+) -> Vec<EchoTopCellRecord> {
+    let projection = QueryProjection::new(scan, window);
+    let mut cells = Vec::new();
+    for record in &scan.echo_tops {
+        let row = record.row as u32;
+        let col = record.col as u32;
+        if row < window.row_start || row > window.row_end {
+            continue;
+        }
+        if !window.lon_wrapped && (col < window.col_start || col > window.col_end) {
+            continue;
+        }
 
-    let origin_lon360 = to_lon360(origin_lon);
-    let (east_nm_per_lon_deg, north_nm_per_lat_deg) = projection_scales_nm_per_degree(origin_lat);
-    let east_nm_per_lon_deg_safe = east_nm_per_lon_deg.abs().max(1e-6);
-    let north_nm_per_lat_deg_safe = north_nm_per_lat_deg.abs().max(1e-6);
+        let (x_nm, z_nm) = projection.project_cell_nm(row, col);
+        if x_nm * x_nm + z_nm * z_nm > window.max_range_squared_nm {
+            continue;
+        }
 
-    let lat_padding_deg = max_range_nm / north_nm_per_lat_deg_safe;
-    let lon_padding_deg = max_range_nm / east_nm_per_lon_deg_safe;
-
-    let lat_min = origin_lat - lat_padding_deg;
-    let lat_max = origin_lat + lat_padding_deg;
-    let lon_min360 = origin_lon360 - lon_padding_deg;
-    let lon_max360 = origin_lon360 + lon_padding_deg;
-    let lon_wrapped = lon_min360 < 0.0 || lon_max360 >= 360.0;
-
-    let row_from_lat = |lat: f64| (lat - scan.grid.la1_deg) / scan.grid.lat_step_deg;
-    let row_start = clamp_i64(
-        (row_from_lat(lat_min).min(row_from_lat(lat_max)) - 1.0).floor() as i64,
-        0,
-        scan.grid.ny as i64 - 1,
-    ) as u32;
-    let row_end = clamp_i64(
-        (row_from_lat(lat_min).max(row_from_lat(lat_max)) + 1.0).ceil() as i64,
-        0,
-        scan.grid.ny as i64 - 1,
-    ) as u32;
-
-    let (col_start, col_end) = if lon_wrapped {
-        (0_u32, scan.grid.nx - 1)
-    } else {
-        let col_from_lon = |lon: f64| (lon - scan.grid.lo1_deg360) / scan.grid.lon_step_deg;
-        let start = clamp_i64(
-            (col_from_lon(lon_min360).min(col_from_lon(lon_max360)) - 1.0).floor() as i64,
-            0,
-            scan.grid.nx as i64 - 1,
-        ) as u32;
-        let end = clamp_i64(
-            (col_from_lon(lon_min360).max(col_from_lon(lon_max360)) + 1.0).ceil() as i64,
-            0,
-            scan.grid.nx as i64 - 1,
-        ) as u32;
-        (start, end)
-    };
-
-    let tile_size = scan.tile_size as u32;
-    let tile_row_start = row_start / tile_size;
-    let tile_row_end = row_end / tile_size;
-    let tile_col_start = if lon_wrapped {
-        0
-    } else {
-        col_start / tile_size
-    };
-    let tile_col_end = if lon_wrapped {
-        scan.tile_cols as u32 - 1
-    } else {
-        col_end / tile_size
-    };
-
-    let footprint_x_milli = round_u16(scan.grid.di_deg.abs() * east_nm_per_lon_deg_safe * 1000.0);
-    let footprint_y_milli = round_u16(scan.grid.dj_deg.abs() * north_nm_per_lat_deg_safe * 1000.0);
-
-    QueryWindow {
-        min_dbz_tenths,
-        origin_lat,
-        origin_lon,
-        origin_lon360,
-        max_range_nm,
-        max_range_squared_nm,
-        east_nm_per_lon_deg_safe,
-        north_nm_per_lat_deg_safe,
-        row_start,
-        row_end,
-        col_start,
-        col_end,
-        lon_wrapped,
-        tile_row_start,
-        tile_row_end,
-        tile_col_start,
-        tile_col_end,
-        footprint_x_milli,
-        footprint_y_milli,
+        cells.push(EchoTopCellRecord {
+            x_nm: x_nm as f32,
+            z_nm: z_nm as f32,
+            top18_feet: record.top18_feet,
+            top30_feet: record.top30_feet,
+            top50_feet: record.top50_feet,
+            top60_feet: record.top60_feet,
+        });
     }
+    cells
+}
+
+/// Build an AVET binary payload for echo-top cells.
+///
+/// Wire format matches `echo_top_wire_codec::decode_echo_top_binary` in approach-viz-core.
+pub(crate) fn build_echo_top_wire(
+    scan: &ScanSnapshot,
+    window: &QueryWindow,
+    cells: &[EchoTopCellRecord],
+) -> Vec<u8> {
+    let cell_count = cells.len() as u32;
+    let body_size =
+        ECHO_TOP_WIRE_HEADER_BYTES + cells.len() * ECHO_TOP_WIRE_CELL_BYTES;
+    let mut body = vec![0_u8; ECHO_TOP_WIRE_HEADER_BYTES];
+    body.reserve(body_size - ECHO_TOP_WIRE_HEADER_BYTES);
+
+    // Header
+    body[0..4].copy_from_slice(&ECHO_TOP_WIRE_MAGIC);
+    body[4..6].copy_from_slice(&ECHO_TOP_WIRE_VERSION.to_le_bytes());
+    body[6..8].copy_from_slice(&(ECHO_TOP_WIRE_HEADER_BYTES as u16).to_le_bytes());
+    body[8..12].copy_from_slice(&cell_count.to_le_bytes());
+    body[12..16].copy_from_slice(&(scan.echo_tops.len() as u32).to_le_bytes());
+    body[16..18].copy_from_slice(&window.footprint_x_milli.to_le_bytes());
+    body[18..20].copy_from_slice(&window.footprint_y_milli.to_le_bytes());
+    body[20..28].copy_from_slice(&scan.generated_at_ms.to_le_bytes());
+    body[28..36].copy_from_slice(&scan.scan_time_ms.to_le_bytes());
+    body[36..38].copy_from_slice(&scan.echo_top_debug.max_top18_feet.unwrap_or(0).to_le_bytes());
+    body[38..40].copy_from_slice(&scan.echo_top_debug.max_top30_feet.unwrap_or(0).to_le_bytes());
+    body[40..42].copy_from_slice(&scan.echo_top_debug.max_top50_feet.unwrap_or(0).to_le_bytes());
+    body[42..44].copy_from_slice(&scan.echo_top_debug.max_top60_feet.unwrap_or(0).to_le_bytes());
+    // bytes 44..64 are reserved (already zero)
+
+    // Cell records
+    for cell in cells {
+        body.extend_from_slice(&cell.x_nm.to_le_bytes());
+        body.extend_from_slice(&cell.z_nm.to_le_bytes());
+        body.extend_from_slice(&cell.top18_feet.to_le_bytes());
+        body.extend_from_slice(&cell.top30_feet.to_le_bytes());
+        body.extend_from_slice(&cell.top50_feet.to_le_bytes());
+        body.extend_from_slice(&cell.top60_feet.to_le_bytes());
+    }
+
+    body
 }
 
 fn build_wire_header(
@@ -285,82 +200,6 @@ fn project_grid_position_nm(
     let x_nm = delta_lon_deg * window.east_nm_per_lon_deg_safe;
     let z_nm = -(lat_deg - window.origin_lat) * window.north_nm_per_lat_deg_safe;
     (x_nm, z_nm)
-}
-
-pub(super) fn build_echo_top_cells(
-    scan: &ScanSnapshot,
-    window: &QueryWindow,
-) -> Vec<EchoTopCellRecord> {
-    let projection = QueryProjection::new(scan, window);
-    let mut cells = Vec::new();
-    for record in &scan.echo_tops {
-        let row = record.row as u32;
-        let col = record.col as u32;
-        if row < window.row_start || row > window.row_end {
-            continue;
-        }
-        if !window.lon_wrapped && (col < window.col_start || col > window.col_end) {
-            continue;
-        }
-
-        let (x_nm, z_nm) = projection.project_cell_nm(row, col);
-        if x_nm * x_nm + z_nm * z_nm > window.max_range_squared_nm {
-            continue;
-        }
-
-        cells.push(EchoTopCellRecord {
-            x_nm: x_nm as f32,
-            z_nm: z_nm as f32,
-            top18_feet: record.top18_feet,
-            top30_feet: record.top30_feet,
-            top50_feet: record.top50_feet,
-            top60_feet: record.top60_feet,
-        });
-    }
-    cells
-}
-
-/// Build an AVET binary payload for echo-top cells.
-///
-/// Wire format matches `echo_top_wire_codec::decode_echo_top_binary` in approach-viz-core.
-pub(super) fn build_echo_top_wire(
-    scan: &ScanSnapshot,
-    window: &QueryWindow,
-    cells: &[EchoTopCellRecord],
-) -> Vec<u8> {
-    let cell_count = cells.len() as u32;
-    let body_size =
-        ECHO_TOP_WIRE_HEADER_BYTES + cells.len() * ECHO_TOP_WIRE_CELL_BYTES;
-    let mut body = vec![0_u8; ECHO_TOP_WIRE_HEADER_BYTES];
-    body.reserve(body_size - ECHO_TOP_WIRE_HEADER_BYTES);
-
-    // Header
-    body[0..4].copy_from_slice(&ECHO_TOP_WIRE_MAGIC);
-    body[4..6].copy_from_slice(&ECHO_TOP_WIRE_VERSION.to_le_bytes());
-    body[6..8].copy_from_slice(&(ECHO_TOP_WIRE_HEADER_BYTES as u16).to_le_bytes());
-    body[8..12].copy_from_slice(&cell_count.to_le_bytes());
-    body[12..16].copy_from_slice(&(scan.echo_tops.len() as u32).to_le_bytes());
-    body[16..18].copy_from_slice(&window.footprint_x_milli.to_le_bytes());
-    body[18..20].copy_from_slice(&window.footprint_y_milli.to_le_bytes());
-    body[20..28].copy_from_slice(&scan.generated_at_ms.to_le_bytes());
-    body[28..36].copy_from_slice(&scan.scan_time_ms.to_le_bytes());
-    body[36..38].copy_from_slice(&scan.echo_top_debug.max_top18_feet.unwrap_or(0).to_le_bytes());
-    body[38..40].copy_from_slice(&scan.echo_top_debug.max_top30_feet.unwrap_or(0).to_le_bytes());
-    body[40..42].copy_from_slice(&scan.echo_top_debug.max_top50_feet.unwrap_or(0).to_le_bytes());
-    body[42..44].copy_from_slice(&scan.echo_top_debug.max_top60_feet.unwrap_or(0).to_le_bytes());
-    // bytes 44..64 are reserved (already zero)
-
-    // Cell records
-    for cell in cells {
-        body.extend_from_slice(&cell.x_nm.to_le_bytes());
-        body.extend_from_slice(&cell.z_nm.to_le_bytes());
-        body.extend_from_slice(&cell.top18_feet.to_le_bytes());
-        body.extend_from_slice(&cell.top30_feet.to_le_bytes());
-        body.extend_from_slice(&cell.top50_feet.to_le_bytes());
-        body.extend_from_slice(&cell.top60_feet.to_le_bytes());
-    }
-
-    body
 }
 
 fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
@@ -697,6 +536,7 @@ mod tests {
     use super::*;
     use crate::constants::DEFAULT_MIN_DBZ;
     use crate::types::{EchoTopDebugMetadata, GridDef, LevelBounds, PhaseDebugMetadata};
+    use crate::weather::projection::build_query_window;
 
     fn sample_scan_for_projection() -> ScanSnapshot {
         ScanSnapshot {

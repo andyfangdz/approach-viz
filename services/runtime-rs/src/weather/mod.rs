@@ -1,4 +1,16 @@
-mod wire;
+mod discovery;
+mod encoding;
+mod grib;
+mod ingest;
+mod phase;
+mod processor;
+mod projection;
+mod sources;
+mod storage;
+
+// Re-exports for main.rs
+pub use self::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
+pub use self::storage::load_latest_snapshot;
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -7,7 +19,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use tracing::{field, instrument, warn};
 
-use self::wire::{build_echo_top_cells, build_echo_top_wire, build_query_window, build_volume_wire};
+use self::encoding::{build_echo_top_cells, build_echo_top_wire, build_volume_wire};
+use self::projection::build_query_window;
 use crate::constants::{
     DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, ECHO_TOP_BINARY_CONTENT_TYPE, MAX_ALLOWED_DBZ,
     MAX_ALLOWED_RANGE_NM, MIN_ALLOWED_DBZ, MIN_ALLOWED_RANGE_NM,

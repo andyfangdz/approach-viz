@@ -6,8 +6,8 @@ use tracing::warn;
 use crate::constants::{
     AUX_TIMESTAMP_LOOKBACK_DAYS, MAX_BASE_DAY_LOOKBACK, MRMS_BUCKET_URL, MRMS_CONUS_PREFIX,
 };
-use crate::discovery::extract_timestamp_from_key;
-use crate::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
+use super::discovery::extract_timestamp_from_key;
+use super::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
 use crate::http_client::{fetch_bytes, fetch_text};
 use crate::types::{AppState, ParsedAuxField, ParsedReflectivityField};
 use crate::utils::parse_timestamp_utc;
