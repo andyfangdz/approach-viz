@@ -60,5 +60,3 @@ jobs:
 
       - name: Cargo test
         run: cargo test --workspace
-
-
