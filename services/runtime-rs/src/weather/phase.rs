@@ -11,10 +11,10 @@ use crate::constants::{
     THERMO_NEAR_FREEZING_FEET, THERMO_STRONG_COLD_WET_BULB_C, THERMO_STRONG_WARM_WET_BULB_C,
 };
 #[derive(Clone, Copy, Debug)]
-pub(super) struct PhaseScores {
-    pub(super) rain: f32,
-    pub(super) mixed: f32,
-    pub(super) snow: f32,
+pub struct PhaseScores {
+    pub rain: f32,
+    pub mixed: f32,
+    pub snow: f32,
 }
 
 impl PhaseScores {
@@ -32,20 +32,20 @@ impl PhaseScores {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct ThermoPhaseEvidence {
-    pub(super) scores: PhaseScores,
-    pub(super) phase: u8,
-    pub(super) confidence: f32,
-    pub(super) signal_count: u8,
-    pub(super) near_transition: bool,
-    pub(super) precip_flag_phase: Option<u8>,
-    pub(super) rqi: Option<f32>,
+pub struct ThermoPhaseEvidence {
+    pub scores: PhaseScores,
+    pub phase: u8,
+    pub confidence: f32,
+    pub signal_count: u8,
+    pub near_transition: bool,
+    pub precip_flag_phase: Option<u8>,
+    pub rqi: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct DualPolEvidence {
-    pub(super) phase: u8,
-    pub(super) confidence: f32,
+pub struct DualPolEvidence {
+    pub phase: u8,
+    pub confidence: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -160,7 +160,7 @@ pub(super) fn resolve_dual_pol_evidence(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn resolve_thermo_phase(
+pub fn resolve_thermo_phase(
     voxel_mid_feet: f64,
     precip_flag_value: Option<f32>,
     freezing_level_value: Option<f32>,

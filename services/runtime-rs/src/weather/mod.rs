@@ -12,6 +12,9 @@ mod storage;
 pub use self::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
 pub use self::storage::load_latest_snapshot;
 
+// Re-exports for benchmarks
+pub use phase::{resolve_thermo_phase, DualPolEvidence, PhaseScores, ThermoPhaseEvidence};
+
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
