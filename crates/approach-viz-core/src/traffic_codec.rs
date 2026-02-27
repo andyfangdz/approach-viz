@@ -3,6 +3,9 @@
 // Decodes the binary payload produced by `services/runtime-rs/src/traffic/encoding.rs`
 // into a `DecodedTrafficPayload`.
 
+#[cfg(not(target_endian = "little"))]
+compile_error!("Wire format decoders assume little-endian byte order");
+
 use crate::types::{
     DecodedTrafficAircraft, DecodedTrafficHistoryGroup, DecodedTrafficHistoryPoint,
     DecodedTrafficPayload, TRAFFIC_WIRE_HEADER_BYTES, TRAFFIC_WIRE_MAGIC, TRAFFIC_WIRE_VERSION,

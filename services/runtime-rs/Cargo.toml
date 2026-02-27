@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 approach-viz-core = { path = "../../crates/approach-viz-core" }
 anyhow = "1.0"
+bytemuck = { version = "1", features = ["derive"] }
 aws-config = "1.8"
 aws-sdk-sqs = "1.89"
 axum = "0.8"

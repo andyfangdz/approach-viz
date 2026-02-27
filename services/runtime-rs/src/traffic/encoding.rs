@@ -113,42 +113,20 @@ fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u
         );
     }
 
-    // Write SoA aircraft section: 38 bytes per aircraft
+    // Write SoA aircraft section: 38 bytes per aircraft (bytemuck zero-copy on LE platforms)
     let ac_soa_bytes = ac_count * 38;
     let mut aircraft_records = Vec::<u8>::with_capacity(ac_soa_bytes);
-    for &v in &ac_hex_offsets {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_hex_lengths {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_flight_offsets {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_flight_lengths {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_flags {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_lats {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_lons {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_altitudes {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_speeds {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_tracks {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &ac_last_seen {
-        aircraft_records.extend_from_slice(&v.to_le_bytes());
-    }
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_hex_offsets));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_hex_lengths));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_flight_offsets));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_flight_lengths));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_flags));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_lats));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_lons));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_altitudes));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_speeds));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_tracks));
+    aircraft_records.extend_from_slice(bytemuck::cast_slice(&ac_last_seen));
 
     // --- History groups SoA ---
     let mut history_entries = payload.history_by_hex.iter().collect::<Vec<_>>();
@@ -199,38 +177,22 @@ fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u
         }
     }
 
-    // Write SoA history group section: 14 bytes per group
+    // Write SoA history group section: 14 bytes per group (bytemuck zero-copy on LE platforms)
     let hg_soa_bytes = hg_count * 14;
     let mut history_group_records = Vec::<u8>::with_capacity(hg_soa_bytes);
-    for &v in &hg_hex_offsets {
-        history_group_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &hg_hex_lengths {
-        history_group_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &hg_point_starts {
-        history_group_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &hg_point_counts {
-        history_group_records.extend_from_slice(&v.to_le_bytes());
-    }
+    history_group_records.extend_from_slice(bytemuck::cast_slice(&hg_hex_offsets));
+    history_group_records.extend_from_slice(bytemuck::cast_slice(&hg_hex_lengths));
+    history_group_records.extend_from_slice(bytemuck::cast_slice(&hg_point_starts));
+    history_group_records.extend_from_slice(bytemuck::cast_slice(&hg_point_counts));
 
-    // Write SoA history point section: 20 bytes per point
+    // Write SoA history point section: 20 bytes per point (bytemuck zero-copy on LE platforms)
     let hp_count = history_point_count as usize;
     let hp_soa_bytes = hp_count * 20;
     let mut history_point_records = Vec::<u8>::with_capacity(hp_soa_bytes);
-    for &v in &hp_lats {
-        history_point_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &hp_lons {
-        history_point_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &hp_altitudes {
-        history_point_records.extend_from_slice(&v.to_le_bytes());
-    }
-    for &v in &hp_timestamps {
-        history_point_records.extend_from_slice(&v.to_le_bytes());
-    }
+    history_point_records.extend_from_slice(bytemuck::cast_slice(&hp_lats));
+    history_point_records.extend_from_slice(bytemuck::cast_slice(&hp_lons));
+    history_point_records.extend_from_slice(bytemuck::cast_slice(&hp_altitudes));
+    history_point_records.extend_from_slice(bytemuck::cast_slice(&hp_timestamps));
 
     // --- Compute section offsets ---
     let aircraft_offset = usize::from(TRAFFIC_BINARY_HEADER_BYTES);

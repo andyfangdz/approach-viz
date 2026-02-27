@@ -87,18 +87,29 @@ pub fn compute_phase_scores_branchless(
     let chunks = n / 4;
     let remainder = n % 4;
 
+    // Cast each input slice to &[[f32; 4]] for safe SIMD loads (bytemuck zero-copy)
+    let pf_chunks: &[[f32; 4]] = bytemuck::cast_slice(&precip_flag[..chunks * 4]);
+    let fl_chunks: &[[f32; 4]] = bytemuck::cast_slice(&freezing_level[..chunks * 4]);
+    let wb_chunks: &[[f32; 4]] = bytemuck::cast_slice(&wet_bulb[..chunks * 4]);
+    let st_chunks: &[[f32; 4]] = bytemuck::cast_slice(&surface_temp[..chunks * 4]);
+    let bbt_chunks: &[[f32; 4]] = bytemuck::cast_slice(&bright_band_top[..chunks * 4]);
+    let bbb_chunks: &[[f32; 4]] = bytemuck::cast_slice(&bright_band_bottom[..chunks * 4]);
+    let rqi_chunks: &[[f32; 4]] = bytemuck::cast_slice(&rqi[..chunks * 4]);
+    let zdr_chunks: &[[f32; 4]] = bytemuck::cast_slice(&zdr[..chunks * 4]);
+    let rhohv_chunks: &[[f32; 4]] = bytemuck::cast_slice(&rhohv[..chunks * 4]);
+
     // ── SIMD main loop: 4 voxels per iteration ─────────────────────────
     for chunk in 0..chunks {
         let base = chunk * 4;
 
-        // Load 4 voxels for each input field
-        let pf4 = f32x4::from(unsafe { *(precip_flag.as_ptr().add(base) as *const [f32; 4]) });
-        let fl4 = f32x4::from(unsafe { *(freezing_level.as_ptr().add(base) as *const [f32; 4]) });
-        let wb4 = f32x4::from(unsafe { *(wet_bulb.as_ptr().add(base) as *const [f32; 4]) });
-        let st4 = f32x4::from(unsafe { *(surface_temp.as_ptr().add(base) as *const [f32; 4]) });
-        let bbt4 = f32x4::from(unsafe { *(bright_band_top.as_ptr().add(base) as *const [f32; 4]) });
-        let bbb4 = f32x4::from(unsafe { *(bright_band_bottom.as_ptr().add(base) as *const [f32; 4]) });
-        let rqi4 = f32x4::from(unsafe { *(rqi.as_ptr().add(base) as *const [f32; 4]) });
+        // Load 4 voxels for each input field (safe bytemuck zero-copy)
+        let pf4 = f32x4::from(pf_chunks[chunk]);
+        let fl4 = f32x4::from(fl_chunks[chunk]);
+        let wb4 = f32x4::from(wb_chunks[chunk]);
+        let st4 = f32x4::from(st_chunks[chunk]);
+        let bbt4 = f32x4::from(bbt_chunks[chunk]);
+        let bbb4 = f32x4::from(bbb_chunks[chunk]);
+        let rqi4 = f32x4::from(rqi_chunks[chunk]);
 
         // Initialize scores
         let mut rain4 = f32x4::splat(1.0);
@@ -303,8 +314,8 @@ pub fn compute_phase_scores_branchless(
 
         // Precip flag phase per lane (for scalar stages)
         let pf_arr = pf4.to_array();
-        let zdr_arr_raw: [f32; 4] = unsafe { *(zdr.as_ptr().add(base) as *const [f32; 4]) };
-        let rhohv_arr_raw: [f32; 4] = unsafe { *(rhohv.as_ptr().add(base) as *const [f32; 4]) };
+        let zdr_arr_raw: [f32; 4] = zdr_chunks[chunk];
+        let rhohv_arr_raw: [f32; 4] = rhohv_chunks[chunk];
 
         for lane in 0..4 {
             let idx = base + lane;

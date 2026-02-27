@@ -388,17 +388,17 @@ fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> 
         brick_count = brick_count.saturating_add(1);
     }
 
-    // Write SoA arrays contiguously
-    for &v in &soa_x { body.extend_from_slice(&v.to_le_bytes()); }
-    for &v in &soa_z { body.extend_from_slice(&v.to_le_bytes()); }
-    for &v in &soa_bottom { body.extend_from_slice(&v.to_le_bytes()); }
-    for &v in &soa_top { body.extend_from_slice(&v.to_le_bytes()); }
-    for &v in &soa_dbz { body.extend_from_slice(&v.to_le_bytes()); }
+    // Write SoA arrays contiguously (bytemuck zero-copy on LE platforms)
+    body.extend_from_slice(bytemuck::cast_slice(&soa_x));
+    body.extend_from_slice(bytemuck::cast_slice(&soa_z));
+    body.extend_from_slice(bytemuck::cast_slice(&soa_bottom));
+    body.extend_from_slice(bytemuck::cast_slice(&soa_top));
+    body.extend_from_slice(bytemuck::cast_slice(&soa_dbz));
     body.extend_from_slice(&soa_phase);
     body.extend_from_slice(&soa_surface_phase);
-    for &v in &soa_span_x { body.extend_from_slice(&v.to_le_bytes()); }
-    for &v in &soa_span_y { body.extend_from_slice(&v.to_le_bytes()); }
-    for &v in &soa_span_z { body.extend_from_slice(&v.to_le_bytes()); }
+    body.extend_from_slice(bytemuck::cast_slice(&soa_span_x));
+    body.extend_from_slice(bytemuck::cast_slice(&soa_span_y));
+    body.extend_from_slice(bytemuck::cast_slice(&soa_span_z));
 
     body[8..12].copy_from_slice(&source_voxel_count.to_le_bytes());
     body[12..16].copy_from_slice(&brick_count.to_le_bytes());

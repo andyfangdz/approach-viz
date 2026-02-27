@@ -3,6 +3,9 @@
 // Decodes the binary payload produced by `services/runtime-rs/src/api/wire.rs`
 // into a `DecodedMrmsVolume` (SoA layout).
 
+#[cfg(not(target_endian = "little"))]
+compile_error!("Wire format decoders assume little-endian byte order");
+
 use crate::types::{
     DecodedMrmsVolume, MRMS_WIRE_HEADER_BYTES, MRMS_WIRE_MAGIC,
     MRMS_WIRE_VERSION,

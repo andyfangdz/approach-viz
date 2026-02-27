@@ -78,6 +78,7 @@ dependencies = [
  "aws-sdk-sqs",
  "axum 0.8.8",
  "bincode",
+ "bytemuck",
  "chrono",
  "criterion",
  "flate2",

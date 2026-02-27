@@ -3,6 +3,9 @@
 // Decodes the binary payload produced by `services/runtime-rs/src/api/wire.rs`
 // into a `DecodedEchoTop` (SoA layout).
 
+#[cfg(not(target_endian = "little"))]
+compile_error!("Wire format decoders assume little-endian byte order");
+
 use crate::types::{
     DecodedEchoTop, ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
     ECHO_TOP_WIRE_VERSION,
