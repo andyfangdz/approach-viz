@@ -31,6 +31,22 @@ use crate::types::{
 };
 use crate::utils::{parse_timestamp_utc, round_u16, to_lon360};
 
+/// Pass 1: Scan dbz_tenths and collect indices of voxels at or above threshold.
+///
+/// Designed for auto-vectorization: single contiguous array, simple comparison,
+/// no branches in the hot path. LLVM should vectorize the comparison to 8×i16
+/// on NEON (aarch64) or 16×i16 on AVX2 (x86_64).
+#[inline(never)] // Preserve as named function for LLVM remarks + asm inspection
+pub(crate) fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> Vec<u32> {
+    let mut valid = Vec::with_capacity(dbz_tenths.len() / 3);
+    for (i, &dbz) in dbz_tenths.iter().enumerate() {
+        if dbz >= threshold {
+            valid.push(i as u32);
+        }
+    }
+    valid
+}
+
 pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanSnapshot>> {
     let date_part = timestamp
         .split('-')
@@ -1055,5 +1071,38 @@ fn bool_label(value: bool) -> &'static str {
         "yes"
     } else {
         "no"
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    #[test]
+    fn filter_voxels_by_threshold_selects_above_threshold() {
+        let dbz = vec![10_i16, 60, -50, 50, 100, 49, 51];
+        let threshold = 50_i16;
+        let result = filter_voxels_by_threshold(&dbz, threshold);
+        assert_eq!(result, vec![1_u32, 3, 4, 6]);
+    }
+
+    #[test]
+    fn filter_voxels_by_threshold_empty_input() {
+        let result = filter_voxels_by_threshold(&[], 50);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn filter_voxels_by_threshold_all_below() {
+        let dbz = vec![10_i16, 20, 30, 40, 49];
+        let result = filter_voxels_by_threshold(&dbz, 50);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn filter_voxels_by_threshold_all_above() {
+        let dbz = vec![50_i16, 60, 70, 80];
+        let result = filter_voxels_by_threshold(&dbz, 50);
+        assert_eq!(result, vec![0_u32, 1, 2, 3]);
     }
 }
