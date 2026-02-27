@@ -7,7 +7,7 @@ use super::EchoTopCellRecord;
 use crate::constants::{
     ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
     ECHO_TOP_WIRE_VERSION, WIRE_DBZ_QUANT_STEP_TENTHS, WIRE_HEADER_BYTES, WIRE_MAGIC,
-    WIRE_MAX_SPAN_HIGH_DBZ, WIRE_MAX_SPAN_LOW_DBZ, WIRE_MAX_VERTICAL_SPAN, WIRE_RECORD_BYTES,
+    WIRE_MAX_SPAN_HIGH_DBZ, WIRE_MAX_SPAN_LOW_DBZ, WIRE_MAX_VERTICAL_SPAN,
     WIRE_VERSION,
 };
 use crate::types::ScanSnapshot;
@@ -227,7 +227,7 @@ fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> 
         scan,
         window,
         WIRE_VERSION,
-        WIRE_RECORD_BYTES as u16,
+        0,  // record_bytes: not used in SoA layout
         WIRE_DBZ_QUANT_STEP_TENTHS as u16,
     );
 
@@ -341,6 +341,18 @@ fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> 
         active = next_active;
     }
 
+    // Collect into SoA vectors
+    let mut soa_x: Vec<i16> = Vec::new();
+    let mut soa_z: Vec<i16> = Vec::new();
+    let mut soa_bottom: Vec<u16> = Vec::new();
+    let mut soa_top: Vec<u16> = Vec::new();
+    let mut soa_dbz: Vec<i16> = Vec::new();
+    let mut soa_phase: Vec<u8> = Vec::new();
+    let mut soa_surface_phase: Vec<u8> = Vec::new();
+    let mut soa_span_x: Vec<u16> = Vec::new();
+    let mut soa_span_y: Vec<u16> = Vec::new();
+    let mut soa_span_z: Vec<u16> = Vec::new();
+
     let mut brick_count: u32 = 0;
     for brick in merged_bricks {
         let level_start_idx = brick.level_start as usize;
@@ -363,20 +375,30 @@ fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> 
         let span_y = (brick.row_end - brick.row_start + 1).min(u16::MAX as u32) as u16;
         let span_z = (level_end_idx - level_start_idx + 1).min(u16::MAX as usize) as u16;
 
-        body.extend_from_slice(&round_i16(x_nm * 100.0).to_le_bytes());
-        body.extend_from_slice(&round_i16(z_nm * 100.0).to_le_bytes());
-        body.extend_from_slice(&level_start_bounds.bottom_feet.to_le_bytes());
-        body.extend_from_slice(&level_end_bounds.top_feet.to_le_bytes());
-        body.extend_from_slice(&brick.key.dbz_tenths.to_le_bytes());
-        body.push(brick.key.phase);
-        body.push(brick.level_start);
-        body.extend_from_slice(&span_x.to_le_bytes());
-        body.extend_from_slice(&span_y.to_le_bytes());
-        body.extend_from_slice(&span_z.to_le_bytes());
-        body.push(brick.surface_phase); // offset 18: surface_phase
-        body.push(0); // offset 19: reserved
+        soa_x.push(round_i16(x_nm * 100.0));
+        soa_z.push(round_i16(z_nm * 100.0));
+        soa_bottom.push(level_start_bounds.bottom_feet);
+        soa_top.push(level_end_bounds.top_feet);
+        soa_dbz.push(brick.key.dbz_tenths);
+        soa_phase.push(brick.key.phase);
+        soa_surface_phase.push(brick.surface_phase);
+        soa_span_x.push(span_x);
+        soa_span_y.push(span_y);
+        soa_span_z.push(span_z);
         brick_count = brick_count.saturating_add(1);
     }
+
+    // Write SoA arrays contiguously
+    for &v in &soa_x { body.extend_from_slice(&v.to_le_bytes()); }
+    for &v in &soa_z { body.extend_from_slice(&v.to_le_bytes()); }
+    for &v in &soa_bottom { body.extend_from_slice(&v.to_le_bytes()); }
+    for &v in &soa_top { body.extend_from_slice(&v.to_le_bytes()); }
+    for &v in &soa_dbz { body.extend_from_slice(&v.to_le_bytes()); }
+    body.extend_from_slice(&soa_phase);
+    body.extend_from_slice(&soa_surface_phase);
+    for &v in &soa_span_x { body.extend_from_slice(&v.to_le_bytes()); }
+    for &v in &soa_span_y { body.extend_from_slice(&v.to_le_bytes()); }
+    for &v in &soa_span_z { body.extend_from_slice(&v.to_le_bytes()); }
 
     body[8..12].copy_from_slice(&source_voxel_count.to_le_bytes());
     body[12..16].copy_from_slice(&brick_count.to_le_bytes());

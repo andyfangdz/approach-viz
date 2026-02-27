@@ -4,7 +4,7 @@
 // into a `DecodedMrmsVolume` (SoA layout).
 
 use crate::types::{
-    DecodedMrmsVolume, MRMS_WIRE_HEADER_BYTES, MRMS_WIRE_MAGIC, MRMS_WIRE_RECORD_BYTES,
+    DecodedMrmsVolume, MRMS_WIRE_HEADER_BYTES, MRMS_WIRE_MAGIC,
     MRMS_WIRE_VERSION,
 };
 use crate::wire_helpers::{read_i16_le, read_i64_le, read_u16_le, read_u32_le};
@@ -95,22 +95,23 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
     // offset 8..12 = source voxel count (unused in decode)
     let voxel_count = read_u32_le(data, 12);
     let layer_count = read_u16_le(data, 16);
-    let record_bytes_from_header = read_u16_le(data, 18) as usize;
+    // offset 18..20 = record_bytes (0 in v4 SoA layout, ignored)
     let generated_at_ms = read_i64_le(data, 20);
     let scan_time_ms = read_i64_le(data, 28);
     let footprint_x_thousandths = read_u16_le(data, 36);
     let footprint_y_thousandths = read_u16_le(data, 38);
 
-    let record_bytes = if record_bytes_from_header > 0 {
-        record_bytes_from_header
-    } else {
-        MRMS_WIRE_RECORD_BYTES
-    };
-
-    // --- Compute offsets and validate size ---
+    // --- Compute SoA offsets and validate size ---
+    let n = voxel_count as usize;
     let layer_counts_offset = header_bytes;
     let records_offset = layer_counts_offset + (layer_count as usize) * 4;
-    let needed_bytes = records_offset + (voxel_count as usize) * record_bytes;
+
+    // SoA layout: i16[n] x, i16[n] z, u16[n] bottom, u16[n] top, i16[n] dbz,
+    //             u8[n] phase, u8[n] surface_phase,
+    //             u16[n] span_x, u16[n] span_y, u16[n] span_z
+    // Per-brick: 2+2+2+2+2+1+1+2+2+2 = 18 bytes
+    let soa_total_bytes = n * 18;
+    let needed_bytes = records_offset + soa_total_bytes;
 
     if data.len() < records_offset {
         return Err(MrmsDecodeError::TooShort {
@@ -120,15 +121,13 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
     }
 
     let available_record_bytes = data.len() - records_offset;
-    if (voxel_count as usize) * record_bytes > available_record_bytes {
+    if soa_total_bytes > available_record_bytes {
         return Err(MrmsDecodeError::VoxelOverflow {
             claimed: voxel_count,
             available: available_record_bytes,
         });
     }
 
-    // This is technically redundant after the overflow check but keeps
-    // the error messages consistent with the TS decoder.
     if data.len() < needed_bytes {
         return Err(MrmsDecodeError::TooShort {
             needed: needed_bytes,
@@ -142,8 +141,21 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
         layer_voxel_counts.push(read_u32_le(data, layer_counts_offset + i * 4));
     }
 
+    // --- SoA field offsets ---
+    let off_x = records_offset;
+    let off_z = off_x + n * 2;
+    let off_bottom = off_z + n * 2;
+    let off_top = off_bottom + n * 2;
+    let off_dbz = off_top + n * 2;
+    let off_phase = off_dbz + n * 2;
+    let off_surface = off_phase + n;
+    let off_sx = off_surface + n;
+    let off_sy = off_sx + n * 2;
+    let off_sz = off_sy + n * 2;
+    // total_needed = off_sz + n * 2 == needed_bytes (already validated)
+    debug_assert_eq!(off_sz + n * 2, needed_bytes);
+
     // --- Voxel records (SoA) ---
-    let n = voxel_count as usize;
     let mut x_nm = Vec::with_capacity(n);
     let mut z_nm = Vec::with_capacity(n);
     let mut bottom_feet = Vec::with_capacity(n);
@@ -158,32 +170,35 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
     let footprint_y_nm = footprint_y_thousandths as f32 / 1000.0;
 
     for i in 0..n {
-        let offset = records_offset + i * record_bytes;
-
-        // x, z: i16 LE scaled /100 -> NM
-        x_nm.push(read_i16_le(data, offset) as f32 / 100.0);
-        z_nm.push(read_i16_le(data, offset + 2) as f32 / 100.0);
-
-        // bottom/top feet: u16 LE direct
-        bottom_feet.push(read_u16_le(data, offset + 4));
-        top_feet.push(read_u16_le(data, offset + 6));
-
-        // dBZ tenths: i16 LE direct
-        dbz_tenths.push(read_i16_le(data, offset + 8));
-
-        // Phase code
-        let p_code = data[offset + 10];
-        phase.push(p_code);
-
-        // Span X, Y
-        let span_x = read_u16_le(data, offset + 12).max(1);
-        let span_y = read_u16_le(data, offset + 14).max(1);
-        footprint_x_span.push(span_x);
-        footprint_y_span.push(span_y);
-
-        // Surface phase: always at offset 18
-        surface_phase.push(data[offset + 18]);
+        x_nm.push(read_i16_le(data, off_x + i * 2) as f32 / 100.0);
     }
+    for i in 0..n {
+        z_nm.push(read_i16_le(data, off_z + i * 2) as f32 / 100.0);
+    }
+    for i in 0..n {
+        bottom_feet.push(read_u16_le(data, off_bottom + i * 2));
+    }
+    for i in 0..n {
+        top_feet.push(read_u16_le(data, off_top + i * 2));
+    }
+    for i in 0..n {
+        dbz_tenths.push(read_i16_le(data, off_dbz + i * 2));
+    }
+    for i in 0..n {
+        phase.push(data[off_phase + i]);
+    }
+    for i in 0..n {
+        surface_phase.push(data[off_surface + i]);
+    }
+    for i in 0..n {
+        footprint_x_span.push(read_u16_le(data, off_sx + i * 2).max(1));
+    }
+    for i in 0..n {
+        footprint_y_span.push(read_u16_le(data, off_sy + i * 2).max(1));
+    }
+    // Note: span_z is written by the encoder but not consumed by the decoder's
+    // output struct (DecodedMrmsVolume has no span_z field). The bytes are
+    // validated by the size check above but intentionally skipped here.
 
     Ok(DecodedMrmsVolume {
         version,
@@ -215,8 +230,35 @@ mod tests {
     use super::*;
     use crate::types::{PHASE_RAIN, PHASE_SNOW};
 
-    /// Build a minimal valid AVMR header + layer counts section.
-    /// Caller appends voxel records.
+    struct TestBrick {
+        x_hundredths: i16,
+        z_hundredths: i16,
+        bottom_feet: u16,
+        top_feet: u16,
+        dbz_tenths: i16,
+        phase: u8,
+        surface_phase: u8,
+        span_x: u16,
+        span_y: u16,
+        span_z: u16,
+    }
+
+    /// Append SoA-encoded bricks to a buffer (matches v4 wire layout).
+    fn append_soa_bricks(buf: &mut Vec<u8>, bricks: &[TestBrick]) {
+        for b in bricks { buf.extend_from_slice(&b.x_hundredths.to_le_bytes()); }
+        for b in bricks { buf.extend_from_slice(&b.z_hundredths.to_le_bytes()); }
+        for b in bricks { buf.extend_from_slice(&b.bottom_feet.to_le_bytes()); }
+        for b in bricks { buf.extend_from_slice(&b.top_feet.to_le_bytes()); }
+        for b in bricks { buf.extend_from_slice(&b.dbz_tenths.to_le_bytes()); }
+        for b in bricks { buf.push(b.phase); }
+        for b in bricks { buf.push(b.surface_phase); }
+        for b in bricks { buf.extend_from_slice(&b.span_x.to_le_bytes()); }
+        for b in bricks { buf.extend_from_slice(&b.span_y.to_le_bytes()); }
+        for b in bricks { buf.extend_from_slice(&b.span_z.to_le_bytes()); }
+    }
+
+    /// Build a minimal valid AVMR v4 header + layer counts section.
+    /// Caller appends SoA brick data via `append_soa_bricks`.
     fn build_test_header(
         version: u16,
         voxel_count: u32,
@@ -228,7 +270,7 @@ mod tests {
         layer_voxel_counts: &[u32],
     ) -> Vec<u8> {
         let header_bytes = MRMS_WIRE_HEADER_BYTES as u16;
-        let record_bytes = MRMS_WIRE_RECORD_BYTES as u16;
+        let record_bytes: u16 = 0; // v4 SoA layout
         let mut buf = vec![0u8; MRMS_WIRE_HEADER_BYTES + layer_count as usize * 4];
 
         // Magic
@@ -243,7 +285,7 @@ mod tests {
         buf[12..16].copy_from_slice(&voxel_count.to_le_bytes());
         // Layer count
         buf[16..18].copy_from_slice(&layer_count.to_le_bytes());
-        // Record bytes
+        // Record bytes (0 for v4 SoA)
         buf[18..20].copy_from_slice(&record_bytes.to_le_bytes());
         // Generated at ms
         buf[20..28].copy_from_slice(&generated_at_ms.to_le_bytes());
@@ -263,36 +305,6 @@ mod tests {
         }
 
         buf
-    }
-
-    /// Build a single 20-byte voxel record.
-    fn build_voxel_record(
-        x_hundredths: i16,
-        z_hundredths: i16,
-        bottom_feet: u16,
-        top_feet: u16,
-        dbz_tenths: i16,
-        phase: u8,
-        level_start: u8,
-        span_x: u16,
-        span_y: u16,
-        span_z: u16,
-        surface_phase: u8,
-    ) -> [u8; 20] {
-        let mut rec = [0u8; 20];
-        rec[0..2].copy_from_slice(&x_hundredths.to_le_bytes());
-        rec[2..4].copy_from_slice(&z_hundredths.to_le_bytes());
-        rec[4..6].copy_from_slice(&bottom_feet.to_le_bytes());
-        rec[6..8].copy_from_slice(&top_feet.to_le_bytes());
-        rec[8..10].copy_from_slice(&dbz_tenths.to_le_bytes());
-        rec[10] = phase;
-        rec[11] = level_start;
-        rec[12..14].copy_from_slice(&span_x.to_le_bytes());
-        rec[14..16].copy_from_slice(&span_y.to_le_bytes());
-        rec[16..18].copy_from_slice(&span_z.to_le_bytes());
-        rec[18] = surface_phase;
-        rec[19] = 0; // reserved
-        rec
     }
 
     #[test]
@@ -324,12 +336,12 @@ mod tests {
         let err = decode_mrms_binary(&data).unwrap_err();
         assert_eq!(err, MrmsDecodeError::UnsupportedVersion(99));
 
-        // V2 is no longer supported
-        let mut data_v2 = vec![0u8; 64];
-        data_v2[0..4].copy_from_slice(&MRMS_WIRE_MAGIC);
-        data_v2[4..6].copy_from_slice(&2u16.to_le_bytes());
-        let err_v2 = decode_mrms_binary(&data_v2).unwrap_err();
-        assert_eq!(err_v2, MrmsDecodeError::UnsupportedVersion(2));
+        // V3 is no longer supported
+        let mut data_v3 = vec![0u8; 64];
+        data_v3[0..4].copy_from_slice(&MRMS_WIRE_MAGIC);
+        data_v3[4..6].copy_from_slice(&3u16.to_le_bytes());
+        let err_v3 = decode_mrms_binary(&data_v3).unwrap_err();
+        assert_eq!(err_v3, MrmsDecodeError::UnsupportedVersion(3));
     }
 
     #[test]
@@ -366,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_single_voxel_v3() {
+    fn decode_single_voxel_v4() {
         let generated_at: i64 = 1_700_000_000_000;
         let scan_time: i64 = 1_699_999_990_000;
         let footprint_x_thousandths: u16 = 250; // 0.25 NM
@@ -383,21 +395,18 @@ mod tests {
             &[1], // layer voxel counts
         );
 
-        // Build a voxel: x=500 hundredths (5.00 NM), z=-300 hundredths (-3.00 NM)
-        let rec = build_voxel_record(
-            500,    // x_hundredths -> 5.00 NM
-            -300,   // z_hundredths -> -3.00 NM
-            3000,   // bottom_feet
-            5000,   // top_feet
-            350,    // dbz_tenths (35.0 dBZ)
-            PHASE_RAIN,
-            0,      // level_start
-            2,      // span_x
-            3,      // span_y
-            1,      // span_z
-            PHASE_SNOW, // surface_phase (V3: different from phase)
-        );
-        buf.extend_from_slice(&rec);
+        append_soa_bricks(&mut buf, &[TestBrick {
+            x_hundredths: 500,     // -> 5.00 NM
+            z_hundredths: -300,    // -> -3.00 NM
+            bottom_feet: 3000,
+            top_feet: 5000,
+            dbz_tenths: 350,       // 35.0 dBZ
+            phase: PHASE_RAIN,
+            surface_phase: PHASE_SNOW,
+            span_x: 2,
+            span_y: 3,
+            span_z: 1,
+        }]);
 
         let vol = decode_mrms_binary(&buf).unwrap();
 
@@ -423,7 +432,7 @@ mod tests {
         // dBZ tenths exact
         assert_eq!(vol.dbz_tenths[0], 350);
 
-        // Phase codes: V3 has separate surface_phase
+        // Phase codes: separate surface_phase
         assert_eq!(vol.phase[0], PHASE_RAIN);
         assert_eq!(vol.surface_phase[0], PHASE_SNOW);
 
@@ -449,9 +458,19 @@ mod tests {
             &[1000],
         );
 
-        // Append only 1 voxel record (20 bytes) instead of 1000
-        let rec = build_voxel_record(0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0);
-        buf.extend_from_slice(&rec);
+        // Append only 1 brick (18 bytes in SoA) instead of 1000
+        append_soa_bricks(&mut buf, &[TestBrick {
+            x_hundredths: 0,
+            z_hundredths: 0,
+            bottom_feet: 0,
+            top_feet: 0,
+            dbz_tenths: 0,
+            phase: 0,
+            surface_phase: 0,
+            span_x: 1,
+            span_y: 1,
+            span_z: 1,
+        }]);
 
         let err = decode_mrms_binary(&buf).unwrap_err();
         match err {
@@ -459,9 +478,9 @@ mod tests {
                 assert_eq!(claimed, 1000);
                 // Available = buf.len() - records_offset
                 // records_offset = 64 + 1*4 = 68
-                // buf.len() = 68 + 20 = 88
-                // available = 88 - 68 = 20
-                assert_eq!(available, 20);
+                // buf.len() = 68 + 18 = 86
+                // available = 86 - 68 = 18
+                assert_eq!(available, 18);
             }
             other => panic!("Expected VoxelOverflow, got {other:?}"),
         }

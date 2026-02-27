@@ -11,9 +11,9 @@ const DEFAULT_MRMS_MIN_DBZ = 5;
 const DEFAULT_MRMS_MAX_RANGE_NM = 120;
 
 const WIRE_MAGIC = 'AVMR';
-const WIRE_VERSION = 3;
+const WIRE_VERSION = 4;
 const WIRE_HEADER_BYTES = 64;
-const WIRE_RECORD_BYTES = 20;
+const WIRE_SOA_BYTES_PER_BRICK = 18;
 
 function envNumber(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -252,12 +252,12 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
 
   assert.ok(wireVersion === WIRE_VERSION, `Unexpected MRMS wire version: ${wireVersion}`);
   assert.equal(headerBytes, WIRE_HEADER_BYTES, 'Unexpected MRMS wire header length');
-  assert.equal(recordBytes, WIRE_RECORD_BYTES, 'Unexpected MRMS wire record size');
+  assert.equal(recordBytes, 0, 'V4 SoA layout should have record_bytes=0');
   assert.ok(layerCount > 0, 'MRMS payload should include at least one layer');
   // sourceVoxelCount and mergedBrickCount may be 0 when there is no precipitation
   // in the queried area — this is normal, not a failure.
 
-  const expectedBytes = headerBytes + layerCount * 4 + mergedBrickCount * recordBytes;
+  const expectedBytes = headerBytes + layerCount * 4 + mergedBrickCount * WIRE_SOA_BYTES_PER_BRICK;
   assert.equal(
     payload.byteLength,
     expectedBytes,
