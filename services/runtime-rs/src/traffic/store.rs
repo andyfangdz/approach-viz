@@ -340,6 +340,10 @@ fn ingest_snapshot_with_connection(
 
     let retention_cutoff_ms = polled_at_ms - CACHE_RETENTION_MS;
 
+    // Cache the last history partition table name to avoid re-preparing
+    // the statement when consecutive aircraft map to the same bucket.
+    let mut last_history_table = String::new();
+
     for candidate in aircraft {
         let observed_at_ms = candidate
             .last_seen_seconds
@@ -418,23 +422,35 @@ fn ingest_snapshot_with_connection(
             let partition =
                 ensure_partition_for_bucket(&transaction, &mut partition_cache, bucket_start_ms)?;
 
-            let insert_point_sql = format!(
-                "INSERT INTO \"{}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground) VALUES (?, ?, ?, ?, ?, ?)",
-                partition.points_table
-            );
-            transaction
-                .execute(
-                    &insert_point_sql,
-                    params![
-                        candidate.hex,
-                        point_timestamp_ms,
-                        candidate.lat,
-                        candidate.lon,
-                        point_altitude_feet,
-                        if track.is_on_ground { 1_i64 } else { 0_i64 },
-                    ],
-                )
+            // Warm the statement cache when the partition table changes (rare —
+            // almost all aircraft in a single ingest share the same 5-min bucket).
+            if partition.points_table != last_history_table {
+                let sql = format!(
+                    "INSERT INTO \"{}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground) VALUES (?, ?, ?, ?, ?, ?)",
+                    partition.points_table
+                );
+                transaction
+                    .prepare_cached(&sql)
+                    .map_err(|error| error.to_string())?;
+                last_history_table = partition.points_table.clone();
+            }
+            {
+                let mut stmt = transaction
+                    .prepare_cached(&format!(
+                        "INSERT INTO \"{}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground) VALUES (?, ?, ?, ?, ?, ?)",
+                        partition.points_table
+                    ))
+                    .map_err(|error| error.to_string())?;
+                stmt.execute(params![
+                    candidate.hex,
+                    point_timestamp_ms,
+                    candidate.lat,
+                    candidate.lon,
+                    point_altitude_feet,
+                    if track.is_on_ground { 1_i64 } else { 0_i64 },
+                ])
                 .map_err(|error| error.to_string())?;
+            }
 
             track.last_point_ts_ms = Some(point_timestamp_ms);
             track.last_point_lat = Some(candidate.lat);
@@ -443,65 +459,74 @@ fn ingest_snapshot_with_connection(
             track.last_point_is_on_ground = Some(track.is_on_ground);
         }
 
-        transaction
-            .execute(
-                "INSERT INTO traffic_tracks (
-                    hex, flight, is_on_ground, altitude_feet, ground_speed_kt, track_deg,
-                    last_observed_at_ms, last_lat, last_lon,
-                    last_point_ts_ms, last_point_lat, last_point_lon, last_point_altitude_feet, last_point_is_on_ground
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(hex) DO UPDATE SET
-                    flight = excluded.flight,
-                    is_on_ground = excluded.is_on_ground,
-                    altitude_feet = excluded.altitude_feet,
-                    ground_speed_kt = excluded.ground_speed_kt,
-                    track_deg = excluded.track_deg,
-                    last_observed_at_ms = excluded.last_observed_at_ms,
-                    last_lat = excluded.last_lat,
-                    last_lon = excluded.last_lon,
-                    last_point_ts_ms = excluded.last_point_ts_ms,
-                    last_point_lat = excluded.last_point_lat,
-                    last_point_lon = excluded.last_point_lon,
-                    last_point_altitude_feet = excluded.last_point_altitude_feet,
-                    last_point_is_on_ground = excluded.last_point_is_on_ground",
-                params![
-                    candidate.hex,
-                    track.flight,
-                    if track.is_on_ground { 1_i64 } else { 0_i64 },
-                    track.altitude_feet,
-                    track.ground_speed_kt,
-                    track.track_deg,
-                    track.last_observed_at_ms,
-                    track.last_lat,
-                    track.last_lon,
-                    track.last_point_ts_ms,
-                    track.last_point_lat,
-                    track.last_point_lon,
-                    track.last_point_altitude_feet,
-                    track
-                        .last_point_is_on_ground
-                        .map(|value| if value { 1_i64 } else { 0_i64 }),
-                ],
-            )
+        {
+            let mut stmt = transaction
+                .prepare_cached(
+                    "INSERT INTO traffic_tracks (
+                        hex, flight, is_on_ground, altitude_feet, ground_speed_kt, track_deg,
+                        last_observed_at_ms, last_lat, last_lon,
+                        last_point_ts_ms, last_point_lat, last_point_lon, last_point_altitude_feet, last_point_is_on_ground
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(hex) DO UPDATE SET
+                        flight = excluded.flight,
+                        is_on_ground = excluded.is_on_ground,
+                        altitude_feet = excluded.altitude_feet,
+                        ground_speed_kt = excluded.ground_speed_kt,
+                        track_deg = excluded.track_deg,
+                        last_observed_at_ms = excluded.last_observed_at_ms,
+                        last_lat = excluded.last_lat,
+                        last_lon = excluded.last_lon,
+                        last_point_ts_ms = excluded.last_point_ts_ms,
+                        last_point_lat = excluded.last_point_lat,
+                        last_point_lon = excluded.last_point_lon,
+                        last_point_altitude_feet = excluded.last_point_altitude_feet,
+                        last_point_is_on_ground = excluded.last_point_is_on_ground",
+                )
+                .map_err(|error| error.to_string())?;
+            stmt.execute(params![
+                candidate.hex,
+                track.flight,
+                if track.is_on_ground { 1_i64 } else { 0_i64 },
+                track.altitude_feet,
+                track.ground_speed_kt,
+                track.track_deg,
+                track.last_observed_at_ms,
+                track.last_lat,
+                track.last_lon,
+                track.last_point_ts_ms,
+                track.last_point_lat,
+                track.last_point_lon,
+                track.last_point_altitude_feet,
+                track
+                    .last_point_is_on_ground
+                    .map(|value| if value { 1_i64 } else { 0_i64 }),
+            ])
             .map_err(|error| error.to_string())?;
+        }
     }
 
     if run_retention_sweep {
         sweep_expired_partitions(&transaction, retention_cutoff_ms)?;
-        transaction
-            .execute(
-                "DELETE FROM traffic_tracks WHERE last_observed_at_ms < ?",
-                params![retention_cutoff_ms],
-            )
-            .map_err(|error| error.to_string())?;
+        {
+            let mut stmt = transaction
+                .prepare_cached("DELETE FROM traffic_tracks WHERE last_observed_at_ms < ?")
+                .map_err(|error| error.to_string())?;
+            stmt.execute(params![retention_cutoff_ms])
+                .map_err(|error| error.to_string())?;
+        }
     }
 
-    upsert_meta_value(&transaction, META_KEY_SOURCE, &source)?;
-    upsert_meta_value(
-        &transaction,
-        META_KEY_UPDATED_AT_MS,
-        &polled_at_ms.to_string(),
-    )?;
+    {
+        let mut stmt = transaction
+            .prepare_cached(
+                "INSERT INTO traffic_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            )
+            .map_err(|error| error.to_string())?;
+        stmt.execute(params![META_KEY_SOURCE, source])
+            .map_err(|error| error.to_string())?;
+        stmt.execute(params![META_KEY_UPDATED_AT_MS, polled_at_ms.to_string()])
+            .map_err(|error| error.to_string())?;
+    }
 
     transaction.commit().map_err(|error| error.to_string())?;
 
@@ -1135,16 +1160,6 @@ fn bucket_start_ms(timestamp_ms: i64) -> i64 {
         return 0;
     }
     (timestamp_ms / PARTITION_BUCKET_MS) * PARTITION_BUCKET_MS
-}
-
-fn upsert_meta_value(connection: &Connection, key: &str, value: &str) -> Result<(), String> {
-    connection
-        .execute(
-            "INSERT INTO traffic_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 fn read_meta_value(connection: &Connection, key: &str) -> Result<Option<String>, String> {

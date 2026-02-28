@@ -3,6 +3,13 @@ mod encoding;
 pub(crate) mod store;
 pub(crate) mod types;
 
+// Public re-exports for benchmarks
+pub use cache_worker::decode_bincraft_aircraft;
+pub use encoding::encode_traffic_binary_payload;
+pub use types::{
+    distance_nm, TrafficAircraft, TrafficBinaryPayload, TrafficHistoryPoint,
+};
+
 use std::collections::HashMap;
 
 use axum::extract::{Query, State};
@@ -19,7 +26,7 @@ use self::store::query_store;
 use self::types::{
     clamp, clamp_usize, history_discovery_radius_nm, no_store_headers, normalize_lat, normalize_lon,
     parse_boolean_query_param, parse_history_hexes, parse_traffic_response_format, to_finite_number,
-    now_ms, QueryRequest, TrafficBinaryPayload, TrafficErrorPayload, TrafficQuery,
+    now_ms, QueryRequest, TrafficErrorPayload, TrafficQuery,
     TrafficResponseFormat, TrafficSuccessPayload, DEFAULT_HIDE_GROUND_TRAFFIC, DEFAULT_LIMIT,
     DEFAULT_RADIUS_NM, MAX_HISTORY_MINUTES, MAX_LIMIT, MAX_RADIUS_NM, MIN_RADIUS_NM,
 };

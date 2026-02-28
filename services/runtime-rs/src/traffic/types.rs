@@ -38,7 +38,7 @@ pub(crate) enum TrafficResponseFormat {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TrafficAircraft {
+pub struct TrafficAircraft {
     pub hex: String,
     pub flight: Option<String>,
     pub lat: f64,
@@ -52,7 +52,7 @@ pub(crate) struct TrafficAircraft {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TrafficHistoryPoint {
+pub struct TrafficHistoryPoint {
     pub lat: f64,
     pub lon: f64,
     pub altitude_feet: f64,
@@ -78,7 +78,7 @@ pub(crate) struct TrafficErrorPayload {
 }
 
 #[derive(Debug)]
-pub(crate) struct TrafficBinaryPayload {
+pub struct TrafficBinaryPayload {
     pub source: Option<String>,
     pub fetched_at_ms: i64,
     pub aircraft: Vec<TrafficAircraft>,
@@ -158,7 +158,7 @@ pub(crate) fn to_radians(deg: f64) -> f64 {
     deg * std::f64::consts::PI / 180.0
 }
 
-pub(crate) fn distance_nm(lat_a: f64, lon_a: f64, lat_b: f64, lon_b: f64) -> f64 {
+pub fn distance_nm(lat_a: f64, lon_a: f64, lat_b: f64, lon_b: f64) -> f64 {
     let lat_a_rad = to_radians(lat_a);
     let lat_b_rad = to_radians(lat_b);
     let d_lat = lat_b_rad - lat_a_rad;

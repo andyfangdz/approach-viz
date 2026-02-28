@@ -35,7 +35,7 @@ fn align_up(offset: usize, align: usize) -> usize {
     (offset + align - 1) & !(align - 1)
 }
 
-fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u8>, String> {
+pub fn encode_traffic_binary_payload(payload: &TrafficBinaryPayload) -> Result<Vec<u8>, String> {
     let mut strings = Vec::<u8>::new();
     let source_meta = payload
         .source

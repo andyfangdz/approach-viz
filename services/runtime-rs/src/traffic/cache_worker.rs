@@ -224,7 +224,7 @@ async fn fetch_bincraft(
     decode_bincraft_aircraft(&payload)
 }
 
-fn decode_bincraft_aircraft(payload: &[u8]) -> Result<Vec<TrafficAircraft>, String> {
+pub fn decode_bincraft_aircraft(payload: &[u8]) -> Result<Vec<TrafficAircraft>, String> {
     let decoded = zstd::stream::decode_all(Cursor::new(payload))
         .map_err(|error| format!("binCraft zstd decode failed: {error}"))?;
 
