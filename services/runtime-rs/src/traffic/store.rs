@@ -1,29 +1,22 @@
-use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{field, info, info_span, instrument, warn, Instrument, Span};
+use tracing::{info, instrument, warn};
 
+use super::memory_store::{
+    CurrentSnapshot, HistoryPoint, TrackEntry, TrafficMemoryStore, PARTITION_BUCKET_MS,
+};
 use super::types::{
-    build_bounding_box, distance_nm, is_sqlite_locked_error, now_ms, DbTrackState,
-    HistoryTargetCandidate, PartitionInfo, QueryRequest, QueryResult, RingPartitionCache,
-    TrafficAircraft, TrafficHistoryPoint, CACHE_CURRENT_STALE_MS, HISTORY_MAX_POINTS_PER_AIRCRAFT,
+    distance_nm, is_sqlite_locked_error, now_ms, DbTrackState, PartitionInfo, QueryRequest,
+    QueryResult, RingPartitionCache, TrafficAircraft,
 };
 
 const CACHE_RETENTION_MS: i64 = 60 * 60_000;
-const PARTITION_BUCKET_MS: i64 = 5 * 60_000;
 const RING_SLOT_COUNT: i64 = CACHE_RETENTION_MS / PARTITION_BUCKET_MS;
 const WRITE_QUEUE_CAPACITY: usize = 256;
-const READ_QUEUE_CAPACITY: usize = 128;
-const READ_POOL_SIZE: usize = 3;
-const READ_BUSY_TIMEOUT_MS: u64 = 500;
-const READ_QUERY_LOCK_RETRIES: usize = 18;
-const READ_QUERY_LOCK_RETRY_DELAY_MS: u64 = 25;
 const WRITE_QUERY_LOCK_RETRIES: usize = 18;
 const WRITE_QUERY_LOCK_RETRY_DELAY_MS: u64 = 50;
 const WAL_CHECKPOINT_PASSIVE_BYTES: u64 = 8 * 1024 * 1024;
@@ -35,32 +28,21 @@ const META_KEY_UPDATED_AT_MS: &str = "updated_at_ms";
 
 pub(crate) struct TrafficStore {
     writer_tx: mpsc::Sender<WriteCommand>,
-    reader_txs: Vec<mpsc::Sender<ReadCommand>>,
-    next_reader: AtomicUsize,
+    memory: Arc<TrafficMemoryStore>,
 }
 
 impl TrafficStore {
     pub(crate) fn new(db_path: PathBuf) -> Result<Self, String> {
         let bootstrap_connection = open_traffic_db(&db_path)?;
-        reconcile_tracks_rtree(&bootstrap_connection)?;
         reconcile_partition_tables(&bootstrap_connection)?;
+
+        let memory = Arc::new(TrafficMemoryStore::load_from_sqlite(&bootstrap_connection)?);
         drop(bootstrap_connection);
 
         let (writer_tx, writer_rx) = mpsc::channel::<WriteCommand>(WRITE_QUEUE_CAPACITY);
-        spawn_writer_worker(db_path.clone(), writer_rx);
+        spawn_writer_worker(db_path, writer_rx, Arc::clone(&memory));
 
-        let mut reader_txs = Vec::new();
-        for worker_idx in 0..READ_POOL_SIZE {
-            let (reader_tx, reader_rx) = mpsc::channel::<ReadCommand>(READ_QUEUE_CAPACITY);
-            spawn_reader_worker(db_path.clone(), worker_idx, reader_rx);
-            reader_txs.push(reader_tx);
-        }
-
-        Ok(TrafficStore {
-            writer_tx,
-            reader_txs,
-            next_reader: AtomicUsize::new(0),
-        })
+        Ok(TrafficStore { writer_tx, memory })
     }
 
     pub(crate) async fn write_ingest(
@@ -85,25 +67,6 @@ impl TrafficStore {
         response_rx
             .await
             .map_err(|_| "Traffic store writer dropped response".to_string())?
-    }
-
-    pub(crate) async fn read_query(&self, request: QueryRequest) -> Result<QueryResult, String> {
-        let (response_tx, response_rx) = oneshot::channel();
-        let reader_idx =
-            self.next_reader.fetch_add(1, AtomicOrdering::Relaxed) % self.reader_txs.len();
-        let parent_span = Span::current();
-        self.reader_txs[reader_idx]
-            .send(ReadCommand::Query {
-                request,
-                parent_span,
-                response: response_tx,
-            })
-            .await
-            .map_err(|_| "Traffic store reader is unavailable".to_string())?;
-
-        response_rx
-            .await
-            .map_err(|_| "Traffic store reader dropped response".to_string())?
     }
 
     pub(crate) async fn write_wal_maintenance(&self, now_ms: i64) -> Result<(), String> {
@@ -136,15 +99,11 @@ enum WriteCommand {
     },
 }
 
-enum ReadCommand {
-    Query {
-        request: QueryRequest,
-        parent_span: Span,
-        response: oneshot::Sender<Result<QueryResult, String>>,
-    },
-}
-
-fn spawn_writer_worker(db_path: PathBuf, mut receiver: mpsc::Receiver<WriteCommand>) {
+fn spawn_writer_worker(
+    db_path: PathBuf,
+    mut receiver: mpsc::Receiver<WriteCommand>,
+    memory: Arc<TrafficMemoryStore>,
+) {
     tokio::task::spawn_blocking(move || {
         let mut connection = match open_traffic_db(&db_path) {
             Ok(connection) => connection,
@@ -181,8 +140,9 @@ fn spawn_writer_worker(db_path: PathBuf, mut receiver: mpsc::Receiver<WriteComma
                 } => {
                     let mut attempts = 0usize;
                     let result = loop {
-                        let result = ingest_snapshot_with_connection(
+                        let result = ingest_snapshot(
                             &mut connection,
+                            &memory,
                             source.clone(),
                             aircraft.clone(),
                             polled_at_ms,
@@ -216,65 +176,6 @@ fn spawn_writer_worker(db_path: PathBuf, mut receiver: mpsc::Receiver<WriteComma
     });
 }
 
-fn spawn_reader_worker(
-    db_path: PathBuf,
-    worker_idx: usize,
-    mut receiver: mpsc::Receiver<ReadCommand>,
-) {
-    tokio::task::spawn_blocking(move || {
-        let connection = match open_traffic_db(&db_path) {
-            Ok(connection) => connection,
-            Err(error) => {
-                while let Some(command) = receiver.blocking_recv() {
-                    let ReadCommand::Query { response, .. } = command;
-                    let _ = response.send(Err(format!(
-                        "Traffic reader #{worker_idx} failed to open DB {}: {error}",
-                        db_path.display()
-                    )));
-                }
-                return;
-            }
-        };
-        if let Err(error) = connection.busy_timeout(Duration::from_millis(READ_BUSY_TIMEOUT_MS)) {
-            while let Some(command) = receiver.blocking_recv() {
-                let ReadCommand::Query { response, .. } = command;
-                let _ = response.send(Err(format!(
-                    "Traffic reader #{worker_idx} failed to set busy timeout: {error}"
-                )));
-            }
-            return;
-        }
-
-        while let Some(command) = receiver.blocking_recv() {
-            match command {
-                ReadCommand::Query {
-                    request,
-                    parent_span,
-                    response,
-                } => {
-                    let mut attempts = 0usize;
-                    let result = loop {
-                        let result = parent_span.clone().in_scope(|| {
-                            query_store_snapshot_blocking(&connection, request.clone())
-                        });
-                        if let Err(error) = &result {
-                            if is_sqlite_locked_error(error) && attempts < READ_QUERY_LOCK_RETRIES {
-                                attempts += 1;
-                                std::thread::sleep(Duration::from_millis(
-                                    READ_QUERY_LOCK_RETRY_DELAY_MS,
-                                ));
-                                continue;
-                            }
-                        }
-                        break result;
-                    };
-                    let _ = response.send(result);
-                }
-            }
-        }
-    });
-}
-
 #[instrument(
     name = "runtime.traffic.store.query",
     skip(store, request),
@@ -293,10 +194,10 @@ pub(crate) async fn query_store(
     store: &TrafficStore,
     request: QueryRequest,
 ) -> Result<QueryResult, String> {
-    store
-        .read_query(request)
-        .instrument(info_span!("runtime.traffic.store.read_queue"))
+    let memory = Arc::clone(&store.memory);
+    tokio::task::spawn_blocking(move || Ok(memory.query(&request)))
         .await
+        .map_err(|e| format!("Traffic query task panicked: {e}"))?
 }
 
 pub(crate) async fn ingest_to_store(
@@ -311,37 +212,190 @@ pub(crate) async fn ingest_to_store(
         .await
 }
 
-pub(crate) async fn wal_maintenance(
-    store: &TrafficStore,
-    now_ms: i64,
-) -> Result<(), String> {
+pub(crate) async fn wal_maintenance(store: &TrafficStore, now_ms: i64) -> Result<(), String> {
     store.write_wal_maintenance(now_ms).await
 }
 
-// --- SQLite internals ---
+// ---------------------------------------------------------------------------
+// Ingest: update memory first, then persist to SQLite
+// ---------------------------------------------------------------------------
 
-fn ingest_snapshot_with_connection(
+fn ingest_snapshot(
     connection: &mut Connection,
+    memory: &TrafficMemoryStore,
     source: String,
     aircraft: Vec<TrafficAircraft>,
     polled_at_ms: i64,
     run_retention_sweep: bool,
 ) -> Result<(), String> {
+    let retention_cutoff_ms = polled_at_ms - CACHE_RETENTION_MS;
+
+    // ── Build new in-memory snapshot ────────────────────────────────
+    let prev_snapshot = memory.current.load();
+
+    let mut new_tracks = Vec::with_capacity(prev_snapshot.tracks.len());
+    let mut new_by_hex = std::collections::HashMap::with_capacity(prev_snapshot.by_hex.len());
+    let mut history_points: Vec<(String, HistoryPoint)> = Vec::new();
+
+    // Carry forward all non-expired tracks from previous snapshot.
+    for prev_track in &prev_snapshot.tracks {
+        if prev_track.last_observed_at_ms < retention_cutoff_ms {
+            continue;
+        }
+        new_by_hex.insert(prev_track.hex.clone(), new_tracks.len());
+        new_tracks.push(prev_track.clone());
+    }
+
+    // Merge incoming aircraft.
+    for candidate in &aircraft {
+        let observed_at_ms = candidate
+            .last_seen_seconds
+            .map(|seconds| (polled_at_ms as f64 - seconds * 1000.0).round() as i64)
+            .unwrap_or(polled_at_ms)
+            .max(retention_cutoff_ms)
+            .min(polled_at_ms);
+
+        let track = if let Some(&idx) = new_by_hex.get(&candidate.hex) {
+            let track = &mut new_tracks[idx];
+
+            if let Some(flight) = candidate.flight.clone() {
+                track.flight = Some(flight);
+            }
+
+            if observed_at_ms >= track.last_observed_at_ms {
+                track.last_observed_at_ms = observed_at_ms;
+                track.lat = candidate.lat;
+                track.lon = candidate.lon;
+                track.is_on_ground = candidate.is_on_ground;
+                track.altitude_feet = candidate.altitude_feet.or(track.altitude_feet);
+                track.ground_speed_kt = candidate.ground_speed_kt.or(track.ground_speed_kt);
+                track.track_deg = candidate.track_deg.or(track.track_deg);
+            } else {
+                track.altitude_feet = track.altitude_feet.or(candidate.altitude_feet);
+                track.ground_speed_kt = track.ground_speed_kt.or(candidate.ground_speed_kt);
+                track.track_deg = track.track_deg.or(candidate.track_deg);
+            }
+            track
+        } else {
+            let idx = new_tracks.len();
+            new_by_hex.insert(candidate.hex.clone(), idx);
+            new_tracks.push(TrackEntry {
+                hex: candidate.hex.clone(),
+                flight: candidate.flight.clone(),
+                lat: candidate.lat,
+                lon: candidate.lon,
+                is_on_ground: candidate.is_on_ground,
+                altitude_feet: candidate.altitude_feet,
+                ground_speed_kt: candidate.ground_speed_kt,
+                track_deg: candidate.track_deg,
+                last_observed_at_ms: observed_at_ms,
+                last_point_ts_ms: None,
+                last_point_lat: None,
+                last_point_lon: None,
+                last_point_altitude_feet: None,
+                last_point_is_on_ground: None,
+            });
+            &mut new_tracks[idx]
+        };
+
+        let point_altitude_feet = track.altitude_feet.unwrap_or(0.0);
+        let point_timestamp_ms = track
+            .last_point_ts_ms
+            .map(|last_ts| observed_at_ms.max(last_ts + 1))
+            .unwrap_or(observed_at_ms);
+
+        let should_append = match (
+            track.last_point_ts_ms,
+            track.last_point_lat,
+            track.last_point_lon,
+            track.last_point_altitude_feet,
+            track.last_point_is_on_ground,
+        ) {
+            (
+                Some(last_ts),
+                Some(last_lat),
+                Some(last_lon),
+                Some(last_alt),
+                Some(last_ground),
+            ) => {
+                point_timestamp_ms - last_ts >= 900
+                    || distance_nm(last_lat, last_lon, candidate.lat, candidate.lon) >= 0.02
+                    || (last_alt - point_altitude_feet).abs() >= 25.0
+                    || last_ground != track.is_on_ground
+            }
+            _ => true,
+        };
+
+        if should_append {
+            history_points.push((
+                candidate.hex.clone(),
+                HistoryPoint {
+                    lat: candidate.lat,
+                    lon: candidate.lon,
+                    altitude_feet: point_altitude_feet,
+                    timestamp_ms: point_timestamp_ms,
+                    is_on_ground: track.is_on_ground,
+                },
+            ));
+            track.last_point_ts_ms = Some(point_timestamp_ms);
+            track.last_point_lat = Some(candidate.lat);
+            track.last_point_lon = Some(candidate.lon);
+            track.last_point_altitude_feet = Some(point_altitude_feet);
+            track.last_point_is_on_ground = Some(track.is_on_ground);
+        }
+    }
+
+    // ── Swap current snapshot (readers see this instantly) ───────────
+    let new_snapshot = CurrentSnapshot {
+        tracks: new_tracks,
+        by_hex: new_by_hex,
+        source: Some(source.clone()),
+        fetched_at_ms: polled_at_ms,
+    };
+    memory.current.store(Arc::new(new_snapshot));
+
+    // ── Append history points (write-lock ~100μs) ───────────────────
+    {
+        let mut ring = memory.history.write().expect("history lock poisoned");
+        ring.rotate_if_needed(polled_at_ms);
+        for (hex, point) in &history_points {
+            ring.append_point(hex, point.clone());
+        }
+        if run_retention_sweep {
+            ring.sweep_retention(retention_cutoff_ms);
+        }
+    }
+
+    // ── Persist to SQLite (background, no readers depend on this) ───
+    persist_to_sqlite(
+        connection,
+        &source,
+        &aircraft,
+        polled_at_ms,
+        run_retention_sweep,
+        retention_cutoff_ms,
+    )?;
+
+    Ok(())
+}
+
+fn persist_to_sqlite(
+    connection: &mut Connection,
+    source: &str,
+    aircraft: &[TrafficAircraft],
+    polled_at_ms: i64,
+    run_retention_sweep: bool,
+    retention_cutoff_ms: i64,
+) -> Result<(), String> {
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
 
-    let hexes = aircraft
-        .iter()
-        .map(|candidate| candidate.hex.clone())
-        .collect::<Vec<_>>();
+    // Load existing tracks from SQLite for the merge (SQLite state tracks persistence).
+    let hexes: Vec<String> = aircraft.iter().map(|a| a.hex.clone()).collect();
     let mut existing_tracks = load_existing_tracks(&transaction, &hexes)?;
     let mut partition_cache = load_partition_cache(&transaction)?;
 
-    let retention_cutoff_ms = polled_at_ms - CACHE_RETENTION_MS;
-
-    // Cache the last history partition table name to avoid re-preparing
-    // the statement when consecutive aircraft map to the same bucket.
     let mut last_history_table = String::new();
 
     for candidate in aircraft {
@@ -418,12 +472,10 @@ fn ingest_snapshot_with_connection(
         };
 
         if should_append {
-            let bucket_start_ms = bucket_start_ms(point_timestamp_ms);
+            let bkt = bucket_start_ms(point_timestamp_ms);
             let partition =
-                ensure_partition_for_bucket(&transaction, &mut partition_cache, bucket_start_ms)?;
+                ensure_partition_for_bucket(&transaction, &mut partition_cache, bkt)?;
 
-            // Warm the statement cache when the partition table changes (rare —
-            // almost all aircraft in a single ingest share the same 5-min bucket).
             if partition.points_table != last_history_table {
                 let sql = format!(
                     "INSERT INTO \"{}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground) VALUES (?, ?, ?, ?, ?, ?)",
@@ -533,6 +585,10 @@ fn ingest_snapshot_with_connection(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// WAL maintenance
+// ---------------------------------------------------------------------------
+
 fn run_wal_maintenance_with_connection(
     connection: &Connection,
     db_path: &Path,
@@ -585,134 +641,9 @@ fn run_wal_maintenance_with_connection(
     Ok(())
 }
 
-#[instrument(
-    name = "runtime.traffic.store.query_blocking",
-    skip(connection, request),
-    fields(
-        lat = request.lat,
-        lon = request.lon,
-        radius_nm = request.radius_nm,
-        discovery_radius_nm = request.discovery_radius_nm,
-        limit = request.limit,
-        history_minutes = request.history_minutes,
-        history_hex_count = request.history_hexes.len(),
-        hide_ground_traffic = request.hide_ground_traffic,
-        track_count = field::Empty,
-        aircraft_count = field::Empty,
-        history_hex_count_result = field::Empty,
-        warming = field::Empty
-    )
-)]
-fn query_store_snapshot_blocking(
-    connection: &Connection,
-    request: QueryRequest,
-) -> Result<QueryResult, String> {
-    let span = Span::current();
-    let source = read_meta_value(connection, META_KEY_SOURCE)?;
-    let fetched_at_ms = read_meta_value(connection, META_KEY_UPDATED_AT_MS)?
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(request.now_ms);
-
-    let track_count: i64 = connection
-        .query_row("SELECT COUNT(1) FROM traffic_tracks", [], |row| row.get(0))
-        .map_err(|error| error.to_string())?;
-    span.record("track_count", track_count);
-    if track_count == 0 {
-        span.record("aircraft_count", 0);
-        span.record("history_hex_count_result", 0);
-        span.record("warming", true);
-        return Ok(QueryResult {
-            source,
-            fetched_at_ms,
-            aircraft: Vec::new(),
-            history_by_hex: HashMap::new(),
-            warming: true,
-        });
-    }
-
-    let mut aircraft = query_current_aircraft_candidates(
-        connection,
-        request.now_ms,
-        request.lat,
-        request.lon,
-        request.discovery_radius_nm,
-        request.hide_ground_traffic,
-    )?;
-
-    aircraft.retain(|candidate| {
-        distance_nm(request.lat, request.lon, candidate.lat, candidate.lon) <= request.radius_nm
-    });
-    aircraft.sort_by(|left, right| {
-        let left_seen = left.last_seen_seconds.unwrap_or(f64::INFINITY);
-        let right_seen = right.last_seen_seconds.unwrap_or(f64::INFINITY);
-        left_seen
-            .partial_cmp(&right_seen)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| {
-                let left_distance = distance_nm(request.lat, request.lon, left.lat, left.lon);
-                let right_distance = distance_nm(request.lat, request.lon, right.lat, right.lon);
-                left_distance
-                    .partial_cmp(&right_distance)
-                    .unwrap_or(Ordering::Equal)
-            })
-    });
-    aircraft.truncate(request.limit);
-    span.record("aircraft_count", aircraft.len() as i64);
-
-    let mut history_by_hex = HashMap::new();
-    if request.history_minutes > 0.0 {
-        let history_cutoff_ms = request.now_ms - (request.history_minutes * 60_000.0) as i64;
-        let partitions = history_partitions(connection, history_cutoff_ms)?;
-
-        let targets = if request.history_hexes.is_empty() {
-            collect_history_target_hexes(
-                connection,
-                &partitions,
-                request.lat,
-                request.lon,
-                request.radius_nm,
-                history_cutoff_ms,
-                request.hide_ground_traffic,
-            )?
-        } else {
-            request.history_hexes
-        };
-
-        history_by_hex = load_history_points_for_hexes(
-            connection,
-            &partitions,
-            &targets,
-            history_cutoff_ms,
-            request.hide_ground_traffic,
-        )?;
-
-        for points in history_by_hex.values_mut() {
-            points.sort_by_key(|point| point.timestamp_ms);
-            if points.len() > HISTORY_MAX_POINTS_PER_AIRCRAFT {
-                *points = points[points.len() - HISTORY_MAX_POINTS_PER_AIRCRAFT..].to_vec();
-            }
-        }
-
-        history_by_hex.retain(|_, points| {
-            super::types::history_points_intersect_scene(
-                points,
-                request.lat,
-                request.lon,
-                request.radius_nm,
-            )
-        });
-    }
-    span.record("history_hex_count_result", history_by_hex.len() as i64);
-    span.record("warming", false);
-
-    Ok(QueryResult {
-        source,
-        fetched_at_ms,
-        aircraft,
-        history_by_hex,
-        warming: false,
-    })
-}
+// ---------------------------------------------------------------------------
+// SQLite schema and partition management
+// ---------------------------------------------------------------------------
 
 fn reconcile_partition_tables(connection: &Connection) -> Result<(), String> {
     if RING_SLOT_COUNT <= 0 {
@@ -754,154 +685,18 @@ fn reconcile_partition_tables(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn reconcile_tracks_rtree(connection: &Connection) -> Result<(), String> {
-    connection
-        .execute_batch(
-            "INSERT OR IGNORE INTO traffic_tracks_rtree (id, min_lat, max_lat, min_lon, max_lon)
-             SELECT t.rowid, t.last_lat, t.last_lat, t.last_lon, t.last_lon
-             FROM traffic_tracks t
-             LEFT JOIN traffic_tracks_rtree r ON r.id = t.rowid
-             WHERE r.id IS NULL;",
-        )
-        .map_err(|error| error.to_string())
-}
-
-fn migrate_legacy_partitions_to_ring(connection: &Connection) -> Result<(), String> {
-    let ring_rows: i64 = connection
-        .query_row(
-            "SELECT COUNT(1) FROM traffic_ring_slots WHERE bucket_start_ms >= 0",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| error.to_string())?;
-    if ring_rows > 0 {
-        return Ok(());
-    }
-
-    let retention_cutoff_ms = now_ms() - CACHE_RETENTION_MS;
-    let min_bucket_start_ms = bucket_start_ms(retention_cutoff_ms);
-
-    let mut statement = connection
-        .prepare(
-            "SELECT bucket_start_ms, points_table
-             FROM traffic_partitions
-             WHERE bucket_start_ms >= ?
-             ORDER BY bucket_start_ms ASC",
-        )
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map(params![min_bucket_start_ms], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|error| error.to_string())?;
-
-    let legacy_rows = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    if legacy_rows.is_empty() {
-        return Ok(());
-    }
-
-    let mut newest_by_slot: HashMap<i64, (i64, String)> = HashMap::new();
-    for (bucket_start_ms, points_table) in legacy_rows {
-        if !points_table.starts_with("traffic_points_p") {
-            continue;
-        }
-        let slot = ring_slot_for_bucket(bucket_start_ms);
-        match newest_by_slot.get(&slot) {
-            Some((existing_bucket_start_ms, _)) if *existing_bucket_start_ms >= bucket_start_ms => {
-            }
-            _ => {
-                newest_by_slot.insert(slot, (bucket_start_ms, points_table));
-            }
-        }
-    }
-
-    let mut migrated_slots = 0usize;
-    for (slot, (bucket_start_ms, legacy_points_table)) in newest_by_slot {
-        let ring_points_table = partition_points_table_name(slot);
-        let ring_rtree_table = partition_rtree_table_name(slot);
-
-        let clear_sql =
-            format!("DELETE FROM \"{ring_rtree_table}\"; DELETE FROM \"{ring_points_table}\";",);
-        if let Err(error) = connection.execute_batch(&clear_sql) {
-            warn!(
-                "Failed clearing ring slot {} before legacy migration: {}",
-                slot, error
-            );
-            continue;
-        }
-
-        let copy_sql = format!(
-            "INSERT INTO \"{ring_points_table}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
-             SELECT hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground
-             FROM \"{legacy_points_table}\"
-             WHERE timestamp_ms >= ?",
-        );
-        if let Err(error) = connection.execute(&copy_sql, params![retention_cutoff_ms]) {
-            warn!(
-                "Failed migrating legacy table {} into ring slot {}: {}",
-                legacy_points_table, slot, error
-            );
-            continue;
-        }
-
-        if let Err(error) = connection.execute(
-            "UPDATE traffic_ring_slots
-             SET bucket_start_ms = ?, points_table = ?, rtree_table = ?
-             WHERE slot = ?",
-            params![bucket_start_ms, ring_points_table, ring_rtree_table, slot,],
-        ) {
-            warn!(
-                "Failed updating ring slot {} metadata during legacy migration: {}",
-                slot, error
-            );
-            continue;
-        }
-
-        migrated_slots += 1;
-    }
-
-    if migrated_slots > 0 {
-        info!(
-            "Migrated {} legacy traffic partition(s) into fixed ring slots.",
-            migrated_slots
-        );
-    }
-
-    Ok(())
-}
-
 fn reconcile_partition_schema(
     connection: &Connection,
     partition: &PartitionInfo,
 ) -> Result<(), String> {
-    let create_sql = partition_schema_sql(&partition.points_table, &partition.rtree_table);
+    let create_sql = partition_schema_sql(&partition.points_table);
     connection
         .execute_batch(&create_sql)
         .map_err(|error| error.to_string())?;
-
-    let backfill_sql = format!(
-        "INSERT OR IGNORE INTO \"{rtree_table}\" (id, min_lat, max_lat, min_lon, max_lon)
-         SELECT p.id, p.lat, p.lat, p.lon, p.lon
-         FROM \"{points_table}\" p
-         LEFT JOIN \"{rtree_table}\" r ON r.id = p.id
-         WHERE r.id IS NULL;",
-        points_table = partition.points_table,
-        rtree_table = partition.rtree_table,
-    );
-    connection
-        .execute_batch(&backfill_sql)
-        .map_err(|error| error.to_string())?;
-
     Ok(())
 }
 
-fn partition_schema_sql(points_table: &str, rtree_table: &str) -> String {
-    let trigger_insert = format!("trg_{points_table}_rtree_insert");
-    let trigger_update = format!("trg_{points_table}_rtree_update");
-    let trigger_delete = format!("trg_{points_table}_rtree_delete");
-
+fn partition_schema_sql(points_table: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS \"{points_table}\" (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -912,44 +707,17 @@ fn partition_schema_sql(points_table: &str, rtree_table: &str) -> String {
             altitude_feet REAL NOT NULL,
             is_on_ground INTEGER NOT NULL
         );
-        CREATE VIRTUAL TABLE IF NOT EXISTS \"{rtree_table}\" USING rtree(
-            id,
-            min_lat,
-            max_lat,
-            min_lon,
-            max_lon
-        );
         CREATE INDEX IF NOT EXISTS \"idx_{points_table}_ts\" ON \"{points_table}\"(timestamp_ms);
-        CREATE INDEX IF NOT EXISTS \"idx_{points_table}_hex_ts\" ON \"{points_table}\"(hex, timestamp_ms);
-        CREATE TRIGGER IF NOT EXISTS \"{trigger_insert}\" AFTER INSERT ON \"{points_table}\"
-        BEGIN
-            DELETE FROM \"{rtree_table}\" WHERE id = new.id;
-            INSERT INTO \"{rtree_table}\" (id, min_lat, max_lat, min_lon, max_lon)
-            VALUES (new.id, new.lat, new.lat, new.lon, new.lon);
-        END;
-        CREATE TRIGGER IF NOT EXISTS \"{trigger_update}\" AFTER UPDATE OF lat, lon ON \"{points_table}\"
-        BEGIN
-            DELETE FROM \"{rtree_table}\" WHERE id = new.id;
-            INSERT INTO \"{rtree_table}\" (id, min_lat, max_lat, min_lon, max_lon)
-            VALUES (new.id, new.lat, new.lat, new.lon, new.lon);
-        END;
-        CREATE TRIGGER IF NOT EXISTS \"{trigger_delete}\" AFTER DELETE ON \"{points_table}\"
-        BEGIN
-            DELETE FROM \"{rtree_table}\" WHERE id = old.id;
-        END;",
+        CREATE INDEX IF NOT EXISTS \"idx_{points_table}_hex_ts\" ON \"{points_table}\"(hex, timestamp_ms);",
         points_table = points_table,
-        rtree_table = rtree_table,
-        trigger_insert = trigger_insert,
-        trigger_update = trigger_update,
-        trigger_delete = trigger_delete,
     )
 }
 
 fn load_existing_tracks(
     connection: &Connection,
     hexes: &[String],
-) -> Result<HashMap<String, DbTrackState>, String> {
-    let mut tracks = HashMap::new();
+) -> Result<std::collections::HashMap<String, DbTrackState>, String> {
+    let mut tracks = std::collections::HashMap::new();
     if hexes.is_empty() {
         return Ok(tracks);
     }
@@ -1133,10 +901,11 @@ fn sweep_expired_partitions(
 }
 
 fn clear_ring_slot(connection: &Connection, partition: &PartitionInfo) -> Result<(), String> {
+    // Only clear the points table — R-tree tables are no longer created/maintained.
+    // Tolerate missing R-tree tables from older schemas.
     let clear_sql = format!(
-        "DELETE FROM \"{rtree_table}\"; DELETE FROM \"{points_table}\";",
+        "DELETE FROM \"{points_table}\";",
         points_table = partition.points_table,
-        rtree_table = partition.rtree_table,
     );
     connection
         .execute_batch(&clear_sql)
@@ -1160,20 +929,6 @@ fn bucket_start_ms(timestamp_ms: i64) -> i64 {
         return 0;
     }
     (timestamp_ms / PARTITION_BUCKET_MS) * PARTITION_BUCKET_MS
-}
-
-fn read_meta_value(connection: &Connection, key: &str) -> Result<Option<String>, String> {
-    let result = connection.query_row(
-        "SELECT value FROM traffic_meta WHERE key = ?",
-        params![key],
-        |row| row.get::<_, String>(0),
-    );
-
-    match result {
-        Ok(value) => Ok(Some(value)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
 }
 
 fn open_traffic_db(path: &Path) -> Result<Connection, String> {
@@ -1239,31 +994,7 @@ fn open_traffic_db(path: &Path) -> Result<Connection, String> {
                 points_table TEXT NOT NULL,
                 rtree_table TEXT NOT NULL
             );
-            CREATE VIRTUAL TABLE IF NOT EXISTS traffic_tracks_rtree USING rtree(
-                id,
-                min_lat,
-                max_lat,
-                min_lon,
-                max_lon
-            );
-            CREATE TRIGGER IF NOT EXISTS trg_traffic_tracks_rtree_insert AFTER INSERT ON traffic_tracks
-            BEGIN
-                DELETE FROM traffic_tracks_rtree WHERE id = new.rowid;
-                INSERT INTO traffic_tracks_rtree (id, min_lat, max_lat, min_lon, max_lon)
-                VALUES (new.rowid, new.last_lat, new.last_lat, new.last_lon, new.last_lon);
-            END;
-            CREATE TRIGGER IF NOT EXISTS trg_traffic_tracks_rtree_update AFTER UPDATE OF last_lat, last_lon ON traffic_tracks
-            BEGIN
-                DELETE FROM traffic_tracks_rtree WHERE id = new.rowid;
-                INSERT INTO traffic_tracks_rtree (id, min_lat, max_lat, min_lon, max_lon)
-                VALUES (new.rowid, new.last_lat, new.last_lat, new.last_lon, new.last_lon);
-            END;
-            CREATE TRIGGER IF NOT EXISTS trg_traffic_tracks_rtree_delete AFTER DELETE ON traffic_tracks
-            BEGIN
-                DELETE FROM traffic_tracks_rtree WHERE id = old.rowid;
-            END;
             CREATE INDEX IF NOT EXISTS idx_traffic_tracks_last_seen ON traffic_tracks(last_observed_at_ms);
-            CREATE INDEX IF NOT EXISTS idx_traffic_tracks_live ON traffic_tracks(last_observed_at_ms, last_lat, last_lon);
             CREATE INDEX IF NOT EXISTS idx_traffic_ring_slots_bucket ON traffic_ring_slots(bucket_start_ms);
             DROP TABLE IF EXISTS traffic_points;
             DROP TABLE IF EXISTS traffic_points_rtree;",
@@ -1273,429 +1004,108 @@ fn open_traffic_db(path: &Path) -> Result<Connection, String> {
     Ok(connection)
 }
 
-fn history_partitions(
-    connection: &Connection,
-    history_cutoff_ms: i64,
-) -> Result<Vec<PartitionInfo>, String> {
-    let min_bucket_start_ms = bucket_start_ms(history_cutoff_ms);
+fn migrate_legacy_partitions_to_ring(connection: &Connection) -> Result<(), String> {
+    let ring_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(1) FROM traffic_ring_slots WHERE bucket_start_ms >= 0",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if ring_rows > 0 {
+        return Ok(());
+    }
+
+    let retention_cutoff_ms = now_ms() - CACHE_RETENTION_MS;
+    let min_bucket_start_ms = bucket_start_ms(retention_cutoff_ms);
+
     let mut statement = connection
         .prepare(
-            "SELECT slot, bucket_start_ms, points_table, rtree_table
-             FROM traffic_ring_slots
-             WHERE bucket_start_ms >= 0
-               AND bucket_start_ms >= ?
+            "SELECT bucket_start_ms, points_table
+             FROM traffic_partitions
+             WHERE bucket_start_ms >= ?
              ORDER BY bucket_start_ms ASC",
         )
         .map_err(|error| error.to_string())?;
-
     let rows = statement
         .query_map(params![min_bucket_start_ms], |row| {
-            Ok(PartitionInfo {
-                slot: row.get(0)?,
-                bucket_start_ms: row.get(1)?,
-                points_table: row.get(2)?,
-                rtree_table: row.get(3)?,
-            })
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })
         .map_err(|error| error.to_string())?;
 
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
-}
-
-fn query_current_aircraft_candidates(
-    connection: &Connection,
-    now_ms: i64,
-    center_lat: f64,
-    center_lon: f64,
-    discovery_radius_nm: f64,
-    hide_ground_traffic: bool,
-) -> Result<Vec<TrafficAircraft>, String> {
-    let stale_cutoff_ms = now_ms - CACHE_CURRENT_STALE_MS;
-    let bounds = build_bounding_box(center_lat, center_lon, discovery_radius_nm);
-
-    let mut candidates = Vec::new();
-
-    if bounds.crosses_dateline {
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    t.hex, t.flight, t.is_on_ground, t.altitude_feet, t.ground_speed_kt, t.track_deg,
-                    t.last_observed_at_ms, t.last_lat, t.last_lon
-                 FROM traffic_tracks t
-                 JOIN traffic_tracks_rtree r ON r.id = t.rowid
-                 WHERE t.last_observed_at_ms >= ?
-                   AND r.min_lat <= ?
-                   AND r.max_lat >= ?
-                   AND ((r.min_lon <= 180.0 AND r.max_lon >= ?)
-                     OR (r.min_lon <= ? AND r.max_lon >= -180.0))",
-            )
-            .map_err(|error| error.to_string())?;
-
-        let rows = statement
-            .query_map(
-                params![
-                    stale_cutoff_ms,
-                    bounds.north,
-                    bounds.south,
-                    bounds.west,
-                    bounds.east,
-                ],
-                |row| {
-                    let is_on_ground: i64 = row.get(2)?;
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        is_on_ground == 1,
-                        row.get::<_, Option<f64>>(3)?,
-                        row.get::<_, Option<f64>>(4)?,
-                        row.get::<_, Option<f64>>(5)?,
-                        row.get::<_, i64>(6)?,
-                        row.get::<_, f64>(7)?,
-                        row.get::<_, f64>(8)?,
-                    ))
-                },
-            )
-            .map_err(|error| error.to_string())?;
-
-        for row in rows {
-            let (
-                hex,
-                flight,
-                is_on_ground,
-                altitude_feet,
-                ground_speed_kt,
-                track_deg,
-                observed_at_ms,
-                lat,
-                lon,
-            ) = row.map_err(|error| error.to_string())?;
-            if hide_ground_traffic && is_on_ground {
-                continue;
-            }
-
-            let distance = distance_nm(center_lat, center_lon, lat, lon);
-            if distance > discovery_radius_nm {
-                continue;
-            }
-
-            let last_seen_seconds = ((now_ms - observed_at_ms).max(0) as f64) / 1000.0;
-            candidates.push(TrafficAircraft {
-                hex,
-                flight,
-                lat,
-                lon,
-                is_on_ground,
-                altitude_feet,
-                ground_speed_kt,
-                track_deg,
-                last_seen_seconds: Some(last_seen_seconds),
-            });
-        }
-    } else {
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    t.hex, t.flight, t.is_on_ground, t.altitude_feet, t.ground_speed_kt, t.track_deg,
-                    t.last_observed_at_ms, t.last_lat, t.last_lon
-                 FROM traffic_tracks t
-                 JOIN traffic_tracks_rtree r ON r.id = t.rowid
-                 WHERE t.last_observed_at_ms >= ?
-                   AND r.min_lat <= ?
-                   AND r.max_lat >= ?
-                   AND r.min_lon <= ?
-                   AND r.max_lon >= ?",
-            )
-            .map_err(|error| error.to_string())?;
-
-        let rows = statement
-            .query_map(
-                params![
-                    stale_cutoff_ms,
-                    bounds.north,
-                    bounds.south,
-                    bounds.east,
-                    bounds.west,
-                ],
-                |row| {
-                    let is_on_ground: i64 = row.get(2)?;
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        is_on_ground == 1,
-                        row.get::<_, Option<f64>>(3)?,
-                        row.get::<_, Option<f64>>(4)?,
-                        row.get::<_, Option<f64>>(5)?,
-                        row.get::<_, i64>(6)?,
-                        row.get::<_, f64>(7)?,
-                        row.get::<_, f64>(8)?,
-                    ))
-                },
-            )
-            .map_err(|error| error.to_string())?;
-
-        for row in rows {
-            let (
-                hex,
-                flight,
-                is_on_ground,
-                altitude_feet,
-                ground_speed_kt,
-                track_deg,
-                observed_at_ms,
-                lat,
-                lon,
-            ) = row.map_err(|error| error.to_string())?;
-            if hide_ground_traffic && is_on_ground {
-                continue;
-            }
-
-            let distance = distance_nm(center_lat, center_lon, lat, lon);
-            if distance > discovery_radius_nm {
-                continue;
-            }
-
-            let last_seen_seconds = ((now_ms - observed_at_ms).max(0) as f64) / 1000.0;
-            candidates.push(TrafficAircraft {
-                hex,
-                flight,
-                lat,
-                lon,
-                is_on_ground,
-                altitude_feet,
-                ground_speed_kt,
-                track_deg,
-                last_seen_seconds: Some(last_seen_seconds),
-            });
-        }
+    let legacy_rows = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if legacy_rows.is_empty() {
+        return Ok(());
     }
 
-    candidates.sort_by(|left, right| {
-        let left_distance = distance_nm(center_lat, center_lon, left.lat, left.lon);
-        let right_distance = distance_nm(center_lat, center_lon, right.lat, right.lon);
-        left_distance
-            .partial_cmp(&right_distance)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| {
-                let left_seen = left.last_seen_seconds.unwrap_or(f64::INFINITY);
-                let right_seen = right.last_seen_seconds.unwrap_or(f64::INFINITY);
-                left_seen
-                    .partial_cmp(&right_seen)
-                    .unwrap_or(Ordering::Equal)
-            })
-    });
-
-    Ok(candidates)
-}
-
-fn collect_history_target_hexes(
-    connection: &Connection,
-    partitions: &[PartitionInfo],
-    center_lat: f64,
-    center_lon: f64,
-    radius_nm: f64,
-    history_cutoff_ms: i64,
-    hide_ground_traffic: bool,
-) -> Result<Vec<String>, String> {
-    let bounds = build_bounding_box(center_lat, center_lon, radius_nm);
-    let mut candidates: HashMap<String, HistoryTargetCandidate> = HashMap::new();
-
-    let mut process_row =
-        |hex: String, lat: f64, lon: f64, timestamp_ms: i64, is_on_ground_raw: i64| {
-            let is_on_ground = is_on_ground_raw == 1;
-            if hide_ground_traffic && is_on_ground {
-                return;
+    let mut newest_by_slot: std::collections::HashMap<i64, (i64, String)> =
+        std::collections::HashMap::new();
+    for (bucket_start_ms, points_table) in legacy_rows {
+        if !points_table.starts_with("traffic_points_p") {
+            continue;
+        }
+        let slot = ring_slot_for_bucket(bucket_start_ms);
+        match newest_by_slot.get(&slot) {
+            Some((existing_bucket_start_ms, _)) if *existing_bucket_start_ms >= bucket_start_ms => {
             }
-
-            let distance = distance_nm(center_lat, center_lon, lat, lon);
-            if distance > radius_nm {
-                return;
-            }
-
-            match candidates.get_mut(&hex) {
-                Some(existing) => {
-                    if distance < existing.closest_distance_nm {
-                        existing.closest_distance_nm = distance;
-                    }
-                    if timestamp_ms > existing.latest_timestamp_ms {
-                        existing.latest_timestamp_ms = timestamp_ms;
-                    }
-                }
-                None => {
-                    candidates.insert(
-                        hex,
-                        HistoryTargetCandidate {
-                            closest_distance_nm: distance,
-                            latest_timestamp_ms: timestamp_ms,
-                        },
-                    );
-                }
-            }
-        };
-
-    for partition in partitions.iter().rev() {
-        let sql = if bounds.crosses_dateline {
-            format!(
-                "SELECT p.hex, p.lat, p.lon, p.timestamp_ms, p.is_on_ground
-                 FROM \"{points_table}\" p
-                 JOIN \"{rtree_table}\" r ON r.id = p.id
-                 WHERE p.timestamp_ms >= ?
-                   AND r.min_lat <= ?
-                   AND r.max_lat >= ?
-                   AND ((r.min_lon <= 180.0 AND r.max_lon >= ?)
-                     OR (r.min_lon <= ? AND r.max_lon >= -180.0))
-                 ORDER BY p.timestamp_ms DESC",
-                points_table = partition.points_table,
-                rtree_table = partition.rtree_table,
-            )
-        } else {
-            format!(
-                "SELECT p.hex, p.lat, p.lon, p.timestamp_ms, p.is_on_ground
-                 FROM \"{points_table}\" p
-                 JOIN \"{rtree_table}\" r ON r.id = p.id
-                 WHERE p.timestamp_ms >= ?
-                   AND r.min_lat <= ?
-                   AND r.max_lat >= ?
-                   AND r.min_lon <= ?
-                   AND r.max_lon >= ?
-                 ORDER BY p.timestamp_ms DESC",
-                points_table = partition.points_table,
-                rtree_table = partition.rtree_table,
-            )
-        };
-
-        let mut statement = connection
-            .prepare(&sql)
-            .map_err(|error| error.to_string())?;
-        if bounds.crosses_dateline {
-            let rows = statement
-                .query_map(
-                    params![
-                        history_cutoff_ms,
-                        bounds.north,
-                        bounds.south,
-                        bounds.west,
-                        bounds.east,
-                    ],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, f64>(1)?,
-                            row.get::<_, f64>(2)?,
-                            row.get::<_, i64>(3)?,
-                            row.get::<_, i64>(4)?,
-                        ))
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-
-            for row in rows {
-                let (hex, lat, lon, timestamp_ms, is_on_ground_raw) =
-                    row.map_err(|error| error.to_string())?;
-                process_row(hex, lat, lon, timestamp_ms, is_on_ground_raw);
-            }
-        } else {
-            let rows = statement
-                .query_map(
-                    params![
-                        history_cutoff_ms,
-                        bounds.north,
-                        bounds.south,
-                        bounds.east,
-                        bounds.west,
-                    ],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, f64>(1)?,
-                            row.get::<_, f64>(2)?,
-                            row.get::<_, i64>(3)?,
-                            row.get::<_, i64>(4)?,
-                        ))
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-
-            for row in rows {
-                let (hex, lat, lon, timestamp_ms, is_on_ground_raw) =
-                    row.map_err(|error| error.to_string())?;
-                process_row(hex, lat, lon, timestamp_ms, is_on_ground_raw);
+            _ => {
+                newest_by_slot.insert(slot, (bucket_start_ms, points_table));
             }
         }
     }
 
-    let mut ranked = candidates.into_iter().collect::<Vec<_>>();
-    ranked.sort_by(|left, right| {
-        left.1
-            .closest_distance_nm
-            .partial_cmp(&right.1.closest_distance_nm)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| right.1.latest_timestamp_ms.cmp(&left.1.latest_timestamp_ms))
-    });
+    let mut migrated_slots = 0usize;
+    for (slot, (bucket_start_ms, legacy_points_table)) in newest_by_slot {
+        let ring_points_table = partition_points_table_name(slot);
 
-    Ok(ranked.into_iter().map(|(hex, _)| hex).collect())
-}
-
-fn load_history_points_for_hexes(
-    connection: &Connection,
-    partitions: &[PartitionInfo],
-    hexes: &[String],
-    history_cutoff_ms: i64,
-    hide_ground_traffic: bool,
-) -> Result<HashMap<String, Vec<TrafficHistoryPoint>>, String> {
-    let mut by_hex: HashMap<String, Vec<TrafficHistoryPoint>> = HashMap::new();
-    if hexes.is_empty() || partitions.is_empty() {
-        return Ok(by_hex);
-    }
-
-    for partition in partitions {
-        for chunk in hexes.chunks(700) {
-            let placeholders = std::iter::repeat("?")
-                .take(chunk.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let mut sql = format!(
-                "SELECT hex, lat, lon, altitude_feet, timestamp_ms, is_on_ground
-                 FROM \"{}\"
-                 WHERE timestamp_ms >= ?
-                   AND hex IN ({placeholders})",
-                partition.points_table
+        let clear_sql = format!("DELETE FROM \"{ring_points_table}\";");
+        if let Err(error) = connection.execute_batch(&clear_sql) {
+            warn!(
+                "Failed clearing ring slot {} before legacy migration: {}",
+                slot, error
             );
-            if hide_ground_traffic {
-                sql.push_str(" AND is_on_ground = 0");
-            }
-            sql.push_str(" ORDER BY hex ASC, timestamp_ms ASC");
-
-            let mut values = Vec::with_capacity(chunk.len() + 1);
-            values.push(Value::Integer(history_cutoff_ms));
-            for hex in chunk {
-                values.push(Value::Text(hex.clone()));
-            }
-
-            let mut statement = connection
-                .prepare(&sql)
-                .map_err(|error| error.to_string())?;
-            let rows = statement
-                .query_map(params_from_iter(values.iter()), |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        TrafficHistoryPoint {
-                            lat: row.get(1)?,
-                            lon: row.get(2)?,
-                            altitude_feet: row.get(3)?,
-                            timestamp_ms: row.get(4)?,
-                        },
-                    ))
-                })
-                .map_err(|error| error.to_string())?;
-
-            for row in rows {
-                let (hex, point) = row.map_err(|error| error.to_string())?;
-                by_hex.entry(hex).or_default().push(point);
-            }
+            continue;
         }
+
+        let copy_sql = format!(
+            "INSERT INTO \"{ring_points_table}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
+             SELECT hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground
+             FROM \"{legacy_points_table}\"
+             WHERE timestamp_ms >= ?",
+        );
+        if let Err(error) = connection.execute(&copy_sql, params![retention_cutoff_ms]) {
+            warn!(
+                "Failed migrating legacy table {} into ring slot {}: {}",
+                legacy_points_table, slot, error
+            );
+            continue;
+        }
+
+        let ring_rtree_table = partition_rtree_table_name(slot);
+        if let Err(error) = connection.execute(
+            "UPDATE traffic_ring_slots
+             SET bucket_start_ms = ?, points_table = ?, rtree_table = ?
+             WHERE slot = ?",
+            params![bucket_start_ms, ring_points_table, ring_rtree_table, slot,],
+        ) {
+            warn!(
+                "Failed updating ring slot {} metadata during legacy migration: {}",
+                slot, error
+            );
+            continue;
+        }
+
+        migrated_slots += 1;
     }
 
-    Ok(by_hex)
+    if migrated_slots > 0 {
+        info!(
+            "Migrated {} legacy traffic partition(s) into fixed ring slots.",
+            migrated_slots
+        );
+    }
+
+    Ok(())
 }

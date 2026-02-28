@@ -96,7 +96,7 @@ pub(crate) struct BoundingBox {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct QueryRequest {
+pub struct QueryRequest {
     pub lat: f64,
     pub lon: f64,
     pub radius_nm: f64,
@@ -109,7 +109,7 @@ pub(crate) struct QueryRequest {
 }
 
 #[derive(Debug)]
-pub(crate) struct QueryResult {
+pub struct QueryResult {
     pub source: Option<String>,
     pub fetched_at_ms: i64,
     pub aircraft: Vec<TrafficAircraft>,

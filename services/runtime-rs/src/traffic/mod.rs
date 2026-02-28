@@ -1,5 +1,6 @@
 mod cache_worker;
 mod encoding;
+pub(crate) mod memory_store;
 pub(crate) mod store;
 pub(crate) mod types;
 

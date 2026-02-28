@@ -777,11 +777,69 @@ fn bench_sqlite_ingest(c: &mut Criterion) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// In-memory query benchmarks
+// ---------------------------------------------------------------------------
+
+fn bench_memory_query(c: &mut Criterion) {
+    use approach_viz_runtime::traffic::{QueryRequest, TrafficMemoryStore};
+
+    let now_ms = 1700000000000_i64;
+
+    // Query warming state (baseline — no data, measures ArcSwap load overhead).
+    c.bench_function("memory_query_warming_state", |b| {
+        let store = TrafficMemoryStore::new_empty();
+        let request = QueryRequest {
+            lat: 40.6413,
+            lon: -73.7781,
+            radius_nm: 100.0,
+            discovery_radius_nm: 100.0,
+            limit: 250,
+            history_minutes: 0.0,
+            history_hexes: Vec::new(),
+            hide_ground_traffic: false,
+            now_ms,
+        };
+        b.iter(|| {
+            let result = store.query(&request);
+            std::hint::black_box(result.warming)
+        })
+    });
+
+    // Distance filter benchmark at 10K tracks (simulates in-memory scan).
+    let center_lat: f64 = 40.6413;
+    let center_lon: f64 = -73.7781;
+    let ac_10k = generate_aircraft(10_000);
+
+    c.bench_function("distance_nm_10k_bbox_filter", |b| {
+        let south = center_lat - 100.0 / 60.0;
+        let north = center_lat + 100.0 / 60.0;
+        let cos_lat = center_lat.to_radians().cos().abs().max(0.01);
+        let west = center_lon - 100.0 / (60.0 * cos_lat);
+        let east = center_lon + 100.0 / (60.0 * cos_lat);
+
+        b.iter(|| {
+            let count = ac_10k
+                .iter()
+                .filter(|ac| {
+                    ac.lat >= south
+                        && ac.lat <= north
+                        && ac.lon >= west
+                        && ac.lon <= east
+                        && distance_nm(center_lat, center_lon, ac.lat, ac.lon) <= 100.0
+                })
+                .count();
+            std::hint::black_box(count)
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_bincraft_decode,
     bench_avtr_encode,
     bench_distance_nm,
-    bench_sqlite_ingest
+    bench_sqlite_ingest,
+    bench_memory_query
 );
 criterion_main!(benches);
