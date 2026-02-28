@@ -15,15 +15,20 @@ const FEET_PER_METER_F32: f32 = 3.28084;
 const THERMO_NEAR_FREEZING_FEET_F32: f32 = 1500.0;
 const FREEZING_LEVEL_TRANSITION_FEET_F32: f32 = 1500.0;
 
+/// Per-voxel boolean flags packed into a single u8 bitfield.
+/// Reduces 5 separate Vec<bool> (5 bytes/voxel) to 1 Vec<u8> (1 byte/voxel).
+pub const FLAG_TRANSITION_CANDIDATE: u8 = 1 << 0;
+pub const FLAG_USED_DUAL: u8 = 1 << 1;
+pub const FLAG_SUPPRESSED_DUAL: u8 = 1 << 2;
+pub const FLAG_SUPPRESSED_MIXED: u8 = 1 << 3;
+pub const FLAG_FORCED_PRECIP_SNOW: u8 = 1 << 4;
+
 pub struct BatchPhaseResult {
     pub phase: Vec<u8>,
     pub surface_phase: Vec<u8>,
-    pub transition_candidate: Vec<bool>,
     pub signal_count: Vec<u8>,
-    pub used_dual: Vec<bool>,
-    pub suppressed_dual: Vec<bool>,
-    pub suppressed_mixed: Vec<bool>,
-    pub forced_precip_snow: Vec<bool>,
+    /// Packed boolean flags per voxel (see FLAG_* constants).
+    pub flags: Vec<u8>,
 }
 
 /// Vectorized batch phase scoring using `wide::f32x4` to process 4 voxels per iteration.
@@ -65,12 +70,8 @@ pub fn compute_phase_scores_branchless(
 
     let mut phase_out = vec![PHASE_RAIN; n];
     let mut surface_phase_out = vec![PHASE_RAIN; n];
-    let mut transition_candidate_out = vec![false; n];
     let mut signal_count_out = vec![0u8; n];
-    let mut used_dual_out = vec![false; n];
-    let mut suppressed_dual_out = vec![false; n];
-    let mut suppressed_mixed_out = vec![false; n];
-    let mut forced_precip_snow_out = vec![false; n];
+    let mut flags_out = vec![0u8; n];
 
     // Loop-invariant constants broadcast to f32x4
     let voxel4 = f32x4::splat(voxel_mid_feet);
@@ -453,12 +454,12 @@ pub fn compute_phase_scores_branchless(
             // Write outputs
             phase_out[idx] = phase;
             surface_phase_out[idx] = surface_phase;
-            transition_candidate_out[idx] = transition_candidate;
             signal_count_out[idx] = signal_count;
-            used_dual_out[idx] = used_dual;
-            suppressed_dual_out[idx] = suppressed_dual;
-            suppressed_mixed_out[idx] = suppressed_mixed;
-            forced_precip_snow_out[idx] = forced_precip_snow;
+            flags_out[idx] = (transition_candidate as u8 * FLAG_TRANSITION_CANDIDATE)
+                | (used_dual as u8 * FLAG_USED_DUAL)
+                | (suppressed_dual as u8 * FLAG_SUPPRESSED_DUAL)
+                | (suppressed_mixed as u8 * FLAG_SUPPRESSED_MIXED)
+                | (forced_precip_snow as u8 * FLAG_FORCED_PRECIP_SNOW);
         }
     }
 
@@ -490,12 +491,12 @@ pub fn compute_phase_scores_branchless(
 
         phase_out[i] = phase;
         surface_phase_out[i] = surface_phase;
-        transition_candidate_out[i] = transition_candidate;
         signal_count_out[i] = signal_count;
-        used_dual_out[i] = used_dual;
-        suppressed_dual_out[i] = suppressed_dual;
-        suppressed_mixed_out[i] = suppressed_mixed;
-        forced_precip_snow_out[i] = forced_precip_snow;
+        flags_out[i] = (transition_candidate as u8 * FLAG_TRANSITION_CANDIDATE)
+            | (used_dual as u8 * FLAG_USED_DUAL)
+            | (suppressed_dual as u8 * FLAG_SUPPRESSED_DUAL)
+            | (suppressed_mixed as u8 * FLAG_SUPPRESSED_MIXED)
+            | (forced_precip_snow as u8 * FLAG_FORCED_PRECIP_SNOW);
     }
 
     let _ = remainder; // suppress unused variable warning
@@ -503,12 +504,8 @@ pub fn compute_phase_scores_branchless(
     BatchPhaseResult {
         phase: phase_out,
         surface_phase: surface_phase_out,
-        transition_candidate: transition_candidate_out,
         signal_count: signal_count_out,
-        used_dual: used_dual_out,
-        suppressed_dual: suppressed_dual_out,
-        suppressed_mixed: suppressed_mixed_out,
-        forced_precip_snow: forced_precip_snow_out,
+        flags: flags_out,
     }
 }
 
@@ -1122,27 +1119,27 @@ mod tests {
                 mismatches += 1;
             }
 
-            // Also verify surface_phase, used_dual, suppressed_dual, suppressed_mixed, forced_precip_snow
+            // Also verify surface_phase and packed flags
             let expected_surface_phase = thermo.precip_flag_phase.unwrap_or(PHASE_RAIN);
             assert_eq!(
                 batch.surface_phase[i], expected_surface_phase,
                 "surface_phase mismatch at index {i}"
             );
+            let f = batch.flags[i];
             assert_eq!(
-                batch.used_dual[i], resolution.used_dual,
+                f & FLAG_USED_DUAL != 0, resolution.used_dual,
                 "used_dual mismatch at index {i}"
             );
             assert_eq!(
-                batch.suppressed_dual[i], resolution.suppressed_dual,
+                f & FLAG_SUPPRESSED_DUAL != 0, resolution.suppressed_dual,
                 "suppressed_dual mismatch at index {i}"
             );
             assert_eq!(
-                batch.suppressed_mixed[i], resolution.suppressed_mixed,
-                "suppressed_mixed mismatch at index {i}: branchless={}, scalar={}",
-                batch.suppressed_mixed[i], resolution.suppressed_mixed,
+                f & FLAG_SUPPRESSED_MIXED != 0, resolution.suppressed_mixed,
+                "suppressed_mixed mismatch at index {i}"
             );
             assert_eq!(
-                batch.forced_precip_snow[i], resolution.forced_precip_snow,
+                f & FLAG_FORCED_PRECIP_SNOW != 0, resolution.forced_precip_snow,
                 "forced_precip_snow mismatch at index {i}"
             );
             assert_eq!(

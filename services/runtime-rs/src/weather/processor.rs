@@ -8,7 +8,10 @@ use tracing::warn;
 use wide::{i16x8, CmpEq, CmpGt};
 
 use super::phase::{promote_mixed_transition_edges, LevelPhaseVoxel};
-use super::phase_batch::compute_phase_scores_branchless;
+use super::phase_batch::{
+    compute_phase_scores_branchless, FLAG_FORCED_PRECIP_SNOW, FLAG_SUPPRESSED_DUAL,
+    FLAG_SUPPRESSED_MIXED, FLAG_TRANSITION_CANDIDATE, FLAG_USED_DUAL,
+};
 use super::simd_lut::COMPRESS_LUT;
 use super::sources::{
     build_level_key, fetch_aux_field_at_timestamp, fetch_level_aux_field_at_timestamp,
@@ -30,18 +33,60 @@ use crate::types::{
 };
 use crate::utils::{parse_timestamp_utc, round_u16, to_lon360};
 
+/// Result of Pass 1 filter: flat indices plus precomputed row/col.
+/// Precomputing row/col here avoids repeated `idx / nx` and `idx % nx`
+/// integer division in the gather pass (9 fields × N voxels) and tally pass.
+///
+/// Designed for reuse across levels: call `clear()` then pass to
+/// `filter_voxels_by_threshold` each iteration to avoid re-allocation.
+pub(crate) struct FilterResult {
+    /// Flat index into the level's 1D grid array.
+    pub indices: Vec<u32>,
+    /// Precomputed `(idx / nx) as u16` for each valid voxel.
+    pub rows: Vec<u16>,
+    /// Precomputed `(idx % nx) as u16` for each valid voxel.
+    pub cols: Vec<u16>,
+}
+
+impl FilterResult {
+    pub fn new() -> Self {
+        Self {
+            indices: Vec::new(),
+            rows: Vec::new(),
+            cols: Vec::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.indices.clear();
+        self.rows.clear();
+        self.cols.clear();
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.indices.len()
+    }
+}
+
 /// Pass 1: Scan dbz_tenths and collect indices of voxels at or above threshold.
 ///
 /// Uses explicit SIMD via `wide::i16x8`: compares 8 i16 lanes per iteration,
 /// extracts a bitmask, and uses `COMPRESS_LUT` to gather matching indices
 /// without per-element branches. Scalar tail loop handles `n % 8` remainder.
+///
+/// Also precomputes row/col for each matching index to eliminate repeated
+/// integer division in downstream passes.
+///
+/// Appends to `out` (caller should `out.clear()` before calling).
+/// Reusing the same `FilterResult` across levels avoids re-allocation.
 #[inline(never)] // Preserve as named function for LLVM remarks + asm inspection
-pub fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> Vec<u32> {
+pub fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16, nx: u32, out: &mut FilterResult) {
     let n = dbz_tenths.len();
-    let mut out = Vec::with_capacity(n / 3);
 
     let threshold_v = i16x8::splat(threshold);
     let chunks = n / 8;
+    let nx_usize = nx as usize;
 
     for chunk_idx in 0..chunks {
         let base = chunk_idx * 8;
@@ -60,7 +105,10 @@ pub fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> Vec<u32
         let (positions, count) = COMPRESS_LUT[mask];
         let base_u32 = base as u32;
         for i in 0..count as usize {
-            out.push(base_u32 + positions[i] as u32);
+            let idx = base + positions[i] as usize;
+            out.indices.push(base_u32 + positions[i] as u32);
+            out.rows.push((idx / nx_usize) as u16);
+            out.cols.push((idx % nx_usize) as u16);
         }
     }
 
@@ -68,15 +116,18 @@ pub fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16) -> Vec<u32
     let tail_start = chunks * 8;
     for i in tail_start..n {
         if dbz_tenths[i] >= threshold {
-            out.push(i as u32);
+            out.indices.push(i as u32);
+            out.rows.push((i / nx_usize) as u16);
+            out.cols.push((i % nx_usize) as u16);
         }
     }
-
-    out
 }
 
 /// Flat f32 arrays of aux field values for valid voxel indices.
 /// NaN indicates missing/unavailable values.
+///
+/// Designed for reuse across levels: call `resize_and_fill_nan(n)` to
+/// prepare for the next level without re-allocating when n <= previous capacity.
 pub(crate) struct GatheredAuxFields {
     pub(crate) zdr: Vec<f32>,
     pub(crate) rhohv: Vec<f32>,
@@ -89,15 +140,55 @@ pub(crate) struct GatheredAuxFields {
     pub(crate) rqi: Vec<f32>,
 }
 
+impl GatheredAuxFields {
+    fn new() -> Self {
+        Self {
+            zdr: Vec::new(),
+            rhohv: Vec::new(),
+            precip_flag: Vec::new(),
+            freezing_level: Vec::new(),
+            wet_bulb: Vec::new(),
+            surface_temp: Vec::new(),
+            bright_band_top: Vec::new(),
+            bright_band_bottom: Vec::new(),
+            rqi: Vec::new(),
+        }
+    }
+
+    /// Resize all arrays to `n` and fill with NaN.
+    /// When `n <= capacity`, this avoids allocation; only the NaN-fill runs.
+    fn resize_and_fill_nan(&mut self, n: usize) {
+        // Fill with NaN by clearing then resizing (resize only memsets new elements,
+        // so we clear first to ensure all positions are NaN)
+        fn fill_nan(v: &mut Vec<f32>, n: usize) {
+            v.clear();
+            v.resize(n, f32::NAN);
+        }
+        fill_nan(&mut self.zdr, n);
+        fill_nan(&mut self.rhohv, n);
+        fill_nan(&mut self.precip_flag, n);
+        fill_nan(&mut self.freezing_level, n);
+        fill_nan(&mut self.wet_bulb, n);
+        fill_nan(&mut self.surface_temp, n);
+        fill_nan(&mut self.bright_band_top, n);
+        fill_nan(&mut self.bright_band_bottom, n);
+        fill_nan(&mut self.rqi, n);
+    }
+}
+
 /// Pass 2: Gather aux field values for valid voxel indices into flat f32 arrays.
 ///
 /// Uses NaN as sentinel for missing values. This separates the Option-chain
 /// indirection (AuxFieldSampler lookup) from the compute pass, so the compute
 /// pass can operate on flat arrays without branches.
+///
+/// Accepts precomputed row/col arrays from `filter_voxels_by_threshold` to
+/// avoid repeated `idx / nx` and `idx % nx` integer division.
+///
+/// Writes into `out` (caller should pre-allocate and reuse across levels).
 #[inline(never)] // Preserve as named function for LLVM remarks + asm inspection
 pub(crate) fn gather_aux_fields(
-    valid_indices: &[u32],
-    nx: u32,
+    filter: &FilterResult,
     zdr_values: Option<&[f32]>,
     rhohv_values: Option<&[f32]>,
     precip_sampler: &AuxFieldSampler,
@@ -107,24 +198,15 @@ pub(crate) fn gather_aux_fields(
     bright_band_top_sampler: &AuxFieldSampler,
     bright_band_bottom_sampler: &AuxFieldSampler,
     rqi_sampler: &AuxFieldSampler,
-) -> GatheredAuxFields {
-    let n = valid_indices.len();
-    let mut out = GatheredAuxFields {
-        zdr: vec![f32::NAN; n],
-        rhohv: vec![f32::NAN; n],
-        precip_flag: vec![f32::NAN; n],
-        freezing_level: vec![f32::NAN; n],
-        wet_bulb: vec![f32::NAN; n],
-        surface_temp: vec![f32::NAN; n],
-        bright_band_top: vec![f32::NAN; n],
-        bright_band_bottom: vec![f32::NAN; n],
-        rqi: vec![f32::NAN; n],
-    };
+    out: &mut GatheredAuxFields,
+) {
+    let n = filter.indices.len();
+    out.resize_and_fill_nan(n);
 
-    for (out_i, &idx) in valid_indices.iter().enumerate() {
-        let value_idx = idx as usize;
-        let row = value_idx / nx as usize;
-        let col = value_idx % nx as usize;
+    for out_i in 0..n {
+        let value_idx = filter.indices[out_i] as usize;
+        let row = filter.rows[out_i] as usize;
+        let col = filter.cols[out_i] as usize;
 
         if let Some(vals) = zdr_values {
             if let Some(&v) = vals.get(value_idx) {
@@ -158,8 +240,6 @@ pub(crate) fn gather_aux_fields(
             out.rqi[out_i] = v;
         }
     }
-
-    out
 }
 
 pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanSnapshot>> {
@@ -426,6 +506,11 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
     );
     let rqi_sampler = AuxFieldSampler::new(rqi_field, rqi_values, &base_grid);
 
+    // Pre-allocate reusable working buffers for the per-level processing loop.
+    // Cleared and reused each iteration to avoid 33 × ~17 allocations per ingest.
+    let mut filtered = FilterResult::new();
+    let mut gathered = GatheredAuxFields::new();
+
     let mut dual_missing_voxel_count: u64 = 0;
     let mut thermo_signal_voxel_count: u64 = 0;
     let mut thermo_no_signal_voxel_count: u64 = 0;
@@ -460,13 +545,18 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
             timestamp,
         );
 
-        // Pass 1: Filter
-        let valid_indices = filter_voxels_by_threshold(&parsed.dbz_tenths, STORE_MIN_DBZ_TENTHS);
-
-        // Pass 2: Gather aux fields into flat f32 arrays
-        let gathered = gather_aux_fields(
-            &valid_indices,
+        // Pass 1: Filter (also precomputes row/col for each valid voxel)
+        filtered.clear();
+        filter_voxels_by_threshold(
+            &parsed.dbz_tenths,
+            STORE_MIN_DBZ_TENTHS,
             parsed.grid.nx,
+            &mut filtered,
+        );
+
+        // Pass 2: Gather aux fields into flat f32 arrays (reuses pre-allocated buffers)
+        gather_aux_fields(
+            &filtered,
             zdr_values,
             rhohv_values,
             &precip_sampler,
@@ -476,6 +566,7 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
             &bright_band_top_sampler,
             &bright_band_bottom_sampler,
             &rqi_sampler,
+            &mut gathered,
         );
 
         // Pass 3: Batch phase scoring
@@ -494,31 +585,34 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
             use_aux_fallback,
         );
 
-        // Pass 4: Tally + Pack
-        let nx = parsed.grid.nx as usize;
-        for (out_i, &idx) in valid_indices.iter().enumerate() {
-            let value_idx = idx as usize;
-            let row = (value_idx / nx) as u16;
-            let col = (value_idx % nx) as u16;
+        // Pass 4: Tally + Pack (row/col precomputed in Pass 1)
+        for out_i in 0..filtered.indices.len() {
+            let value_idx = filtered.indices[out_i] as usize;
+            let row = filtered.rows[out_i];
+            let col = filtered.cols[out_i];
 
-            if batch_result.used_dual[out_i] {
+            let f = batch_result.flags[out_i];
+            let used_dual = f & FLAG_USED_DUAL != 0;
+            let suppressed_dual = f & FLAG_SUPPRESSED_DUAL != 0;
+
+            if used_dual {
                 dual_adjusted_voxel_count += 1;
                 if use_aux_fallback {
                     stale_dual_adjusted_voxel_count += 1;
                 }
             }
-            if batch_result.suppressed_dual[out_i] {
+            if suppressed_dual {
                 dual_suppressed_voxel_count += 1;
             }
             // Dual evidence was missing when neither used nor suppressed
             // (batch scorer only sets these when resolve_dual_pol_evidence returns Some)
-            if !batch_result.used_dual[out_i] && !batch_result.suppressed_dual[out_i] {
+            if !used_dual && !suppressed_dual {
                 dual_missing_voxel_count += 1;
             }
-            if batch_result.suppressed_mixed[out_i] {
+            if f & FLAG_SUPPRESSED_MIXED != 0 {
                 mixed_suppressed_voxel_count += 1;
             }
-            if batch_result.forced_precip_snow[out_i] {
+            if f & FLAG_FORCED_PRECIP_SNOW != 0 {
                 precip_snow_forced_voxel_count += 1;
             }
             if batch_result.signal_count[out_i] > 0 {
@@ -533,7 +627,7 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
                 dbz_tenths: parsed.dbz_tenths[value_idx],
                 phase: batch_result.phase[out_i],
                 surface_phase: batch_result.surface_phase[out_i],
-                transition_candidate: batch_result.transition_candidate[out_i],
+                transition_candidate: f & FLAG_TRANSITION_CANDIDATE != 0,
             });
         }
 
@@ -1214,32 +1308,59 @@ mod filter_tests {
 
     // --- Original tests ---
 
+    fn run_filter(dbz: &[i16], threshold: i16, nx: u32) -> FilterResult {
+        let mut result = FilterResult::new();
+        filter_voxels_by_threshold(dbz, threshold, nx, &mut result);
+        result
+    }
+
     #[test]
     fn filter_voxels_by_threshold_selects_above_threshold() {
         let dbz = vec![10_i16, 60, -50, 50, 100, 49, 51];
-        let threshold = 50_i16;
-        let result = filter_voxels_by_threshold(&dbz, threshold);
-        assert_eq!(result, vec![1_u32, 3, 4, 6]);
+        let result = run_filter(&dbz, 50, 7);
+        assert_eq!(result.indices, vec![1_u32, 3, 4, 6]);
     }
 
     #[test]
     fn filter_voxels_by_threshold_empty_input() {
-        let result = filter_voxels_by_threshold(&[], 50);
-        assert!(result.is_empty());
+        let result = run_filter(&[], 50, 1);
+        assert!(result.indices.is_empty());
     }
 
     #[test]
     fn filter_voxels_by_threshold_all_below() {
         let dbz = vec![10_i16, 20, 30, 40, 49];
-        let result = filter_voxels_by_threshold(&dbz, 50);
-        assert!(result.is_empty());
+        let result = run_filter(&dbz, 50, 5);
+        assert!(result.indices.is_empty());
     }
 
     #[test]
     fn filter_voxels_by_threshold_all_above() {
         let dbz = vec![50_i16, 60, 70, 80];
-        let result = filter_voxels_by_threshold(&dbz, 50);
-        assert_eq!(result, vec![0_u32, 1, 2, 3]);
+        let result = run_filter(&dbz, 50, 4);
+        assert_eq!(result.indices, vec![0_u32, 1, 2, 3]);
+    }
+
+    #[test]
+    fn filter_precomputes_row_col() {
+        // 3x3 grid: nx=3. Index 5 → row=1, col=2. Index 7 → row=2, col=1.
+        let dbz = vec![0_i16, 0, 0, 0, 0, 100, 0, 100, 0];
+        let result = run_filter(&dbz, 50, 3);
+        assert_eq!(result.indices, vec![5, 7]);
+        assert_eq!(result.rows, vec![1, 2]);
+        assert_eq!(result.cols, vec![2, 1]);
+    }
+
+    #[test]
+    fn filter_reuses_buffer_across_calls() {
+        let mut result = FilterResult::new();
+        filter_voxels_by_threshold(&[100_i16; 8], 50, 8, &mut result);
+        assert_eq!(result.len(), 8);
+        result.clear();
+        filter_voxels_by_threshold(&[100_i16; 4], 50, 4, &mut result);
+        assert_eq!(result.len(), 4);
+        // Capacity should be >= 8 (from first call, not reallocated)
+        assert!(result.indices.capacity() >= 8);
     }
 
     // --- SIMD equivalence tests ---
@@ -1254,30 +1375,32 @@ mod filter_tests {
 
     #[test]
     fn simd_filter_matches_scalar() {
+        let mut result = FilterResult::new();
         for n in [0, 1, 7, 8, 9, 15, 16, 100, 1000, 12_250_000] {
             let data: Vec<i16> = (0..n).map(|i| ((i * 7 + 3) % 200 - 50) as i16).collect();
             let threshold = 50i16;
             let expected = filter_scalar_reference(&data, threshold);
-            let actual = filter_voxels_by_threshold(&data, threshold);
-            assert_eq!(actual, expected, "mismatch at n={n}");
+            result.clear();
+            filter_voxels_by_threshold(&data, threshold, n.max(1) as u32, &mut result);
+            assert_eq!(result.indices, expected, "mismatch at n={n}");
         }
     }
 
     #[test]
     fn simd_filter_empty() {
-        assert!(filter_voxels_by_threshold(&[], 50).is_empty());
+        assert!(run_filter(&[], 50, 1).indices.is_empty());
     }
 
     #[test]
     fn simd_filter_all_pass() {
         let data = vec![100i16; 17];
-        assert_eq!(filter_voxels_by_threshold(&data, 50).len(), 17);
+        assert_eq!(run_filter(&data, 50, 17).len(), 17);
     }
 
     #[test]
     fn simd_filter_none_pass() {
         let data = vec![10i16; 17];
-        assert!(filter_voxels_by_threshold(&data, 50).is_empty());
+        assert!(run_filter(&data, 50, 17).indices.is_empty());
     }
 }
 
@@ -1285,29 +1408,50 @@ mod filter_tests {
 mod gather_tests {
     use super::*;
 
+    /// Build a FilterResult from flat indices for a 1×n grid (single row).
+    fn make_filter(indices: &[u32], nx: u32) -> FilterResult {
+        let rows: Vec<u16> = indices.iter().map(|&i| (i as usize / nx as usize) as u16).collect();
+        let cols: Vec<u16> = indices.iter().map(|&i| (i as usize % nx as usize) as u16).collect();
+        FilterResult {
+            indices: indices.to_vec(),
+            rows,
+            cols,
+        }
+    }
+
+    fn run_gather(
+        filter: &FilterResult,
+        zdr: Option<&[f32]>,
+        precip_sampler: &AuxFieldSampler,
+        empty_sampler: &AuxFieldSampler,
+    ) -> GatheredAuxFields {
+        let mut out = GatheredAuxFields::new();
+        gather_aux_fields(
+            filter,
+            zdr,
+            None,
+            precip_sampler,
+            empty_sampler,
+            empty_sampler,
+            empty_sampler,
+            empty_sampler,
+            empty_sampler,
+            empty_sampler,
+            &mut out,
+        );
+        out
+    }
+
     #[test]
     fn gather_uses_nan_for_missing_zdr() {
-        let valid_indices = vec![0_u32, 2, 5];
+        let filter = make_filter(&[0, 2, 5], 6);
         let zdr = vec![1.0_f32, f32::NAN, 2.0, 3.0, 4.0, 5.0];
-        // Empty samplers (no direct values, no lookup)
         let empty_sampler = AuxFieldSampler {
             direct_values: None,
             sampled_lookup: None,
         };
 
-        let result = gather_aux_fields(
-            &valid_indices,
-            6,
-            Some(&zdr),
-            None,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-        );
+        let result = run_gather(&filter, Some(&zdr), &empty_sampler, &empty_sampler);
 
         assert_eq!(result.zdr[0], 1.0);
         assert_eq!(result.zdr[1], 2.0);
@@ -1319,24 +1463,13 @@ mod gather_tests {
 
     #[test]
     fn gather_empty_indices_returns_empty_vecs() {
+        let filter = make_filter(&[], 6);
         let empty_sampler = AuxFieldSampler {
             direct_values: None,
             sampled_lookup: None,
         };
 
-        let result = gather_aux_fields(
-            &[],
-            6,
-            None,
-            None,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-        );
+        let result = run_gather(&filter, None, &empty_sampler, &empty_sampler);
 
         assert!(result.zdr.is_empty());
         assert!(result.rhohv.is_empty());
@@ -1355,20 +1488,8 @@ mod gather_tests {
             sampled_lookup: None,
         };
 
-        let valid_indices = vec![1_u32, 3, 5];
-        let result = gather_aux_fields(
-            &valid_indices,
-            6,
-            None,
-            None,
-            &precip_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-            &empty_sampler,
-        );
+        let filter = make_filter(&[1, 3, 5], 6);
+        let result = run_gather(&filter, None, &precip_sampler, &empty_sampler);
 
         assert_eq!(result.precip_flag[0], 20.0);
         assert_eq!(result.precip_flag[1], 40.0);

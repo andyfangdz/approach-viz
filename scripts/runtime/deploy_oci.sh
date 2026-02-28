@@ -187,6 +187,7 @@ ${parse_concurrency_line}
 ExecStart=/usr/local/bin/approach-viz-runtime
 Restart=always
 RestartSec=5
+CPUQuota=200%
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

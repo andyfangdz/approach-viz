@@ -76,25 +76,33 @@ async fn load_snapshot_file(path: &Path) -> Result<ScanSnapshot> {
 }
 
 pub async fn persist_snapshot(cfg: &Config, snapshot: Arc<ScanSnapshot>) -> Result<()> {
-    let file = SnapshotFile {
-        magic: SNAPSHOT_MAGIC,
-        version: SNAPSHOT_VERSION,
-        payload: (*snapshot).clone(),
-    };
-
-    let encoded = encode_to_vec(&file, bincode_config()).context("Failed to encode snapshot")?;
-    let compressed = zstd::stream::encode_all(Cursor::new(encoded), 6)
-        .context("Failed to zstd-compress snapshot")?;
-
     let scans_dir = cfg.scans_dir();
+    let timestamp = snapshot.timestamp.clone();
+
+    // Offload CPU-intensive bincode encode + zstd compress to the blocking pool
+    // so the async runtime stays free for request handling.
+    let compressed = tokio::task::spawn_blocking(move || {
+        let file = SnapshotFile {
+            magic: SNAPSHOT_MAGIC,
+            version: SNAPSHOT_VERSION,
+            payload: (*snapshot).clone(),
+        };
+        let encoded =
+            encode_to_vec(&file, bincode_config()).context("Failed to encode snapshot")?;
+        zstd::stream::encode_all(Cursor::new(encoded), 6)
+            .context("Failed to zstd-compress snapshot")
+    })
+    .await
+    .context("Join error in snapshot compression")??;
+
     fs::create_dir_all(&scans_dir)
         .await
         .with_context(|| format!("Failed to create {}", scans_dir.display()))?;
 
-    let path = scans_dir.join(format!("{}.avsn.zst", snapshot.timestamp));
-    let tmp_path = scans_dir.join(format!("{}.tmp", snapshot.timestamp));
+    let path = scans_dir.join(format!("{timestamp}.avsn.zst"));
+    let tmp_path = scans_dir.join(format!("{timestamp}.tmp"));
 
-    fs::write(&tmp_path, compressed)
+    fs::write(&tmp_path, &compressed)
         .await
         .with_context(|| format!("Failed writing {}", tmp_path.display()))?;
     fs::rename(&tmp_path, &path).await.with_context(|| {

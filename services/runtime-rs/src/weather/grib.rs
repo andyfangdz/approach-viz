@@ -3,6 +3,7 @@ use std::io::{Cursor, Read};
 use anyhow::{anyhow, bail, Context, Result};
 use flate2::read::GzDecoder;
 use grib::{Grib2SubmessageDecoder, GridDefinitionTemplateValues};
+use wide::f32x4;
 
 use crate::types::{GridDef, ParsedAuxField, ParsedReflectivityField};
 use crate::utils::to_lon360;
@@ -52,16 +53,18 @@ fn parse_reflectivity_grib_values(buffer: &[u8]) -> Result<ParsedReflectivityFie
         .dispatch()
         .map_err(|error| anyhow!("Failed to decode GRIB2 values: {error}"))?;
 
-    let mut dbz_tenths = Vec::with_capacity(expected_count);
-    dbz_tenths.extend(decoded.map(float_to_tenths));
+    let mut raw_f32: Vec<f32> = Vec::with_capacity(expected_count);
+    raw_f32.extend(decoded);
 
-    if dbz_tenths.len() != expected_count {
+    if raw_f32.len() != expected_count {
         bail!(
             "Decoded point-count mismatch: expected {}, got {}",
             expected_count,
-            dbz_tenths.len()
+            raw_f32.len()
         );
     }
+
+    let dbz_tenths = floats_to_tenths_bulk(&raw_f32);
 
     Ok(ParsedReflectivityField { grid, dbz_tenths })
 }
@@ -168,11 +171,43 @@ fn read_u32_be(buffer: &[u8], offset: usize) -> Result<u32> {
     ]))
 }
 
-fn float_to_tenths(value: f32) -> i16 {
-    if !value.is_finite() {
-        return i16::MIN;
+/// Bulk-convert f32 values to i16 tenths using f32 arithmetic.
+///
+/// Non-finite values map to `i16::MIN`. Uses `(value * 10.0).round()` in f32
+/// which is precise for the MRMS reflectivity range (−999.0 to +999.0 dBZ).
+fn floats_to_tenths_bulk(values: &[f32]) -> Vec<i16> {
+    let n = values.len();
+    let mut out = vec![i16::MIN; n];
+    let scale = f32x4::splat(10.0);
+    let lo = f32x4::splat(i16::MIN as f32);
+    let hi = f32x4::splat(i16::MAX as f32);
+    let chunks = n / 4;
+
+    let src_chunks: &[[f32; 4]] = bytemuck::cast_slice(&values[..chunks * 4]);
+    let dst_chunks: &mut [[i16; 4]] = bytemuck::cast_slice_mut(&mut out[..chunks * 4]);
+
+    for i in 0..chunks {
+        let v = f32x4::from(src_chunks[i]);
+        let finite = v.is_finite();
+        let scaled = (v * scale).round().max(lo).min(hi);
+        // Blend: finite → scaled, non-finite → i16::MIN (already in output)
+        let result = finite.blend(scaled, f32x4::splat(i16::MIN as f32));
+        let arr = result.to_array();
+        dst_chunks[i] = [
+            arr[0] as i16,
+            arr[1] as i16,
+            arr[2] as i16,
+            arr[3] as i16,
+        ];
     }
-    (f64::from(value) * 10.0)
-        .round()
-        .clamp(i16::MIN as f64, i16::MAX as f64) as i16
+
+    // Scalar tail
+    for i in (chunks * 4)..n {
+        let v = values[i];
+        if v.is_finite() {
+            out[i] = (v * 10.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+        }
+    }
+
+    out
 }
