@@ -422,6 +422,8 @@ impl TrafficMemoryStore {
     // ------------------------------------------------------------------
 
     pub fn query(&self, request: &QueryRequest) -> QueryResult {
+        use std::time::Instant;
+
         let snapshot = self.current.load();
 
         // Warming check — no tracks loaded yet.
@@ -435,6 +437,8 @@ impl TrafficMemoryStore {
             };
         }
 
+        let t0 = Instant::now();
+
         // ── Current aircraft within discovery radius ────────────────
         let mut aircraft = query_current_tracks(
             &snapshot,
@@ -444,6 +448,8 @@ impl TrafficMemoryStore {
             request.discovery_radius_nm,
             request.hide_ground_traffic,
         );
+
+        let t_current = t0.elapsed();
 
         // Exact radius filter, sort, truncate.
         aircraft.retain(|ac| {
@@ -463,6 +469,8 @@ impl TrafficMemoryStore {
         });
         aircraft.truncate(request.limit);
 
+        let t_sort = t0.elapsed();
+
         // ── History ─────────────────────────────────────────────────
         let mut history_by_hex = HashMap::new();
         if request.history_minutes > 0.0 {
@@ -471,6 +479,7 @@ impl TrafficMemoryStore {
             let min_bucket = bucket_start_ms(history_cutoff_ms);
 
             let ring = self.history.read().expect("history lock poisoned");
+            let t_lock = t0.elapsed();
             let partitions = ring.partitions_in_range(min_bucket);
 
             let targets = if request.history_hexes.is_empty() {
@@ -485,6 +494,7 @@ impl TrafficMemoryStore {
             } else {
                 request.history_hexes.clone()
             };
+            let t_discover = t0.elapsed();
 
             history_by_hex = load_history_for_hexes(
                 &partitions,
@@ -492,6 +502,8 @@ impl TrafficMemoryStore {
                 history_cutoff_ms,
                 request.hide_ground_traffic,
             );
+            let t_load = t0.elapsed();
+            let partition_count = partitions.len();
             drop(ring);
 
             // Post-process: sort, truncate, trail intersection filter.
@@ -510,6 +522,26 @@ impl TrafficMemoryStore {
                     request.radius_nm,
                 )
             });
+            let t_post = t0.elapsed();
+
+            let total_ms = t_post.as_secs_f64() * 1000.0;
+            let is_discovery = request.history_hexes.is_empty();
+            if total_ms > 100.0 || (is_discovery && total_ms > 20.0) {
+                info!(
+                    current_ms = format!("{:.1}", t_current.as_secs_f64() * 1000.0),
+                    sort_ms = format!("{:.1}", (t_sort - t_current).as_secs_f64() * 1000.0),
+                    lock_ms = format!("{:.1}", (t_lock - t_sort).as_secs_f64() * 1000.0),
+                    discover_ms = format!("{:.1}", (t_discover - t_lock).as_secs_f64() * 1000.0),
+                    load_ms = format!("{:.1}", (t_load - t_discover).as_secs_f64() * 1000.0),
+                    post_ms = format!("{:.1}", (t_post - t_load).as_secs_f64() * 1000.0),
+                    total_ms = format!("{:.1}", total_ms),
+                    target_hexes = targets.len(),
+                    result_hexes = history_by_hex.len(),
+                    partitions = partition_count,
+                    discovery = is_discovery,
+                    "traffic query timing"
+                );
+            }
         }
 
         QueryResult {
