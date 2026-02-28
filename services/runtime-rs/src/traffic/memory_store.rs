@@ -478,7 +478,7 @@ impl TrafficMemoryStore {
                     &partitions,
                     request.lat,
                     request.lon,
-                    request.radius_nm,
+                    request.discovery_radius_nm,
                     history_cutoff_ms,
                     request.hide_ground_traffic,
                 )
@@ -592,6 +592,10 @@ fn collect_history_target_hexes(
     for partition in partitions.iter().rev() {
         let grid_hexes = partition.grid.hexes_in_bbox(&bounds);
         for hex in &grid_hexes {
+            // Already confirmed this hex — skip remaining partitions for it.
+            if candidates.contains_key(hex) {
+                continue;
+            }
             if let Some(points) = partition.points_by_hex.get(hex) {
                 for point in points {
                     if point.timestamp_ms < history_cutoff_ms {
@@ -601,27 +605,15 @@ fn collect_history_target_hexes(
                         continue;
                     }
                     let dist = distance_nm(center_lat, center_lon, point.lat, point.lon);
-                    if dist > radius_nm {
-                        continue;
-                    }
-                    match candidates.get_mut(hex) {
-                        Some(existing) => {
-                            if dist < existing.closest_distance_nm {
-                                existing.closest_distance_nm = dist;
-                            }
-                            if point.timestamp_ms > existing.latest_timestamp_ms {
-                                existing.latest_timestamp_ms = point.timestamp_ms;
-                            }
-                        }
-                        None => {
-                            candidates.insert(
-                                hex.clone(),
-                                HistoryTargetCandidate {
-                                    closest_distance_nm: dist,
-                                    latest_timestamp_ms: point.timestamp_ms,
-                                },
-                            );
-                        }
+                    if dist <= radius_nm {
+                        candidates.insert(
+                            hex.clone(),
+                            HistoryTargetCandidate {
+                                closest_distance_nm: dist,
+                                latest_timestamp_ms: point.timestamp_ms,
+                            },
+                        );
+                        break; // Confirmed — stop scanning this hex's points.
                     }
                 }
             }
