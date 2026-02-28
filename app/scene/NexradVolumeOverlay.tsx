@@ -8,7 +8,7 @@ import type {
   NexradVolumeOverlayProps,
   NexradVolumePayload,
   EchoTopPayload,
-  EchoTopSurfaceCell
+  EchoTopSoA
 } from './nexrad/nexrad-types';
 import {
   POLL_INTERVAL_MS,
@@ -18,7 +18,8 @@ import {
   PHASE_SNOW,
   ALTITUDE_GUIDE_STEP_FEET,
   MIN_CROSS_SECTION_HALF_WIDTH_NM,
-  MAX_CROSS_SECTION_HALF_WIDTH_NM
+  MAX_CROSS_SECTION_HALF_WIDTH_NM,
+  EMPTY_ECHO_TOP_SOA
 } from './nexrad/nexrad-types';
 import { MIN_NEXRAD_MIN_DBZ } from '@/app/app-client/constants';
 import { buildEchoTopRequestUrl, buildNexradRequestUrl } from './nexrad/nexrad-decode';
@@ -206,9 +207,9 @@ export function NexradVolumeOverlay({
     emptyPreparedVolume()
   );
   const [crossSectionData, setCrossSectionData] = useState<CrossSectionData | null>(null);
-  const [echoTop18Cells, setEchoTop18Cells] = useState<EchoTopSurfaceCell[]>([]);
-  const [echoTop30Cells, setEchoTop30Cells] = useState<EchoTopSurfaceCell[]>([]);
-  const [echoTop50Cells, setEchoTop50Cells] = useState<EchoTopSurfaceCell[]>([]);
+  const [echoTop18, setEchoTop18] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
+  const [echoTop30, setEchoTop30] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
+  const [echoTop50, setEchoTop50] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [timingsMs, setTimingsMs] = useState<NexradTimingDebugState>(EMPTY_TIMINGS_MS);
   const patchTimings = useCallback((patch: Partial<NexradTimingDebugState>) => {
     setTimingsMs((previous) => {
@@ -232,9 +233,9 @@ export function NexradVolumeOverlay({
     array.fill(1);
     return array;
   }, [instanceCapacity]);
-  const echo18Capacity = useGrowingInstanceCapacity(echoTop18Cells.length);
-  const echo30Capacity = useGrowingInstanceCapacity(echoTop30Cells.length);
-  const echo50Capacity = useGrowingInstanceCapacity(echoTop50Cells.length);
+  const echo18Capacity = useGrowingInstanceCapacity(echoTop18.count);
+  const echo30Capacity = useGrowingInstanceCapacity(echoTop30.count);
+  const echo50Capacity = useGrowingInstanceCapacity(echoTop50.count);
 
   const voxelGeometry = useMemo(() => {
     const nextGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -386,9 +387,9 @@ export function NexradVolumeOverlay({
       setEchoTopPayload(null);
       setVolumeData(emptyPreparedVolume());
       setCrossSectionData(null);
-      setEchoTop18Cells([]);
-      setEchoTop30Cells([]);
-      setEchoTop50Cells([]);
+      setEchoTop18(EMPTY_ECHO_TOP_SOA);
+      setEchoTop30(EMPTY_ECHO_TOP_SOA);
+      setEchoTop50(EMPTY_ECHO_TOP_SOA);
       setIsLoading(false);
       setLastError(null);
       setLastPollAt(null);
@@ -400,9 +401,9 @@ export function NexradVolumeOverlay({
     setEchoTopPayload(null);
     setVolumeData(emptyPreparedVolume());
     setCrossSectionData(null);
-    setEchoTop18Cells([]);
-    setEchoTop30Cells([]);
-    setEchoTop50Cells([]);
+    setEchoTop18(EMPTY_ECHO_TOP_SOA);
+    setEchoTop30(EMPTY_ECHO_TOP_SOA);
+    setEchoTop50(EMPTY_ECHO_TOP_SOA);
     setIsLoading(true);
     setLastError(null);
     setLastPollAt(null);
@@ -532,15 +533,15 @@ export function NexradVolumeOverlay({
                 }
                 return nextEchoTopPayload ?? previousPayload;
               });
-              setEchoTop18Cells(result.echoTop18Cells);
-              setEchoTop30Cells(result.echoTop30Cells);
-              setEchoTop50Cells(result.echoTop50Cells);
+              setEchoTop18(result.echoTop18);
+              setEchoTop30(result.echoTop30);
+              setEchoTop50(result.echoTop50);
             }
           } else if (!showEchoTopsRef.current) {
             setEchoTopPayload(null);
-            setEchoTop18Cells([]);
-            setEchoTop30Cells([]);
-            setEchoTop50Cells([]);
+            setEchoTop18(EMPTY_ECHO_TOP_SOA);
+            setEchoTop30(EMPTY_ECHO_TOP_SOA);
+            setEchoTop50(EMPTY_ECHO_TOP_SOA);
           }
         }
       } catch (error) {
@@ -845,9 +846,9 @@ export function NexradVolumeOverlay({
         glowMesh.instanceColor.needsUpdate = true;
       }
     }
-    applyConstantColorInstances(echo18MeshRef.current, echoTop18Cells, meshDummy);
-    applyConstantColorInstances(echo30MeshRef.current, echoTop30Cells, meshDummy);
-    applyConstantColorInstances(echo50MeshRef.current, echoTop50Cells, meshDummy);
+    applyConstantColorInstances(echo18MeshRef.current, echoTop18, meshDummy);
+    applyConstantColorInstances(echo30MeshRef.current, echoTop30, meshDummy);
+    applyConstantColorInstances(echo50MeshRef.current, echoTop50, meshDummy);
     patchTimings({ instanceUploadMs: roundMs(performance.now() - uploadStartedAt) });
     // showVolume/showEchoTops: re-run when sub-layer toggles so freshly
     // mounted meshes get count set to 0 (or the real count if data exists)
@@ -857,9 +858,9 @@ export function NexradVolumeOverlay({
     volumeData,
     declutterIndices,
     declutterCount,
-    echoTop18Cells,
-    echoTop30Cells,
-    echoTop50Cells,
+    echoTop18,
+    echoTop30,
+    echoTop50,
     meshDummy,
     colorScratch,
     instanceAlphaArray,
@@ -938,8 +939,7 @@ export function NexradVolumeOverlay({
   }
   const hasVolume = showVolume && declutterCount > 0;
   const hasEchoTops =
-    showEchoTops &&
-    (echoTop18Cells.length > 0 || echoTop30Cells.length > 0 || echoTop50Cells.length > 0);
+    showEchoTops && (echoTop18.count > 0 || echoTop30.count > 0 || echoTop50.count > 0);
   const hasCrossSection = showCrossSection && crossSectionData !== null;
   if (!hasVolume && !hasEchoTops && !hasCrossSection) {
     return null;

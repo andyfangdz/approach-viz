@@ -235,13 +235,25 @@ export const SNOW_DBZ_COLOR_BANDS: DbzColorBand[] = [
   { minDbz: 5, hex: 0x7de8ff }
 ];
 
-export interface EchoTopSurfaceCell {
-  x: number;
-  z: number;
-  yBase: number;
-  footprintXNm: number;
-  footprintYNm: number;
+/** SoA representation of echo-top surface cells — typed arrays straight from WASM. */
+export interface EchoTopSoA {
+  count: number;
+  x: Float32Array;
+  z: Float32Array;
+  yBase: Float32Array;
+  footprintXNm: Float32Array;
+  footprintYNm: Float32Array;
 }
+
+const EMPTY_F32 = new Float32Array(0);
+export const EMPTY_ECHO_TOP_SOA: EchoTopSoA = {
+  count: 0,
+  x: EMPTY_F32,
+  z: EMPTY_F32,
+  yBase: EMPTY_F32,
+  footprintXNm: EMPTY_F32,
+  footprintYNm: EMPTY_F32
+};
 
 export interface CrossSectionData {
   binsX: number;

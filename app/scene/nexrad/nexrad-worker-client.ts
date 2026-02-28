@@ -1,10 +1,11 @@
 import type { NexradDeclutterMode, NexradPhaseMode } from '@/app/app-client/types';
 import type {
   CrossSectionData,
-  EchoTopSurfaceCell,
+  EchoTopSoA,
   NexradPreparedVolumeData,
   NexradVolumePayload
 } from './nexrad-types';
+import { EMPTY_ECHO_TOP_SOA } from './nexrad-types';
 import type {
   NexradWorkerRequestMessage,
   NexradWorkerResponseMessage,
@@ -86,9 +87,9 @@ export interface NexradPollAndPrepareResult {
   volumePayload: NexradVolumePayload | null;
   preparedVolume: NexradPreparedVolumeData;
   crossSectionData: CrossSectionData | null;
-  echoTop18Cells: EchoTopSurfaceCell[];
-  echoTop30Cells: EchoTopSurfaceCell[];
-  echoTop50Cells: EchoTopSurfaceCell[];
+  echoTop18: EchoTopSoA;
+  echoTop30: EchoTopSoA;
+  echoTop50: EchoTopSoA;
   echoTopSummary: PollAndPrepareEchoTopSummary | null;
   timings: PollAndPrepareTimings | null;
 }
@@ -391,9 +392,9 @@ class NexradDecodeWorkerClient extends BaseWorkerClient<NexradWorkerResponseMess
         volumePayload: response.volumePayload ?? null,
         preparedVolume: decoded.payload,
         crossSectionData: decoded.crossSectionData,
-        echoTop18Cells: response.echoTop18Cells ?? [],
-        echoTop30Cells: response.echoTop30Cells ?? [],
-        echoTop50Cells: response.echoTop50Cells ?? [],
+        echoTop18: response.echoTop18 ?? EMPTY_ECHO_TOP_SOA,
+        echoTop30: response.echoTop30 ?? EMPTY_ECHO_TOP_SOA,
+        echoTop50: response.echoTop50 ?? EMPTY_ECHO_TOP_SOA,
         echoTopSummary: response.echoTopSummary ?? null,
         timings: response.timings ?? null
       } satisfies NexradPollAndPrepareResult;

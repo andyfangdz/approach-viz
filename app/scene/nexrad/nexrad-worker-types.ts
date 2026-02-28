@@ -1,4 +1,4 @@
-import type { EchoTopSurfaceCell, NexradVolumePayload } from './nexrad-types';
+import type { EchoTopSoA, NexradVolumePayload } from './nexrad-types';
 import type { NexradDeclutterMode, NexradPhaseMode } from '@/app/app-client/types';
 
 export interface PhaseDebugHeaderValues {
@@ -107,9 +107,9 @@ export interface PollAndPrepareResponseMessage {
   usedSab?: boolean;
   sabOverflow?: NexradPrepareSabOverflow;
   volumePayload?: NexradVolumePayload;
-  echoTop18Cells?: EchoTopSurfaceCell[];
-  echoTop30Cells?: EchoTopSurfaceCell[];
-  echoTop50Cells?: EchoTopSurfaceCell[];
+  echoTop18?: EchoTopSoA;
+  echoTop30?: EchoTopSoA;
+  echoTop50?: EchoTopSoA;
   echoTopSummary?: PollAndPrepareEchoTopSummary | null;
   timings?: PollAndPrepareTimings;
   error?: string;

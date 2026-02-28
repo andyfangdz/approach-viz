@@ -2,9 +2,10 @@ import { applyPhaseDebugValues, extractPhaseDebugHeaderValues } from './nexrad-d
 import type {
   NexradVolumePayload,
   NexradLayerSummary,
-  NexradPreparedVolumeData
+  NexradPreparedVolumeData,
+  EchoTopSoA
 } from './nexrad-types';
-import { MRMS_LEVEL_TAGS } from './nexrad-types';
+import { MRMS_LEVEL_TAGS, EMPTY_ECHO_TOP_SOA } from './nexrad-types';
 import type {
   NexradInitSabRequestMessage,
   NexradWorkerRequestMessage,
@@ -119,21 +120,32 @@ async function fetchArrayBuffer(
   };
 }
 
-/** Convert WASM SoA echo-top output to the EchoTopSurfaceCell[] shape. */
-function unpackEchoTopSoA(
-  soa: any
-): { x: number; z: number; yBase: number; footprintXNm: number; footprintYNm: number }[] {
-  const count: number = soa.count ?? 0;
-  const x: Float32Array = soa.x;
-  const z: Float32Array = soa.z;
-  const yBase: Float32Array = soa.yBase;
-  const fpX: Float32Array = soa.footprintXNm;
-  const fpY: Float32Array = soa.footprintYNm;
-  const cells = new Array(count);
-  for (let i = 0; i < count; i++) {
-    cells[i] = { x: x[i], z: z[i], yBase: yBase[i], footprintXNm: fpX[i], footprintYNm: fpY[i] };
+/** Extract SoA typed arrays from WASM echo-top output (zero-copy pass-through). */
+function extractEchoTopSoA(soa: any): EchoTopSoA {
+  return {
+    count: soa.count ?? 0,
+    x: soa.x as Float32Array,
+    z: soa.z as Float32Array,
+    yBase: soa.yBase as Float32Array,
+    footprintXNm: soa.footprintXNm as Float32Array,
+    footprintYNm: soa.footprintYNm as Float32Array
+  };
+}
+
+/** Collect transferable ArrayBuffers from echo-top SoA arrays (zero-copy postMessage). */
+function echoTopSoATransferables(...soas: EchoTopSoA[]): ArrayBuffer[] {
+  const buffers: ArrayBuffer[] = [];
+  for (const soa of soas) {
+    if (soa.count === 0) continue;
+    buffers.push(
+      soa.x.buffer as ArrayBuffer,
+      soa.z.buffer as ArrayBuffer,
+      soa.yBase.buffer as ArrayBuffer,
+      soa.footprintXNm.buffer as ArrayBuffer,
+      soa.footprintYNm.buffer as ArrayBuffer
+    );
   }
-  return cells;
+  return buffers;
 }
 
 function encodePhaseMode(mode: NexradPhaseMode): number {
@@ -302,16 +314,16 @@ async function handlePollAndPrepare(
     return;
   }
 
-  let echoTop18Cells: PollAndPrepareResponseMessage['echoTop18Cells'] = [];
-  let echoTop30Cells: PollAndPrepareResponseMessage['echoTop30Cells'] = [];
-  let echoTop50Cells: PollAndPrepareResponseMessage['echoTop50Cells'] = [];
+  let echoTop18: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
+  let echoTop30: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
+  let echoTop50: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
   let echoTopSummary: PollAndPrepareResponseMessage['echoTopSummary'] = null;
 
   if (message.includeEchoTop && message.echoTopUrl) {
     try {
       const echoTopFetch = await fetchArrayBuffer(
         message.echoTopUrl,
-        'application/vnd.approach-viz.echo-tops.v1'
+        'application/vnd.approach-viz.echo-tops.v2'
       );
       timings.echoTopFetchMs = echoTopFetch.fetchMs;
       const echoDecodeStartedAt = performance.now();
@@ -322,9 +334,9 @@ async function handlePollAndPrepare(
         message.applyEarthCurvatureCompensation,
         message.refLat
       ) as any;
-      echoTop18Cells = unpackEchoTopSoA(result.top18);
-      echoTop30Cells = unpackEchoTopSoA(result.top30);
-      echoTop50Cells = unpackEchoTopSoA(result.top50);
+      echoTop18 = extractEchoTopSoA(result.top18);
+      echoTop30 = extractEchoTopSoA(result.top30);
+      echoTop50 = extractEchoTopSoA(result.top50);
 
       const summary = result.summary;
       echoTopSummary = {
@@ -358,19 +370,24 @@ async function handlePollAndPrepare(
     }
   }
 
+  const echoTopTransferables = echoTopSoATransferables(echoTop18, echoTop30, echoTop50);
+  const transferables = volumePayload
+    ? [...volumeTransferables(volumePayload), ...echoTopTransferables]
+    : echoTopTransferables;
+
   endpoint.postMessage(
     {
       type: 'poll-and-prepare-result',
       requestId: message.requestId,
       usedSab: true,
       volumePayload,
-      echoTop18Cells,
-      echoTop30Cells,
-      echoTop50Cells,
+      echoTop18,
+      echoTop30,
+      echoTop50,
       echoTopSummary,
       timings
     },
-    volumePayload ? volumeTransferables(volumePayload) : []
+    transferables
   );
 }
 

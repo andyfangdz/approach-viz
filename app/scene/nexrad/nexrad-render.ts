@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { NexradDeclutterMode } from '@/app/app-client/types';
-import type { DbzColorBand, EchoTopSurfaceCell } from './nexrad-types';
+import type { DbzColorBand, EchoTopSoA } from './nexrad-types';
 import {
   NEXRAD_COLOR_GAIN,
   MIN_VISIBLE_LUMINANCE,
@@ -180,18 +180,18 @@ export function keepVoxelForDeclutter(
 
 export function applyConstantColorInstances(
   mesh: THREE.InstancedMesh | null,
-  cells: EchoTopSurfaceCell[],
+  soa: EchoTopSoA,
   meshDummy: THREE.Object3D
 ) {
   if (!mesh) return;
-  for (let index = 0; index < cells.length; index += 1) {
-    const cell = cells[index];
-    meshDummy.position.set(cell.x, cell.yBase, cell.z);
-    meshDummy.scale.set(cell.footprintXNm, MIN_VOXEL_HEIGHT_NM, cell.footprintYNm);
+  const { count, x, z, yBase, footprintXNm, footprintYNm } = soa;
+  for (let i = 0; i < count; i++) {
+    meshDummy.position.set(x[i], yBase[i], z[i]);
+    meshDummy.scale.set(footprintXNm[i], MIN_VOXEL_HEIGHT_NM, footprintYNm[i]);
     meshDummy.updateMatrix();
-    mesh.setMatrixAt(index, meshDummy.matrix);
+    mesh.setMatrixAt(i, meshDummy.matrix);
   }
-  mesh.count = cells.length;
+  mesh.count = count;
   mesh.instanceMatrix.needsUpdate = true;
 }
 
