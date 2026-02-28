@@ -127,8 +127,8 @@ function extractEchoTopSoA(soa: any): EchoTopSoA {
     x: soa.x as Float32Array,
     z: soa.z as Float32Array,
     yBase: soa.yBase as Float32Array,
-    footprintXNm: soa.footprintXNm as Float32Array,
-    footprintYNm: soa.footprintYNm as Float32Array
+    footprintXNm: (soa.footprintXNm as number) ?? 0,
+    footprintYNm: (soa.footprintYNm as number) ?? 0
   };
 }
 
@@ -140,9 +140,7 @@ function echoTopSoATransferables(...soas: EchoTopSoA[]): ArrayBuffer[] {
     buffers.push(
       soa.x.buffer as ArrayBuffer,
       soa.z.buffer as ArrayBuffer,
-      soa.yBase.buffer as ArrayBuffer,
-      soa.footprintXNm.buffer as ArrayBuffer,
-      soa.footprintYNm.buffer as ArrayBuffer
+      soa.yBase.buffer as ArrayBuffer
     );
   }
   return buffers;

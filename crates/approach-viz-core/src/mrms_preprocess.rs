@@ -25,22 +25,23 @@ pub struct EchoTopInput {
     pub footprint_y_nm: f32,
 }
 
-/// A single echo-top surface cell ready for rendering.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EchoTopSurfaceCell {
-    pub x: f32,
-    pub z: f32,
-    pub y_base: f32,
+/// Prepared echo-top surfaces in SoA layout, ready for direct JS Float32Array handoff.
+#[derive(Debug, Clone)]
+pub struct EchoTopSurfacesSoA {
+    pub count18: usize,
+    pub count30: usize,
+    pub count50: usize,
+    pub x18: Vec<f32>,
+    pub z18: Vec<f32>,
+    pub y_base18: Vec<f32>,
+    pub x30: Vec<f32>,
+    pub z30: Vec<f32>,
+    pub y_base30: Vec<f32>,
+    pub x50: Vec<f32>,
+    pub z50: Vec<f32>,
+    pub y_base50: Vec<f32>,
     pub footprint_x_nm: f32,
     pub footprint_y_nm: f32,
-}
-
-/// Prepared echo-top surfaces for the three dBZ thresholds.
-#[derive(Debug, Clone)]
-pub struct EchoTopSurfaces {
-    pub top18: Vec<EchoTopSurfaceCell>,
-    pub top30: Vec<EchoTopSurfaceCell>,
-    pub top50: Vec<EchoTopSurfaceCell>,
 }
 
 // ---------------------------------------------------------------------------
@@ -283,15 +284,15 @@ pub fn build_cross_section(
 // 3. prepare_echo_top_surfaces
 // ---------------------------------------------------------------------------
 
-/// Build renderable echo-top surface cells from typed echo-top input.
+/// Build renderable echo-top surfaces in SoA layout from decoded echo-top data.
 ///
-/// Mirrors `prepareEchoTopSurfaces()` from `nexrad-preprocess.ts:255-369`
-/// (typed-array path only; legacy `cells` array path is not needed in Rust).
+/// Takes `DecodedEchoTop` directly (u16 heights), applies curvature correction,
+/// and outputs SoA Vecs ready for direct Float32Array handoff to JS.
 pub fn prepare_echo_top_surfaces(
     input: &EchoTopInput,
     apply_earth_curvature: bool,
     ref_lat: f64,
-) -> EchoTopSurfaces {
+) -> EchoTopSurfacesSoA {
     let count = input
         .x_nm
         .len()
@@ -300,9 +301,15 @@ pub fn prepare_echo_top_surfaces(
         .min(input.top30_feet.len())
         .min(input.top50_feet.len());
 
-    let mut top18 = Vec::new();
-    let mut top30 = Vec::new();
-    let mut top50 = Vec::new();
+    let mut x18 = Vec::new();
+    let mut z18 = Vec::new();
+    let mut y18 = Vec::new();
+    let mut x30 = Vec::new();
+    let mut z30 = Vec::new();
+    let mut y30 = Vec::new();
+    let mut x50 = Vec::new();
+    let mut z50 = Vec::new();
+    let mut y50 = Vec::new();
 
     for i in 0..count {
         let x = input.x_nm[i];
@@ -322,35 +329,38 @@ pub fn prepare_echo_top_surfaces(
         let t50 = f64::max(0.0, f64::from(input.top50_feet[i]) - curvature_drop_feet);
 
         if t18 > 0.0 {
-            top18.push(EchoTopSurfaceCell {
-                x,
-                z,
-                y_base: (t18 * ALTITUDE_SCALE) as f32,
-                footprint_x_nm: input.footprint_x_nm,
-                footprint_y_nm: input.footprint_y_nm,
-            });
+            x18.push(x);
+            z18.push(z);
+            y18.push((t18 * ALTITUDE_SCALE) as f32);
         }
         if t30 > 0.0 {
-            top30.push(EchoTopSurfaceCell {
-                x,
-                z,
-                y_base: (t30 * ALTITUDE_SCALE) as f32,
-                footprint_x_nm: input.footprint_x_nm,
-                footprint_y_nm: input.footprint_y_nm,
-            });
+            x30.push(x);
+            z30.push(z);
+            y30.push((t30 * ALTITUDE_SCALE) as f32);
         }
         if t50 > 0.0 {
-            top50.push(EchoTopSurfaceCell {
-                x,
-                z,
-                y_base: (t50 * ALTITUDE_SCALE) as f32,
-                footprint_x_nm: input.footprint_x_nm,
-                footprint_y_nm: input.footprint_y_nm,
-            });
+            x50.push(x);
+            z50.push(z);
+            y50.push((t50 * ALTITUDE_SCALE) as f32);
         }
     }
 
-    EchoTopSurfaces { top18, top30, top50 }
+    EchoTopSurfacesSoA {
+        count18: x18.len(),
+        count30: x30.len(),
+        count50: x50.len(),
+        x18,
+        z18,
+        y_base18: y18,
+        x30,
+        z30,
+        y_base30: y30,
+        x50,
+        z50,
+        y_base50: y50,
+        footprint_x_nm: input.footprint_x_nm,
+        footprint_y_nm: input.footprint_y_nm,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -734,32 +744,32 @@ mod tests {
         };
         let result = prepare_echo_top_surfaces(&input, false, 40.0);
 
-        assert_eq!(result.top18.len(), 3);
-        assert_eq!(result.top30.len(), 3);
-        assert_eq!(result.top50.len(), 3);
+        assert_eq!(result.count18, 3);
+        assert_eq!(result.count30, 3);
+        assert_eq!(result.count50, 3);
 
         // Verify y_base = top_feet * ALTITUDE_SCALE for the first cell
         let expected_y18 = 5000.0 * ALTITUDE_SCALE;
         assert!(
-            (f64::from(result.top18[0].y_base) - expected_y18).abs() < 1e-4,
-            "top18[0].y_base {} != expected {}",
-            result.top18[0].y_base,
+            (f64::from(result.y_base18[0]) - expected_y18).abs() < 1e-4,
+            "y_base18[0] {} != expected {}",
+            result.y_base18[0],
             expected_y18
         );
 
         let expected_y30 = 3000.0 * ALTITUDE_SCALE;
         assert!(
-            (f64::from(result.top30[0].y_base) - expected_y30).abs() < 1e-4,
-            "top30[0].y_base {} != expected {}",
-            result.top30[0].y_base,
+            (f64::from(result.y_base30[0]) - expected_y30).abs() < 1e-4,
+            "y_base30[0] {} != expected {}",
+            result.y_base30[0],
             expected_y30
         );
 
         let expected_y50 = 1000.0 * ALTITUDE_SCALE;
         assert!(
-            (f64::from(result.top50[0].y_base) - expected_y50).abs() < 1e-4,
-            "top50[0].y_base {} != expected {}",
-            result.top50[0].y_base,
+            (f64::from(result.y_base50[0]) - expected_y50).abs() < 1e-4,
+            "y_base50[0] {} != expected {}",
+            result.y_base50[0],
             expected_y50
         );
     }
@@ -778,11 +788,11 @@ mod tests {
             footprint_y_nm: 0.05,
         };
         let result = prepare_echo_top_surfaces(&input, true, 40.0);
-        assert_eq!(result.top18.len(), 1);
+        assert_eq!(result.count18, 1);
 
         // Curvature drop at 60 NM ≈ 0.52 NM * 6076.12 ≈ 3160 feet
         let raw_y = raw_top as f64 * ALTITUDE_SCALE;
-        let corrected_y = f64::from(result.top18[0].y_base);
+        let corrected_y = f64::from(result.y_base18[0]);
         assert!(
             corrected_y < raw_y,
             "with curvature, y_base {} should be < raw {}",
@@ -812,9 +822,9 @@ mod tests {
             footprint_y_nm: 0.05,
         };
         let result = prepare_echo_top_surfaces(&input, false, 40.0);
-        assert!(result.top18.is_empty());
-        assert!(result.top30.is_empty());
-        assert!(result.top50.is_empty());
+        assert_eq!(result.count18, 0);
+        assert_eq!(result.count30, 0);
+        assert_eq!(result.count50, 0);
     }
 
     #[test]
@@ -829,7 +839,7 @@ mod tests {
             footprint_y_nm: 0.05,
         };
         let result = prepare_echo_top_surfaces(&input, false, 40.0);
-        assert!(result.top18.is_empty());
+        assert_eq!(result.count18, 0);
     }
 
     // -----------------------------------------------------------------------

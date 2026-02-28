@@ -241,8 +241,9 @@ export interface EchoTopSoA {
   x: Float32Array;
   z: Float32Array;
   yBase: Float32Array;
-  footprintXNm: Float32Array;
-  footprintYNm: Float32Array;
+  /** Uniform footprint (same for every cell in this threshold). */
+  footprintXNm: number;
+  footprintYNm: number;
 }
 
 const EMPTY_F32 = new Float32Array(0);
@@ -251,8 +252,8 @@ export const EMPTY_ECHO_TOP_SOA: EchoTopSoA = {
   x: EMPTY_F32,
   z: EMPTY_F32,
   yBase: EMPTY_F32,
-  footprintXNm: EMPTY_F32,
-  footprintYNm: EMPTY_F32
+  footprintXNm: 0,
+  footprintYNm: 0
 };
 
 export interface CrossSectionData {

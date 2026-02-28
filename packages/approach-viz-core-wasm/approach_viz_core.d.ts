@@ -76,8 +76,8 @@ export function build_mrms_cross_section(x_nm: Float32Array, z_nm: Float32Array,
 /**
  * Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
  *
- * Returns `{ top18, top30, top50, summary }` where each top is an SoA typed-array
- * object from `echo_top_cells_to_js` and `summary` contains passthrough metadata.
+ * Returns `{ top18, top30, top50, summary }` where each top is an SoA object
+ * with Float32Array x/z/yBase columns and scalar footprint values.
  */
 export function decode_and_prepare_echo_top(data: Uint8Array, apply_earth_curvature: boolean, ref_lat: number): any;
 

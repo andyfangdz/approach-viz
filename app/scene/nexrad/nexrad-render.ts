@@ -187,7 +187,7 @@ export function applyConstantColorInstances(
   const { count, x, z, yBase, footprintXNm, footprintYNm } = soa;
   for (let i = 0; i < count; i++) {
     meshDummy.position.set(x[i], yBase[i], z[i]);
-    meshDummy.scale.set(footprintXNm[i], MIN_VOXEL_HEIGHT_NM, footprintYNm[i]);
+    meshDummy.scale.set(footprintXNm, MIN_VOXEL_HEIGHT_NM, footprintYNm);
     meshDummy.updateMatrix();
     mesh.setMatrixAt(i, meshDummy.matrix);
   }

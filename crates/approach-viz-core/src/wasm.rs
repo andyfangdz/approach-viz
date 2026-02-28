@@ -400,43 +400,59 @@ pub fn prepare_echo_top_surfaces(
         footprint_y_nm,
     };
 
-    let surfaces = crate::mrms_preprocess::prepare_echo_top_surfaces(&input, apply_earth_curvature, ref_lat);
+    let s = crate::mrms_preprocess::prepare_echo_top_surfaces(
+        &input,
+        apply_earth_curvature,
+        ref_lat,
+    );
 
     let obj = js_sys::Object::new();
-
-    set_prop(&obj, "top18", &echo_top_cells_to_js(&surfaces.top18)?)?;
-    set_prop(&obj, "top30", &echo_top_cells_to_js(&surfaces.top30)?)?;
-    set_prop(&obj, "top50", &echo_top_cells_to_js(&surfaces.top50)?)?;
+    set_prop(
+        &obj,
+        "top18",
+        &echo_top_soa_to_js(s.count18, &s.x18, &s.z18, &s.y_base18, s.footprint_x_nm, s.footprint_y_nm)?,
+    )?;
+    set_prop(
+        &obj,
+        "top30",
+        &echo_top_soa_to_js(s.count30, &s.x30, &s.z30, &s.y_base30, s.footprint_x_nm, s.footprint_y_nm)?,
+    )?;
+    set_prop(
+        &obj,
+        "top50",
+        &echo_top_soa_to_js(s.count50, &s.x50, &s.z50, &s.y_base50, s.footprint_x_nm, s.footprint_y_nm)?,
+    )?;
 
     Ok(obj.into())
 }
 
-/// Convert a Vec of EchoTopSurfaceCell into a JS object with SoA typed arrays.
-fn echo_top_cells_to_js(
-    cells: &[crate::mrms_preprocess::EchoTopSurfaceCell],
+/// Convert SoA echo-top column Vecs into a JS object with Float32Array views.
+///
+/// The footprint values are uniform (same for every cell), so we create
+/// single-element arrays and let the JS side broadcast.
+fn echo_top_soa_to_js(
+    count: usize,
+    x: &[f32],
+    z: &[f32],
+    y_base: &[f32],
+    footprint_x_nm: f32,
+    footprint_y_nm: f32,
 ) -> Result<JsValue, JsValue> {
-    let count = cells.len();
-    let mut x = Vec::with_capacity(count);
-    let mut z = Vec::with_capacity(count);
-    let mut y_base = Vec::with_capacity(count);
-    let mut fp_x = Vec::with_capacity(count);
-    let mut fp_y = Vec::with_capacity(count);
-
-    for cell in cells {
-        x.push(cell.x);
-        z.push(cell.z);
-        y_base.push(cell.y_base);
-        fp_x.push(cell.footprint_x_nm);
-        fp_y.push(cell.footprint_y_nm);
-    }
-
     let obj = js_sys::Object::new();
     set_prop(&obj, "count", &JsValue::from(count as u32))?;
-    set_prop(&obj, "x", &js_sys::Float32Array::from(&x[..]).into())?;
-    set_prop(&obj, "z", &js_sys::Float32Array::from(&z[..]).into())?;
-    set_prop(&obj, "yBase", &js_sys::Float32Array::from(&y_base[..]).into())?;
-    set_prop(&obj, "footprintXNm", &js_sys::Float32Array::from(&fp_x[..]).into())?;
-    set_prop(&obj, "footprintYNm", &js_sys::Float32Array::from(&fp_y[..]).into())?;
+    set_prop(&obj, "x", &js_sys::Float32Array::from(x).into())?;
+    set_prop(&obj, "z", &js_sys::Float32Array::from(z).into())?;
+    set_prop(&obj, "yBase", &js_sys::Float32Array::from(y_base).into())?;
+    set_prop(
+        &obj,
+        "footprintXNm",
+        &JsValue::from_f64(footprint_x_nm as f64),
+    )?;
+    set_prop(
+        &obj,
+        "footprintYNm",
+        &JsValue::from_f64(footprint_y_nm as f64),
+    )?;
 
     Ok(obj.into())
 }
@@ -447,8 +463,8 @@ fn echo_top_cells_to_js(
 
 /// Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
 ///
-/// Returns `{ top18, top30, top50, summary }` where each top is an SoA typed-array
-/// object from `echo_top_cells_to_js` and `summary` contains passthrough metadata.
+/// Returns `{ top18, top30, top50, summary }` where each top is an SoA object
+/// with Float32Array x/z/yBase columns and scalar footprint values.
 #[wasm_bindgen]
 pub fn decode_and_prepare_echo_top(
     data: &[u8],
@@ -473,13 +489,25 @@ pub fn decode_and_prepare_echo_top(
         footprint_y_nm: decoded.footprint_y_nm,
     };
 
-    let surfaces =
+    let s =
         crate::mrms_preprocess::prepare_echo_top_surfaces(&input, apply_earth_curvature, ref_lat);
 
     let root = js_sys::Object::new();
-    set_prop(&root, "top18", &echo_top_cells_to_js(&surfaces.top18)?)?;
-    set_prop(&root, "top30", &echo_top_cells_to_js(&surfaces.top30)?)?;
-    set_prop(&root, "top50", &echo_top_cells_to_js(&surfaces.top50)?)?;
+    set_prop(
+        &root,
+        "top18",
+        &echo_top_soa_to_js(s.count18, &s.x18, &s.z18, &s.y_base18, s.footprint_x_nm, s.footprint_y_nm)?,
+    )?;
+    set_prop(
+        &root,
+        "top30",
+        &echo_top_soa_to_js(s.count30, &s.x30, &s.z30, &s.y_base30, s.footprint_x_nm, s.footprint_y_nm)?,
+    )?;
+    set_prop(
+        &root,
+        "top50",
+        &echo_top_soa_to_js(s.count50, &s.x50, &s.z50, &s.y_base50, s.footprint_x_nm, s.footprint_y_nm)?,
+    )?;
 
     let summary_obj = js_sys::Object::new();
     set_prop(&summary_obj, "sourceCellCount", &JsValue::from(decoded.source_cell_count))?;
