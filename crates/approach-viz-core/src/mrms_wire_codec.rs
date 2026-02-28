@@ -175,14 +175,14 @@ pub fn decode_mrms_binary(data: &[u8]) -> Result<DecodedMrmsVolume, MrmsDecodeEr
     let dbz_tenths = bulk_read_column::<i16>(data, off_dbz, n);
     let phase = data[off_phase..off_phase + n].to_vec();
     let surface_phase = data[off_surface..off_surface + n].to_vec();
-    let footprint_x_span: Vec<u16> = bulk_read_column::<u16>(data, off_sx, n)
-        .iter()
-        .map(|&v| v.max(1))
-        .collect();
-    let footprint_y_span: Vec<u16> = bulk_read_column::<u16>(data, off_sy, n)
-        .iter()
-        .map(|&v| v.max(1))
-        .collect();
+    let mut footprint_x_span = bulk_read_column::<u16>(data, off_sx, n);
+    for v in &mut footprint_x_span {
+        *v = (*v).max(1);
+    }
+    let mut footprint_y_span = bulk_read_column::<u16>(data, off_sy, n);
+    for v in &mut footprint_y_span {
+        *v = (*v).max(1);
+    }
     // Note: span_z is written by the encoder but not consumed by the decoder's
     // output struct (DecodedMrmsVolume has no span_z field). The bytes are
     // validated by the size check above but intentionally skipped here.

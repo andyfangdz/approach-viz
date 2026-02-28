@@ -1,6 +1,6 @@
 import type { LiveTrafficAircraft, LiveTrafficHistoryPoint } from './traffic-worker-types';
 
-export const TRAFFIC_BINARY_CONTENT_TYPE = 'application/vnd.approach-viz.traffic.v1';
+export const TRAFFIC_BINARY_CONTENT_TYPE = 'application/vnd.approach-viz.traffic.v3';
 
 const TRAFFIC_BINARY_MAGIC = 'AVTR';
 const TRAFFIC_BINARY_VERSION = 3;

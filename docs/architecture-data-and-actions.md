@@ -41,7 +41,7 @@
 - Runtime traffic data is gathered continuously by a background poller (1s cadence) across four ADS-B Exchange US bounding boxes (CONUS, Alaska, Hawaii, Puerto Rico/USVI) and ingested into a local SQLite store at `RUNTIME_STORAGE_DIR/traffic-store.db`.
 - The store keeps per-aircraft track state plus append-only point history with spatial (`R*Tree`) and time indexes so `/v1/traffic/adsbx` can serve both live targets and departed-trail history directly from disk.
 - The endpoint supports `hideGround` filtering and history responses via `historyMinutes` (`0..60`) plus optional `historyHexes=<hex,hex,...>` scoping; one-hour retention is enforced by periodic DB sweeps during ingest.
-- Response format is selectable via `format=` query param: default JSON payloads, or compact binary payloads (`format=binary`, `application/vnd.approach-viz.traffic.v1`) carrying aircraft, history groups/points, and optional error/source metadata.
+- Response format is selectable via `format=` query param: default JSON payloads, or compact binary payloads (`format=binary`, `application/vnd.approach-viz.traffic.v3`) carrying aircraft, history groups/points, and optional error/source metadata.
 - Runtime target host defaults to `https://globe.adsbexchange.com` and can be overridden with `RUNTIME_ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts can be supplied via `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy `ADSBX_*` env aliases still supported).
 - On upstream fetch failures, the runtime endpoint returns an empty `aircraft` set plus `error` metadata (HTTP 200) in whichever response format was requested, so client polling remains non-fatal.
 - Client traffic rendering is optional and independent from SQLite/server-action scene payload assembly.

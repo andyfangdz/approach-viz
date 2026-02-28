@@ -228,7 +228,7 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
   assert.equal(volumeResponse.status, 200, `Volume endpoint returned ${volumeResponse.status}`);
   const contentType = (volumeResponse.headers.get('content-type') || '').toLowerCase();
   assert.ok(
-    contentType.includes('application/vnd.approach-viz.mrms.v3'),
+    contentType.includes('application/vnd.approach-viz.mrms.v4'),
     `Unexpected MRMS content-type: ${contentType || 'none'}`
   );
   assert.ok(

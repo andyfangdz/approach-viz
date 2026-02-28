@@ -35,10 +35,10 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - ADS-B spatial indexing path: ring-slot and live-track `R*Tree` tables are trigger-maintained (`INSERT`/`UPDATE`/`DELETE`), startup reconciliation backfills any missing index rows, and `/v1/traffic/adsbx` uses `R*Tree` joins for live candidate and history-target discovery.
 - ADS-B WAL maintenance: low-priority writer maintenance runs periodic `wal_checkpoint(PASSIVE)` and only attempts `wal_checkpoint(TRUNCATE)` when WAL size is above threshold and truncate cooldown has elapsed.
 
-## Wire Format (`application/vnd.approach-viz.mrms.v3`, AVMR v4)
+## Wire Format (`application/vnd.approach-viz.mrms.v4`, AVMR v4)
 
 - Header magic: `AVMR`
-- Version: `4` (content-type string kept at `.v3` for backwards-compatible Accept headers)
+- Version: `4`
 - Header includes:
   - source voxel count (pre-merge)
   - encoded brick count
@@ -61,10 +61,10 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - Dropped from v3: `levelStart:u8` and `reserved:u8` (20→18 bytes/brick)
 - Merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
 
-## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v1`, AVET v2)
+## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v2`, AVET v2)
 
 - Header magic: `AVET`
-- Version: `2` (content-type string kept at `.v1` for backwards-compatible Accept headers)
+- Version: `2`
 - Header size: `64` bytes (all little-endian)
   - `[0..4]` magic `"AVET"`
   - `[4..6]` version (u16) = 2
@@ -82,7 +82,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `[44..64]` reserved (zero)
 - v2 SoA layout: `16` bytes per cell across 6 contiguous column arrays:
   - `x_nm:f32[n]`, `z_nm:f32[n]`, `top18_feet:u16[n]`, `top30_feet:u16[n]`, `top50_feet:u16[n]`, `top60_feet:u16[n]`
-- Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v1` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
+- Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v2` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
 - Decoder in `crates/approach-viz-core/src/echo_top_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`.
 
 ## Deployment
@@ -165,11 +165,11 @@ ps -ef | grep '[d]dprof'
 
 - `GET /healthz` -> `ok`
 - `GET /v1/meta` -> readiness + scan stats
-- `GET /v1/weather/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v3`)
+- `GET /v1/weather/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v4`)
 - `GET /v1/volume?...` -> legacy weather alias
-- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> echo-top cells (`EchoTop_18/30/50/60`), JSON by default or AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v1` is provided
+- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> echo-top cells (`EchoTop_18/30/50/60`), JSON by default or AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v2` is provided
 - `GET /v1/echo-tops?...` -> legacy echo-top alias
-- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>&format=<json|binary>` -> default JSON aircraft + optional trail history, or compact binary payload (`format=binary`, `application/vnd.approach-viz.traffic.v1`) served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
+- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>&format=<json|binary>` -> default JSON aircraft + optional trail history, or compact binary payload (`format=binary`, `application/vnd.approach-viz.traffic.v3`) served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
 
 ## Next.js Configuration
 

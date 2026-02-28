@@ -43,7 +43,7 @@ External data feeds and their ingestion paths.
 
 - Source: ADSB Exchange tar1090 `binCraft+zstd` feed (`/re-api/?binCraft&zstd&box=...`).
 - Fetched/decoded by the Rust runtime service (`services/runtime-rs`) endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is a thin proxy.
-- Runtime traffic endpoint can emit JSON (default) or compact binary wire payloads (`format=binary`, `application/vnd.approach-viz.traffic.v1`) for browser worker ingestion.
+- Runtime traffic endpoint can emit JSON (default) or compact binary wire payloads (`format=binary`, `application/vnd.approach-viz.traffic.v3`) for browser worker ingestion.
 - Runtime continuously polls ADS-B Exchange at 1 Hz across four US regions (CONUS, Alaska, Hawaii, Puerto Rico/USVI), and writes decoded aircraft updates into a disk-backed SQLite traffic store (`RUNTIME_STORAGE_DIR/traffic-store.db`).
 - The store maintains live per-aircraft state in `traffic_tracks` and one-hour historical points in a fixed 12-slot ring (5-minute buckets) with per-slot time/hex indexes plus slot-local `R*Tree` spatial indexes.
 - Runtime startup reconciles ring-slot schemas, installs trigger-based `R*Tree` maintenance (`INSERT`/`UPDATE`/`DELETE`), backfills missing `R*Tree` rows for pre-existing point data, and can migrate legacy dynamic partition data into the ring when the ring is empty.
@@ -63,8 +63,8 @@ External data feeds and their ingestion paths.
 - Phase resolution is thermodynamic-first and incorporates `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, `BrightBandTopHeight_00.00`, `BrightBandBottomHeight_00.00`, and `RadarQualityIndex_00.00`; dual-pol (`Zdr`/`RhoHV`) acts as a weighted correction layer rather than a hard first-pass classifier.
 - Dual-pol fields are fetched for the same timestamp and altitude slice as reflectivity when available. When dual-pol is sparse/lagging beyond 5 minutes ingest switches to latest available dual-pol timestamps, flags fallback in debug telemetry, and down-weights stale corrections to prevent cycle-mismatch artifacts.
 - Retry scheduling favors the earliest due pending timestamp so delayed-complete cycles are still evaluated even while newer precip events continue arriving.
-- Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v3`) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`); merged-brick span records reduce client draw load.
-- Echo-top responses default to JSON, and also support AVET binary (`application/vnd.approach-viz.echo-tops.v1`) via `Accept` content negotiation.
+- Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v4`) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`); merged-brick span records reduce client draw load.
+- Echo-top responses default to JSON, and also support AVET binary (`application/vnd.approach-viz.echo-tops.v2`) via `Accept` content negotiation.
 - The Next.js routes `app/api/weather/nexrad/route.ts` and `app/api/weather/nexrad/echo-tops/route.ts` proxy to the Rust runtime endpoints; the app's MRMS worker decodes binary reflectivity and binary AVET echo-top payloads directly.
 - Snapshot storage is bounded to `5 GB` (oldest scans pruned first) to fit the OCI host disk budget.
 

@@ -297,7 +297,7 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
             let mut headers = HeaderMap::new();
             headers.insert(
                 "Content-Type",
-                HeaderValue::from_static("application/vnd.approach-viz.mrms.v3"),
+                HeaderValue::from_static("application/vnd.approach-viz.mrms.v4"),
             );
             headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
             if let Some(scan_time) = iso_from_ms(scan.scan_time_ms) {

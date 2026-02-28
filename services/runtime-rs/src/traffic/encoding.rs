@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
-const TRAFFIC_BINARY_CONTENT_TYPE: &str = "application/vnd.approach-viz.traffic.v1";
+const TRAFFIC_BINARY_CONTENT_TYPE: &str = "application/vnd.approach-viz.traffic.v3";
 const TRAFFIC_BINARY_MAGIC: &[u8; 4] = b"AVTR";
 const TRAFFIC_BINARY_VERSION: u16 = 3;
 const TRAFFIC_BINARY_HEADER_BYTES: u16 = 64;

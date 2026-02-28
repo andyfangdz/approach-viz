@@ -60,7 +60,7 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 
 ## Transport and Polling
 
-- MRMS polling is worker-initiated (`poll-and-prepare`): the worker fetches volume/echo-top endpoints directly (proxy or direct configured URL), decodes compact binary payloads (`application/vnd.approach-viz.mrms.v3`), and runs prepare steps in the same request cycle.
+- MRMS polling is worker-initiated (`poll-and-prepare`): the worker fetches volume/echo-top endpoints directly (proxy or direct configured URL), decodes compact binary payloads (`application/vnd.approach-viz.mrms.v4`), and runs prepare steps in the same request cycle.
 - Worker startup/communication failures surface as explicit overlay/debug errors (no synchronous in-thread fallback).
 - Prepared-volume worker responses use a SharedArrayBuffer + Atomics transport (`init-sab` handshake + shared typed arrays + atomic control metadata), with automatic voxel-capacity growth/retry when shared capacity is exceeded.
 - The poll response also returns decoded volume typed-array buffers as transferables for final instanced upload inputs (`xNm`/`zNm`/`dbz`/footprints) and returns prepared echo-top surfaces + summary metadata for caps/debug readouts.

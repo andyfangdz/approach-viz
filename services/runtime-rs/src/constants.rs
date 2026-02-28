@@ -85,7 +85,7 @@ pub use approach_viz_core::types::{
     ECHO_TOP_WIRE_VERSION,
     ECHO_TOP_WIRE_HEADER_BYTES,
 };
-pub const ECHO_TOP_BINARY_CONTENT_TYPE: &str = "application/vnd.approach-viz.echo-tops.v1";
+pub const ECHO_TOP_BINARY_CONTENT_TYPE: &str = "application/vnd.approach-viz.echo-tops.v2";
 
 pub const SNAPSHOT_MAGIC: [u8; 4] = *b"AVSN";
 pub const SNAPSHOT_VERSION: u16 = 1;

@@ -38,7 +38,7 @@ Run live endpoint checks for runtime service behavior and summarize pass/fail si
    - `/healthz` returns `ok`.
    - `/v1/meta` returns JSON and `ready: true`.
    - `/v1/traffic/adsbx` returns JSON with `aircraft` array and no upstream error string.
-   - `/v1/weather/volume` returns `application/vnd.approach-viz.mrms.v2` and body with `AVMR` magic.
+   - `/v1/weather/volume` returns `application/vnd.approach-viz.mrms.v4` and body with `AVMR` magic.
 4. Summarize with actionable next step.
    - Distinguish transient upstream/data gaps from code regressions.
 

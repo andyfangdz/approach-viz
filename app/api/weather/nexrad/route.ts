@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
     headers.set('Cache-Control', 'no-store');
     headers.set(
       'Content-Type',
-      upstreamResponse.headers.get('content-type') ?? 'application/vnd.approach-viz.mrms.v2'
+      upstreamResponse.headers.get('content-type') ?? 'application/vnd.approach-viz.mrms.v4'
     );
 
     const scanTime = upstreamResponse.headers.get('x-av-scan-time');
