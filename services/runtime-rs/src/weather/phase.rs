@@ -49,6 +49,7 @@ pub struct DualPolEvidence {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 pub(super) struct PhaseResolution {
     pub(super) phase: u8,
     pub(super) used_dual: bool,

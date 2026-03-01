@@ -241,6 +241,7 @@ pub(crate) struct CurrentSnapshot {
 }
 
 impl CurrentSnapshot {
+    #[allow(dead_code)]
     pub(crate) fn empty() -> Self {
         Self {
             tracks: Vec::new(),
@@ -261,6 +262,7 @@ pub struct TrafficMemoryStore {
 }
 
 impl TrafficMemoryStore {
+    #[allow(dead_code)]
     pub fn new_empty() -> Self {
         Self {
             current: ArcSwap::from_pointee(CurrentSnapshot::empty()),

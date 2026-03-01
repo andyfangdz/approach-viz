@@ -13,6 +13,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 static DATADOG_TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
+const BUILD_SERVICE_VERSION: &str = env!("APPROACH_VIZ_RUNTIME_BUILD_SERVICE_VERSION");
 
 pub fn init_tracing() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -91,16 +92,16 @@ fn build_datadog_tracer_provider() -> Result<SdkTracerProvider> {
         .or_else(|| env_optional("DD_SERVICE"))
         .unwrap_or_else(|| "approach-viz-runtime-rs".to_string());
     let service_env = env_optional("RUNTIME_DD_ENV").or_else(|| env_optional("DD_ENV"));
-    let service_version = env_optional("RUNTIME_DD_VERSION").or_else(|| env_optional("DD_VERSION"));
+    let service_version = env_optional("RUNTIME_DD_VERSION")
+        .or_else(|| env_optional("DD_VERSION"))
+        .unwrap_or_else(|| BUILD_SERVICE_VERSION.to_string());
 
     let mut attributes = vec![KeyValue::new("service.name", service_name)];
     if let Some(env) = service_env {
         attributes.push(KeyValue::new("env", env.clone()));
         attributes.push(KeyValue::new("deployment.environment.name", env));
     }
-    if let Some(version) = service_version {
-        attributes.push(KeyValue::new("service.version", version));
-    }
+    attributes.push(KeyValue::new("service.version", service_version));
 
     Ok(SdkTracerProvider::builder()
         .with_resource(

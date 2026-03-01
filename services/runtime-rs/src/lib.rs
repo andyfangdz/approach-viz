@@ -1,3 +1,5 @@
+#![allow(dead_code, private_interfaces, unused_imports)]
+
 // Library target: exposes crate internals for benchmarks and integration tests.
 // The binary entry point remains in main.rs.
 

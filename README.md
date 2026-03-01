@@ -185,7 +185,7 @@ Legacy aliases `/v1/volume` and `/v1/echo-tops` are still supported.
 | `RUNTIME_DD_TRACE_OTLP_PORT`                    | Runtime Datadog OTLP gRPC port (default: `4317`)                        |
 | `RUNTIME_DD_SERVICE`                            | Runtime trace service name (default: `approach-viz-runtime-rs`)         |
 | `RUNTIME_DD_ENV`                                | Runtime trace environment tag (fallback: `DD_ENV`)                      |
-| `RUNTIME_DD_VERSION`                            | Runtime trace version tag (fallback: `DD_VERSION`)                      |
+| `RUNTIME_DD_VERSION`                            | Runtime trace version tag (fallback: `DD_VERSION`, then build-time stamped `<yyyymmdd.hhmmss>-<git_branch>-<git_sha>` with optional `-dirty`) |
 | `NEXT_PUBLIC_DD_RUM_APPLICATION_ID`             | Datadog RUM app ID (enables browser RUM when set)                       |
 | `NEXT_PUBLIC_DD_RUM_CLIENT_TOKEN`               | Datadog RUM client token                                                |
 | `NEXT_PUBLIC_DD_SITE`                           | Datadog site for browser RUM (default: `datadoghq.com`)                 |

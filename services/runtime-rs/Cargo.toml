@@ -2,6 +2,7 @@
 name = "approach-viz-runtime"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 approach-viz-core = { path = "../../crates/approach-viz-core" }
@@ -36,6 +37,9 @@ zstd = "0.13"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[build-dependencies]
+chrono = { version = "0.4", features = ["clock"] }
 
 [[bench]]
 name = "weather_ingest"

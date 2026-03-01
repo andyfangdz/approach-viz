@@ -5,8 +5,11 @@ pub(crate) mod store;
 pub(crate) mod types;
 
 // Public re-exports for benchmarks
+#[allow(unused_imports)]
 pub use cache_worker::decode_bincraft_aircraft;
+#[allow(unused_imports)]
 pub use encoding::encode_traffic_binary_payload;
+#[allow(unused_imports)]
 pub use types::{
     distance_nm, TrafficAircraft, TrafficBinaryPayload, TrafficHistoryPoint,
 };
@@ -19,6 +22,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use tracing::{field, info_span, instrument, Instrument, Span};
 
+#[allow(unused_imports)]
 pub(crate) use cache_worker::spawn_traffic_cache_worker;
 pub(crate) use store::TrafficStore;
 

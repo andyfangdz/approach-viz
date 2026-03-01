@@ -149,7 +149,7 @@ pub async fn healthz() -> &'static str {
 }
 
 #[instrument(name = "runtime.meta", skip(state))]
-pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
+pub(crate) async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
     let latest = state.latest.read().await;
     let (
         ready,
@@ -251,7 +251,10 @@ pub async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
         max_range_nm = field::Empty
     )
 )]
-pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQuery>) -> Response {
+pub(crate) async fn volume(
+    State(state): State<AppState>,
+    Query(query): Query<VolumeQuery>,
+) -> Response {
     if query.lat < -90.0 || query.lat > 90.0 || query.lon < -180.0 || query.lon > 180.0 {
         return (
             StatusCode::BAD_REQUEST,
@@ -385,7 +388,7 @@ pub async fn volume(State(state): State<AppState>, Query(query): Query<VolumeQue
     }
 }
 
-pub async fn echo_tops(
+pub(crate) async fn echo_tops(
     State(state): State<AppState>,
     req_headers: HeaderMap,
     Query(query): Query<EchoTopsQuery>,

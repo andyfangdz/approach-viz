@@ -187,7 +187,7 @@ impl GatheredAuxFields {
 ///
 /// Writes into `out` (caller should pre-allocate and reuse across levels).
 #[inline(never)] // Preserve as named function for LLVM remarks + asm inspection
-pub(crate) fn gather_aux_fields(
+fn gather_aux_fields(
     filter: &FilterResult,
     zdr_values: Option<&[f32]>,
     rhohv_values: Option<&[f32]>,

@@ -39,6 +39,7 @@ fn make_request_span(request: &axum::http::Request<axum::body::Body>) -> tracing
         .get::<MatchedPath>()
         .map(MatchedPath::as_str)
         .unwrap_or(request.uri().path());
+    let http_version = http_protocol_version(request.version());
     tracing::info_span!(
         "http.server.request",
         otel.name = "http.server.request",
@@ -51,12 +52,24 @@ fn make_request_span(request: &axum::http::Request<axum::body::Body>) -> tracing
         query = %request.uri().query().unwrap_or(""),
         "http.request.method" = %request.method(),
         "http.route" = %matched_path,
+        "http.flavor" = %http_version,
+        "network.protocol.version" = %http_version,
         "url.path" = %request.uri().path(),
         "url.query" = %request.uri().query().unwrap_or(""),
-        version = ?request.version(),
         status_code = tracing::field::Empty,
         "http.response.status_code" = tracing::field::Empty
     )
+}
+
+fn http_protocol_version(version: axum::http::Version) -> &'static str {
+    match version {
+        axum::http::Version::HTTP_09 => "0.9",
+        axum::http::Version::HTTP_10 => "1.0",
+        axum::http::Version::HTTP_11 => "1.1",
+        axum::http::Version::HTTP_2 => "2",
+        axum::http::Version::HTTP_3 => "3",
+        _ => "unknown",
+    }
 }
 
 fn on_response(

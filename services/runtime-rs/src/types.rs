@@ -17,7 +17,7 @@ pub struct AppState {
     pub pending: Arc<Mutex<HashMap<String, PendingIngest>>>,
     pub recent_timestamps: Arc<Mutex<HashSet<String>>>,
     pub ingest_parse_limiter: Arc<Semaphore>,
-    pub traffic_store: Arc<TrafficStore>,
+    pub(crate) traffic_store: Arc<TrafficStore>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

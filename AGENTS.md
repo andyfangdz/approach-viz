@@ -75,6 +75,7 @@
 - MRMS phase-mode default is `surface` (`Surface Precip Type`); `thermo` is optional.
 - Service worker caches FAA plate proxy responses and Terrarium tiles. Google 3D Tiles use browser-native HTTP caching.
 - Cross-origin isolation headers are enabled by default (`COOP: same-origin`, `COEP: require-corp`), configurable via `DISABLE_CROSS_ORIGIN_ISOLATION` and `CROSS_ORIGIN_EMBEDDER_POLICY`.
+- Runtime Datadog OTLP tracing no longer emits a bare span `version` field from HTTP protocol; instead, `service.version` defaults to a build-time stamped `<yyyymmdd.hhmmss>-<git_branch>-<git_sha>` with optional `-dirty` suffix when `RUNTIME_DD_VERSION`/`DD_VERSION` are unset.
 - CI uses `npx next build` (not `npm run build`) to avoid triggering data download during CI.
 
 ## Documentation Index
