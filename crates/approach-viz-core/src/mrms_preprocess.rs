@@ -96,7 +96,7 @@ pub(crate) struct FbVolumeView<'a> {
 impl<'a> FbVolumeView<'a> {
     pub(crate) fn new(fb: &MrmsVolume<'a>) -> Self {
         Self {
-            count: fb.source_voxel_count() as usize,
+            count: fb.brick_count() as usize,
             x_hundredths: fb.x_hundredths(),
             z_hundredths: fb.z_hundredths(),
             bottom_feet: fb.bottom_feet(),
