@@ -119,73 +119,6 @@ export class WasmTrafficState {
 if (Symbol.dispose) WasmTrafficState.prototype[Symbol.dispose] = WasmTrafficState.prototype.free;
 
 /**
- * Build a 2D cross-section grid from a prepared volume along a given slice axis.
- *
- * Accepts raw volume arrays, prepared volume arrays, and slice parameters.
- * Returns null if the cross-section cannot be built (empty volume).
- * @param {Float32Array} x_nm
- * @param {Float32Array} z_nm
- * @param {Uint16Array} bottom_feet
- * @param {Uint16Array} top_feet
- * @param {Int16Array} dbz_tenths
- * @param {Uint8Array} phase
- * @param {Uint8Array} surface_phase
- * @param {Uint16Array} footprint_x_span
- * @param {Uint16Array} footprint_y_span
- * @param {number} footprint_x_nm
- * @param {number} footprint_y_nm
- * @param {number} layer_count
- * @param {Uint32Array} layer_voxel_counts
- * @param {number} valid_count
- * @param {Int32Array} valid_indices
- * @param {Float32Array} corrected_bottom_feet
- * @param {Float32Array} corrected_top_feet
- * @param {Uint8Array} effective_phase_code
- * @param {number} slice_axis_x
- * @param {number} slice_axis_z
- * @param {number} slice_perp_x
- * @param {number} slice_perp_z
- * @param {number} normalized_range
- * @param {number} half_width_nm
- * @returns {any}
- */
-export function build_mrms_cross_section(x_nm, z_nm, bottom_feet, top_feet, dbz_tenths, phase, surface_phase, footprint_x_span, footprint_y_span, footprint_x_nm, footprint_y_nm, layer_count, layer_voxel_counts, valid_count, valid_indices, corrected_bottom_feet, corrected_top_feet, effective_phase_code, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm) {
-    const ptr0 = passArrayF32ToWasm0(x_nm, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArrayF32ToWasm0(z_nm, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray16ToWasm0(bottom_feet, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ptr3 = passArray16ToWasm0(top_feet, wasm.__wbindgen_malloc);
-    const len3 = WASM_VECTOR_LEN;
-    const ptr4 = passArray16ToWasm0(dbz_tenths, wasm.__wbindgen_malloc);
-    const len4 = WASM_VECTOR_LEN;
-    const ptr5 = passArray8ToWasm0(phase, wasm.__wbindgen_malloc);
-    const len5 = WASM_VECTOR_LEN;
-    const ptr6 = passArray8ToWasm0(surface_phase, wasm.__wbindgen_malloc);
-    const len6 = WASM_VECTOR_LEN;
-    const ptr7 = passArray16ToWasm0(footprint_x_span, wasm.__wbindgen_malloc);
-    const len7 = WASM_VECTOR_LEN;
-    const ptr8 = passArray16ToWasm0(footprint_y_span, wasm.__wbindgen_malloc);
-    const len8 = WASM_VECTOR_LEN;
-    const ptr9 = passArray32ToWasm0(layer_voxel_counts, wasm.__wbindgen_malloc);
-    const len9 = WASM_VECTOR_LEN;
-    const ptr10 = passArray32ToWasm0(valid_indices, wasm.__wbindgen_malloc);
-    const len10 = WASM_VECTOR_LEN;
-    const ptr11 = passArrayF32ToWasm0(corrected_bottom_feet, wasm.__wbindgen_malloc);
-    const len11 = WASM_VECTOR_LEN;
-    const ptr12 = passArrayF32ToWasm0(corrected_top_feet, wasm.__wbindgen_malloc);
-    const len12 = WASM_VECTOR_LEN;
-    const ptr13 = passArray8ToWasm0(effective_phase_code, wasm.__wbindgen_malloc);
-    const len13 = WASM_VECTOR_LEN;
-    const ret = wasm.build_mrms_cross_section(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, ptr8, len8, footprint_x_nm, footprint_y_nm, layer_count, ptr9, len9, valid_count, ptr10, len10, ptr11, len11, ptr12, len12, ptr13, len13, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
  * Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
  *
  * Returns `{ top18, top30, top50, summary }` where each top is an SoA object
@@ -235,113 +168,6 @@ export function decode_and_prepare_mrms(data, min_dbz_tenths, phase_mode, declut
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.decode_and_prepare_mrms(ptr0, len0, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
- * Decode an AVMR binary payload into a JS object matching NexradVolumePayload shape.
- *
- * Returns raw decoded values (dBZ in tenths, feet as u16, spans as-is).
- * The TS caller is responsible for any further conversions (e.g. tenths -> whole dBZ).
- * @param {Uint8Array} data
- * @returns {any}
- */
-export function decode_mrms_volume(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_mrms_volume(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
- * Build echo-top surfaces from typed echo-top input arrays.
- * @param {Float32Array} x_nm
- * @param {Float32Array} z_nm
- * @param {Float32Array} top18_feet
- * @param {Float32Array} top30_feet
- * @param {Float32Array} top50_feet
- * @param {number} footprint_x_nm
- * @param {number} footprint_y_nm
- * @param {boolean} apply_earth_curvature
- * @param {number} ref_lat
- * @returns {any}
- */
-export function prepare_echo_top_surfaces(x_nm, z_nm, top18_feet, top30_feet, top50_feet, footprint_x_nm, footprint_y_nm, apply_earth_curvature, ref_lat) {
-    const ptr0 = passArrayF32ToWasm0(x_nm, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArrayF32ToWasm0(z_nm, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArrayF32ToWasm0(top18_feet, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ptr3 = passArrayF32ToWasm0(top30_feet, wasm.__wbindgen_malloc);
-    const len3 = WASM_VECTOR_LEN;
-    const ptr4 = passArrayF32ToWasm0(top50_feet, wasm.__wbindgen_malloc);
-    const len4 = WASM_VECTOR_LEN;
-    const ret = wasm.prepare_echo_top_surfaces(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, footprint_x_nm, footprint_y_nm, apply_earth_curvature, ref_lat);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
- * Filter, curvature-correct, and declutter an MRMS decoded volume.
- *
- * Accepts raw SoA arrays (matching the decode output) plus configuration params.
- *
- * NOTE: `min_dbz_tenths` is in tenths of dBZ (e.g. 50 = 5.0 dBZ). The TS caller
- * passes whole dBZ and must multiply by 10 before calling this function.
- *
- * `phase_mode`: 0 = Altitude, 1 = Surface.
- * `declutter_mode`: 0 = All, 1 = Low, 2 = Mid, 3 = High.
- * @param {Float32Array} x_nm
- * @param {Float32Array} z_nm
- * @param {Uint16Array} bottom_feet
- * @param {Uint16Array} top_feet
- * @param {Int16Array} dbz_tenths
- * @param {Uint8Array} phase
- * @param {Uint8Array} surface_phase
- * @param {Uint16Array} footprint_x_span
- * @param {Uint16Array} footprint_y_span
- * @param {number} footprint_x_nm
- * @param {number} footprint_y_nm
- * @param {number} layer_count
- * @param {Uint32Array} layer_voxel_counts
- * @param {number} min_dbz_tenths
- * @param {number} phase_mode
- * @param {number} declutter_mode
- * @param {boolean} apply_earth_curvature
- * @param {number} ref_lat
- * @returns {any}
- */
-export function prepare_mrms_volume(x_nm, z_nm, bottom_feet, top_feet, dbz_tenths, phase, surface_phase, footprint_x_span, footprint_y_span, footprint_x_nm, footprint_y_nm, layer_count, layer_voxel_counts, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat) {
-    const ptr0 = passArrayF32ToWasm0(x_nm, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArrayF32ToWasm0(z_nm, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray16ToWasm0(bottom_feet, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ptr3 = passArray16ToWasm0(top_feet, wasm.__wbindgen_malloc);
-    const len3 = WASM_VECTOR_LEN;
-    const ptr4 = passArray16ToWasm0(dbz_tenths, wasm.__wbindgen_malloc);
-    const len4 = WASM_VECTOR_LEN;
-    const ptr5 = passArray8ToWasm0(phase, wasm.__wbindgen_malloc);
-    const len5 = WASM_VECTOR_LEN;
-    const ptr6 = passArray8ToWasm0(surface_phase, wasm.__wbindgen_malloc);
-    const len6 = WASM_VECTOR_LEN;
-    const ptr7 = passArray16ToWasm0(footprint_x_span, wasm.__wbindgen_malloc);
-    const len7 = WASM_VECTOR_LEN;
-    const ptr8 = passArray16ToWasm0(footprint_y_span, wasm.__wbindgen_malloc);
-    const len8 = WASM_VECTOR_LEN;
-    const ptr9 = passArray32ToWasm0(layer_voxel_counts, wasm.__wbindgen_malloc);
-    const len9 = WASM_VECTOR_LEN;
-    const ret = wasm.prepare_mrms_volume(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, ptr8, len8, footprint_x_nm, footprint_y_nm, layer_count, ptr9, len9, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -438,10 +264,6 @@ function __wbg_get_imports() {
             const ret = new Int8Array(getArrayI8FromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg_new_from_slice_d4b7f69587b09a51: function(arg0, arg1) {
-            const ret = new Int16Array(getArrayI16FromWasm0(arg0, arg1));
-            return ret;
-        },
         __wbg_new_from_slice_d7e202fdbee3c396: function(arg0, arg1) {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return ret;
@@ -515,11 +337,6 @@ function getArrayF64FromWasm0(ptr, len) {
     return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 
-function getArrayI16FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getInt16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
-}
-
 function getArrayI32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
@@ -559,14 +376,6 @@ function getFloat64ArrayMemory0() {
         cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
     }
     return cachedFloat64ArrayMemory0;
-}
-
-let cachedInt16ArrayMemory0 = null;
-function getInt16ArrayMemory0() {
-    if (cachedInt16ArrayMemory0 === null || cachedInt16ArrayMemory0.byteLength === 0) {
-        cachedInt16ArrayMemory0 = new Int16Array(wasm.memory.buffer);
-    }
-    return cachedInt16ArrayMemory0;
 }
 
 let cachedInt32ArrayMemory0 = null;
@@ -623,30 +432,9 @@ function handleError(f, args) {
     }
 }
 
-function passArray16ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 2, 2) >>> 0;
-    getUint16ArrayMemory0().set(arg, ptr / 2);
-    WASM_VECTOR_LEN = arg.length;
-    return ptr;
-}
-
-function passArray32ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 4, 4) >>> 0;
-    getUint32ArrayMemory0().set(arg, ptr / 4);
-    WASM_VECTOR_LEN = arg.length;
-    return ptr;
-}
-
 function passArray8ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 1, 1) >>> 0;
     getUint8ArrayMemory0().set(arg, ptr / 1);
-    WASM_VECTOR_LEN = arg.length;
-    return ptr;
-}
-
-function passArrayF32ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 4, 4) >>> 0;
-    getFloat32ArrayMemory0().set(arg, ptr / 4);
     WASM_VECTOR_LEN = arg.length;
     return ptr;
 }
@@ -686,7 +474,6 @@ function __wbg_finalize_init(instance, module) {
     wasmModule = module;
     cachedFloat32ArrayMemory0 = null;
     cachedFloat64ArrayMemory0 = null;
-    cachedInt16ArrayMemory0 = null;
     cachedInt32ArrayMemory0 = null;
     cachedInt8ArrayMemory0 = null;
     cachedUint16ArrayMemory0 = null;

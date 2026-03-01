@@ -93,13 +93,14 @@ export interface NexradVolumePayload {
   voxelCount: number;
   xNm: Float32Array;
   zNm: Float32Array;
-  bottomFeet: Float32Array;
-  topFeet: Float32Array;
   dbz: Float32Array;
-  footprintXNm: Float32Array;
-  footprintYNm: Float32Array;
+  /** Scalar base footprint in NM — multiply by max(1, spanX[i]) for per-brick size. */
+  footprintBaseXNm: number;
+  /** Scalar base footprint in NM — multiply by max(1, spanY[i]) for per-brick size. */
+  footprintBaseYNm: number;
+  spanX: Uint16Array;
+  spanY: Uint16Array;
   phaseCode: Uint8Array;
-  surfacePhaseCode: Uint8Array;
   phaseMode?: string | null;
   phaseDetail?: string | null;
   zdrAgeSeconds?: number | null;

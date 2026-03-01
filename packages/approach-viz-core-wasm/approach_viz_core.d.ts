@@ -57,14 +57,6 @@ export class WasmTrafficState {
 }
 
 /**
- * Build a 2D cross-section grid from a prepared volume along a given slice axis.
- *
- * Accepts raw volume arrays, prepared volume arrays, and slice parameters.
- * Returns null if the cross-section cannot be built (empty volume).
- */
-export function build_mrms_cross_section(x_nm: Float32Array, z_nm: Float32Array, bottom_feet: Uint16Array, top_feet: Uint16Array, dbz_tenths: Int16Array, phase: Uint8Array, surface_phase: Uint8Array, footprint_x_span: Uint16Array, footprint_y_span: Uint16Array, footprint_x_nm: number, footprint_y_nm: number, layer_count: number, layer_voxel_counts: Uint32Array, valid_count: number, valid_indices: Int32Array, corrected_bottom_feet: Float32Array, corrected_top_feet: Float32Array, effective_phase_code: Uint8Array, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number): any;
-
-/**
  * Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
  *
  * Returns `{ top18, top30, top50, summary }` where each top is an SoA object
@@ -85,32 +77,6 @@ export function decode_and_prepare_echo_top(data: Uint8Array, apply_earth_curvat
  * `poll-and-prepare` hot path.
  */
 export function decode_and_prepare_mrms(data: Uint8Array, min_dbz_tenths: number, phase_mode: number, declutter_mode: number, apply_earth_curvature: boolean, ref_lat: number, include_cross_section: boolean, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number): any;
-
-/**
- * Decode an AVMR binary payload into a JS object matching NexradVolumePayload shape.
- *
- * Returns raw decoded values (dBZ in tenths, feet as u16, spans as-is).
- * The TS caller is responsible for any further conversions (e.g. tenths -> whole dBZ).
- */
-export function decode_mrms_volume(data: Uint8Array): any;
-
-/**
- * Build echo-top surfaces from typed echo-top input arrays.
- */
-export function prepare_echo_top_surfaces(x_nm: Float32Array, z_nm: Float32Array, top18_feet: Float32Array, top30_feet: Float32Array, top50_feet: Float32Array, footprint_x_nm: number, footprint_y_nm: number, apply_earth_curvature: boolean, ref_lat: number): any;
-
-/**
- * Filter, curvature-correct, and declutter an MRMS decoded volume.
- *
- * Accepts raw SoA arrays (matching the decode output) plus configuration params.
- *
- * NOTE: `min_dbz_tenths` is in tenths of dBZ (e.g. 50 = 5.0 dBZ). The TS caller
- * passes whole dBZ and must multiply by 10 before calling this function.
- *
- * `phase_mode`: 0 = Altitude, 1 = Surface.
- * `declutter_mode`: 0 = All, 1 = Low, 2 = Mid, 3 = High.
- */
-export function prepare_mrms_volume(x_nm: Float32Array, z_nm: Float32Array, bottom_feet: Uint16Array, top_feet: Uint16Array, dbz_tenths: Int16Array, phase: Uint8Array, surface_phase: Uint8Array, footprint_x_span: Uint16Array, footprint_y_span: Uint16Array, footprint_x_nm: number, footprint_y_nm: number, layer_count: number, layer_voxel_counts: Uint32Array, min_dbz_tenths: number, phase_mode: number, declutter_mode: number, apply_earth_curvature: boolean, ref_lat: number): any;
 
 /**
  * Scale an altitude in feet to scene Y units.
@@ -146,12 +112,8 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmtrafficstate_free: (a: number, b: number) => void;
-    readonly build_mrms_cross_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number, c1: number, d1: number, e1: number, f1: number, g1: number, h1: number, i1: number, j1: number, k1: number, l1: number) => [number, number, number];
     readonly decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
-    readonly decode_mrms_volume: (a: number, b: number) => [number, number, number];
-    readonly prepare_echo_top_surfaces: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
-    readonly prepare_mrms_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number) => [number, number, number];
     readonly wasm_alt_to_y: (a: number, b: number) => number;
     readonly wasm_earth_curvature_drop_nm: (a: number, b: number, c: number) => number;
     readonly wasm_geocentric_radius_nm: (a: number) => number;

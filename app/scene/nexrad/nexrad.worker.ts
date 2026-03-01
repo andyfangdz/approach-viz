@@ -54,18 +54,14 @@ function errorResponseForRequest(
 }
 
 function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
-  const t: Transferable[] = [
+  return [
     payload.xNm.buffer,
     payload.zNm.buffer,
     payload.dbz.buffer,
-    payload.footprintXNm.buffer,
-    payload.footprintYNm.buffer,
+    payload.spanX.buffer,
+    payload.spanY.buffer,
     payload.phaseCode.buffer
   ];
-  if (payload.bottomFeet.byteLength > 0) t.push(payload.bottomFeet.buffer);
-  if (payload.topFeet.byteLength > 0) t.push(payload.topFeet.buffer);
-  if (payload.surfacePhaseCode.byteLength > 0) t.push(payload.surfacePhaseCode.buffer);
-  return t;
 }
 
 function roundMs(value: number): number {
@@ -277,13 +273,12 @@ async function handlePollAndPrepare(
         voxelCount: vp.voxelCount as number,
         xNm: vp.xNm as Float32Array,
         zNm: vp.zNm as Float32Array,
-        bottomFeet: new Float32Array(0),
-        topFeet: new Float32Array(0),
         dbz: vp.dbz as Float32Array,
-        footprintXNm: vp.footprintXNm as Float32Array,
-        footprintYNm: vp.footprintYNm as Float32Array,
-        phaseCode: vp.phaseCode as Uint8Array,
-        surfacePhaseCode: new Uint8Array(0)
+        footprintBaseXNm: vp.footprintBaseXNm as number,
+        footprintBaseYNm: vp.footprintBaseYNm as number,
+        spanX: vp.spanX as Uint16Array,
+        spanY: vp.spanY as Uint16Array,
+        phaseCode: vp.phaseCode as Uint8Array
       },
       extractPhaseDebugHeaderValues(volumeFetch.headers)
     );

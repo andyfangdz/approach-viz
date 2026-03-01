@@ -10,44 +10,6 @@
 use wasm_bindgen::prelude::*;
 
 // ---------------------------------------------------------------------------
-// MRMS Decode
-// ---------------------------------------------------------------------------
-
-/// Decode an AVMR binary payload into a JS object matching NexradVolumePayload shape.
-///
-/// Returns raw decoded values (dBZ in tenths, feet as u16, spans as-is).
-/// The TS caller is responsible for any further conversions (e.g. tenths -> whole dBZ).
-#[wasm_bindgen]
-pub fn decode_mrms_volume(data: &[u8]) -> Result<JsValue, JsValue> {
-    let vol = crate::mrms_wire_codec::decode_mrms_fb(data)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let obj = js_sys::Object::new();
-
-    // Scalar header fields
-    set_prop(&obj, "voxelCount", &JsValue::from(vol.voxel_count))?;
-    set_prop(&obj, "layerCount", &JsValue::from(vol.layer_count))?;
-    set_prop(&obj, "generatedAtMs", &JsValue::from(vol.generated_at_ms as f64))?;
-    set_prop(&obj, "scanTimeMs", &JsValue::from(vol.scan_time_ms as f64))?;
-    set_prop(&obj, "footprintXNm", &JsValue::from(vol.footprint_x_nm))?;
-    set_prop(&obj, "footprintYNm", &JsValue::from(vol.footprint_y_nm))?;
-
-    // Typed arrays (SoA parallel arrays)
-    set_prop(&obj, "xNm", &js_sys::Float32Array::from(&vol.x_nm[..]).into())?;
-    set_prop(&obj, "zNm", &js_sys::Float32Array::from(&vol.z_nm[..]).into())?;
-    set_prop(&obj, "bottomFeet", &js_sys::Uint16Array::from(&vol.bottom_feet[..]).into())?;
-    set_prop(&obj, "topFeet", &js_sys::Uint16Array::from(&vol.top_feet[..]).into())?;
-    set_prop(&obj, "dbzTenths", &js_sys::Int16Array::from(&vol.dbz_tenths[..]).into())?;
-    set_prop(&obj, "phase", &js_sys::Uint8Array::from(&vol.phase[..]).into())?;
-    set_prop(&obj, "surfacePhase", &js_sys::Uint8Array::from(&vol.surface_phase[..]).into())?;
-    set_prop(&obj, "footprintXSpan", &js_sys::Uint16Array::from(&vol.footprint_x_span[..]).into())?;
-    set_prop(&obj, "footprintYSpan", &js_sys::Uint16Array::from(&vol.footprint_y_span[..]).into())?;
-    set_prop(&obj, "layerVoxelCounts", &js_sys::Uint32Array::from(&vol.layer_voxel_counts[..]).into())?;
-
-    Ok(obj.into())
-}
-
-// ---------------------------------------------------------------------------
 // MRMS Decode + Prepare + Cross-Section (single boundary crossing)
 // ---------------------------------------------------------------------------
 
@@ -85,10 +47,6 @@ pub fn decode_and_prepare_mrms(
 
     // Zero-copy volume view — reads directly from the FB buffer
     let vol_view = crate::mrms_preprocess::FbVolumeView::new(&fb);
-
-    // Also decode to owned for the volume-payload JS output (typed arrays)
-    let vol = crate::mrms_wire_codec::decode_mrms_fb(data)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // 2. Prepare (generic — uses FbVolumeView for zero-copy reads)
     let pm = match phase_mode {
@@ -153,282 +111,59 @@ pub fn decode_and_prepare_mrms(
         }
     }
 
-    // -- volume payload (converted fields for transferable arrays) --
+    // -- volume payload — built directly from FB vectors (no owned decode) --
     let vp_obj = js_sys::Object::new();
-    let voxel_count = vol.voxel_count as usize;
+    let brick_count = fb.brick_count() as usize;
 
-    set_prop(&vp_obj, "voxelCount", &JsValue::from(vol.voxel_count))?;
-    set_prop(&vp_obj, "generatedAtMs", &JsValue::from(vol.generated_at_ms as f64))?;
-    set_prop(&vp_obj, "scanTimeMs", &JsValue::from(vol.scan_time_ms as f64))?;
-    set_prop(&vp_obj, "layerCount", &JsValue::from(vol.layer_count))?;
-    set_prop(&vp_obj, "layerVoxelCounts", &js_sys::Uint32Array::from(&vol.layer_voxel_counts[..]).into())?;
+    set_prop(&vp_obj, "voxelCount", &JsValue::from(brick_count as u32))?;
+    set_prop(&vp_obj, "generatedAtMs", &JsValue::from(fb.generated_at_ms() as f64))?;
+    set_prop(&vp_obj, "scanTimeMs", &JsValue::from(fb.scan_time_ms() as f64))?;
+    set_prop(&vp_obj, "layerCount", &JsValue::from(fb.layer_count()))?;
 
-    // xNm, zNm passed through
-    set_prop(&vp_obj, "xNm", &js_sys::Float32Array::from(&vol.x_nm[..]).into())?;
-    set_prop(&vp_obj, "zNm", &js_sys::Float32Array::from(&vol.z_nm[..]).into())?;
+    // layer_voxel_counts — small array, collect from FB vector
+    let lvc: Vec<u32> = fb.layer_voxel_counts()
+        .map(|v| v.iter().collect())
+        .unwrap_or_default();
+    set_prop(&vp_obj, "layerVoxelCounts", &js_sys::Uint32Array::from(&lvc[..]).into())?;
 
-    // Convert dbzTenths i16 -> f32 (whole dBZ)
-    let mut dbz_f32 = Vec::with_capacity(voxel_count);
-    for i in 0..voxel_count {
-        dbz_f32.push(vol.dbz_tenths[i] as f32 / 10.0);
+    // xNm, zNm — convert from i16 hundredths to f32 NM in a single pass
+    let x_hundredths = fb.x_hundredths();
+    let z_hundredths = fb.z_hundredths();
+    let mut x_nm = Vec::with_capacity(brick_count);
+    let mut z_nm = Vec::with_capacity(brick_count);
+    for i in 0..brick_count {
+        x_nm.push(x_hundredths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 100.0);
+        z_nm.push(z_hundredths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 100.0);
+    }
+    set_prop(&vp_obj, "xNm", &js_sys::Float32Array::from(&x_nm[..]).into())?;
+    set_prop(&vp_obj, "zNm", &js_sys::Float32Array::from(&z_nm[..]).into())?;
+
+    // dbz — convert from i16 tenths to f32 whole dBZ
+    let dbz_tenths = fb.dbz_tenths();
+    let mut dbz_f32 = Vec::with_capacity(brick_count);
+    for i in 0..brick_count {
+        dbz_f32.push(dbz_tenths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 10.0);
     }
     set_prop(&vp_obj, "dbz", &js_sys::Float32Array::from(&dbz_f32[..]).into())?;
 
-    // Per-voxel footprint NM = scalar * max(1, span)
-    let mut fp_x_nm = Vec::with_capacity(voxel_count);
-    let mut fp_y_nm = Vec::with_capacity(voxel_count);
-    for i in 0..voxel_count {
-        fp_x_nm.push(vol.footprint_x_nm * (vol.footprint_x_span[i].max(1) as f32));
-        fp_y_nm.push(vol.footprint_y_nm * (vol.footprint_y_span[i].max(1) as f32));
-    }
-    set_prop(&vp_obj, "footprintXNm", &js_sys::Float32Array::from(&fp_x_nm[..]).into())?;
-    set_prop(&vp_obj, "footprintYNm", &js_sys::Float32Array::from(&fp_y_nm[..]).into())?;
+    // Footprint — pass scalar base NM + per-brick u16 span arrays.
+    // The renderer computes footprintNm = base * max(1, span[i]) inline.
+    set_prop(&vp_obj, "footprintBaseXNm", &JsValue::from(fb.footprint_x_milli() as f32 / 1000.0))?;
+    set_prop(&vp_obj, "footprintBaseYNm", &JsValue::from(fb.footprint_y_milli() as f32 / 1000.0))?;
+    let span_x: Vec<u16> = fb.span_x().map(|v| v.iter().collect()).unwrap_or_default();
+    let span_y: Vec<u16> = fb.span_y().map(|v| v.iter().collect()).unwrap_or_default();
+    set_prop(&vp_obj, "spanX", &js_sys::Uint16Array::from(&span_x[..]).into())?;
+    set_prop(&vp_obj, "spanY", &js_sys::Uint16Array::from(&span_y[..]).into())?;
 
-    // Phase code passed through (surfacePhaseCode omitted — already in prepared.effectivePhaseCode)
-    set_prop(&vp_obj, "phaseCode", &js_sys::Uint8Array::from(&vol.phase[..]).into())?;
+    // Phase code — direct copy from FB vector
+    let phase: Vec<u8> = fb.phase().map(|v| v.iter().collect()).unwrap_or_default();
+    set_prop(&vp_obj, "phaseCode", &js_sys::Uint8Array::from(&phase[..]).into())?;
 
     set_prop(&root, "volumePayload", &vp_obj.into())?;
 
     Ok(root.into())
 }
 
-// ---------------------------------------------------------------------------
-// MRMS Preprocess — prepare_volume
-// ---------------------------------------------------------------------------
-
-/// Filter, curvature-correct, and declutter an MRMS decoded volume.
-///
-/// Accepts raw SoA arrays (matching the decode output) plus configuration params.
-///
-/// NOTE: `min_dbz_tenths` is in tenths of dBZ (e.g. 50 = 5.0 dBZ). The TS caller
-/// passes whole dBZ and must multiply by 10 before calling this function.
-///
-/// `phase_mode`: 0 = Altitude, 1 = Surface.
-/// `declutter_mode`: 0 = All, 1 = Low, 2 = Mid, 3 = High.
-#[wasm_bindgen]
-pub fn prepare_mrms_volume(
-    x_nm: &[f32],
-    z_nm: &[f32],
-    bottom_feet: &[u16],
-    top_feet: &[u16],
-    dbz_tenths: &[i16],
-    phase: &[u8],
-    surface_phase: &[u8],
-    footprint_x_span: &[u16],
-    footprint_y_span: &[u16],
-    footprint_x_nm: f32,
-    footprint_y_nm: f32,
-    layer_count: u16,
-    layer_voxel_counts: &[u32],
-    min_dbz_tenths: i16,
-    phase_mode: u8,
-    declutter_mode: u8,
-    apply_earth_curvature: bool,
-    ref_lat: f64,
-) -> Result<JsValue, JsValue> {
-    let voxel_count = x_nm.len() as u32;
-
-    // Reconstruct DecodedMrmsVolume from slices
-    let volume = crate::types::DecodedMrmsVolume {
-        voxel_count,
-        layer_count,
-        generated_at_ms: 0,
-        scan_time_ms: 0,
-        footprint_x_nm,
-        footprint_y_nm,
-        layer_voxel_counts: layer_voxel_counts.to_vec(),
-        x_nm: x_nm.to_vec(),
-        z_nm: z_nm.to_vec(),
-        bottom_feet: bottom_feet.to_vec(),
-        top_feet: top_feet.to_vec(),
-        dbz_tenths: dbz_tenths.to_vec(),
-        phase: phase.to_vec(),
-        surface_phase: surface_phase.to_vec(),
-        footprint_x_span: footprint_x_span.to_vec(),
-        footprint_y_span: footprint_y_span.to_vec(),
-    };
-
-    let pm = match phase_mode {
-        1 => crate::types::PhaseMode::Surface,
-        _ => crate::types::PhaseMode::Altitude,
-    };
-    let dm = match declutter_mode {
-        1 => crate::types::DeclutterMode::Low,
-        2 => crate::types::DeclutterMode::Mid,
-        3 => crate::types::DeclutterMode::High,
-        _ => crate::types::DeclutterMode::All,
-    };
-
-    let prepared =
-        crate::mrms_preprocess::prepare_volume(&volume, min_dbz_tenths, pm, dm, apply_earth_curvature, ref_lat);
-
-    let obj = js_sys::Object::new();
-    set_prop(&obj, "validCount", &JsValue::from(prepared.valid_count as u32))?;
-    set_prop(&obj, "validIndices", &js_sys::Int32Array::from(&prepared.valid_indices[..]).into())?;
-    set_prop(&obj, "yBase", &js_sys::Float32Array::from(&prepared.y_base[..]).into())?;
-    set_prop(&obj, "heightBase", &js_sys::Float32Array::from(&prepared.height_base[..]).into())?;
-    set_prop(&obj, "correctedBottomFeet", &js_sys::Float32Array::from(&prepared.corrected_bottom_feet[..]).into())?;
-    set_prop(&obj, "correctedTopFeet", &js_sys::Float32Array::from(&prepared.corrected_top_feet[..]).into())?;
-    set_prop(&obj, "effectivePhaseCode", &js_sys::Uint8Array::from(&prepared.effective_phase_code[..]).into())?;
-    set_prop(&obj, "declutterIndices", &js_sys::Int32Array::from(&prepared.declutter_indices[..]).into())?;
-    set_prop(&obj, "declutterCount", &JsValue::from(prepared.declutter_count as u32))?;
-
-    Ok(obj.into())
-}
-
-// ---------------------------------------------------------------------------
-// MRMS Preprocess — cross section
-// ---------------------------------------------------------------------------
-
-/// Build a 2D cross-section grid from a prepared volume along a given slice axis.
-///
-/// Accepts raw volume arrays, prepared volume arrays, and slice parameters.
-/// Returns null if the cross-section cannot be built (empty volume).
-#[wasm_bindgen]
-pub fn build_mrms_cross_section(
-    // Volume arrays (raw decode output)
-    x_nm: &[f32],
-    z_nm: &[f32],
-    bottom_feet: &[u16],
-    top_feet: &[u16],
-    dbz_tenths: &[i16],
-    phase: &[u8],
-    surface_phase: &[u8],
-    footprint_x_span: &[u16],
-    footprint_y_span: &[u16],
-    footprint_x_nm: f32,
-    footprint_y_nm: f32,
-    layer_count: u16,
-    layer_voxel_counts: &[u32],
-    // Prepared volume arrays
-    valid_count: u32,
-    valid_indices: &[i32],
-    corrected_bottom_feet: &[f32],
-    corrected_top_feet: &[f32],
-    effective_phase_code: &[u8],
-    // Slice parameters
-    slice_axis_x: f64,
-    slice_axis_z: f64,
-    slice_perp_x: f64,
-    slice_perp_z: f64,
-    normalized_range: f64,
-    half_width_nm: f64,
-) -> Result<JsValue, JsValue> {
-    let voxel_count = x_nm.len() as u32;
-
-    // Reconstruct DecodedMrmsVolume from slices
-    let volume = crate::types::DecodedMrmsVolume {
-        voxel_count,
-        layer_count,
-        generated_at_ms: 0,
-        scan_time_ms: 0,
-        footprint_x_nm,
-        footprint_y_nm,
-        layer_voxel_counts: layer_voxel_counts.to_vec(),
-        x_nm: x_nm.to_vec(),
-        z_nm: z_nm.to_vec(),
-        bottom_feet: bottom_feet.to_vec(),
-        top_feet: top_feet.to_vec(),
-        dbz_tenths: dbz_tenths.to_vec(),
-        phase: phase.to_vec(),
-        surface_phase: surface_phase.to_vec(),
-        footprint_x_span: footprint_x_span.to_vec(),
-        footprint_y_span: footprint_y_span.to_vec(),
-    };
-
-    // Reconstruct PreparedVolume from slices
-    let prepared = crate::types::PreparedVolume {
-        valid_count: valid_count as usize,
-        valid_indices: valid_indices.to_vec(),
-        y_base: Vec::new(),         // not used by build_cross_section
-        height_base: Vec::new(),     // not used by build_cross_section
-        corrected_bottom_feet: corrected_bottom_feet.to_vec(),
-        corrected_top_feet: corrected_top_feet.to_vec(),
-        effective_phase_code: effective_phase_code.to_vec(),
-        declutter_indices: Vec::new(), // not used by build_cross_section
-        declutter_count: 0,            // not used by build_cross_section
-    };
-
-    let result = crate::mrms_preprocess::build_cross_section(
-        &volume,
-        &prepared,
-        (slice_axis_x, slice_axis_z),
-        (slice_perp_x, slice_perp_z),
-        normalized_range,
-        half_width_nm,
-    );
-
-    match result {
-        None => Ok(JsValue::NULL),
-        Some(cs) => {
-            let obj = js_sys::Object::new();
-            set_prop(&obj, "binsX", &JsValue::from(cs.bins_x as u32))?;
-            set_prop(&obj, "binsY", &JsValue::from(cs.bins_y as u32))?;
-            set_prop(&obj, "grid", &js_sys::Float32Array::from(&cs.grid[..]).into())?;
-
-            // phase_grid is Vec<i8>: Int8Array::from expects &[i8]
-            set_prop(&obj, "phaseGrid", &js_sys::Int8Array::from(&cs.phase_grid[..]).into())?;
-
-            set_prop(&obj, "topEnvelopeFeet", &js_sys::Float32Array::from(&cs.top_envelope_feet[..]).into())?;
-            set_prop(&obj, "maxTopFeet", &JsValue::from(cs.max_top_feet))?;
-
-            Ok(obj.into())
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MRMS Preprocess — echo-top surfaces
-// ---------------------------------------------------------------------------
-
-/// Build echo-top surfaces from typed echo-top input arrays.
-#[wasm_bindgen]
-pub fn prepare_echo_top_surfaces(
-    x_nm: &[f32],
-    z_nm: &[f32],
-    top18_feet: &[f32],
-    top30_feet: &[f32],
-    top50_feet: &[f32],
-    footprint_x_nm: f32,
-    footprint_y_nm: f32,
-    apply_earth_curvature: bool,
-    ref_lat: f64,
-) -> Result<JsValue, JsValue> {
-    let input = crate::mrms_preprocess::EchoTopInput {
-        x_nm: x_nm.to_vec(),
-        z_nm: z_nm.to_vec(),
-        top18_feet: top18_feet.to_vec(),
-        top30_feet: top30_feet.to_vec(),
-        top50_feet: top50_feet.to_vec(),
-        footprint_x_nm,
-        footprint_y_nm,
-    };
-
-    let s = crate::mrms_preprocess::prepare_echo_top_surfaces(
-        &input,
-        apply_earth_curvature,
-        ref_lat,
-    );
-
-    let obj = js_sys::Object::new();
-    set_prop(
-        &obj,
-        "top18",
-        &echo_top_soa_to_js(s.count18, &s.x18, &s.z18, &s.y_base18, s.footprint_x_nm, s.footprint_y_nm)?,
-    )?;
-    set_prop(
-        &obj,
-        "top30",
-        &echo_top_soa_to_js(s.count30, &s.x30, &s.z30, &s.y_base30, s.footprint_x_nm, s.footprint_y_nm)?,
-    )?;
-    set_prop(
-        &obj,
-        "top50",
-        &echo_top_soa_to_js(s.count50, &s.x50, &s.z50, &s.y_base50, s.footprint_x_nm, s.footprint_y_nm)?,
-    )?;
-
-    Ok(obj.into())
-}
 
 /// Convert SoA echo-top column Vecs into a JS object with Float32Array views.
 ///

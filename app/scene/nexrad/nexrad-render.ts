@@ -110,8 +110,10 @@ export function applyVoxelInstances(
   zNm: Float32Array,
   heightBase: Float32Array,
   dbz: Float32Array,
-  footprintXNm: Float32Array,
-  footprintYNm: Float32Array,
+  footprintBaseXNm: number,
+  footprintBaseYNm: number,
+  spanX: Uint16Array,
+  spanY: Uint16Array,
   phaseCode: Uint8Array,
   validIndices: Int32Array,
   validCount: number,
@@ -126,7 +128,7 @@ export function applyVoxelInstances(
 
     // Direct matrix manipulation: only scale and translate are needed.
     // Matrix format is column-major.
-    matrixArray[offset + 0] = footprintXNm[dataIndex]; // scale X
+    matrixArray[offset + 0] = footprintBaseXNm * Math.max(1, spanX[dataIndex]); // scale X
     matrixArray[offset + 1] = 0;
     matrixArray[offset + 2] = 0;
     matrixArray[offset + 3] = 0;
@@ -138,7 +140,7 @@ export function applyVoxelInstances(
 
     matrixArray[offset + 8] = 0;
     matrixArray[offset + 9] = 0;
-    matrixArray[offset + 10] = footprintYNm[dataIndex]; // scale Z
+    matrixArray[offset + 10] = footprintBaseYNm * Math.max(1, spanY[dataIndex]); // scale Z
     matrixArray[offset + 11] = 0;
 
     matrixArray[offset + 12] = xNm[dataIndex]; // translate X
