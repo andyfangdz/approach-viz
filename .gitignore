@@ -33,6 +33,12 @@ npm-debug.log*
 .tmp*
 output/playwright
 
+# Worktrees
+.worktrees/
+
+# Local tools (flatc, etc.)
+tools/
+
 # WASM build output — all wasm-pack artifacts are checked in (102KB binary + JS glue +
 # type declarations) for CI typecheck/build and Vercel deployment without requiring
 # wasm-pack/Rust toolchain.
