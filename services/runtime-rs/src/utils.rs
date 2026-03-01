@@ -92,9 +92,7 @@ fn build_datadog_tracer_provider() -> Result<SdkTracerProvider> {
         .or_else(|| env_optional("DD_SERVICE"))
         .unwrap_or_else(|| "approach-viz-runtime-rs".to_string());
     let service_env = env_optional("RUNTIME_DD_ENV").or_else(|| env_optional("DD_ENV"));
-    let service_version = env_optional("RUNTIME_DD_VERSION")
-        .or_else(|| env_optional("DD_VERSION"))
-        .unwrap_or_else(|| BUILD_SERVICE_VERSION.to_string());
+    let service_version = BUILD_SERVICE_VERSION.to_string();
 
     let mut attributes = vec![KeyValue::new("service.name", service_name)];
     if let Some(env) = service_env {
