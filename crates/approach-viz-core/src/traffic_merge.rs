@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 
 use crate::coords::{alt_to_y, earth_curvature_drop_nm, lat_lon_to_local};
+use crate::generated::TrafficPayload;
 
 const DEG_TO_RAD: f64 = PI / 180.0;
 const FEET_PER_NM: f64 = 6076.12;
@@ -95,6 +96,147 @@ pub struct SceneAirport {
     pub lat: f64,
     pub lon: f64,
     pub elevation_feet: f64,
+}
+
+// ---------------------------------------------------------------------------
+// AircraftSource trait — abstracts indexed aircraft access for merge()
+// ---------------------------------------------------------------------------
+
+/// Indexed access to aircraft fields. Implemented for `&[MergeAircraft]` (JSON
+/// path) and `FbAircraftView` (binary FlatBuffers zero-copy path).
+pub trait AircraftSource {
+    fn len(&self) -> usize;
+    fn hex(&self, i: usize) -> &str;
+    fn lat(&self, i: usize) -> f64;
+    fn lon(&self, i: usize) -> f64;
+    fn altitude_feet(&self, i: usize) -> Option<f64>;
+    fn is_on_ground(&self, i: usize) -> bool;
+    fn ground_speed_kt(&self, i: usize) -> Option<f64>;
+    fn track_deg(&self, i: usize) -> Option<f64>;
+    fn flight(&self, i: usize) -> Option<&str>;
+}
+
+impl AircraftSource for [MergeAircraft] {
+    #[inline]
+    fn len(&self) -> usize {
+        <[MergeAircraft]>::len(self)
+    }
+    #[inline]
+    fn hex(&self, i: usize) -> &str {
+        &self[i].hex
+    }
+    #[inline]
+    fn lat(&self, i: usize) -> f64 {
+        self[i].lat
+    }
+    #[inline]
+    fn lon(&self, i: usize) -> f64 {
+        self[i].lon
+    }
+    #[inline]
+    fn altitude_feet(&self, i: usize) -> Option<f64> {
+        self[i].altitude_feet
+    }
+    #[inline]
+    fn is_on_ground(&self, i: usize) -> bool {
+        self[i].is_on_ground
+    }
+    #[inline]
+    fn ground_speed_kt(&self, i: usize) -> Option<f64> {
+        self[i].ground_speed_kt
+    }
+    #[inline]
+    fn track_deg(&self, i: usize) -> Option<f64> {
+        self[i].track_deg
+    }
+    #[inline]
+    fn flight(&self, i: usize) -> Option<&str> {
+        self[i].flight.as_deref()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FbAircraftView — zero-copy view over FlatBuffers SoA aircraft columns
+// ---------------------------------------------------------------------------
+
+/// Convert NaN f32 to None; finite values become `Some(v as f64)`.
+#[inline]
+#[allow(dead_code)] // used only in wasm target
+fn nan_f32_to_option_f64(v: f32) -> Option<f64> {
+    if v.is_nan() { None } else { Some(v as f64) }
+}
+
+/// Zero-copy view over a FlatBuffers `TrafficPayload`'s aircraft columns.
+/// All `&str` borrows point directly into the FlatBuffers buffer — no String
+/// allocations until the merge loop actually needs to insert a new track.
+#[allow(dead_code)] // used only in wasm target
+pub(crate) struct FbAircraftView<'a> {
+    count: usize,
+    ac_hex: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<&'a str>>>,
+    ac_flight: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<&'a str>>>,
+    ac_lat: Option<flatbuffers::Vector<'a, f32>>,
+    ac_lon: Option<flatbuffers::Vector<'a, f32>>,
+    ac_altitude_feet: Option<flatbuffers::Vector<'a, f32>>,
+    ac_ground_speed_kt: Option<flatbuffers::Vector<'a, f32>>,
+    ac_track_deg: Option<flatbuffers::Vector<'a, f32>>,
+    ac_flags: Option<flatbuffers::Vector<'a, u16>>,
+}
+
+#[allow(dead_code)] // used only in wasm target
+impl<'a> FbAircraftView<'a> {
+    pub(crate) fn new(fb: &TrafficPayload<'a>) -> Self {
+        Self {
+            count: fb.aircraft_count() as usize,
+            ac_hex: fb.ac_hex(),
+            ac_flight: fb.ac_flight(),
+            ac_lat: fb.ac_lat(),
+            ac_lon: fb.ac_lon(),
+            ac_altitude_feet: fb.ac_altitude_feet(),
+            ac_ground_speed_kt: fb.ac_ground_speed_kt(),
+            ac_track_deg: fb.ac_track_deg(),
+            ac_flags: fb.ac_flags(),
+        }
+    }
+}
+
+impl AircraftSource for FbAircraftView<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.count
+    }
+    #[inline]
+    fn hex(&self, i: usize) -> &str {
+        self.ac_hex.as_ref().map(|v| v.get(i)).unwrap_or("")
+    }
+    #[inline]
+    fn lat(&self, i: usize) -> f64 {
+        self.ac_lat.as_ref().map(|v| v.get(i)).unwrap_or(0.0) as f64
+    }
+    #[inline]
+    fn lon(&self, i: usize) -> f64 {
+        self.ac_lon.as_ref().map(|v| v.get(i)).unwrap_or(0.0) as f64
+    }
+    #[inline]
+    fn altitude_feet(&self, i: usize) -> Option<f64> {
+        nan_f32_to_option_f64(self.ac_altitude_feet.as_ref().map(|v| v.get(i)).unwrap_or(f32::NAN))
+    }
+    #[inline]
+    fn is_on_ground(&self, i: usize) -> bool {
+        self.ac_flags.as_ref().map(|v| v.get(i) & 1 != 0).unwrap_or(false)
+    }
+    #[inline]
+    fn ground_speed_kt(&self, i: usize) -> Option<f64> {
+        nan_f32_to_option_f64(self.ac_ground_speed_kt.as_ref().map(|v| v.get(i)).unwrap_or(f32::NAN))
+    }
+    #[inline]
+    fn track_deg(&self, i: usize) -> Option<f64> {
+        nan_f32_to_option_f64(self.ac_track_deg.as_ref().map(|v| v.get(i)).unwrap_or(f32::NAN))
+    }
+    #[inline]
+    fn flight(&self, i: usize) -> Option<&str> {
+        let s = self.ac_flight.as_ref().map(|v| v.get(i)).unwrap_or("");
+        if s.is_empty() { None } else { Some(s) }
+    }
 }
 
 /// Render-ready track output.
@@ -284,9 +426,13 @@ impl TrafficState {
     ///
     /// After processing, prune stale tracks whose last update is too old
     /// and whose history is empty after trimming.
+    ///
+    /// Generic over `AircraftSource` so the binary path can pass an
+    /// `FbAircraftView` that reads directly from the FlatBuffers buffer
+    /// (zero String allocations for existing tracks).
     pub fn merge(
         &mut self,
-        aircraft: &[MergeAircraft],
+        aircraft: &(impl AircraftSource + ?Sized),
         now_ms: i64,
         history_minutes: f64,
         hide_ground: bool,
@@ -300,37 +446,43 @@ impl TrafficState {
             .map(|b| (b.hex.as_str(), b.points.as_slice()))
             .collect();
 
-        for ac in aircraft {
-            if ac.hex.is_empty() {
+        for idx in 0..aircraft.len() {
+            let hex = aircraft.hex(idx);
+            if hex.is_empty() {
                 continue;
             }
-            if hide_ground && ac.is_on_ground {
-                self.tracks.remove(&ac.hex);
+            let is_on_ground = aircraft.is_on_ground(idx);
+            if hide_ground && is_on_ground {
+                self.tracks.remove(hex);
                 continue;
             }
 
-            let bf_points = backfill_map.get(ac.hex.as_str()).copied().unwrap_or(&[]);
+            let ac_lat = aircraft.lat(idx);
+            let ac_lon = aircraft.lon(idx);
+            let ac_altitude_feet = aircraft.altitude_feet(idx);
+
+            let bf_points = backfill_map.get(hex).copied().unwrap_or(&[]);
 
             let existing_history: Vec<TrafficHistoryPoint> = self
                 .tracks
-                .get_mut(&ac.hex)
+                .get_mut(hex)
                 .map(|t| std::mem::take(&mut t.history))
                 .unwrap_or_default();
 
             let mut history = merge_history_samples(&existing_history, bf_points);
 
             // Current position as a candidate history point.
-            let current_alt = ac.altitude_feet.unwrap_or(0.0);
+            let current_alt = ac_altitude_feet.unwrap_or(0.0);
             let current_point = TrafficHistoryPoint {
-                lat: ac.lat,
-                lon: ac.lon,
+                lat: ac_lat,
+                lon: ac_lon,
                 altitude_feet: current_alt,
                 timestamp_ms: now_ms,
             };
 
             if let Some(last) = history.last_mut() {
-                let dist = estimate_distance_nm(last.lat, last.lon, ac.lat, ac.lon);
-                let alt_delta = match ac.altitude_feet {
+                let dist = estimate_distance_nm(last.lat, last.lon, ac_lat, ac_lon);
+                let alt_delta = match ac_altitude_feet {
                     Some(alt) => (last.altitude_feet - alt).abs(),
                     None => 0.0,
                 };
@@ -349,20 +501,35 @@ impl TrafficState {
             // Trim old history.
             trim_history(&mut history, cutoff_ms);
 
-            let track = TrafficTrack {
-                hex: ac.hex.clone(),
-                lat: ac.lat,
-                lon: ac.lon,
-                altitude_feet: ac.altitude_feet,
-                ground_speed_kt: ac.ground_speed_kt,
-                track_deg: ac.track_deg,
-                flight: ac.flight.clone(),
-                is_on_ground: ac.is_on_ground,
-                last_update_ms: now_ms,
-                last_seen_ms: now_ms,
-                history,
-            };
-            self.tracks.insert(ac.hex.clone(), track);
+            // Update-in-place for existing tracks (0 String allocs);
+            // only allocate hex/flight Strings for genuinely new tracks.
+            if let Some(track) = self.tracks.get_mut(hex) {
+                track.lat = ac_lat;
+                track.lon = ac_lon;
+                track.altitude_feet = ac_altitude_feet;
+                track.ground_speed_kt = aircraft.ground_speed_kt(idx);
+                track.track_deg = aircraft.track_deg(idx);
+                track.flight = aircraft.flight(idx).map(|s| s.to_owned());
+                track.is_on_ground = is_on_ground;
+                track.last_update_ms = now_ms;
+                track.last_seen_ms = now_ms;
+                track.history = history;
+            } else {
+                let track = TrafficTrack {
+                    hex: hex.to_owned(),
+                    lat: ac_lat,
+                    lon: ac_lon,
+                    altitude_feet: ac_altitude_feet,
+                    ground_speed_kt: aircraft.ground_speed_kt(idx),
+                    track_deg: aircraft.track_deg(idx),
+                    flight: aircraft.flight(idx).map(|s| s.to_owned()),
+                    is_on_ground,
+                    last_update_ms: now_ms,
+                    last_seen_ms: now_ms,
+                    history,
+                };
+                self.tracks.insert(hex.to_owned(), track);
+            }
         }
 
         // Prune stale tracks not in the current aircraft batch.
@@ -593,7 +760,7 @@ mod tests {
     fn merge_single_aircraft() {
         let mut state = TrafficState::new();
         let ac = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac], 1_000_000, 5.0, false, &[]);
+        state.merge([ac].as_slice(),1_000_000, 5.0, false, &[]);
         assert_eq!(state.track_count(), 1);
         let track = state.tracks.get("abc123").unwrap();
         assert_eq!(track.hex, "abc123");
@@ -607,11 +774,11 @@ mod tests {
     fn merge_updates_existing() {
         let mut state = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac1], 1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
 
         // Move far enough to create new history point.
         let ac2 = make_aircraft("abc123", 40.1, -74.0, Some(5500.0));
-        state.merge(&[ac2], 1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
 
         assert_eq!(state.track_count(), 1);
         let track = state.tracks.get("abc123").unwrap();
@@ -629,11 +796,11 @@ mod tests {
     fn merge_adds_history_point() {
         let mut state = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac1], 1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
 
         // Move > 0.03 NM (~0.0005 deg at lat 40).
         let ac2 = make_aircraft("abc123", 40.01, -74.0, Some(5000.0));
-        state.merge(&[ac2], 1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
 
         let track = state.tracks.get("abc123").unwrap();
         assert!(
@@ -650,13 +817,13 @@ mod tests {
     fn merge_skips_close_point() {
         let mut state = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac1], 1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
 
         let initial_len = state.tracks.get("abc123").unwrap().history.len();
 
         // Tiny move: < 0.03 NM and < 100ft altitude delta.
         let ac2 = make_aircraft("abc123", 40.000001, -74.0, Some(5010.0));
-        state.merge(&[ac2], 1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
 
         let final_len = state.tracks.get("abc123").unwrap().history.len();
         assert_eq!(
@@ -672,13 +839,13 @@ mod tests {
     fn merge_altitude_delta_adds_point() {
         let mut state = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac1], 1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
 
         let initial_len = state.tracks.get("abc123").unwrap().history.len();
 
         // Same position but 200ft altitude change (>= 100ft threshold).
         let ac2 = make_aircraft("abc123", 40.0, -74.0, Some(5200.0));
-        state.merge(&[ac2], 1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
 
         let final_len = state.tracks.get("abc123").unwrap().history.len();
         assert_eq!(
@@ -697,12 +864,12 @@ mod tests {
 
         // Insert with early timestamp.
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac1], 100_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(),100_000, 5.0, false, &[]);
 
         // Now advance time so the first point is beyond the 5-minute cutoff.
         // cutoff = 600_000 - 300_000 = 300_000
         let ac2 = make_aircraft("abc123", 40.01, -74.0, Some(5000.0));
-        state.merge(&[ac2], 600_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(),600_000, 5.0, false, &[]);
 
         let track = state.tracks.get("abc123").unwrap();
         for point in &track.history {
@@ -723,13 +890,13 @@ mod tests {
 
         // Insert track at t=100_000.
         let ac1 = make_aircraft("stale", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac1], 100_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(),100_000, 5.0, false, &[]);
 
         // Much later, merge a *different* aircraft. "stale" should be pruned
         // because last_update_ms(100_000) + STALE_GRACE_MS(20_000) = 120_000 < 1_000_000
         // and history will be trimmed (cutoff = 1_000_000 - 300_000 = 700_000, point at 100_000 < 700_000).
         let ac2 = make_aircraft("fresh", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac2], 1_000_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(),1_000_000, 5.0, false, &[]);
 
         assert!(
             state.tracks.get("stale").is_none(),
@@ -771,7 +938,7 @@ mod tests {
         }];
 
         let ac = make_aircraft("abc123", 40.01, -74.0, Some(5000.0));
-        state.merge(&[ac], 600_000, 5.0, false, &backfill);
+        state.merge([ac].as_slice(),600_000, 5.0, false, &backfill);
 
         let track = state.tracks.get("abc123").unwrap();
         // Check dedup: timestamp 510_000 should appear only once.
@@ -800,7 +967,7 @@ mod tests {
     fn merge_hide_ground() {
         let mut state = TrafficState::new();
         let ac = make_ground_aircraft("gnd1", 40.0, -74.0);
-        state.merge(&[ac], 1_000_000, 5.0, true, &[]);
+        state.merge([ac].as_slice(),1_000_000, 5.0, true, &[]);
         assert_eq!(
             state.track_count(),
             0,
@@ -817,11 +984,11 @@ mod tests {
 
         // Insert at t=100_000 with a far-off position to create history.
         let ac = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac], 100_000, 60.0, false, &[]);
+        state.merge([ac].as_slice(),100_000, 60.0, false, &[]);
 
         // Add another point at t=200_000.
         let ac2 = make_aircraft("abc123", 40.01, -74.0, Some(5100.0));
-        state.merge(&[ac2], 200_000, 60.0, false, &[]);
+        state.merge([ac2].as_slice(),200_000, 60.0, false, &[]);
 
         // Prune with history_minutes=1.0, now=500_000.
         // cutoff = 500_000 - 60_000 = 440_000.
@@ -843,11 +1010,11 @@ mod tests {
 
         // Insert a ground track.
         let ac_gnd = make_ground_aircraft("gnd1", 40.0, -74.0);
-        state.merge(&[ac_gnd], 1_000_000, 5.0, false, &[]);
+        state.merge([ac_gnd].as_slice(),1_000_000, 5.0, false, &[]);
 
         // Insert an airborne track.
         let ac_air = make_aircraft("air1", 40.01, -74.0, Some(5000.0));
-        state.merge(&[ac_air], 1_000_000, 5.0, false, &[]);
+        state.merge([ac_air].as_slice(),1_000_000, 5.0, false, &[]);
 
         assert_eq!(state.track_count(), 2);
 
@@ -916,7 +1083,7 @@ mod tests {
     fn render_hash_deterministic() {
         let mut state = TrafficState::new();
         let ac = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac], 1_000_000, 5.0, false, &[]);
+        state.merge([ac].as_slice(),1_000_000, 5.0, false, &[]);
 
         let airports = default_airports();
         let (_, hash1) = state.build_render_tracks(40.0, -74.0, &airports, 1.0, false, true);
@@ -933,12 +1100,12 @@ mod tests {
 
         let mut state1 = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state1.merge(&[ac1], 1_000_000, 5.0, false, &[]);
+        state1.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
         let (_, hash1) = state1.build_render_tracks(40.0, -74.0, &airports, 1.0, false, true);
 
         let mut state2 = TrafficState::new();
         let ac2 = make_aircraft("abc123", 41.0, -73.0, Some(8000.0));
-        state2.merge(&[ac2], 1_000_000, 5.0, false, &[]);
+        state2.merge([ac2].as_slice(),1_000_000, 5.0, false, &[]);
         let (_, hash2) = state2.build_render_tracks(40.0, -74.0, &airports, 1.0, false, true);
 
         assert_ne!(hash1, hash2, "different positions should produce different hashes");
@@ -953,10 +1120,10 @@ mod tests {
 
         // Insert and then move to create history.
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge(&[ac1], 1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
 
         let ac2 = make_aircraft("abc123", 40.01, -74.0, Some(5100.0));
-        state.merge(&[ac2], 1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
 
         let airports = default_airports();
         let (render_tracks, hash) =

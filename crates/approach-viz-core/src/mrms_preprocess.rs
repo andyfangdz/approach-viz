@@ -3,6 +3,7 @@
 // Ported from `app/scene/nexrad/nexrad-preprocess.ts` — must produce numerically identical results.
 
 use crate::coords::{earth_curvature_drop_nm, ALTITUDE_SCALE};
+use crate::generated::MrmsVolume;
 use crate::types::{
     CrossSectionData, DecodedMrmsVolume, DeclutterMode, PhaseMode, PreparedVolume,
     CROSS_SECTION_BINS_X, CROSS_SECTION_BINS_Y, DECLUTTER_LOW_MAX_FEET, DECLUTTER_MID_MAX_FEET,
@@ -10,8 +11,165 @@ use crate::types::{
 };
 
 // ---------------------------------------------------------------------------
-// Echo-top input/output types
+// VolumeSource trait — abstracts indexed voxel access for prepare/cross-section
 // ---------------------------------------------------------------------------
+
+/// Indexed access to MRMS volume voxel fields. Implemented for `DecodedMrmsVolume`
+/// (the fully decoded path) and `FbVolumeView` (zero-copy FlatBuffers view).
+pub trait VolumeSource {
+    fn voxel_count(&self) -> usize;
+    fn x_nm(&self, i: usize) -> f32;
+    fn z_nm(&self, i: usize) -> f32;
+    fn bottom_feet(&self, i: usize) -> u16;
+    fn top_feet(&self, i: usize) -> u16;
+    fn dbz_tenths(&self, i: usize) -> i16;
+    fn phase(&self, i: usize) -> u8;
+    fn surface_phase(&self, i: usize) -> u8;
+    fn footprint_x_span(&self, i: usize) -> u16;
+    fn footprint_y_span(&self, i: usize) -> u16;
+}
+
+impl VolumeSource for DecodedMrmsVolume {
+    #[inline]
+    fn voxel_count(&self) -> usize {
+        self.voxel_count as usize
+    }
+    #[inline]
+    fn x_nm(&self, i: usize) -> f32 {
+        self.x_nm[i]
+    }
+    #[inline]
+    fn z_nm(&self, i: usize) -> f32 {
+        self.z_nm[i]
+    }
+    #[inline]
+    fn bottom_feet(&self, i: usize) -> u16 {
+        self.bottom_feet[i]
+    }
+    #[inline]
+    fn top_feet(&self, i: usize) -> u16 {
+        self.top_feet[i]
+    }
+    #[inline]
+    fn dbz_tenths(&self, i: usize) -> i16 {
+        self.dbz_tenths[i]
+    }
+    #[inline]
+    fn phase(&self, i: usize) -> u8 {
+        self.phase[i]
+    }
+    #[inline]
+    fn surface_phase(&self, i: usize) -> u8 {
+        self.surface_phase[i]
+    }
+    #[inline]
+    fn footprint_x_span(&self, i: usize) -> u16 {
+        self.footprint_x_span[i]
+    }
+    #[inline]
+    fn footprint_y_span(&self, i: usize) -> u16 {
+        self.footprint_y_span[i]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FbVolumeView — zero-copy view over FlatBuffers MrmsVolume SoA columns
+// ---------------------------------------------------------------------------
+
+/// Zero-copy view over a FlatBuffers `MrmsVolume`'s voxel columns.
+/// Converts from wire encoding (hundredths, millis) to domain units (NM, etc.) inline.
+#[allow(dead_code)] // used only in wasm target
+pub(crate) struct FbVolumeView<'a> {
+    count: usize,
+    x_hundredths: Option<flatbuffers::Vector<'a, i16>>,
+    z_hundredths: Option<flatbuffers::Vector<'a, i16>>,
+    bottom_feet: Option<flatbuffers::Vector<'a, u16>>,
+    top_feet: Option<flatbuffers::Vector<'a, u16>>,
+    dbz_tenths: Option<flatbuffers::Vector<'a, i16>>,
+    phase: Option<flatbuffers::Vector<'a, u8>>,
+    surface_phase: Option<flatbuffers::Vector<'a, u8>>,
+    span_x: Option<flatbuffers::Vector<'a, u16>>,
+    span_y: Option<flatbuffers::Vector<'a, u16>>,
+}
+
+#[allow(dead_code)] // used only in wasm target
+impl<'a> FbVolumeView<'a> {
+    pub(crate) fn new(fb: &MrmsVolume<'a>) -> Self {
+        Self {
+            count: fb.source_voxel_count() as usize,
+            x_hundredths: fb.x_hundredths(),
+            z_hundredths: fb.z_hundredths(),
+            bottom_feet: fb.bottom_feet(),
+            top_feet: fb.top_feet(),
+            dbz_tenths: fb.dbz_tenths(),
+            phase: fb.phase(),
+            surface_phase: fb.surface_phase(),
+            span_x: fb.span_x(),
+            span_y: fb.span_y(),
+        }
+    }
+}
+
+impl VolumeSource for FbVolumeView<'_> {
+    #[inline]
+    fn voxel_count(&self) -> usize {
+        self.count
+    }
+    #[inline]
+    fn x_nm(&self, i: usize) -> f32 {
+        self.x_hundredths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 100.0
+    }
+    #[inline]
+    fn z_nm(&self, i: usize) -> f32 {
+        self.z_hundredths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 100.0
+    }
+    #[inline]
+    fn bottom_feet(&self, i: usize) -> u16 {
+        self.bottom_feet.as_ref().map(|v| v.get(i)).unwrap_or(0)
+    }
+    #[inline]
+    fn top_feet(&self, i: usize) -> u16 {
+        self.top_feet.as_ref().map(|v| v.get(i)).unwrap_or(0)
+    }
+    #[inline]
+    fn dbz_tenths(&self, i: usize) -> i16 {
+        self.dbz_tenths.as_ref().map(|v| v.get(i)).unwrap_or(0)
+    }
+    #[inline]
+    fn phase(&self, i: usize) -> u8 {
+        self.phase.as_ref().map(|v| v.get(i)).unwrap_or(0)
+    }
+    #[inline]
+    fn surface_phase(&self, i: usize) -> u8 {
+        self.surface_phase.as_ref().map(|v| v.get(i)).unwrap_or(0)
+    }
+    #[inline]
+    fn footprint_x_span(&self, i: usize) -> u16 {
+        self.span_x.as_ref().map(|v| v.get(i)).unwrap_or(1).max(1)
+    }
+    #[inline]
+    fn footprint_y_span(&self, i: usize) -> u16 {
+        self.span_y.as_ref().map(|v| v.get(i)).unwrap_or(1).max(1)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EchoTopSource trait — abstracts indexed cell access for prepare
+// ---------------------------------------------------------------------------
+
+/// Indexed access to echo-top SoA columns. Implemented for `EchoTopInput`
+/// (owned path / tests) and `FbEchoTopView` (zero-copy FlatBuffers path).
+pub trait EchoTopSource {
+    fn len(&self) -> usize;
+    fn x_nm(&self, i: usize) -> f32;
+    fn z_nm(&self, i: usize) -> f32;
+    /// Echo-top height as f64 feet (u16→f64 widening for the curvature subtract).
+    fn top18_feet(&self, i: usize) -> f64;
+    fn top30_feet(&self, i: usize) -> f64;
+    fn top50_feet(&self, i: usize) -> f64;
+    fn footprint_x_nm(&self) -> f32;
+    fn footprint_y_nm(&self) -> f32;
+}
 
 /// Input echo-top data (SoA layout, mirroring the typed-array path in TS).
 #[derive(Debug, Clone)]
@@ -23,6 +181,85 @@ pub struct EchoTopInput {
     pub top50_feet: Vec<f32>,
     pub footprint_x_nm: f32,
     pub footprint_y_nm: f32,
+}
+
+impl EchoTopSource for EchoTopInput {
+    #[inline]
+    fn len(&self) -> usize {
+        self.x_nm
+            .len()
+            .min(self.z_nm.len())
+            .min(self.top18_feet.len())
+            .min(self.top30_feet.len())
+            .min(self.top50_feet.len())
+    }
+    #[inline]
+    fn x_nm(&self, i: usize) -> f32 { self.x_nm[i] }
+    #[inline]
+    fn z_nm(&self, i: usize) -> f32 { self.z_nm[i] }
+    #[inline]
+    fn top18_feet(&self, i: usize) -> f64 { f64::from(self.top18_feet[i]) }
+    #[inline]
+    fn top30_feet(&self, i: usize) -> f64 { f64::from(self.top30_feet[i]) }
+    #[inline]
+    fn top50_feet(&self, i: usize) -> f64 { f64::from(self.top50_feet[i]) }
+    #[inline]
+    fn footprint_x_nm(&self) -> f32 { self.footprint_x_nm }
+    #[inline]
+    fn footprint_y_nm(&self) -> f32 { self.footprint_y_nm }
+}
+
+// ---------------------------------------------------------------------------
+// FbEchoTopView — zero-copy view over FlatBuffers EchoTops SoA columns
+// ---------------------------------------------------------------------------
+
+/// Zero-copy view over a FlatBuffers `EchoTops` payload's SoA columns.
+/// Top heights are u16 in the buffer — widened to f64 inline at access time.
+#[allow(dead_code)] // used only in wasm target
+pub(crate) struct FbEchoTopView<'a> {
+    count: usize,
+    et_x_nm: Option<flatbuffers::Vector<'a, f32>>,
+    et_z_nm: Option<flatbuffers::Vector<'a, f32>>,
+    top18: Option<flatbuffers::Vector<'a, u16>>,
+    top30: Option<flatbuffers::Vector<'a, u16>>,
+    top50: Option<flatbuffers::Vector<'a, u16>>,
+    fp_x: f32,
+    fp_y: f32,
+}
+
+#[allow(dead_code)] // used only in wasm target
+impl<'a> FbEchoTopView<'a> {
+    pub(crate) fn new(fb: &crate::generated::EchoTops<'a>) -> Self {
+        Self {
+            count: fb.cell_count() as usize,
+            et_x_nm: fb.x_nm(),
+            et_z_nm: fb.z_nm(),
+            top18: fb.top18_feet(),
+            top30: fb.top30_feet(),
+            top50: fb.top50_feet(),
+            fp_x: fb.footprint_x_milli() as f32 / 1000.0,
+            fp_y: fb.footprint_y_milli() as f32 / 1000.0,
+        }
+    }
+}
+
+impl EchoTopSource for FbEchoTopView<'_> {
+    #[inline]
+    fn len(&self) -> usize { self.count }
+    #[inline]
+    fn x_nm(&self, i: usize) -> f32 { self.et_x_nm.as_ref().map(|v| v.get(i)).unwrap_or(0.0) }
+    #[inline]
+    fn z_nm(&self, i: usize) -> f32 { self.et_z_nm.as_ref().map(|v| v.get(i)).unwrap_or(0.0) }
+    #[inline]
+    fn top18_feet(&self, i: usize) -> f64 { self.top18.as_ref().map(|v| v.get(i) as f64).unwrap_or(0.0) }
+    #[inline]
+    fn top30_feet(&self, i: usize) -> f64 { self.top30.as_ref().map(|v| v.get(i) as f64).unwrap_or(0.0) }
+    #[inline]
+    fn top50_feet(&self, i: usize) -> f64 { self.top50.as_ref().map(|v| v.get(i) as f64).unwrap_or(0.0) }
+    #[inline]
+    fn footprint_x_nm(&self) -> f32 { self.fp_x }
+    #[inline]
+    fn footprint_y_nm(&self) -> f32 { self.fp_y }
 }
 
 /// Prepared echo-top surfaces in SoA layout, ready for direct JS Float32Array handoff.
@@ -51,15 +288,18 @@ pub struct EchoTopSurfacesSoA {
 /// Filter, curvature-correct, and declutter an MRMS decoded volume.
 ///
 /// Mirrors `prepareVolumeData()` from `nexrad-preprocess.ts:59-181`.
+///
+/// Generic over `VolumeSource` so the binary path can pass an `FbVolumeView`
+/// that reads directly from the FlatBuffers buffer (zero allocation).
 pub fn prepare_volume(
-    volume: &DecodedMrmsVolume,
+    volume: &impl VolumeSource,
     min_dbz_tenths: i16,
     phase_mode: PhaseMode,
     declutter_mode: DeclutterMode,
     apply_earth_curvature: bool,
     ref_lat: f64,
 ) -> PreparedVolume {
-    let count = volume.voxel_count as usize;
+    let count = volume.voxel_count();
     if count == 0 {
         return PreparedVolume {
             valid_count: 0,
@@ -83,15 +323,15 @@ pub fn prepare_volume(
 
     for i in 0..count {
         // Skip below minimum reflectivity
-        let d = volume.dbz_tenths[i];
+        let d = volume.dbz_tenths(i);
         if d < min_dbz_tenths {
             continue;
         }
 
-        let x = volume.x_nm[i];
-        let z = volume.z_nm[i];
-        let fp_x = volume.footprint_x_span[i];
-        let fp_y = volume.footprint_y_span[i];
+        let x = volume.x_nm(i);
+        let z = volume.z_nm(i);
+        let fp_x = volume.footprint_x_span(i);
+        let fp_y = volume.footprint_y_span(i);
 
         // Validate: position must be finite, footprint spans > 0
         if !x.is_finite() || !z.is_finite() || fp_x == 0 || fp_y == 0 {
@@ -104,8 +344,8 @@ pub fn prepare_volume(
             0.0
         };
 
-        let c_bottom = f64::from(volume.bottom_feet[i]) - curvature_drop_feet;
-        let c_top = f64::from(volume.top_feet[i]) - curvature_drop_feet;
+        let c_bottom = f64::from(volume.bottom_feet(i)) - curvature_drop_feet;
+        let c_top = f64::from(volume.top_feet(i)) - curvature_drop_feet;
         let c_center = (c_bottom + c_top) * 0.5;
         let yb = c_center * ALTITUDE_SCALE;
         let hb = ((c_top - c_bottom) * ALTITUDE_SCALE).max(MIN_VOXEL_HEIGHT_NM);
@@ -123,8 +363,8 @@ pub fn prepare_volume(
 
         // Phase selection
         let selected = match phase_mode {
-            PhaseMode::Surface => volume.surface_phase[i],
-            PhaseMode::Altitude => volume.phase[i],
+            PhaseMode::Surface => volume.surface_phase(i),
+            PhaseMode::Altitude => volume.phase(i),
         };
         effective_phase_code.push(selected);
     }
@@ -190,8 +430,10 @@ fn keep_voxel_for_declutter(mode: DeclutterMode, bottom_feet: f64, top_feet: f64
 /// Build a 2D cross-section grid from a prepared volume along a given slice axis.
 ///
 /// Mirrors `buildCrossSectionData()` from `nexrad-preprocess.ts:183-253`.
+///
+/// Generic over `VolumeSource` for zero-copy FlatBuffers reads.
 pub fn build_cross_section(
-    volume: &DecodedMrmsVolume,
+    volume: &impl VolumeSource,
     prepared: &PreparedVolume,
     slice_axis: (f64, f64),
     slice_perp_axis: (f64, f64),
@@ -223,8 +465,8 @@ pub fn build_cross_section(
 
     for i in 0..prepared.valid_count {
         let idx = prepared.valid_indices[i] as usize;
-        let vx = volume.x_nm[idx] as f64;
-        let vz = volume.z_nm[idx] as f64;
+        let vx = volume.x_nm(idx) as f64;
+        let vz = volume.z_nm(idx) as f64;
 
         let along_nm = vx * slice_axis.0 + vz * slice_axis.1;
         if along_nm < -normalized_range || along_nm > normalized_range {
@@ -259,7 +501,7 @@ pub fn build_cross_section(
         }
 
         let phase_code = prepared.effective_phase_code[i];
-        let v_dbz = volume.dbz_tenths[idx] as f32 / 10.0;
+        let v_dbz = volume.dbz_tenths(idx) as f32 / 10.0;
 
         for y in y0..=y1 {
             let grid_idx = y * CROSS_SECTION_BINS_X + bin_x;
@@ -284,22 +526,17 @@ pub fn build_cross_section(
 // 3. prepare_echo_top_surfaces
 // ---------------------------------------------------------------------------
 
-/// Build renderable echo-top surfaces in SoA layout from decoded echo-top data.
+/// Build renderable echo-top surfaces in SoA layout from echo-top data.
 ///
-/// Takes `DecodedEchoTop` directly (u16 heights), applies curvature correction,
-/// and outputs SoA Vecs ready for direct Float32Array handoff to JS.
+/// Generic over `EchoTopSource` so the binary path can use `FbEchoTopView`
+/// for zero-copy reads. Applies curvature correction and outputs SoA Vecs
+/// ready for direct Float32Array handoff to JS.
 pub fn prepare_echo_top_surfaces(
-    input: &EchoTopInput,
+    input: &impl EchoTopSource,
     apply_earth_curvature: bool,
     ref_lat: f64,
 ) -> EchoTopSurfacesSoA {
-    let count = input
-        .x_nm
-        .len()
-        .min(input.z_nm.len())
-        .min(input.top18_feet.len())
-        .min(input.top30_feet.len())
-        .min(input.top50_feet.len());
+    let count = input.len();
 
     let mut x18 = Vec::new();
     let mut z18 = Vec::new();
@@ -312,8 +549,8 @@ pub fn prepare_echo_top_surfaces(
     let mut y50 = Vec::new();
 
     for i in 0..count {
-        let x = input.x_nm[i];
-        let z = input.z_nm[i];
+        let x = input.x_nm(i);
+        let z = input.z_nm(i);
         if !x.is_finite() || !z.is_finite() {
             continue;
         }
@@ -324,9 +561,9 @@ pub fn prepare_echo_top_surfaces(
             0.0
         };
 
-        let t18 = f64::max(0.0, f64::from(input.top18_feet[i]) - curvature_drop_feet);
-        let t30 = f64::max(0.0, f64::from(input.top30_feet[i]) - curvature_drop_feet);
-        let t50 = f64::max(0.0, f64::from(input.top50_feet[i]) - curvature_drop_feet);
+        let t18 = f64::max(0.0, input.top18_feet(i) - curvature_drop_feet);
+        let t30 = f64::max(0.0, input.top30_feet(i) - curvature_drop_feet);
+        let t50 = f64::max(0.0, input.top50_feet(i) - curvature_drop_feet);
 
         if t18 > 0.0 {
             x18.push(x);
@@ -358,8 +595,8 @@ pub fn prepare_echo_top_surfaces(
         x50,
         z50,
         y_base50: y50,
-        footprint_x_nm: input.footprint_x_nm,
-        footprint_y_nm: input.footprint_y_nm,
+        footprint_x_nm: input.footprint_x_nm(),
+        footprint_y_nm: input.footprint_y_nm(),
     }
 }
 

@@ -1,6 +1,4 @@
 import type {
-  LiveTrafficAircraft,
-  LiveTrafficHistoryPoint,
   SceneAirport,
   TrafficInitSabRequest,
   TrafficWorkerRequestMessage,
@@ -30,13 +28,6 @@ function getTrafficState(): WasmTrafficState {
   return trafficState;
 }
 
-const TRAFFIC_FB_CONTENT_TYPE = 'application/vnd.approach-viz.traffic.v4';
-
-function isTrafficBinaryContentType(contentType: string | null): boolean {
-  if (!contentType) return false;
-  return contentType.toLowerCase().startsWith(TRAFFIC_FB_CONTENT_TYPE);
-}
-
 function normalizeFetchUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
   const workerLocation = (globalThis as { location?: { origin?: string } }).location;
@@ -46,151 +37,40 @@ function normalizeFetchUrl(url: string): string {
   return url;
 }
 
-function dedupeHexes(hexes: string[]): string[] {
-  return Array.from(new Set(hexes.filter((hex) => typeof hex === 'string' && hex.length > 0)));
-}
-
-function trackedHexesFromAircraft(aircraftList: LiveTrafficAircraft[]): string[] {
-  return dedupeHexes(aircraftList.map((aircraft) => aircraft.hex));
-}
-
-function historyHexesFromMap(
-  historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined
-): string[] {
-  if (!historyByHex || typeof historyByHex !== 'object') return [];
-  return dedupeHexes(Object.keys(historyByHex));
-}
-
-function mergeRemoteHistoryMaps(
-  primary: Record<string, LiveTrafficHistoryPoint[]> | undefined,
-  secondary: Record<string, LiveTrafficHistoryPoint[]> | undefined
-): Record<string, LiveTrafficHistoryPoint[]> | undefined {
-  if (!primary && !secondary) return undefined;
-  if (!primary) return secondary;
-  if (!secondary) return primary;
-  const merged: Record<string, LiveTrafficHistoryPoint[]> = { ...primary };
-  for (const [hex, points] of Object.entries(secondary)) {
-    const existing = merged[hex];
-    if (!existing) {
-      merged[hex] = points;
-      continue;
-    }
-    merged[hex] = [...existing, ...points];
-  }
-  return merged;
-}
-
-interface LiveTrafficFeed {
-  aircraft?: LiveTrafficAircraft[];
-  historyByHex?: Record<string, LiveTrafficHistoryPoint[]>;
-  error?: string;
-}
-
-interface RuntimeBinaryFetchResult {
-  kind: 'binary';
-  primaryBuffer: ArrayBuffer;
-  backfillBuffer: ArrayBuffer | null;
-  fetchMs: number;
-}
-
-interface RuntimeJsonFetchResult {
-  kind: 'json';
-  aircraftList: LiveTrafficAircraft[];
-  historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined;
-  trackedHexes: string[];
-  returnedHistoryHexes: string[];
-  fetchMs: number;
-  parseMs: number;
-}
-
-type RuntimeTrafficFetchResult = RuntimeBinaryFetchResult | RuntimeJsonFetchResult;
-
 async function fetchTrafficRuntimeRaw(
   url: string
-): Promise<{ buffer: ArrayBuffer; isBinary: boolean; fetchMs: number }> {
+): Promise<{ buffer: ArrayBuffer; fetchMs: number }> {
   const fetchStartedAt = performance.now();
   const response = await fetch(normalizeFetchUrl(url), { cache: 'no-store' });
   const fetchMs = roundMs(performance.now() - fetchStartedAt);
   if (!response.ok) {
     throw new Error(`Traffic feed request failed (${response.status})`);
   }
-  const contentType = response.headers.get('content-type');
   const buffer = await response.arrayBuffer();
-  return { buffer, isBinary: isTrafficBinaryContentType(contentType), fetchMs };
+  return { buffer, fetchMs };
 }
 
-async function fetchRuntimeIngestData(
+async function fetchRuntimeBinaryData(
   primaryUrl: string,
   followupUrl?: string
-): Promise<RuntimeTrafficFetchResult> {
+): Promise<{ primaryBuffer: ArrayBuffer; backfillBuffer: ArrayBuffer | null; fetchMs: number }> {
   const primary = await fetchTrafficRuntimeRaw(primaryUrl);
 
-  if (primary.isBinary) {
-    let backfillBuffer: ArrayBuffer | null = null;
-    let backfillFetchMs = 0;
-    if (followupUrl) {
-      try {
-        const followup = await fetchTrafficRuntimeRaw(followupUrl);
-        backfillBuffer = followup.buffer;
-        backfillFetchMs = followup.fetchMs;
-      } catch (error) {
-        console.warn('Traffic history backfill follow-up failed.', error);
-      }
-    }
-    return {
-      kind: 'binary',
-      primaryBuffer: primary.buffer,
-      backfillBuffer,
-      fetchMs: roundMs(primary.fetchMs + backfillFetchMs)
-    };
-  }
-
-  // JSON path — decode and merge in JS
-  const parseStartedAt = performance.now();
-  const payload = JSON.parse(new TextDecoder().decode(primary.buffer)) as LiveTrafficFeed;
-  if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
-    throw new Error(`Traffic feed error: ${payload.error}`);
-  }
-  const aircraftList = Array.isArray(payload.aircraft) ? payload.aircraft : [];
-  let historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined =
-    payload.historyByHex && typeof payload.historyByHex === 'object'
-      ? payload.historyByHex
-      : undefined;
-  let returnedHistoryHexes = historyHexesFromMap(historyByHex);
-  let totalFetchMs = primary.fetchMs;
-
+  let backfillBuffer: ArrayBuffer | null = null;
+  let backfillFetchMs = 0;
   if (followupUrl) {
     try {
       const followup = await fetchTrafficRuntimeRaw(followupUrl);
-      totalFetchMs = roundMs(totalFetchMs + followup.fetchMs);
-      const followupPayload = JSON.parse(
-        new TextDecoder().decode(followup.buffer)
-      ) as LiveTrafficFeed;
-      if (typeof followupPayload.error === 'string' && followupPayload.error.trim().length > 0) {
-        throw new Error(`Traffic history backfill error: ${followupPayload.error}`);
-      }
-      const followupHistory =
-        followupPayload.historyByHex && typeof followupPayload.historyByHex === 'object'
-          ? followupPayload.historyByHex
-          : undefined;
-      historyByHex = mergeRemoteHistoryMaps(historyByHex, followupHistory);
-      returnedHistoryHexes = dedupeHexes([
-        ...returnedHistoryHexes,
-        ...historyHexesFromMap(followupHistory)
-      ]);
+      backfillBuffer = followup.buffer;
+      backfillFetchMs = followup.fetchMs;
     } catch (error) {
       console.warn('Traffic history backfill follow-up failed.', error);
     }
   }
-
   return {
-    kind: 'json',
-    aircraftList,
-    historyByHex,
-    trackedHexes: trackedHexesFromAircraft(aircraftList),
-    returnedHistoryHexes,
-    fetchMs: totalFetchMs,
-    parseMs: roundMs(performance.now() - parseStartedAt)
+    primaryBuffer: primary.buffer,
+    backfillBuffer,
+    fetchMs: roundMs(primary.fetchMs + backfillFetchMs)
   };
 }
 
@@ -243,26 +123,13 @@ async function handleMessage(
 
   let trackedHexes: string[] = [];
   let returnedHistoryHexes: string[] = [];
-  let feedTransport: 'binary' | 'json' | undefined;
   let fetchMs: number | undefined;
-  let parseMs: number | undefined;
 
   if (message.type === 'reset') {
     trafficState?.free();
     trafficState = new WasmTrafficState();
-  } else if (message.type === 'ingest') {
-    const state = getTrafficState();
-    // Pre-decoded JS objects — use merge_decoded
-    state.merge_decoded(
-      message.aircraftList,
-      message.historyByHex ?? null,
-      message.nowMs,
-      message.historyMinutes,
-      message.hideGroundTargets
-    );
   } else if (message.type === 'ingest-binary') {
     const state = getTrafficState();
-    // Direct binary merge — single WASM call, no JS intermediate
     const mergeResult = state.merge(
       new Uint8Array(message.payloadBuffer),
       message.nowMs,
@@ -281,40 +148,22 @@ async function handleMessage(
     }
     trackedHexes = mergeResult.trackedHexes;
     returnedHistoryHexes = mergeResult.returnedHistoryHexes;
-    feedTransport = 'binary';
   } else if (message.type === 'ingest-runtime') {
     const state = getTrafficState();
-    const runtimeData = await fetchRuntimeIngestData(message.primaryUrl, message.followupUrl);
+    const runtimeData = await fetchRuntimeBinaryData(message.primaryUrl, message.followupUrl);
     fetchMs = runtimeData.fetchMs;
-    if (runtimeData.kind === 'binary') {
-      // Direct binary merge — single WASM call, no JS intermediate
-      const mergeResult = state.merge(
-        new Uint8Array(runtimeData.primaryBuffer),
-        message.nowMs,
-        message.historyMinutes,
-        message.hideGroundTargets,
-        runtimeData.backfillBuffer ? new Uint8Array(runtimeData.backfillBuffer) : new Uint8Array(0)
-      ) as { trackedHexes: string[]; returnedHistoryHexes: string[]; error: string | null };
-      if (typeof mergeResult.error === 'string' && mergeResult.error.trim().length > 0) {
-        throw new Error(`Traffic feed error: ${mergeResult.error}`);
-      }
-      trackedHexes = mergeResult.trackedHexes;
-      returnedHistoryHexes = mergeResult.returnedHistoryHexes;
-      feedTransport = 'binary';
-    } else {
-      // JSON path — already decoded in JS
-      state.merge_decoded(
-        runtimeData.aircraftList,
-        runtimeData.historyByHex ?? null,
-        message.nowMs,
-        message.historyMinutes,
-        message.hideGroundTargets
-      );
-      trackedHexes = runtimeData.trackedHexes;
-      returnedHistoryHexes = runtimeData.returnedHistoryHexes;
-      feedTransport = 'json';
-      parseMs = runtimeData.parseMs;
+    const mergeResult = state.merge(
+      new Uint8Array(runtimeData.primaryBuffer),
+      message.nowMs,
+      message.historyMinutes,
+      message.hideGroundTargets,
+      runtimeData.backfillBuffer ? new Uint8Array(runtimeData.backfillBuffer) : new Uint8Array(0)
+    ) as { trackedHexes: string[]; returnedHistoryHexes: string[]; error: string | null };
+    if (typeof mergeResult.error === 'string' && mergeResult.error.trim().length > 0) {
+      throw new Error(`Traffic feed error: ${mergeResult.error}`);
     }
+    trackedHexes = mergeResult.trackedHexes;
+    returnedHistoryHexes = mergeResult.returnedHistoryHexes;
   } else if (message.type === 'prune-error') {
     getTrafficState().prune_for_error(message.nowMs, message.historyMinutes);
   } else {
@@ -351,9 +200,7 @@ async function handleMessage(
       usedSab: true,
       trackedHexes,
       returnedHistoryHexes,
-      feedTransport,
-      fetchMs,
-      parseMs
+      fetchMs
     };
   }
   return {
@@ -364,9 +211,7 @@ async function handleMessage(
     sabOverflow: sabResult.overflow,
     trackedHexes,
     returnedHistoryHexes,
-    feedTransport,
-    fetchMs,
-    parseMs
+    fetchMs
   };
 }
 

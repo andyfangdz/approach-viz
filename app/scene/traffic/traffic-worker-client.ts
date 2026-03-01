@@ -2,7 +2,6 @@ import type {
   TrafficBinaryIngestRequest,
   SceneAirport,
   TrafficErrorPruneRequest,
-  TrafficIngestRequest,
   TrafficRuntimeIngestRequest,
   TrafficRecomputeRequest,
   TrafficResetRequest,
@@ -10,7 +9,6 @@ import type {
   TrafficWorkerRequestMessage,
   TrafficWorkerResponseMessage
 } from './traffic-worker-types';
-import type { LiveTrafficAircraft, LiveTrafficHistoryPoint } from './traffic-worker-types';
 import {
   createTrafficSabBuffers,
   createTrafficSabViews,
@@ -102,7 +100,6 @@ export interface TrafficProcessResult {
 
 type TrafficRequestWithoutId =
   | Omit<TrafficResetRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
-  | Omit<TrafficIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficBinaryIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficRuntimeIngestRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
   | Omit<TrafficRecomputeRequest, 'requestId' | 'preferSab' | 'sabChannelId'>
@@ -185,14 +182,6 @@ export class TrafficWorkerClient extends BaseWorkerClient<TrafficWorkerResponseM
 
   reset(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
     return this.sendSabRequest({ type: 'reset', ...options });
-  }
-
-  ingest(
-    aircraftList: LiveTrafficAircraft[],
-    historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined,
-    options: TrafficProcessOptions
-  ): Promise<TrafficProcessResult> {
-    return this.sendSabRequest({ type: 'ingest', aircraftList, historyByHex, ...options });
   }
 
   ingestBinary(
@@ -461,18 +450,12 @@ export class TrafficWorkerClient extends BaseWorkerClient<TrafficWorkerResponseM
       returnedHistoryHexes: Array.isArray(response.returnedHistoryHexes)
         ? response.returnedHistoryHexes
         : [],
-      feedTransport:
-        response.feedTransport === 'binary' || response.feedTransport === 'json'
-          ? response.feedTransport
-          : null,
+      feedTransport: 'binary',
       fetchMs:
         typeof response.fetchMs === 'number' && Number.isFinite(response.fetchMs)
           ? response.fetchMs
           : null,
-      parseMs:
-        typeof response.parseMs === 'number' && Number.isFinite(response.parseMs)
-          ? response.parseMs
-          : null
+      parseMs: null
     };
   }
 }

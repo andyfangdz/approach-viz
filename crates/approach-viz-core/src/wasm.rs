@@ -79,11 +79,18 @@ pub fn decode_and_prepare_mrms(
     normalized_range: f64,
     half_width_nm: f64,
 ) -> Result<JsValue, JsValue> {
-    // 1. Decode
+    // 1. Verify FB root — no decode/copy
+    let fb = flatbuffers::root::<crate::generated::MrmsVolume>(data)
+        .map_err(|e| JsValue::from_str(&format!("AVMR payload invalid: {e}")))?;
+
+    // Zero-copy volume view — reads directly from the FB buffer
+    let vol_view = crate::mrms_preprocess::FbVolumeView::new(&fb);
+
+    // Also decode to owned for the volume-payload JS output (typed arrays)
     let vol = crate::mrms_wire_codec::decode_mrms_fb(data)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    // 2. Prepare
+    // 2. Prepare (generic — uses FbVolumeView for zero-copy reads)
     let pm = match phase_mode {
         1 => crate::types::PhaseMode::Surface,
         _ => crate::types::PhaseMode::Altitude,
@@ -96,13 +103,13 @@ pub fn decode_and_prepare_mrms(
     };
 
     let prepared = crate::mrms_preprocess::prepare_volume(
-        &vol, min_dbz_tenths, pm, dm, apply_earth_curvature, ref_lat,
+        &vol_view, min_dbz_tenths, pm, dm, apply_earth_curvature, ref_lat,
     );
 
-    // 3. Cross-section (optional)
+    // 3. Cross-section (optional — also reads from FbVolumeView)
     let cross_section = if include_cross_section {
         crate::mrms_preprocess::build_cross_section(
-            &vol,
+            &vol_view,
             &prepared,
             (slice_axis_x, slice_axis_z),
             (slice_perp_x, slice_perp_z),
@@ -468,26 +475,15 @@ pub fn decode_and_prepare_echo_top(
     apply_earth_curvature: bool,
     ref_lat: f64,
 ) -> Result<JsValue, JsValue> {
-    let decoded = crate::echo_top_wire_codec::decode_echo_top_fb(data)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    // Verify FB root — no decode/copy for the prepare path
+    let fb = flatbuffers::root::<crate::generated::EchoTops>(data)
+        .map_err(|e| JsValue::from_str(&format!("AVET payload invalid: {e}")))?;
 
-    // Convert u16 feet to f32 for prepare_echo_top_surfaces
-    let top18_f32: Vec<f32> = decoded.top18_feet.iter().map(|&v| v as f32).collect();
-    let top30_f32: Vec<f32> = decoded.top30_feet.iter().map(|&v| v as f32).collect();
-    let top50_f32: Vec<f32> = decoded.top50_feet.iter().map(|&v| v as f32).collect();
-
-    let input = crate::mrms_preprocess::EchoTopInput {
-        x_nm: decoded.x_nm,
-        z_nm: decoded.z_nm,
-        top18_feet: top18_f32,
-        top30_feet: top30_f32,
-        top50_feet: top50_f32,
-        footprint_x_nm: decoded.footprint_x_nm,
-        footprint_y_nm: decoded.footprint_y_nm,
-    };
+    // Zero-copy echo-top view for prepare
+    let et_view = crate::mrms_preprocess::FbEchoTopView::new(&fb);
 
     let s =
-        crate::mrms_preprocess::prepare_echo_top_surfaces(&input, apply_earth_curvature, ref_lat);
+        crate::mrms_preprocess::prepare_echo_top_surfaces(&et_view, apply_earth_curvature, ref_lat);
 
     let root = js_sys::Object::new();
     set_prop(
@@ -506,12 +502,13 @@ pub fn decode_and_prepare_echo_top(
         &echo_top_soa_to_js(s.count50, &s.x50, &s.z50, &s.y_base50, s.footprint_x_nm, s.footprint_y_nm)?,
     )?;
 
+    // Summary metadata — read directly from FB root (no owned decode).
     let summary_obj = js_sys::Object::new();
-    set_prop(&summary_obj, "sourceCellCount", &JsValue::from(decoded.source_cell_count))?;
-    set_prop(&summary_obj, "maxTop18Feet", &option_u16_to_js(decoded.max_top18_feet))?;
-    set_prop(&summary_obj, "maxTop30Feet", &option_u16_to_js(decoded.max_top30_feet))?;
-    set_prop(&summary_obj, "maxTop50Feet", &option_u16_to_js(decoded.max_top50_feet))?;
-    set_prop(&summary_obj, "maxTop60Feet", &option_u16_to_js(decoded.max_top60_feet))?;
+    set_prop(&summary_obj, "sourceCellCount", &JsValue::from(fb.source_cell_count()))?;
+    set_prop(&summary_obj, "maxTop18Feet", &option_u16_to_js(fb.max_top18_feet()))?;
+    set_prop(&summary_obj, "maxTop30Feet", &option_u16_to_js(fb.max_top30_feet()))?;
+    set_prop(&summary_obj, "maxTop50Feet", &option_u16_to_js(fb.max_top50_feet()))?;
+    set_prop(&summary_obj, "maxTop60Feet", &option_u16_to_js(fb.max_top60_feet()))?;
     set_prop(&root, "summary", &summary_obj.into())?;
 
     Ok(root.into())
@@ -565,123 +562,67 @@ impl WasmTrafficState {
     ) -> Result<JsValue, JsValue> {
         let now_ms_i64 = now_ms as i64;
 
-        // Decode main payload
-        let payload = crate::traffic_codec::decode_traffic_fb(data)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // Verify and get a reference to the FB root — no decode/copy.
+        let fb = flatbuffers::root::<crate::generated::TrafficPayload>(data)
+            .map_err(|e| JsValue::from_str(&format!("AVTR payload invalid: {e}")))?;
 
-        // Decode backfill payload (if non-empty)
-        let backfill_payload = if !backfill_data.is_empty() {
+        // Zero-copy aircraft view — reads directly from the FB buffer.
+        let ac_view = crate::traffic_merge::FbAircraftView::new(&fb);
+
+        // Backfill FB (if present).
+        let backfill_fb = if !backfill_data.is_empty() {
             Some(
-                crate::traffic_codec::decode_traffic_fb(backfill_data)
-                    .map_err(|e| JsValue::from_str(&format!("backfill decode error: {e}")))?,
+                flatbuffers::root::<crate::generated::TrafficPayload>(backfill_data)
+                    .map_err(|e| JsValue::from_str(&format!("backfill AVTR invalid: {e}")))?,
             )
         } else {
             None
         };
 
-        // Convert decoded aircraft to MergeAircraft
-        let merge_aircraft: Vec<crate::traffic_merge::MergeAircraft> = payload
-            .aircraft
-            .iter()
-            .map(|ac| crate::traffic_merge::MergeAircraft {
-                hex: ac.hex.clone(),
-                lat: ac.lat as f64,
-                lon: ac.lon as f64,
-                altitude_feet: ac.altitude_feet.map(|v| v as f64),
-                ground_speed_kt: ac.ground_speed_kt.map(|v| v as f64),
-                track_deg: ac.track_deg.map(|v| v as f64),
-                flight: ac.flight.clone(),
-                is_on_ground: ac.is_on_ground,
-                last_seen_seconds: ac.last_seen_seconds.map(|v| v as f64),
-            })
-            .collect();
+        // History still needs owned Vecs for sort/dedup — collect from FB accessors.
+        let backfill_history = collect_fb_history(&fb, backfill_fb.as_ref())?;
 
-        // Build backfill history from both payloads' history groups
-        let mut backfill_history: Vec<crate::traffic_merge::BackfillHistory> = Vec::new();
-
-        // Add history from main payload
-        for group in &payload.history_groups {
-            backfill_history.push(crate::traffic_merge::BackfillHistory {
-                hex: group.hex.clone(),
-                points: group
-                    .points
-                    .iter()
-                    .map(|p| crate::traffic_merge::TrafficHistoryPoint {
-                        lat: p.lat as f64,
-                        lon: p.lon as f64,
-                        altitude_feet: p.altitude_feet as f64,
-                        timestamp_ms: p.timestamp_ms,
-                    })
-                    .collect(),
-            });
-        }
-
-        // Add history from backfill payload
-        if let Some(bp) = &backfill_payload {
-            for group in &bp.history_groups {
-                backfill_history.push(crate::traffic_merge::BackfillHistory {
-                    hex: group.hex.clone(),
-                    points: group
-                        .points
-                        .iter()
-                        .map(|p| crate::traffic_merge::TrafficHistoryPoint {
-                            lat: p.lat as f64,
-                            lon: p.lon as f64,
-                            altitude_feet: p.altitude_feet as f64,
-                            timestamp_ms: p.timestamp_ms,
-                        })
-                        .collect(),
-                });
-            }
-        }
-
-        // Collect tracked hexes (unique aircraft hex codes from primary payload)
+        // Collect tracked hexes directly from FB string vector (zero-copy &str).
         let mut tracked_set = std::collections::HashSet::new();
         let tracked_hexes = js_sys::Array::new();
-        for ac in &payload.aircraft {
-            if tracked_set.insert(ac.hex.as_str()) {
-                tracked_hexes.push(&JsValue::from_str(&ac.hex));
-            }
-        }
-
-        // Collect returned history hexes (unique hex codes from history groups in both payloads)
-        let mut history_set = std::collections::HashSet::new();
-        let returned_history_hexes = js_sys::Array::new();
-        for group in &payload.history_groups {
-            if history_set.insert(group.hex.clone()) {
-                returned_history_hexes.push(&JsValue::from_str(&group.hex));
-            }
-        }
-        if let Some(bp) = &backfill_payload {
-            for group in &bp.history_groups {
-                if history_set.insert(group.hex.clone()) {
-                    returned_history_hexes.push(&JsValue::from_str(&group.hex));
+        if let Some(hex_vec) = fb.ac_hex() {
+            for i in 0..fb.aircraft_count() as usize {
+                let hex = hex_vec.get(i);
+                if !hex.is_empty() && tracked_set.insert(hex) {
+                    tracked_hexes.push(&JsValue::from_str(hex));
                 }
             }
         }
 
-        self.inner
-            .merge(&merge_aircraft, now_ms_i64, history_minutes, hide_ground, &backfill_history);
+        // Collect returned history hexes from FB string vectors.
+        let mut history_set = std::collections::HashSet::new();
+        let returned_history_hexes = js_sys::Array::new();
+        collect_fb_history_hexes(&fb, &mut history_set, &returned_history_hexes);
+        if let Some(bfb) = backfill_fb.as_ref() {
+            collect_fb_history_hexes(bfb, &mut history_set, &returned_history_hexes);
+        }
 
+        self.inner
+            .merge(&ac_view, now_ms_i64, history_minutes, hide_ground, &backfill_history);
+
+        // Read metadata directly from FB.
         let obj = js_sys::Object::new();
         set_prop(&obj, "trackCount", &JsValue::from(self.inner.track_count() as u32))?;
-        set_prop(&obj, "fetchedAtMs", &JsValue::from(payload.fetched_at_ms as f64))?;
+        set_prop(&obj, "fetchedAtMs", &JsValue::from(fb.fetched_at_ms() as f64))?;
         set_prop(
             &obj,
             "source",
-            &match &payload.source {
+            &match fb.source() {
                 Some(s) => JsValue::from_str(s),
                 None => JsValue::NULL,
             },
         )?;
-        set_prop(
-            &obj,
-            "error",
-            &match &payload.error {
-                Some(s) => JsValue::from_str(s),
-                None => JsValue::NULL,
-            },
-        )?;
+        let error_val = if fb.flags() & 1 != 0 {
+            fb.error().map(|s| JsValue::from_str(s)).unwrap_or(JsValue::NULL)
+        } else {
+            JsValue::NULL
+        };
+        set_prop(&obj, "error", &error_val)?;
         set_prop(&obj, "trackedHexes", &tracked_hexes)?;
         set_prop(&obj, "returnedHistoryHexes", &returned_history_hexes)?;
 
@@ -701,150 +642,6 @@ impl WasmTrafficState {
 
         let obj = js_sys::Object::new();
         set_prop(&obj, "trackCount", &JsValue::from(self.inner.track_count() as u32))?;
-        Ok(obj.into())
-    }
-
-    /// Merge pre-decoded aircraft + history into the state (for JSON/ingest paths).
-    ///
-    /// `aircraft_js`: JS Array of `{ hex, lat, lon, altitudeFeet?, groundSpeedKt?, trackDeg?, flight?, isOnGround, lastSeenSeconds? }`
-    /// `history_js`: JS object `Record<string, Array<{ lat, lon, altitudeFeet, timestampMs }>>` or null/undefined.
-    ///
-    /// Returns `{ trackCount: number }`.
-    pub fn merge_decoded(
-        &mut self,
-        aircraft_js: &JsValue,
-        history_js: &JsValue,
-        now_ms: f64,
-        history_minutes: f64,
-        hide_ground: bool,
-    ) -> Result<JsValue, JsValue> {
-        let now_ms_i64 = now_ms as i64;
-
-        // Convert aircraft JS array to Vec<MergeAircraft>.
-        let ac_array: js_sys::Array = aircraft_js.clone().dyn_into()
-            .map_err(|_| JsValue::from_str("aircraft must be an array"))?;
-        let mut merge_aircraft: Vec<crate::traffic_merge::MergeAircraft> =
-            Vec::with_capacity(ac_array.length() as usize);
-        for i in 0..ac_array.length() {
-            let ac = ac_array.get(i);
-            let hex = js_sys::Reflect::get(&ac, &JsValue::from_str("hex"))
-                .ok()
-                .and_then(|v| v.as_string())
-                .unwrap_or_default();
-            let lat = js_sys::Reflect::get(&ac, &JsValue::from_str("lat"))
-                .ok()
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let lon = js_sys::Reflect::get(&ac, &JsValue::from_str("lon"))
-                .ok()
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let altitude_feet = js_sys::Reflect::get(&ac, &JsValue::from_str("altitudeFeet"))
-                .ok()
-                .and_then(|v| v.as_f64());
-            let ground_speed_kt =
-                js_sys::Reflect::get(&ac, &JsValue::from_str("groundSpeedKt"))
-                    .ok()
-                    .and_then(|v| v.as_f64());
-            let track_deg = js_sys::Reflect::get(&ac, &JsValue::from_str("trackDeg"))
-                .ok()
-                .and_then(|v| v.as_f64());
-            let flight = js_sys::Reflect::get(&ac, &JsValue::from_str("flight"))
-                .ok()
-                .and_then(|v| v.as_string());
-            let is_on_ground =
-                js_sys::Reflect::get(&ac, &JsValue::from_str("isOnGround"))
-                    .ok()
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-            let last_seen_seconds =
-                js_sys::Reflect::get(&ac, &JsValue::from_str("lastSeenSeconds"))
-                    .ok()
-                    .and_then(|v| v.as_f64());
-
-            merge_aircraft.push(crate::traffic_merge::MergeAircraft {
-                hex,
-                lat,
-                lon,
-                altitude_feet,
-                ground_speed_kt,
-                track_deg,
-                flight,
-                is_on_ground,
-                last_seen_seconds,
-            });
-        }
-
-        // Convert history JS object to Vec<BackfillHistory>.
-        let mut backfill_history: Vec<crate::traffic_merge::BackfillHistory> = Vec::new();
-        if !history_js.is_null() && !history_js.is_undefined() {
-            let keys = js_sys::Object::keys(&history_js.clone().unchecked_into::<js_sys::Object>());
-            for i in 0..keys.length() {
-                let hex_key = keys.get(i);
-                let hex = hex_key.as_string().unwrap_or_default();
-                let points_js = js_sys::Reflect::get(history_js, &hex_key)
-                    .unwrap_or(JsValue::NULL);
-                if js_sys::Array::is_array(&points_js) {
-                    let points_array = js_sys::Array::from(&points_js);
-                    let mut points: Vec<crate::traffic_merge::TrafficHistoryPoint> =
-                        Vec::with_capacity(points_array.length() as usize);
-                    for j in 0..points_array.length() {
-                        let pt = points_array.get(j);
-                        let lat =
-                            js_sys::Reflect::get(&pt, &JsValue::from_str("lat"))
-                                .ok()
-                                .and_then(|v| v.as_f64())
-                                .filter(|v| v.is_finite());
-                        let lon =
-                            js_sys::Reflect::get(&pt, &JsValue::from_str("lon"))
-                                .ok()
-                                .and_then(|v| v.as_f64())
-                                .filter(|v| v.is_finite());
-                        let altitude_feet =
-                            js_sys::Reflect::get(&pt, &JsValue::from_str("altitudeFeet"))
-                                .ok()
-                                .and_then(|v| v.as_f64())
-                                .filter(|v| v.is_finite());
-                        let timestamp_ms =
-                            js_sys::Reflect::get(&pt, &JsValue::from_str("timestampMs"))
-                                .ok()
-                                .and_then(|v| v.as_f64())
-                                .filter(|v| v.is_finite());
-                        // Skip points with any missing/non-finite field (matches old TS behavior)
-                        let (Some(lat), Some(lon), Some(alt), Some(ts)) =
-                            (lat, lon, altitude_feet, timestamp_ms)
-                        else {
-                            continue;
-                        };
-                        points.push(crate::traffic_merge::TrafficHistoryPoint {
-                            lat,
-                            lon,
-                            altitude_feet: alt,
-                            timestamp_ms: ts as i64,
-                        });
-                    }
-                    backfill_history.push(crate::traffic_merge::BackfillHistory {
-                        hex,
-                        points,
-                    });
-                }
-            }
-        }
-
-        self.inner.merge(
-            &merge_aircraft,
-            now_ms_i64,
-            history_minutes,
-            hide_ground,
-            &backfill_history,
-        );
-
-        let obj = js_sys::Object::new();
-        set_prop(
-            &obj,
-            "trackCount",
-            &JsValue::from(self.inner.track_count() as u32),
-        )?;
         Ok(obj.into())
     }
 
@@ -1004,6 +801,85 @@ fn set_prop(obj: &js_sys::Object, key: &str, value: &JsValue) -> Result<(), JsVa
     Ok(())
 }
 
+
+/// Collect history groups from one or two FB payloads into owned BackfillHistory
+/// vectors. History points need owned Vecs for sort/dedup in merge, but we read
+/// the data directly from FB accessors (no intermediate DecodedTrafficPayload).
+fn collect_fb_history(
+    primary: &crate::generated::TrafficPayload<'_>,
+    backfill: Option<&crate::generated::TrafficPayload<'_>>,
+) -> Result<Vec<crate::traffic_merge::BackfillHistory>, JsValue> {
+    let mut result: Vec<crate::traffic_merge::BackfillHistory> = Vec::new();
+    collect_fb_history_from_payload(primary, &mut result)?;
+    if let Some(bp) = backfill {
+        collect_fb_history_from_payload(bp, &mut result)?;
+    }
+    Ok(result)
+}
+
+fn collect_fb_history_from_payload(
+    fb: &crate::generated::TrafficPayload<'_>,
+    out: &mut Vec<crate::traffic_merge::BackfillHistory>,
+) -> Result<(), JsValue> {
+    let hg_count = fb.history_group_count() as usize;
+    if hg_count == 0 {
+        return Ok(());
+    }
+    let total_hp = fb.history_point_count();
+    let hg_hex = fb.hg_hex();
+    let hg_start = fb.hg_point_start();
+    let hg_cnt = fb.hg_point_count();
+    let hp_ts = fb.hp_timestamp_ms();
+    let hp_lat = fb.hp_lat();
+    let hp_lon = fb.hp_lon();
+    let hp_alt = fb.hp_altitude_feet();
+
+    for i in 0..hg_count {
+        let hex = hg_hex.as_ref().map(|v| v.get(i)).unwrap_or("");
+        let ps = hg_start.as_ref().map(|v| v.get(i)).unwrap_or(0);
+        let pc = hg_cnt.as_ref().map(|v| v.get(i)).unwrap_or(0);
+
+        if ps as u64 + pc as u64 > total_hp as u64 {
+            return Err(JsValue::from_str(&format!(
+                "AVTR history overflow: start={ps}, count={pc}, total={total_hp}"
+            )));
+        }
+
+        let mut points = Vec::with_capacity(pc as usize);
+        for j in 0..pc as usize {
+            let idx = ps as usize + j;
+            points.push(crate::traffic_merge::TrafficHistoryPoint {
+                lat: hp_lat.as_ref().map(|v| v.get(idx)).unwrap_or(0.0) as f64,
+                lon: hp_lon.as_ref().map(|v| v.get(idx)).unwrap_or(0.0) as f64,
+                altitude_feet: hp_alt.as_ref().map(|v| v.get(idx)).unwrap_or(0.0) as f64,
+                timestamp_ms: hp_ts.as_ref().map(|v| v.get(idx)).unwrap_or(0),
+            });
+        }
+
+        out.push(crate::traffic_merge::BackfillHistory {
+            hex: hex.to_owned(),
+            points,
+        });
+    }
+    Ok(())
+}
+
+/// Collect unique history hex codes from an FB payload into a set + JS array.
+fn collect_fb_history_hexes<'a>(
+    fb: &crate::generated::TrafficPayload<'a>,
+    set: &mut std::collections::HashSet<&'a str>,
+    js_array: &js_sys::Array,
+) {
+    let hg_count = fb.history_group_count() as usize;
+    if let Some(hg_hex) = fb.hg_hex() {
+        for i in 0..hg_count {
+            let hex = hg_hex.get(i);
+            if !hex.is_empty() && set.insert(hex) {
+                js_array.push(&JsValue::from_str(hex));
+            }
+        }
+    }
+}
 
 /// Convert u16 to JsValue (0 → null, otherwise f32).
 fn option_u16_to_js(val: u16) -> JsValue {

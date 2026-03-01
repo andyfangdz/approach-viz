@@ -37,15 +37,6 @@ export class WasmTrafficState {
      */
     merge(data: Uint8Array, now_ms: number, history_minutes: number, hide_ground: boolean, backfill_data: Uint8Array): any;
     /**
-     * Merge pre-decoded aircraft + history into the state (for JSON/ingest paths).
-     *
-     * `aircraft_js`: JS Array of `{ hex, lat, lon, altitudeFeet?, groundSpeedKt?, trackDeg?, flight?, isOnGround, lastSeenSeconds? }`
-     * `history_js`: JS object `Record<string, Array<{ lat, lon, altitudeFeet, timestampMs }>>` or null/undefined.
-     *
-     * Returns `{ trackCount: number }`.
-     */
-    merge_decoded(aircraft_js: any, history_js: any, now_ms: number, history_minutes: number, hide_ground: boolean): any;
-    /**
      * Create a new empty traffic state.
      */
     constructor();
@@ -168,16 +159,14 @@ export interface InitOutput {
     readonly wasm_projection_scales: (a: number) => [number, number];
     readonly wasmtrafficstate_build_render_tracks: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly wasmtrafficstate_merge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
-    readonly wasmtrafficstate_merge_decoded: (a: number, b: any, c: any, d: number, e: number, f: number) => [number, number, number];
     readonly wasmtrafficstate_new: () => number;
     readonly wasmtrafficstate_prune_for_error: (a: number, b: number, c: number) => void;
     readonly wasmtrafficstate_recompute: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly wasmtrafficstate_track_count: (a: number) => number;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;

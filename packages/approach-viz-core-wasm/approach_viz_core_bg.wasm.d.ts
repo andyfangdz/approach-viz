@@ -15,16 +15,14 @@ export const wasm_lat_lon_to_local: (a: number, b: number, c: number, d: number)
 export const wasm_projection_scales: (a: number) => [number, number];
 export const wasmtrafficstate_build_render_tracks: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
 export const wasmtrafficstate_merge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
-export const wasmtrafficstate_merge_decoded: (a: number, b: any, c: any, d: number, e: number, f: number) => [number, number, number];
 export const wasmtrafficstate_new: () => number;
 export const wasmtrafficstate_prune_for_error: (a: number, b: number, c: number) => void;
 export const wasmtrafficstate_recompute: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const wasmtrafficstate_track_count: (a: number) => number;
-export const __wbindgen_malloc: (a: number, b: number) => number;
-export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_exn_store: (a: number) => void;
 export const __externref_table_alloc: () => number;
 export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __externref_table_dealloc: (a: number) => void;
 export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_start: () => void;

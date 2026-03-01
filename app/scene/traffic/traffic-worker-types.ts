@@ -4,25 +4,6 @@ export interface SceneAirport {
   elevation: number;
 }
 
-export interface LiveTrafficAircraft {
-  hex: string;
-  flight: string | null;
-  lat: number;
-  lon: number;
-  isOnGround?: boolean;
-  altitudeFeet: number | null;
-  groundSpeedKt: number | null;
-  trackDeg: number | null;
-  lastSeenSeconds: number | null;
-}
-
-export interface LiveTrafficHistoryPoint {
-  lat: number;
-  lon: number;
-  altitudeFeet: number;
-  timestampMs: number;
-}
-
 export interface TrafficSabBuffers {
   control: SharedArrayBuffer;
   markerPositions: SharedArrayBuffer;
@@ -63,12 +44,6 @@ export interface TrafficResetRequest extends TrafficBaseRequest {
   type: 'reset';
 }
 
-export interface TrafficIngestRequest extends TrafficBaseRequest {
-  type: 'ingest';
-  aircraftList: LiveTrafficAircraft[];
-  historyByHex?: Record<string, LiveTrafficHistoryPoint[]>;
-}
-
 export interface TrafficBinaryIngestRequest extends TrafficBaseRequest {
   type: 'ingest-binary';
   payloadBuffer: ArrayBuffer;
@@ -92,7 +67,6 @@ export interface TrafficErrorPruneRequest extends TrafficBaseRequest {
 export type TrafficWorkerRequestMessage =
   | TrafficInitSabRequest
   | TrafficResetRequest
-  | TrafficIngestRequest
   | TrafficBinaryIngestRequest
   | TrafficRuntimeIngestRequest
   | TrafficRecomputeRequest
@@ -116,8 +90,6 @@ export interface TrafficWorkerResponseMessage {
   sabOverflow?: TrafficSabOverflow;
   trackedHexes?: string[];
   returnedHistoryHexes?: string[];
-  feedTransport?: 'binary' | 'json';
   fetchMs?: number;
-  parseMs?: number;
   error?: string;
 }
