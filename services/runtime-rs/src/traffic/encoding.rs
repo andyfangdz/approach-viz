@@ -1,5 +1,6 @@
 use super::types::{
-    no_store_headers, no_store_headers_with_content_type, TrafficBinaryPayload,
+    add_traffic_snapshot_headers, no_store_headers, no_store_headers_with_content_type,
+    TrafficBinaryPayload,
 };
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -13,12 +14,15 @@ const TRAFFIC_BINARY_FLAG_HAS_ERROR: u32 = 1 << 0;
 
 pub(crate) fn traffic_binary_response(payload: TrafficBinaryPayload) -> Response {
     match encode_traffic_binary_payload(&payload) {
-        Ok(bytes) => (
-            StatusCode::OK,
-            no_store_headers_with_content_type(TRAFFIC_BINARY_CONTENT_TYPE),
-            bytes,
-        )
-            .into_response(),
+        Ok(bytes) => {
+            let mut headers = no_store_headers_with_content_type(TRAFFIC_BINARY_CONTENT_TYPE);
+            add_traffic_snapshot_headers(
+                &mut headers,
+                payload.stale_current,
+                payload.snapshot_age_ms,
+            );
+            (StatusCode::OK, headers, bytes).into_response()
+        }
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             no_store_headers(),

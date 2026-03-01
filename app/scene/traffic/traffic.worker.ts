@@ -12,7 +12,7 @@ import {
   type TrafficSoAPayload,
   writeTrafficSabResultSoA
 } from './traffic-sab';
-import { isTrafficBinaryContentType } from './traffic-binary-protocol';
+import { inspectTrafficBinaryPayload, isTrafficBinaryContentType } from './traffic-binary-protocol';
 import { ensureWasm } from '../shared/wasm-loader';
 import { WasmTrafficState } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
@@ -120,11 +120,25 @@ async function fetchRuntimeIngestData(
   const primary = await fetchTrafficRuntimeRaw(primaryUrl);
 
   if (primary.isBinary) {
+    const primarySummary = inspectTrafficBinaryPayload(primary.buffer);
+    if (typeof primarySummary.error === 'string' && primarySummary.error.trim().length > 0) {
+      throw new Error(`Traffic feed error: ${primarySummary.error}`);
+    }
+
     let backfillBuffer: ArrayBuffer | null = null;
     let backfillFetchMs = 0;
     if (followupUrl) {
       try {
         const followup = await fetchTrafficRuntimeRaw(followupUrl);
+        if (followup.isBinary) {
+          const followupSummary = inspectTrafficBinaryPayload(followup.buffer);
+          if (
+            typeof followupSummary.error === 'string' &&
+            followupSummary.error.trim().length > 0
+          ) {
+            throw new Error(`Traffic history backfill error: ${followupSummary.error}`);
+          }
+        }
         backfillBuffer = followup.buffer;
         backfillFetchMs = followup.fetchMs;
       } catch (error) {
@@ -142,6 +156,9 @@ async function fetchRuntimeIngestData(
   // JSON path — decode and merge in JS
   const parseStartedAt = performance.now();
   const payload = JSON.parse(new TextDecoder().decode(primary.buffer)) as LiveTrafficFeed;
+  if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
+    throw new Error(`Traffic feed error: ${payload.error}`);
+  }
   const aircraftList = Array.isArray(payload.aircraft) ? payload.aircraft : [];
   let historyByHex: Record<string, LiveTrafficHistoryPoint[]> | undefined =
     payload.historyByHex && typeof payload.historyByHex === 'object'
@@ -157,6 +174,9 @@ async function fetchRuntimeIngestData(
       const followupPayload = JSON.parse(
         new TextDecoder().decode(followup.buffer)
       ) as LiveTrafficFeed;
+      if (typeof followupPayload.error === 'string' && followupPayload.error.trim().length > 0) {
+        throw new Error(`Traffic history backfill error: ${followupPayload.error}`);
+      }
       const followupHistory =
         followupPayload.historyByHex && typeof followupPayload.historyByHex === 'object'
           ? followupPayload.historyByHex

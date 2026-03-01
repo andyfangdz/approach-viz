@@ -427,12 +427,16 @@ impl TrafficMemoryStore {
         use std::time::Instant;
 
         let snapshot = self.current.load();
+        let snapshot_age_ms = request.now_ms.saturating_sub(snapshot.fetched_at_ms).max(0);
+        let stale_current = snapshot_age_ms > CACHE_CURRENT_STALE_MS;
 
         // Warming check — no tracks loaded yet.
         if snapshot.tracks.is_empty() {
             return QueryResult {
                 source: snapshot.source.clone(),
                 fetched_at_ms: snapshot.fetched_at_ms,
+                snapshot_age_ms,
+                stale_current,
                 aircraft: Vec::new(),
                 history_by_hex: HashMap::new(),
                 warming: true,
@@ -549,6 +553,8 @@ impl TrafficMemoryStore {
         QueryResult {
             source: snapshot.source.clone(),
             fetched_at_ms: snapshot.fetched_at_ms,
+            snapshot_age_ms,
+            stale_current,
             aircraft,
             history_by_hex,
             warming: false,

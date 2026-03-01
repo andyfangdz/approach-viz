@@ -42,8 +42,11 @@
 - The store keeps per-aircraft track state plus append-only point history with spatial (`R*Tree`) and time indexes so `/v1/traffic/adsbx` can serve both live targets and departed-trail history directly from disk.
 - The endpoint supports `hideGround` filtering and history responses via `historyMinutes` (`0..60`) plus optional `historyHexes=<hex,hex,...>` scoping; one-hour retention is enforced by periodic DB sweeps during ingest.
 - Response format is selectable via `format=` query param: default JSON payloads, or compact binary payloads (`format=binary`, `application/vnd.approach-viz.traffic.v3`) carrying aircraft, history groups/points, and optional error/source metadata.
+- Client traffic polling issues an initial full-history request on overlay context reset, then uses live-only primary polls with targeted `historyHexes` follow-up backfill while departed trails are enabled.
+- Runtime response freshness/staleness metadata is emitted for traffic queries: headers `x-approach-viz-traffic-stale-current` (`0|1`) and `x-approach-viz-traffic-snapshot-age-ms` (ms since last successful ingest snapshot), with JSON payload mirrors (`staleCurrent`, `snapshotAgeMs`). The same-origin proxy forwards these headers.
 - Runtime target host defaults to `https://globe.adsbexchange.com` and can be overridden with `RUNTIME_ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts can be supplied via `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy `ADSBX_*` env aliases still supported).
 - On upstream fetch failures, the runtime endpoint returns an empty `aircraft` set plus `error` metadata (HTTP 200) in whichever response format was requested, so client polling remains non-fatal.
+- Traffic worker ingestion treats runtime payload `error` metadata as request failures (rather than merging empty datasets), surfacing explicit overlay/debug errors and preserving fail-loud behavior.
 - Client traffic rendering is optional and independent from SQLite/server-action scene payload assembly.
 
 ## MRMS Weather Access

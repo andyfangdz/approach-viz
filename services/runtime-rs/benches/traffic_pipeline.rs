@@ -221,6 +221,8 @@ fn bench_avtr_encode(c: &mut Criterion) {
     let payload_no_history = TrafficBinaryPayload {
         source: Some("benchmark".to_string()),
         fetched_at_ms: 1700000000000,
+        snapshot_age_ms: 0,
+        stale_current: false,
         aircraft: aircraft_250.clone(),
         history_by_hex: HashMap::new(),
         error: None,
@@ -238,6 +240,8 @@ fn bench_avtr_encode(c: &mut Criterion) {
     let payload_with_history = TrafficBinaryPayload {
         source: Some("benchmark".to_string()),
         fetched_at_ms: 1700000000000,
+        snapshot_age_ms: 0,
+        stale_current: false,
         aircraft: aircraft_800,
         history_by_hex: history,
         error: None,

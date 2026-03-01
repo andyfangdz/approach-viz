@@ -71,6 +71,9 @@
   - `GET /v1/weather/echo-tops` -> JSON by default; AVET binary with `Accept: application/vnd.approach-viz.echo-tops.v2` content-type (wire format AVET v2, SoA layout) (legacy alias `/v1/echo-tops`)
   - `GET /v1/traffic/adsbx` -> JSON or binary (`format=binary`, `application/vnd.approach-viz.traffic.v3` content-type, wire format AVTR v3, SoA layout, widest-first column order with inter-section alignment padding)
 - Worker-first execution: approach geometry, MRMS decode/prepare, traffic ingest/merge/recompute, and selector filtering run in workers; no synchronous compute fallback.
+- ADS-B overlay polling: initial full-history query on context reset (`historyMinutes`), then live-only primary polls plus targeted `historyHexes` follow-up backfill when departed trails are enabled.
+- ADS-B runtime payloads with `error` metadata are treated as poll failures in the traffic worker (no silent empty merge), and traffic worker request timeout budget is `12s`.
+- Runtime traffic "current aircraft" staleness window is `60s` (`CACHE_CURRENT_STALE_MS`); responses expose stale/freshness markers via `x-approach-viz-traffic-stale-current` and `x-approach-viz-traffic-snapshot-age-ms` headers (proxy passthrough enabled), and JSON payloads include `staleCurrent` + `snapshotAgeMs`.
 - Layer defaults (`DEFAULT_LAYER_STATE`): `approach`, `airspace`, `adsb`, `probsevere`, `guides` = on; `mrms`, `echotops`, `slice` = off.
 - MRMS phase-mode default is `surface` (`Surface Precip Type`); `thermo` is optional.
 - Service worker caches FAA plate proxy responses and Terrarium tiles. Google 3D Tiles use browser-native HTTP caching.

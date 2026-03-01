@@ -29,9 +29,9 @@ pub(crate) use store::TrafficStore;
 use self::encoding::traffic_binary_response;
 use self::store::query_store;
 use self::types::{
-    clamp, clamp_usize, history_discovery_radius_nm, no_store_headers, normalize_lat, normalize_lon,
-    parse_boolean_query_param, parse_history_hexes, parse_traffic_response_format, to_finite_number,
-    now_ms, QueryRequest, TrafficErrorPayload, TrafficQuery,
+    add_traffic_snapshot_headers, clamp, clamp_usize, history_discovery_radius_nm, no_store_headers,
+    normalize_lat, normalize_lon, parse_boolean_query_param, parse_history_hexes,
+    parse_traffic_response_format, to_finite_number, now_ms, QueryRequest, TrafficErrorPayload, TrafficQuery,
     TrafficResponseFormat, TrafficSuccessPayload, DEFAULT_HIDE_GROUND_TRAFFIC, DEFAULT_LIMIT,
     DEFAULT_RADIUS_NM, MAX_HISTORY_MINUTES, MAX_LIMIT, MAX_RADIUS_NM, MIN_RADIUS_NM,
 };
@@ -50,6 +50,8 @@ use crate::types::AppState;
         history_hex_count = field::Empty,
         result_aircraft_count = field::Empty,
         result_history_hex_count = field::Empty,
+        snapshot_age_ms = field::Empty,
+        stale_snapshot = field::Empty,
         warming = field::Empty
     )
 )]
@@ -130,6 +132,8 @@ pub(crate) async fn traffic_adsbx(
                 "result_history_hex_count",
                 result.history_by_hex.len() as i64,
             );
+            span.record("snapshot_age_ms", result.snapshot_age_ms);
+            span.record("stale_snapshot", result.stale_current);
             span.record("warming", result.warming);
             if result.warming {
                 let source = result.source;
@@ -138,17 +142,27 @@ pub(crate) async fn traffic_adsbx(
                     return traffic_binary_response(TrafficBinaryPayload {
                         source,
                         fetched_at_ms,
+                        snapshot_age_ms: result.snapshot_age_ms,
+                        stale_current: result.stale_current,
                         aircraft: Vec::new(),
                         history_by_hex: HashMap::new(),
                         error: Some("Traffic cache is warming up.".to_string()),
                     });
                 }
+                let mut headers = no_store_headers();
+                add_traffic_snapshot_headers(
+                    &mut headers,
+                    result.stale_current,
+                    result.snapshot_age_ms,
+                );
                 return (
                     StatusCode::OK,
-                    no_store_headers(),
+                    headers,
                     Json(TrafficErrorPayload {
                         source,
                         fetched_at_ms,
+                        snapshot_age_ms: Some(result.snapshot_age_ms),
+                        stale_current: Some(result.stale_current),
                         aircraft: Vec::new(),
                         error: "Traffic cache is warming up.".to_string(),
                     }),
@@ -159,6 +173,8 @@ pub(crate) async fn traffic_adsbx(
             let payload = TrafficBinaryPayload {
                 source: Some(result.source.unwrap_or_else(|| "traffic-store".to_string())),
                 fetched_at_ms: result.fetched_at_ms,
+                snapshot_age_ms: result.snapshot_age_ms,
+                stale_current: result.stale_current,
                 aircraft: result.aircraft,
                 history_by_hex: result.history_by_hex,
                 error: None,
@@ -166,12 +182,20 @@ pub(crate) async fn traffic_adsbx(
             if response_format == TrafficResponseFormat::Binary {
                 return traffic_binary_response(payload);
             }
+            let mut headers = no_store_headers();
+            add_traffic_snapshot_headers(
+                &mut headers,
+                payload.stale_current,
+                payload.snapshot_age_ms,
+            );
             (
                 StatusCode::OK,
-                no_store_headers(),
+                headers,
                 Json(TrafficSuccessPayload {
                     source: payload.source.unwrap_or_else(|| "traffic-store".to_string()),
                     fetched_at_ms: payload.fetched_at_ms,
+                    snapshot_age_ms: payload.snapshot_age_ms,
+                    stale_current: payload.stale_current,
                     aircraft: payload.aircraft,
                     history_by_hex: payload.history_by_hex,
                 }),
@@ -183,6 +207,8 @@ pub(crate) async fn traffic_adsbx(
                 return traffic_binary_response(TrafficBinaryPayload {
                     source: None,
                     fetched_at_ms: now_ms,
+                    snapshot_age_ms: 0,
+                    stale_current: false,
                     aircraft: Vec::new(),
                     history_by_hex: HashMap::new(),
                     error: Some(error),
@@ -194,6 +220,8 @@ pub(crate) async fn traffic_adsbx(
                 Json(TrafficErrorPayload {
                     source: None,
                     fetched_at_ms: now_ms,
+                    snapshot_age_ms: None,
+                    stale_current: None,
                     aircraft: Vec::new(),
                     error,
                 }),

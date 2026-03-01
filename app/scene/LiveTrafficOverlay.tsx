@@ -332,8 +332,6 @@ export function LiveTrafficOverlay({
             0,
             MAX_HISTORY_BACKFILL_HEXES
           );
-          params.set('historyMinutes', String(normalizedHistoryMinutes));
-          params.set('historyHexes', requestedHistoryHexes.join(','));
         }
       }
 
@@ -343,6 +341,8 @@ export function LiveTrafficOverlay({
         !shouldRequestHistoryBackfill &&
         requestedHistoryHexes.length > 0
       ) {
+        // Keep primary poll lightweight (live aircraft only) and fetch targeted
+        // trail backfill in a follow-up query for pending hexes.
         const followupParams = new URLSearchParams();
         followupParams.set('lat', refLat.toFixed(6));
         followupParams.set('lon', refLon.toFixed(6));

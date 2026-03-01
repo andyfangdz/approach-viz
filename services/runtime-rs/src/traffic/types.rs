@@ -12,7 +12,11 @@ pub(crate) const HISTORY_MAX_POINTS_PER_AIRCRAFT: usize = 3_800;
 pub(crate) const DEFAULT_HIDE_GROUND_TRAFFIC: bool = false;
 pub(crate) const EARTH_RADIUS_NM: f64 = 3440.065;
 pub(crate) const TRACE_HISTORY_DISCOVERY_MAX_SPEED_KT: f64 = 620.0;
-pub(crate) const CACHE_CURRENT_STALE_MS: i64 = 15_000;
+pub(crate) const CACHE_CURRENT_STALE_MS: i64 = 60_000;
+pub(crate) const TRAFFIC_STALE_CURRENT_HEADER: &str =
+    "x-approach-viz-traffic-stale-current";
+pub(crate) const TRAFFIC_SNAPSHOT_AGE_MS_HEADER: &str =
+    "x-approach-viz-traffic-snapshot-age-ms";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct TrafficQuery {
@@ -64,6 +68,8 @@ pub struct TrafficHistoryPoint {
 pub(crate) struct TrafficSuccessPayload {
     pub source: String,
     pub fetched_at_ms: i64,
+    pub snapshot_age_ms: i64,
+    pub stale_current: bool,
     pub aircraft: Vec<TrafficAircraft>,
     pub history_by_hex: HashMap<String, Vec<TrafficHistoryPoint>>,
 }
@@ -73,6 +79,8 @@ pub(crate) struct TrafficSuccessPayload {
 pub(crate) struct TrafficErrorPayload {
     pub source: Option<String>,
     pub fetched_at_ms: i64,
+    pub snapshot_age_ms: Option<i64>,
+    pub stale_current: Option<bool>,
     pub aircraft: Vec<TrafficAircraft>,
     pub error: String,
 }
@@ -81,6 +89,8 @@ pub(crate) struct TrafficErrorPayload {
 pub struct TrafficBinaryPayload {
     pub source: Option<String>,
     pub fetched_at_ms: i64,
+    pub snapshot_age_ms: i64,
+    pub stale_current: bool,
     pub aircraft: Vec<TrafficAircraft>,
     pub history_by_hex: HashMap<String, Vec<TrafficHistoryPoint>>,
     pub error: Option<String>,
@@ -112,6 +122,8 @@ pub struct QueryRequest {
 pub struct QueryResult {
     pub source: Option<String>,
     pub fetched_at_ms: i64,
+    pub snapshot_age_ms: i64,
+    pub stale_current: bool,
     pub aircraft: Vec<TrafficAircraft>,
     pub history_by_hex: HashMap<String, Vec<TrafficHistoryPoint>>,
     pub warming: bool,
@@ -389,6 +401,20 @@ pub(crate) fn no_store_headers_with_content_type(content_type: &'static str) -> 
     let mut headers = no_store_headers();
     headers.insert("content-type", axum::http::HeaderValue::from_static(content_type));
     headers
+}
+
+pub(crate) fn add_traffic_snapshot_headers(
+    headers: &mut axum::http::HeaderMap,
+    stale_current: bool,
+    snapshot_age_ms: i64,
+) {
+    headers.insert(
+        TRAFFIC_STALE_CURRENT_HEADER,
+        axum::http::HeaderValue::from_static(if stale_current { "1" } else { "0" }),
+    );
+    if let Ok(value) = axum::http::HeaderValue::from_str(&snapshot_age_ms.max(0).to_string()) {
+        headers.insert(TRAFFIC_SNAPSHOT_AGE_MS_HEADER, value);
+    }
 }
 
 #[cfg(test)]

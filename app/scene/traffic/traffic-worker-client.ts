@@ -33,7 +33,7 @@ import {
   handleSabOverflowRetry
 } from '../shared/base-worker-client';
 
-const REQUEST_TIMEOUT_MS = 5000;
+const REQUEST_TIMEOUT_MS = 12000;
 const MAX_SAB_OVERFLOW_RETRIES = 3;
 const SAB_INITIAL_CHANNEL_COUNT = 2;
 const SAB_MAX_CHANNEL_COUNT = 4;

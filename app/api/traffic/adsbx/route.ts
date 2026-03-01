@@ -4,6 +4,10 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const REQUEST_TIMEOUT_MS = 6500;
+const TRAFFIC_PASSTHROUGH_HEADERS = [
+  'x-approach-viz-traffic-stale-current',
+  'x-approach-viz-traffic-snapshot-age-ms'
+] as const;
 const DEFAULT_UPSTREAM_BASE_URL =
   process.env.RUNTIME_UPSTREAM_BASE_URL ||
   process.env.MRMS_BINARY_UPSTREAM_BASE_URL ||
@@ -15,10 +19,18 @@ function toFiniteNumber(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function noStoreHeaders(contentType = 'application/json'): Headers {
+function noStoreHeaders(contentType = 'application/json', sourceHeaders?: Headers): Headers {
   const headers = new Headers();
   headers.set('cache-control', 'no-store, max-age=0');
   headers.set('content-type', contentType);
+  if (sourceHeaders) {
+    for (const headerName of TRAFFIC_PASSTHROUGH_HEADERS) {
+      const value = sourceHeaders.get(headerName);
+      if (value !== null && value.trim() !== '') {
+        headers.set(headerName, value);
+      }
+    }
+  }
   return headers;
 }
 
@@ -77,7 +89,7 @@ export async function GET(request: NextRequest) {
     const contentType = upstreamResponse.headers.get('content-type') || 'application/json';
     return new NextResponse(body, {
       status: upstreamResponse.status,
-      headers: noStoreHeaders(contentType)
+      headers: noStoreHeaders(contentType, upstreamResponse.headers)
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to fetch traffic feed.';
@@ -85,6 +97,8 @@ export async function GET(request: NextRequest) {
       {
         source: null,
         fetchedAtMs: Date.now(),
+        snapshotAgeMs: null,
+        staleCurrent: true,
         aircraft: [],
         error: message
       },
