@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_RANGE_NM = 120;
-const ECHO_TOP_BINARY_CONTENT_TYPE = 'application/vnd.approach-viz.echo-tops.v2';
+const ECHO_TOP_BINARY_CONTENT_TYPE = 'application/vnd.approach-viz.echo-tops.v3';
 const DEFAULT_UPSTREAM_BASE_URL =
   process.env.RUNTIME_UPSTREAM_BASE_URL ||
   process.env.MRMS_BINARY_UPSTREAM_BASE_URL ||

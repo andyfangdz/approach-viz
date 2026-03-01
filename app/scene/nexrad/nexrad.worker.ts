@@ -321,7 +321,7 @@ async function handlePollAndPrepare(
     try {
       const echoTopFetch = await fetchArrayBuffer(
         message.echoTopUrl,
-        'application/vnd.approach-viz.echo-tops.v2'
+        'application/vnd.approach-viz.echo-tops.v3'
       );
       timings.echoTopFetchMs = echoTopFetch.fetchMs;
       const echoDecodeStartedAt = performance.now();
