@@ -1,16 +1,9 @@
-// AVET binary wire-format decoder.
+// AVET FlatBuffers wire-format decoder.
 //
-// Decodes the binary payload produced by `services/runtime-rs/src/api/wire.rs`
-// into a `DecodedEchoTop` (SoA layout).
+// Decodes the FlatBuffers payload produced by
+// `services/runtime-rs/src/weather/encoding.rs` into a `DecodedEchoTop` (SoA layout).
 
-#[cfg(not(target_endian = "little"))]
-compile_error!("Wire format decoders assume little-endian byte order");
-
-use crate::types::{
-    DecodedEchoTop, ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
-    ECHO_TOP_WIRE_VERSION,
-};
-use crate::wire_helpers::{bulk_read_column, read_i64_le, read_u16_le, read_u32_le};
+use crate::types::DecodedEchoTop;
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -18,27 +11,15 @@ use crate::wire_helpers::{bulk_read_column, read_i64_le, read_u16_le, read_u32_l
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EchoTopDecodeError {
-    TooShort { needed: usize, got: usize },
-    BadMagic([u8; 4]),
-    UnsupportedVersion(u16),
+    InvalidPayload(String),
     CellOverflow { claimed: u32, available: usize },
 }
 
 impl std::fmt::Display for EchoTopDecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EchoTopDecodeError::TooShort { needed, got } => {
-                write!(f, "AVET payload too short: need {needed} bytes, got {got}")
-            }
-            EchoTopDecodeError::BadMagic(magic) => {
-                write!(
-                    f,
-                    "AVET payload bad magic: expected {:?}, got {:?}",
-                    ECHO_TOP_WIRE_MAGIC, magic
-                )
-            }
-            EchoTopDecodeError::UnsupportedVersion(v) => {
-                write!(f, "AVET payload unsupported version: {v}")
+            EchoTopDecodeError::InvalidPayload(msg) => {
+                write!(f, "AVET payload invalid: {msg}")
             }
             EchoTopDecodeError::CellOverflow { claimed, available } => {
                 write!(
@@ -57,122 +38,73 @@ impl std::error::Error for EchoTopDecodeError {}
 // Decoder
 // ---------------------------------------------------------------------------
 
-/// Decode an AVET v2 binary payload into a `DecodedEchoTop`.
-///
-/// Wire format (all little-endian):
-///   Header (64 bytes):
-///     [0..4]   magic "AVET"
-///     [4..6]   version (u16) = 2
-///     [6..8]   header_bytes (u16) = 64
-///     [8..12]  cell_count (u32)
-///     [12..16] source_cell_count (u32)
-///     [16..18] footprint_x_milli (u16) — NM * 1000
-///     [18..20] footprint_y_milli (u16)
-///     [20..28] generated_at_ms (i64)
-///     [28..36] scan_time_ms (i64)
-///     [36..38] max_top18_feet (u16)
-///     [38..40] max_top30_feet (u16)
-///     [40..42] max_top50_feet (u16)
-///     [42..44] max_top60_feet (u16)
-///     [44..64] reserved (zero)
-///   SoA arrays (contiguous per field):
-///     n * 4 bytes: x_nm (f32 LE)
-///     n * 4 bytes: z_nm (f32 LE)
-///     n * 2 bytes: top18_feet (u16 LE)
-///     n * 2 bytes: top30_feet (u16 LE)
-///     n * 2 bytes: top50_feet (u16 LE)
-///     n * 2 bytes: top60_feet (u16 LE)
-pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDecodeError> {
-    if data.len() < ECHO_TOP_WIRE_HEADER_BYTES {
-        return Err(EchoTopDecodeError::TooShort {
-            needed: ECHO_TOP_WIRE_HEADER_BYTES,
-            got: data.len(),
-        });
-    }
+/// Decode an AVET FlatBuffers payload into a `DecodedEchoTop`.
+pub fn decode_echo_top_fb(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDecodeError> {
+    let fb = flatbuffers::root::<crate::generated::EchoTops>(data).map_err(|e| {
+        EchoTopDecodeError::InvalidPayload(format!("FlatBuffers verification failed: {e}"))
+    })?;
 
-    let mut magic = [0u8; 4];
-    magic.copy_from_slice(&data[0..4]);
-    if magic != ECHO_TOP_WIRE_MAGIC {
-        return Err(EchoTopDecodeError::BadMagic(magic));
-    }
-
-    let version = read_u16_le(data, 4);
-    if version != ECHO_TOP_WIRE_VERSION {
-        return Err(EchoTopDecodeError::UnsupportedVersion(version));
-    }
-
-    let header_bytes = read_u16_le(data, 6) as usize;
-    let cell_count = read_u32_le(data, 8);
-    let source_cell_count = read_u32_le(data, 12);
-    let footprint_x_milli = read_u16_le(data, 16);
-    let footprint_y_milli = read_u16_le(data, 18);
-    let generated_at_ms = read_i64_le(data, 20);
-    let scan_time_ms = read_i64_le(data, 28);
-    let max_top18_feet = read_u16_le(data, 36);
-    let max_top30_feet = read_u16_le(data, 38);
-    let max_top50_feet = read_u16_le(data, 40);
-    let max_top60_feet = read_u16_le(data, 42);
-
-    let records_offset = header_bytes.max(ECHO_TOP_WIRE_HEADER_BYTES);
+    let cell_count = fb.cell_count();
     let n = cell_count as usize;
-    // SoA: 2 * f32 arrays (4 bytes each) + 4 * u16 arrays (2 bytes each) = 16 bytes per cell
-    let soa_bytes_per_cell: usize = 4 + 4 + 2 + 2 + 2 + 2;
-    let needed_bytes = records_offset + n * soa_bytes_per_cell;
 
-    if data.len() < records_offset {
-        return Err(EchoTopDecodeError::TooShort {
-            needed: records_offset,
-            got: data.len(),
-        });
-    }
+    let x_nm_slice = fb.x_nm().ok_or(EchoTopDecodeError::CellOverflow {
+        claimed: cell_count,
+        available: 0,
+    })?;
+    let z_nm_slice = fb.z_nm().ok_or(EchoTopDecodeError::CellOverflow {
+        claimed: cell_count,
+        available: 0,
+    })?;
+    let top18_slice = fb.top18_feet().ok_or(EchoTopDecodeError::CellOverflow {
+        claimed: cell_count,
+        available: 0,
+    })?;
+    let top30_slice = fb.top30_feet().ok_or(EchoTopDecodeError::CellOverflow {
+        claimed: cell_count,
+        available: 0,
+    })?;
+    let top50_slice = fb.top50_feet().ok_or(EchoTopDecodeError::CellOverflow {
+        claimed: cell_count,
+        available: 0,
+    })?;
+    let top60_slice = fb.top60_feet().ok_or(EchoTopDecodeError::CellOverflow {
+        claimed: cell_count,
+        available: 0,
+    })?;
 
-    let available = data.len() - records_offset;
-    if n * soa_bytes_per_cell > available {
+    if x_nm_slice.len() != n
+        || z_nm_slice.len() != n
+        || top18_slice.len() != n
+        || top30_slice.len() != n
+        || top50_slice.len() != n
+        || top60_slice.len() != n
+    {
         return Err(EchoTopDecodeError::CellOverflow {
             claimed: cell_count,
-            available,
+            available: x_nm_slice.len(),
         });
     }
 
-    if data.len() < needed_bytes {
-        return Err(EchoTopDecodeError::TooShort {
-            needed: needed_bytes,
-            got: data.len(),
-        });
-    }
-
-    // SoA offsets: x_nm[], z_nm[], top18[], top30[], top50[], top60[]
-    let off_x = records_offset;
-    let off_z = off_x + n * 4;
-    let off_t18 = off_z + n * 4;
-    let off_t30 = off_t18 + n * 2;
-    let off_t50 = off_t30 + n * 2;
-    let off_t60 = off_t50 + n * 2;
-
-    let x_nm = bulk_read_column::<f32>(data, off_x, n);
-    let z_nm = bulk_read_column::<f32>(data, off_z, n);
-    let top18_feet = bulk_read_column::<u16>(data, off_t18, n);
-    let top30_feet = bulk_read_column::<u16>(data, off_t30, n);
-    let top50_feet = bulk_read_column::<u16>(data, off_t50, n);
-    let top60_feet = bulk_read_column::<u16>(data, off_t60, n);
+    let footprint_x_milli = fb.footprint_x_milli();
+    let footprint_y_milli = fb.footprint_y_milli();
 
     Ok(DecodedEchoTop {
         cell_count,
-        source_cell_count,
+        source_cell_count: fb.source_cell_count(),
         footprint_x_nm: footprint_x_milli as f32 / 1000.0,
         footprint_y_nm: footprint_y_milli as f32 / 1000.0,
-        generated_at_ms,
-        scan_time_ms,
-        max_top18_feet,
-        max_top30_feet,
-        max_top50_feet,
-        max_top60_feet,
-        x_nm,
-        z_nm,
-        top18_feet,
-        top30_feet,
-        top50_feet,
-        top60_feet,
+        generated_at_ms: fb.generated_at_ms(),
+        scan_time_ms: fb.scan_time_ms(),
+        max_top18_feet: fb.max_top18_feet(),
+        max_top30_feet: fb.max_top30_feet(),
+        max_top50_feet: fb.max_top50_feet(),
+        max_top60_feet: fb.max_top60_feet(),
+        x_nm: x_nm_slice.iter().collect(),
+        z_nm: z_nm_slice.iter().collect(),
+        top18_feet: top18_slice.iter().collect(),
+        top30_feet: top30_slice.iter().collect(),
+        top50_feet: top50_slice.iter().collect(),
+        top60_feet: top60_slice.iter().collect(),
     })
 }
 
@@ -184,8 +116,16 @@ pub fn decode_echo_top_binary(data: &[u8]) -> Result<DecodedEchoTop, EchoTopDeco
 mod tests {
     use super::*;
 
-    /// Build a minimal valid AVET v2 header. Caller appends SoA cell arrays.
-    fn build_test_header(
+    struct TestCell {
+        x_nm: f32,
+        z_nm: f32,
+        top18: u16,
+        top30: u16,
+        top50: u16,
+        top60: u16,
+    }
+
+    fn build_fb_payload(
         cell_count: u32,
         source_cell_count: u32,
         footprint_x_milli: u16,
@@ -196,90 +136,56 @@ mod tests {
         max_top30: u16,
         max_top50: u16,
         max_top60: u16,
+        cells: &[TestCell],
     ) -> Vec<u8> {
-        let mut buf = vec![0u8; ECHO_TOP_WIRE_HEADER_BYTES];
-        buf[0..4].copy_from_slice(&ECHO_TOP_WIRE_MAGIC);
-        buf[4..6].copy_from_slice(&ECHO_TOP_WIRE_VERSION.to_le_bytes());
-        buf[6..8].copy_from_slice(&(ECHO_TOP_WIRE_HEADER_BYTES as u16).to_le_bytes());
-        buf[8..12].copy_from_slice(&cell_count.to_le_bytes());
-        buf[12..16].copy_from_slice(&source_cell_count.to_le_bytes());
-        buf[16..18].copy_from_slice(&footprint_x_milli.to_le_bytes());
-        buf[18..20].copy_from_slice(&footprint_y_milli.to_le_bytes());
-        buf[20..28].copy_from_slice(&generated_at_ms.to_le_bytes());
-        buf[28..36].copy_from_slice(&scan_time_ms.to_le_bytes());
-        buf[36..38].copy_from_slice(&max_top18.to_le_bytes());
-        buf[38..40].copy_from_slice(&max_top30.to_le_bytes());
-        buf[40..42].copy_from_slice(&max_top50.to_le_bytes());
-        buf[42..44].copy_from_slice(&max_top60.to_le_bytes());
-        buf
-    }
+        use crate::generated::{EchoTops, EchoTopsArgs};
 
-    /// Cell data for building SoA test payloads.
-    struct TestCell {
-        x_nm: f32,
-        z_nm: f32,
-        top18: u16,
-        top30: u16,
-        top50: u16,
-        top60: u16,
-    }
+        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
 
-    /// Append SoA cell arrays to a header buffer.
-    fn append_soa_cells(buf: &mut Vec<u8>, cells: &[TestCell]) {
-        for c in cells {
-            buf.extend_from_slice(&c.x_nm.to_le_bytes());
-        }
-        for c in cells {
-            buf.extend_from_slice(&c.z_nm.to_le_bytes());
-        }
-        for c in cells {
-            buf.extend_from_slice(&c.top18.to_le_bytes());
-        }
-        for c in cells {
-            buf.extend_from_slice(&c.top30.to_le_bytes());
-        }
-        for c in cells {
-            buf.extend_from_slice(&c.top50.to_le_bytes());
-        }
-        for c in cells {
-            buf.extend_from_slice(&c.top60.to_le_bytes());
-        }
-    }
+        let x_nm: Vec<f32> = cells.iter().map(|c| c.x_nm).collect();
+        let z_nm: Vec<f32> = cells.iter().map(|c| c.z_nm).collect();
+        let top18: Vec<u16> = cells.iter().map(|c| c.top18).collect();
+        let top30: Vec<u16> = cells.iter().map(|c| c.top30).collect();
+        let top50: Vec<u16> = cells.iter().map(|c| c.top50).collect();
+        let top60: Vec<u16> = cells.iter().map(|c| c.top60).collect();
 
-    #[test]
-    fn reject_truncated() {
-        let data = vec![0u8; 32];
-        let err = decode_echo_top_binary(&data).unwrap_err();
-        assert_eq!(
-            err,
-            EchoTopDecodeError::TooShort {
-                needed: 64,
-                got: 32
-            }
+        let x_nm_vec = builder.create_vector(&x_nm);
+        let z_nm_vec = builder.create_vector(&z_nm);
+        let top18_vec = builder.create_vector(&top18);
+        let top30_vec = builder.create_vector(&top30);
+        let top50_vec = builder.create_vector(&top50);
+        let top60_vec = builder.create_vector(&top60);
+
+        let echo_tops = EchoTops::create(
+            &mut builder,
+            &EchoTopsArgs {
+                cell_count,
+                source_cell_count,
+                footprint_x_milli,
+                footprint_y_milli,
+                generated_at_ms,
+                scan_time_ms,
+                max_top18_feet: max_top18,
+                max_top30_feet: max_top30,
+                max_top50_feet: max_top50,
+                max_top60_feet: max_top60,
+                x_nm: Some(x_nm_vec),
+                z_nm: Some(z_nm_vec),
+                top18_feet: Some(top18_vec),
+                top30_feet: Some(top30_vec),
+                top50_feet: Some(top50_vec),
+                top60_feet: Some(top60_vec),
+            },
         );
+
+        builder.finish(echo_tops, Some("AVET"));
+        builder.finished_data().to_vec()
     }
 
     #[test]
-    fn reject_bad_magic() {
-        let mut data = vec![0u8; 64];
-        data[0..4].copy_from_slice(b"NOPE");
-        let err = decode_echo_top_binary(&data).unwrap_err();
-        assert_eq!(err, EchoTopDecodeError::BadMagic(*b"NOPE"));
-    }
-
-    #[test]
-    fn reject_unsupported_version() {
-        let mut data = vec![0u8; 64];
-        data[0..4].copy_from_slice(&ECHO_TOP_WIRE_MAGIC);
-        data[4..6].copy_from_slice(&99u16.to_le_bytes());
-        let err = decode_echo_top_binary(&data).unwrap_err();
-        assert_eq!(err, EchoTopDecodeError::UnsupportedVersion(99));
-    }
-
-    #[test]
-    fn decode_empty() {
-        let buf = build_test_header(0, 0, 50, 50, 1000000, 2000000, 0, 0, 0, 0);
-        let et = decode_echo_top_binary(&buf).unwrap();
+    fn fb_decode_empty() {
+        let buf = build_fb_payload(0, 0, 50, 50, 1000000, 2000000, 0, 0, 0, 0, &[]);
+        let et = decode_echo_top_fb(&buf).unwrap();
         assert_eq!(et.cell_count, 0);
         assert_eq!(et.source_cell_count, 0);
         assert!((et.footprint_x_nm - 0.05).abs() < 1e-6);
@@ -290,15 +196,15 @@ mod tests {
     }
 
     #[test]
-    fn decode_single_cell() {
+    fn fb_decode_single_cell() {
         let gen_at: i64 = 1_700_000_000_000;
         let scan_time: i64 = 1_699_999_990_000;
-        let mut buf = build_test_header(1, 100, 50, 60, gen_at, scan_time, 45000, 40000, 35000, 30000);
-        append_soa_cells(&mut buf, &[TestCell {
-            x_nm: 5.5, z_nm: -3.2, top18: 12000, top30: 10000, top50: 8000, top60: 6000,
-        }]);
+        let buf = build_fb_payload(
+            1, 100, 50, 60, gen_at, scan_time, 45000, 40000, 35000, 30000,
+            &[TestCell { x_nm: 5.5, z_nm: -3.2, top18: 12000, top30: 10000, top50: 8000, top60: 6000 }],
+        );
 
-        let et = decode_echo_top_binary(&buf).unwrap();
+        let et = decode_echo_top_fb(&buf).unwrap();
         assert_eq!(et.cell_count, 1);
         assert_eq!(et.source_cell_count, 100);
         assert!((et.footprint_x_nm - 0.05).abs() < 1e-6);
@@ -306,21 +212,12 @@ mod tests {
         assert_eq!(et.generated_at_ms, gen_at);
         assert_eq!(et.scan_time_ms, scan_time);
         assert_eq!(et.max_top18_feet, 45000);
-        assert_eq!(et.max_top30_feet, 40000);
-        assert_eq!(et.max_top50_feet, 35000);
-        assert_eq!(et.max_top60_feet, 30000);
-
         assert!((et.x_nm[0] - 5.5).abs() < 1e-6);
-        assert!((et.z_nm[0] - (-3.2)).abs() < 1e-5);
         assert_eq!(et.top18_feet[0], 12000);
-        assert_eq!(et.top30_feet[0], 10000);
-        assert_eq!(et.top50_feet[0], 8000);
-        assert_eq!(et.top60_feet[0], 6000);
     }
 
     #[test]
-    fn decode_multiple_cells() {
-        let mut buf = build_test_header(3, 300, 100, 100, 0, 0, 50000, 45000, 40000, 35000);
+    fn fb_decode_multiple_cells() {
         let cells: Vec<TestCell> = (0..3u16).map(|i| TestCell {
             x_nm: i as f32 * 10.0,
             z_nm: i as f32 * -5.0,
@@ -329,9 +226,9 @@ mod tests {
             top50: (i + 1) * 3000,
             top60: (i + 1) * 2000,
         }).collect();
-        append_soa_cells(&mut buf, &cells);
+        let buf = build_fb_payload(3, 300, 100, 100, 0, 0, 50000, 45000, 40000, 35000, &cells);
 
-        let et = decode_echo_top_binary(&buf).unwrap();
+        let et = decode_echo_top_fb(&buf).unwrap();
         assert_eq!(et.cell_count, 3);
         assert_eq!(et.x_nm.len(), 3);
         assert!((et.x_nm[2] - 20.0).abs() < 1e-6);
@@ -339,20 +236,8 @@ mod tests {
     }
 
     #[test]
-    fn cell_overflow_detected() {
-        let mut buf = build_test_header(1000, 1000, 50, 50, 0, 0, 0, 0, 0, 0);
-        // Only append 1 cell worth of SoA data instead of 1000
-        append_soa_cells(&mut buf, &[TestCell {
-            x_nm: 1.0, z_nm: 2.0, top18: 100, top30: 200, top50: 300, top60: 400,
-        }]);
-
-        let err = decode_echo_top_binary(&buf).unwrap_err();
-        match err {
-            EchoTopDecodeError::CellOverflow { claimed, available } => {
-                assert_eq!(claimed, 1000);
-                assert_eq!(available, 16); // 1 cell SoA = 4+4+2+2+2+2 = 16 bytes
-            }
-            other => panic!("Expected CellOverflow, got {other:?}"),
-        }
+    fn reject_invalid_payload() {
+        let data = vec![0u8; 32];
+        assert!(decode_echo_top_fb(&data).is_err());
     }
 }

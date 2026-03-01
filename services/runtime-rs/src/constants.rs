@@ -68,24 +68,15 @@ pub const STORE_MIN_DBZ_TENTHS: i16 = 50;
 pub const MAX_BASE_KEYS_LOOKUP: usize = 120;
 pub const MAX_BASE_DAY_LOOKBACK: i64 = 1;
 
-// Wire format constants — re-exported from approach-viz-core for single source of truth
-pub use approach_viz_core::types::{
-    MRMS_WIRE_MAGIC as WIRE_MAGIC,
-    MRMS_WIRE_VERSION as WIRE_VERSION,
-    MRMS_WIRE_HEADER_BYTES as WIRE_HEADER_BYTES,
-    MRMS_WIRE_DBZ_QUANT_STEP_TENTHS as WIRE_DBZ_QUANT_STEP_TENTHS,
-};
+// Volume encoding constants (used by brick merge pipeline)
+pub use approach_viz_core::types::MRMS_WIRE_DBZ_QUANT_STEP_TENTHS as WIRE_DBZ_QUANT_STEP_TENTHS;
 pub const WIRE_MAX_SPAN_LOW_DBZ: u16 = 48;
 pub const WIRE_MAX_SPAN_HIGH_DBZ: u16 = 20;
 pub const WIRE_MAX_VERTICAL_SPAN: u16 = 4;
 
-// Echo-top wire format constants
-pub use approach_viz_core::types::{
-    ECHO_TOP_WIRE_MAGIC,
-    ECHO_TOP_WIRE_VERSION,
-    ECHO_TOP_WIRE_HEADER_BYTES,
-};
-pub const ECHO_TOP_BINARY_CONTENT_TYPE: &str = "application/vnd.approach-viz.echo-tops.v2";
+// FlatBuffers content types
+pub const ECHO_TOP_FB_CONTENT_TYPE: &str = "application/vnd.approach-viz.echo-tops.v3";
+pub const VOLUME_FB_CONTENT_TYPE: &str = "application/vnd.approach-viz.mrms.v5";
 
 pub const SNAPSHOT_MAGIC: [u8; 4] = *b"AVSN";
 pub const SNAPSHOT_VERSION: u16 = 1;

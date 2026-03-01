@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use approach_viz_runtime::traffic::{
-    decode_bincraft_aircraft, distance_nm, encode_traffic_binary_payload, TrafficAircraft,
+    decode_bincraft_aircraft, distance_nm, encode_traffic_fb, TrafficAircraft,
     TrafficBinaryPayload, TrafficHistoryPoint,
 };
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -230,7 +230,7 @@ fn bench_avtr_encode(c: &mut Criterion) {
 
     c.bench_function("avtr_encode_250ac_no_history", |b| {
         b.iter(|| {
-            let bytes = encode_traffic_binary_payload(&payload_no_history).unwrap();
+            let bytes = encode_traffic_fb(&payload_no_history);
             std::hint::black_box(bytes.len())
         })
     });
@@ -249,7 +249,7 @@ fn bench_avtr_encode(c: &mut Criterion) {
 
     c.bench_function("avtr_encode_800ac_with_history", |b| {
         b.iter(|| {
-            let bytes = encode_traffic_binary_payload(&payload_with_history).unwrap();
+            let bytes = encode_traffic_fb(&payload_with_history);
             std::hint::black_box(bytes.len())
         })
     });

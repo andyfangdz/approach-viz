@@ -90,7 +90,7 @@ This allows concurrent requests while minimizing over-allocation.
 - Worker: `app/scene/traffic/traffic.worker.ts`
 - Types: `app/scene/traffic/traffic-worker-types.ts`
 - SAB layout/read-write: `app/scene/traffic/traffic-sab.ts`
-- Binary payload codec: `app/scene/traffic/traffic-binary-protocol.ts`
+- Binary payload decode: handled by WASM (`crates/approach-viz-core/src/traffic_codec.rs`)
 
 ### Handshake
 

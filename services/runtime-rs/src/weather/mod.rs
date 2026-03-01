@@ -29,11 +29,12 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use tracing::{field, instrument, warn};
 
-use self::encoding::{build_echo_top_cells, build_echo_top_wire, build_volume_wire};
+use self::encoding::{build_echo_top_cells, build_echo_top_wire_fb, build_volume_wire_fb};
 use self::projection::build_query_window;
 use crate::constants::{
-    DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, ECHO_TOP_BINARY_CONTENT_TYPE, MAX_ALLOWED_DBZ,
-    MAX_ALLOWED_RANGE_NM, MIN_ALLOWED_DBZ, MIN_ALLOWED_RANGE_NM,
+    DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, ECHO_TOP_FB_CONTENT_TYPE,
+    MAX_ALLOWED_DBZ, MAX_ALLOWED_RANGE_NM, MIN_ALLOWED_DBZ,
+    MIN_ALLOWED_RANGE_NM, VOLUME_FB_CONTENT_TYPE,
 };
 use crate::types::AppState;
 use crate::utils::{clamp, iso_from_ms};
@@ -294,13 +295,13 @@ pub(crate) async fn volume(
 
     let build_span = tracing::info_span!("runtime.volume.build_wire_payload");
     match build_span
-        .in_scope(|| build_volume_wire(scan, query.lat, query.lon, min_dbz, max_range_nm))
+        .in_scope(|| build_volume_wire_fb(scan, query.lat, query.lon, min_dbz, max_range_nm))
     {
         Ok(body) => {
             let mut headers = HeaderMap::new();
             headers.insert(
                 "Content-Type",
-                HeaderValue::from_static("application/vnd.approach-viz.mrms.v4"),
+                HeaderValue::from_static(VOLUME_FB_CONTENT_TYPE),
             );
             headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
             if let Some(scan_time) = iso_from_ms(scan.scan_time_ms) {
@@ -433,11 +434,12 @@ pub(crate) async fn echo_tops(
     let build_cells_span = tracing::info_span!("runtime.echo_tops.build_cells");
     let cells = build_cells_span.in_scope(|| build_echo_top_cells(scan, &window));
 
-    // Content negotiation: binary AVET if client accepts it, otherwise JSON
-    let wants_binary = req_headers
+    // Content negotiation: FlatBuffers binary or JSON
+    let accept = req_headers
         .get("accept")
         .and_then(|v| v.to_str().ok())
-        .map_or(false, |v| v.contains(ECHO_TOP_BINARY_CONTENT_TYPE));
+        .unwrap_or("");
+    let wants_binary = accept.contains(ECHO_TOP_FB_CONTENT_TYPE);
 
     let mut headers = HeaderMap::new();
     headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
@@ -453,10 +455,10 @@ pub(crate) async fn echo_tops(
     }
 
     if wants_binary {
-        let wire_body = build_echo_top_wire(scan, &window, &cells);
+        let wire_body = build_echo_top_wire_fb(scan, &window, &cells);
         headers.insert(
             "Content-Type",
-            HeaderValue::from_static(ECHO_TOP_BINARY_CONTENT_TYPE),
+            HeaderValue::from_static(ECHO_TOP_FB_CONTENT_TYPE),
         );
         (headers, wire_body).into_response()
     } else {

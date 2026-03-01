@@ -5,24 +5,11 @@ use std::cmp::min;
 use super::projection::{QueryProjection, QueryWindow};
 use super::EchoTopCellRecord;
 use crate::constants::{
-    ECHO_TOP_WIRE_HEADER_BYTES, ECHO_TOP_WIRE_MAGIC,
-    ECHO_TOP_WIRE_VERSION, WIRE_DBZ_QUANT_STEP_TENTHS, WIRE_HEADER_BYTES, WIRE_MAGIC,
+    WIRE_DBZ_QUANT_STEP_TENTHS,
     WIRE_MAX_SPAN_HIGH_DBZ, WIRE_MAX_SPAN_LOW_DBZ, WIRE_MAX_VERTICAL_SPAN,
-    WIRE_VERSION,
 };
 use crate::types::ScanSnapshot;
 use crate::utils::{round_i16, round_u16, shortest_lon_delta_degrees, to_lon360};
-
-pub(crate) fn build_volume_wire(
-    scan: &ScanSnapshot,
-    origin_lat: f64,
-    origin_lon: f64,
-    min_dbz: f64,
-    max_range_nm: f64,
-) -> Result<Vec<u8>> {
-    let window = super::projection::build_query_window(scan, origin_lat, origin_lon, min_dbz, max_range_nm);
-    Ok(build_volume_wire_impl(scan, &window))
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct MergeKey {
@@ -117,121 +104,81 @@ pub(crate) fn build_echo_top_cells(
     cells
 }
 
-/// Build an AVET v2 binary payload for echo-top cells (SoA layout).
-///
-/// Wire format matches `echo_top_wire_codec::decode_echo_top_binary` in approach-viz-core.
-///
-/// SoA layout after 64-byte header:
-///   n * 4 bytes: x_nm (f32 LE)
-///   n * 4 bytes: z_nm (f32 LE)
-///   n * 2 bytes: top18_feet (u16 LE)
-///   n * 2 bytes: top30_feet (u16 LE)
-///   n * 2 bytes: top50_feet (u16 LE)
-///   n * 2 bytes: top60_feet (u16 LE)
-pub(crate) fn build_echo_top_wire(
+/// Build an AVET FlatBuffers payload for echo-top cells.
+pub(crate) fn build_echo_top_wire_fb(
     scan: &ScanSnapshot,
     window: &QueryWindow,
     cells: &[EchoTopCellRecord],
 ) -> Vec<u8> {
-    let cell_count = cells.len() as u32;
+    use approach_viz_core::generated::{EchoTops, EchoTopsArgs};
+
     let n = cells.len();
-    // SoA: 2 * f32 arrays + 4 * u16 arrays
-    let body_size = ECHO_TOP_WIRE_HEADER_BYTES + n * (4 + 4 + 2 + 2 + 2 + 2);
-    let mut body = vec![0_u8; ECHO_TOP_WIRE_HEADER_BYTES];
-    body.reserve(body_size - ECHO_TOP_WIRE_HEADER_BYTES);
+    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(64 + n * 16);
 
-    // Header (64 bytes)
-    body[0..4].copy_from_slice(&ECHO_TOP_WIRE_MAGIC);
-    body[4..6].copy_from_slice(&ECHO_TOP_WIRE_VERSION.to_le_bytes());
-    body[6..8].copy_from_slice(&(ECHO_TOP_WIRE_HEADER_BYTES as u16).to_le_bytes());
-    body[8..12].copy_from_slice(&cell_count.to_le_bytes());
-    body[12..16].copy_from_slice(&(scan.echo_tops.len() as u32).to_le_bytes());
-    body[16..18].copy_from_slice(&window.footprint_x_milli.to_le_bytes());
-    body[18..20].copy_from_slice(&window.footprint_y_milli.to_le_bytes());
-    body[20..28].copy_from_slice(&scan.generated_at_ms.to_le_bytes());
-    body[28..36].copy_from_slice(&scan.scan_time_ms.to_le_bytes());
-    body[36..38].copy_from_slice(&scan.echo_top_debug.max_top18_feet.unwrap_or(0).to_le_bytes());
-    body[38..40].copy_from_slice(&scan.echo_top_debug.max_top30_feet.unwrap_or(0).to_le_bytes());
-    body[40..42].copy_from_slice(&scan.echo_top_debug.max_top50_feet.unwrap_or(0).to_le_bytes());
-    body[42..44].copy_from_slice(&scan.echo_top_debug.max_top60_feet.unwrap_or(0).to_le_bytes());
-    // bytes 44..64 are reserved (already zero)
+    // Collect SoA columns
+    let x_nm: Vec<f32> = cells.iter().map(|c| c.x_nm).collect();
+    let z_nm: Vec<f32> = cells.iter().map(|c| c.z_nm).collect();
+    let top18: Vec<u16> = cells.iter().map(|c| c.top18_feet).collect();
+    let top30: Vec<u16> = cells.iter().map(|c| c.top30_feet).collect();
+    let top50: Vec<u16> = cells.iter().map(|c| c.top50_feet).collect();
+    let top60: Vec<u16> = cells.iter().map(|c| c.top60_feet).collect();
 
-    // SoA layout: contiguous arrays per field
-    for cell in cells {
-        body.extend_from_slice(&cell.x_nm.to_le_bytes());
-    }
-    for cell in cells {
-        body.extend_from_slice(&cell.z_nm.to_le_bytes());
-    }
-    for cell in cells {
-        body.extend_from_slice(&cell.top18_feet.to_le_bytes());
-    }
-    for cell in cells {
-        body.extend_from_slice(&cell.top30_feet.to_le_bytes());
-    }
-    for cell in cells {
-        body.extend_from_slice(&cell.top50_feet.to_le_bytes());
-    }
-    for cell in cells {
-        body.extend_from_slice(&cell.top60_feet.to_le_bytes());
-    }
+    // Create FlatBuffers vectors (must be done before creating the table)
+    let x_nm_vec = builder.create_vector(&x_nm);
+    let z_nm_vec = builder.create_vector(&z_nm);
+    let top18_vec = builder.create_vector(&top18);
+    let top30_vec = builder.create_vector(&top30);
+    let top50_vec = builder.create_vector(&top50);
+    let top60_vec = builder.create_vector(&top60);
 
-    body
-}
-
-fn build_wire_header(
-    scan: &ScanSnapshot,
-    window: &QueryWindow,
-    wire_version: u16,
-    record_bytes: u16,
-    encoding_hint: u16,
-) -> Vec<u8> {
-    let mut body = vec![0_u8; WIRE_HEADER_BYTES + scan.level_bounds.len() * 4];
-    body[0..4].copy_from_slice(&WIRE_MAGIC);
-    body[4..6].copy_from_slice(&wire_version.to_le_bytes());
-    body[6..8].copy_from_slice(&(WIRE_HEADER_BYTES as u16).to_le_bytes());
-    body[8..12].copy_from_slice(&0_u32.to_le_bytes());
-    body[12..16].copy_from_slice(&0_u32.to_le_bytes());
-    body[16..18].copy_from_slice(&(scan.level_bounds.len() as u16).to_le_bytes());
-    body[18..20].copy_from_slice(&record_bytes.to_le_bytes());
-    body[20..28].copy_from_slice(&scan.generated_at_ms.to_le_bytes());
-    body[28..36].copy_from_slice(&scan.scan_time_ms.to_le_bytes());
-    body[36..38].copy_from_slice(&window.footprint_x_milli.to_le_bytes());
-    body[38..40].copy_from_slice(&window.footprint_y_milli.to_le_bytes());
-    body[40..42].copy_from_slice(&window.min_dbz_tenths.to_le_bytes());
-    body[42..44].copy_from_slice(&round_u16(window.max_range_nm * 10.0).to_le_bytes());
-    body[44..46].copy_from_slice(&scan.tile_size.to_le_bytes());
-    body[46..48].copy_from_slice(&encoding_hint.to_le_bytes());
-    body[48..52].copy_from_slice(&((window.origin_lat * 1_000_000.0).round() as i32).to_le_bytes());
-    body[52..56].copy_from_slice(&((window.origin_lon * 1_000_000.0).round() as i32).to_le_bytes());
-    body
-}
-
-fn project_grid_position_nm(
-    scan: &ScanSnapshot,
-    window: &QueryWindow,
-    row: f64,
-    col: f64,
-) -> (f64, f64) {
-    let lat_deg = scan.grid.la1_deg + row * scan.grid.lat_step_deg;
-    let lon_deg360 = to_lon360(scan.grid.lo1_deg360 + col * scan.grid.lon_step_deg);
-    let delta_lon_deg = shortest_lon_delta_degrees(lon_deg360, window.origin_lon360);
-    let x_nm = delta_lon_deg * window.east_nm_per_lon_deg_safe;
-    let z_nm = -(lat_deg - window.origin_lat) * window.north_nm_per_lat_deg_safe;
-    (x_nm, z_nm)
-}
-
-fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
-    let projection = QueryProjection::new(scan, window);
-    let mut body = build_wire_header(
-        scan,
-        window,
-        WIRE_VERSION,
-        0,  // record_bytes: not used in SoA layout
-        WIRE_DBZ_QUANT_STEP_TENTHS as u16,
+    let echo_tops = EchoTops::create(
+        &mut builder,
+        &EchoTopsArgs {
+            cell_count: n as u32,
+            source_cell_count: scan.echo_tops.len() as u32,
+            footprint_x_milli: window.footprint_x_milli,
+            footprint_y_milli: window.footprint_y_milli,
+            generated_at_ms: scan.generated_at_ms,
+            scan_time_ms: scan.scan_time_ms,
+            max_top18_feet: scan.echo_top_debug.max_top18_feet.unwrap_or(0),
+            max_top30_feet: scan.echo_top_debug.max_top30_feet.unwrap_or(0),
+            max_top50_feet: scan.echo_top_debug.max_top50_feet.unwrap_or(0),
+            max_top60_feet: scan.echo_top_debug.max_top60_feet.unwrap_or(0),
+            x_nm: Some(x_nm_vec),
+            z_nm: Some(z_nm_vec),
+            top18_feet: Some(top18_vec),
+            top30_feet: Some(top30_vec),
+            top50_feet: Some(top50_vec),
+            top60_feet: Some(top60_vec),
+        },
     );
 
-    let layer_counts_offset = WIRE_HEADER_BYTES;
+    builder.finish(echo_tops, Some("AVET"));
+    builder.finished_data().to_vec()
+}
+
+/// Build an AVMR v5 FlatBuffers payload for the MRMS volume.
+///
+/// Same pipeline as `build_volume_wire_impl` (voxel filtering, brick merging)
+/// but serializes the output via FlatBuffers instead of the hand-rolled AVMR v4
+/// binary format.
+pub(crate) fn build_volume_wire_fb(
+    scan: &ScanSnapshot,
+    origin_lat: f64,
+    origin_lon: f64,
+    min_dbz: f64,
+    max_range_nm: f64,
+) -> Result<Vec<u8>> {
+    let window = super::projection::build_query_window(scan, origin_lat, origin_lon, min_dbz, max_range_nm);
+    Ok(build_volume_wire_fb_impl(scan, &window))
+}
+
+fn build_volume_wire_fb_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
+    use approach_viz_core::generated::{MrmsVolume, MrmsVolumeArgs};
+
+    let projection = QueryProjection::new(scan, window);
+
+    // --- Same voxel filtering + brick merging as build_volume_wire_impl ---
     let mut layer_counts = vec![0_u32; scan.level_bounds.len()];
     let mut source_voxel_count: u32 = 0;
     let mut cells_by_level: Vec<Vec<MergeCell>> = vec![Vec::new(); scan.level_bounds.len()];
@@ -388,26 +335,68 @@ fn build_volume_wire_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> 
         brick_count = brick_count.saturating_add(1);
     }
 
-    // Write SoA arrays contiguously (bytemuck zero-copy on LE platforms)
-    body.extend_from_slice(bytemuck::cast_slice(&soa_x));
-    body.extend_from_slice(bytemuck::cast_slice(&soa_z));
-    body.extend_from_slice(bytemuck::cast_slice(&soa_bottom));
-    body.extend_from_slice(bytemuck::cast_slice(&soa_top));
-    body.extend_from_slice(bytemuck::cast_slice(&soa_dbz));
-    body.extend_from_slice(&soa_phase);
-    body.extend_from_slice(&soa_surface_phase);
-    body.extend_from_slice(bytemuck::cast_slice(&soa_span_x));
-    body.extend_from_slice(bytemuck::cast_slice(&soa_span_y));
-    body.extend_from_slice(bytemuck::cast_slice(&soa_span_z));
+    // --- FlatBuffers serialization ---
+    let n = brick_count as usize;
+    let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(128 + n * 20);
 
-    body[8..12].copy_from_slice(&source_voxel_count.to_le_bytes());
-    body[12..16].copy_from_slice(&brick_count.to_le_bytes());
-    for (idx, count) in layer_counts.iter().enumerate() {
-        let offset = layer_counts_offset + idx * 4;
-        body[offset..offset + 4].copy_from_slice(&count.to_le_bytes());
-    }
+    let layer_voxel_counts_vec = builder.create_vector(&layer_counts);
+    let x_vec = builder.create_vector(&soa_x);
+    let z_vec = builder.create_vector(&soa_z);
+    let bottom_vec = builder.create_vector(&soa_bottom);
+    let top_vec = builder.create_vector(&soa_top);
+    let dbz_vec = builder.create_vector(&soa_dbz);
+    let phase_vec = builder.create_vector(&soa_phase);
+    let surface_phase_vec = builder.create_vector(&soa_surface_phase);
+    let span_x_vec = builder.create_vector(&soa_span_x);
+    let span_y_vec = builder.create_vector(&soa_span_y);
+    let span_z_vec = builder.create_vector(&soa_span_z);
 
-    body
+    let volume = MrmsVolume::create(
+        &mut builder,
+        &MrmsVolumeArgs {
+            source_voxel_count,
+            brick_count,
+            layer_count: scan.level_bounds.len() as u16,
+            generated_at_ms: scan.generated_at_ms,
+            scan_time_ms: scan.scan_time_ms,
+            footprint_x_milli: window.footprint_x_milli,
+            footprint_y_milli: window.footprint_y_milli,
+            min_dbz_tenths: window.min_dbz_tenths,
+            max_range_tenths_nm: round_u16(window.max_range_nm * 10.0),
+            tile_size: scan.tile_size,
+            encoding_hint: WIRE_DBZ_QUANT_STEP_TENTHS as u16,
+            origin_lat_microdeg: (window.origin_lat * 1_000_000.0).round() as i32,
+            origin_lon_microdeg: (window.origin_lon * 1_000_000.0).round() as i32,
+            layer_voxel_counts: Some(layer_voxel_counts_vec),
+            x_hundredths: Some(x_vec),
+            z_hundredths: Some(z_vec),
+            bottom_feet: Some(bottom_vec),
+            top_feet: Some(top_vec),
+            dbz_tenths: Some(dbz_vec),
+            phase: Some(phase_vec),
+            surface_phase: Some(surface_phase_vec),
+            span_x: Some(span_x_vec),
+            span_y: Some(span_y_vec),
+            span_z: Some(span_z_vec),
+        },
+    );
+
+    builder.finish(volume, Some("AVMR"));
+    builder.finished_data().to_vec()
+}
+
+fn project_grid_position_nm(
+    scan: &ScanSnapshot,
+    window: &QueryWindow,
+    row: f64,
+    col: f64,
+) -> (f64, f64) {
+    let lat_deg = scan.grid.la1_deg + row * scan.grid.lat_step_deg;
+    let lon_deg360 = to_lon360(scan.grid.lo1_deg360 + col * scan.grid.lon_step_deg);
+    let delta_lon_deg = shortest_lon_delta_degrees(lon_deg360, window.origin_lon360);
+    let x_nm = delta_lon_deg * window.east_nm_per_lon_deg_safe;
+    let z_nm = -(lat_deg - window.origin_lat) * window.north_nm_per_lat_deg_safe;
+    (x_nm, z_nm)
 }
 
 fn quantize_dbz_tenths(dbz_tenths: i16, step_tenths: i16) -> i16 {

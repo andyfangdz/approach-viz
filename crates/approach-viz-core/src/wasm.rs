@@ -19,13 +19,12 @@ use wasm_bindgen::prelude::*;
 /// The TS caller is responsible for any further conversions (e.g. tenths -> whole dBZ).
 #[wasm_bindgen]
 pub fn decode_mrms_volume(data: &[u8]) -> Result<JsValue, JsValue> {
-    let vol = crate::mrms_wire_codec::decode_mrms_binary(data)
+    let vol = crate::mrms_wire_codec::decode_mrms_fb(data)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     let obj = js_sys::Object::new();
 
     // Scalar header fields
-    set_prop(&obj, "version", &JsValue::from(vol.version))?;
     set_prop(&obj, "voxelCount", &JsValue::from(vol.voxel_count))?;
     set_prop(&obj, "layerCount", &JsValue::from(vol.layer_count))?;
     set_prop(&obj, "generatedAtMs", &JsValue::from(vol.generated_at_ms as f64))?;
@@ -81,7 +80,7 @@ pub fn decode_and_prepare_mrms(
     half_width_nm: f64,
 ) -> Result<JsValue, JsValue> {
     // 1. Decode
-    let vol = crate::mrms_wire_codec::decode_mrms_binary(data)
+    let vol = crate::mrms_wire_codec::decode_mrms_fb(data)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // 2. Prepare
@@ -224,7 +223,6 @@ pub fn prepare_mrms_volume(
 
     // Reconstruct DecodedMrmsVolume from slices
     let volume = crate::types::DecodedMrmsVolume {
-        version: crate::types::MRMS_WIRE_VERSION,
         voxel_count,
         layer_count,
         generated_at_ms: 0,
@@ -313,7 +311,6 @@ pub fn build_mrms_cross_section(
 
     // Reconstruct DecodedMrmsVolume from slices
     let volume = crate::types::DecodedMrmsVolume {
-        version: crate::types::MRMS_WIRE_VERSION,
         voxel_count,
         layer_count,
         generated_at_ms: 0,
@@ -471,7 +468,7 @@ pub fn decode_and_prepare_echo_top(
     apply_earth_curvature: bool,
     ref_lat: f64,
 ) -> Result<JsValue, JsValue> {
-    let decoded = crate::echo_top_wire_codec::decode_echo_top_binary(data)
+    let decoded = crate::echo_top_wire_codec::decode_echo_top_fb(data)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // Convert u16 feet to f32 for prepare_echo_top_surfaces
@@ -569,13 +566,13 @@ impl WasmTrafficState {
         let now_ms_i64 = now_ms as i64;
 
         // Decode main payload
-        let payload = crate::traffic_codec::decode_traffic_binary(data)
+        let payload = crate::traffic_codec::decode_traffic_fb(data)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         // Decode backfill payload (if non-empty)
         let backfill_payload = if !backfill_data.is_empty() {
             Some(
-                crate::traffic_codec::decode_traffic_binary(backfill_data)
+                crate::traffic_codec::decode_traffic_fb(backfill_data)
                     .map_err(|e| JsValue::from_str(&format!("backfill decode error: {e}")))?,
             )
         } else {

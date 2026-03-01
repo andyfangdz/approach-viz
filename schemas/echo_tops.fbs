@@ -1,0 +1,26 @@
+namespace approach_viz.wire;
+file_identifier "AVET";
+
+table EchoTops {
+  // Header scalars
+  cell_count: uint32;
+  source_cell_count: uint32;
+  footprint_x_milli: uint16;
+  footprint_y_milli: uint16;
+  generated_at_ms: int64;
+  scan_time_ms: int64;
+  max_top18_feet: uint16;
+  max_top30_feet: uint16;
+  max_top50_feet: uint16;
+  max_top60_feet: uint16;
+
+  // SoA columns (n = cell_count)
+  x_nm: [float32];
+  z_nm: [float32];
+  top18_feet: [uint16];
+  top30_feet: [uint16];
+  top50_feet: [uint16];
+  top60_feet: [uint16];
+}
+
+root_type EchoTops;

@@ -403,7 +403,6 @@ mod tests {
         surface_phase: impl Fn(usize) -> u8,
     ) -> DecodedMrmsVolume {
         DecodedMrmsVolume {
-            version: 3,
             voxel_count: n as u32,
             layer_count: 1,
             generated_at_ms: 0,

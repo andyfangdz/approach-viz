@@ -8,7 +8,7 @@ default = []
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "serde"]
 
 [dependencies]
-bytemuck = { version = "1", features = ["derive"] }
+flatbuffers = "25.12.19"
 wide = "1.1.1"
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }

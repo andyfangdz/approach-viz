@@ -21,7 +21,8 @@
     "build": "npm run prepare-data && next build",
     "start": "next start",
     "build:wasm": "PATH=$HOME/.cargo/bin:$PATH wasm-pack build crates/approach-viz-core --target web --out-dir ../../packages/approach-viz-core-wasm -- --features wasm && cp packages/approach-viz-core-wasm/approach_viz_core_bg.wasm public/approach_viz_core_bg.wasm && cp packages/approach-viz-core-wasm/approach_viz_core.js public/approach_viz_core.js",
-    "test:smoke": "npx playwright test pw-wasm-smoke --config .tmp/playwright.config.ts"
+    "test:smoke": "npx playwright test pw-wasm-smoke --config .tmp/playwright.config.ts",
+    "codegen:flatbuffers": "bash scripts/install-flatc.sh && tools/flatc --rust -o crates/approach-viz-core/src/generated/ schemas/*.fbs"
   },
   "keywords": [
     "aviation",

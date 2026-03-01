@@ -1,0 +1,36 @@
+namespace approach_viz.wire;
+file_identifier "AVTR";
+
+table TrafficPayload {
+  flags: uint32;
+  fetched_at_ms: int64;
+  source: string;
+  error: string;
+
+  // Aircraft SoA (n = aircraft_count)
+  aircraft_count: uint32;
+  ac_hex: [string];
+  ac_flight: [string];
+  ac_lat: [float32];
+  ac_lon: [float32];
+  ac_altitude_feet: [float32];     // NaN = absent
+  ac_ground_speed_kt: [float32];   // NaN = absent
+  ac_track_deg: [float32];         // NaN = absent
+  ac_last_seen_seconds: [float32]; // NaN = absent
+  ac_flags: [uint16];
+
+  // History group SoA (n = history_group_count)
+  history_group_count: uint32;
+  hg_hex: [string];
+  hg_point_start: [uint32];
+  hg_point_count: [uint32];
+
+  // History point SoA (n = history_point_count)
+  history_point_count: uint32;
+  hp_timestamp_ms: [int64];
+  hp_lat: [float32];
+  hp_lon: [float32];
+  hp_altitude_feet: [float32];
+}
+
+root_type TrafficPayload;

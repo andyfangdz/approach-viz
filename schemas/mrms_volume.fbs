@@ -1,0 +1,34 @@
+namespace approach_viz.wire;
+file_identifier "AVMR";
+
+table MrmsVolume {
+  source_voxel_count: uint32;
+  brick_count: uint32;
+  layer_count: uint16;
+  generated_at_ms: int64;
+  scan_time_ms: int64;
+  footprint_x_milli: uint16;
+  footprint_y_milli: uint16;
+  min_dbz_tenths: int16;
+  max_range_tenths_nm: uint16;
+  tile_size: uint16;
+  encoding_hint: uint16;
+  origin_lat_microdeg: int32;
+  origin_lon_microdeg: int32;
+
+  layer_voxel_counts: [uint32];
+
+  // SoA columns (n = brick_count)
+  x_hundredths: [int16];
+  z_hundredths: [int16];
+  bottom_feet: [uint16];
+  top_feet: [uint16];
+  dbz_tenths: [int16];
+  phase: [ubyte];
+  surface_phase: [ubyte];
+  span_x: [uint16];
+  span_y: [uint16];
+  span_z: [uint16];
+}
+
+root_type MrmsVolume;

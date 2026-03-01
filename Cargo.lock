@@ -60,7 +60,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "approach-viz-core"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
+ "flatbuffers",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
@@ -82,6 +82,7 @@ dependencies = [
  "bytemuck",
  "chrono",
  "criterion",
+ "flatbuffers",
  "flate2",
  "futures",
  "grib",
@@ -1105,6 +1106,16 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "flatbuffers"
+version = "25.12.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35f6839d7b3b98adde531effaf34f0c2badc6f4735d26fe74709d8e513a96ef3"
+dependencies = [
+ "bitflags",
+ "rustc_version",
+]
 
 [[package]]
 name = "flate2"

@@ -12,7 +12,6 @@ import {
   type TrafficSoAPayload,
   writeTrafficSabResultSoA
 } from './traffic-sab';
-import { inspectTrafficBinaryPayload, isTrafficBinaryContentType } from './traffic-binary-protocol';
 import { ensureWasm } from '../shared/wasm-loader';
 import { WasmTrafficState } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
@@ -29,6 +28,13 @@ function getTrafficState(): WasmTrafficState {
     trafficState = new WasmTrafficState();
   }
   return trafficState;
+}
+
+const TRAFFIC_FB_CONTENT_TYPE = 'application/vnd.approach-viz.traffic.v4';
+
+function isTrafficBinaryContentType(contentType: string | null): boolean {
+  if (!contentType) return false;
+  return contentType.toLowerCase().startsWith(TRAFFIC_FB_CONTENT_TYPE);
 }
 
 function normalizeFetchUrl(url: string): string {
@@ -120,25 +126,11 @@ async function fetchRuntimeIngestData(
   const primary = await fetchTrafficRuntimeRaw(primaryUrl);
 
   if (primary.isBinary) {
-    const primarySummary = inspectTrafficBinaryPayload(primary.buffer);
-    if (typeof primarySummary.error === 'string' && primarySummary.error.trim().length > 0) {
-      throw new Error(`Traffic feed error: ${primarySummary.error}`);
-    }
-
     let backfillBuffer: ArrayBuffer | null = null;
     let backfillFetchMs = 0;
     if (followupUrl) {
       try {
         const followup = await fetchTrafficRuntimeRaw(followupUrl);
-        if (followup.isBinary) {
-          const followupSummary = inspectTrafficBinaryPayload(followup.buffer);
-          if (
-            typeof followupSummary.error === 'string' &&
-            followupSummary.error.trim().length > 0
-          ) {
-            throw new Error(`Traffic history backfill error: ${followupSummary.error}`);
-          }
-        }
         backfillBuffer = followup.buffer;
         backfillFetchMs = followup.fetchMs;
       } catch (error) {
@@ -282,7 +274,11 @@ async function handleMessage(
     ) as {
       trackedHexes: string[];
       returnedHistoryHexes: string[];
+      error: string | null;
     };
+    if (typeof mergeResult.error === 'string' && mergeResult.error.trim().length > 0) {
+      throw new Error(`Traffic feed error: ${mergeResult.error}`);
+    }
     trackedHexes = mergeResult.trackedHexes;
     returnedHistoryHexes = mergeResult.returnedHistoryHexes;
     feedTransport = 'binary';
@@ -298,7 +294,10 @@ async function handleMessage(
         message.historyMinutes,
         message.hideGroundTargets,
         runtimeData.backfillBuffer ? new Uint8Array(runtimeData.backfillBuffer) : new Uint8Array(0)
-      ) as { trackedHexes: string[]; returnedHistoryHexes: string[] };
+      ) as { trackedHexes: string[]; returnedHistoryHexes: string[]; error: string | null };
+      if (typeof mergeResult.error === 'string' && mergeResult.error.trim().length > 0) {
+        throw new Error(`Traffic feed error: ${mergeResult.error}`);
+      }
       trackedHexes = mergeResult.trackedHexes;
       returnedHistoryHexes = mergeResult.returnedHistoryHexes;
       feedTransport = 'binary';

@@ -1,38 +1,13 @@
-// Wire format constants and decoded types shared between MRMS and traffic decoders.
+// Wire format constants and decoded types shared between decoders.
 //
 // These are the *decoded* (client-side) types, not server storage types.
 // Wire constants must match the runtime-rs encoder exactly.
 
 // ---------------------------------------------------------------------------
-// MRMS wire format (match services/runtime-rs/src/constants.rs:77-86)
+// MRMS encoding constant (used by brick merge pipeline)
 // ---------------------------------------------------------------------------
 
-pub const MRMS_WIRE_MAGIC: [u8; 4] = *b"AVMR";
-pub const MRMS_WIRE_VERSION: u16 = 4;
-pub const MRMS_WIRE_HEADER_BYTES: usize = 64;
 pub const MRMS_WIRE_DBZ_QUANT_STEP_TENTHS: i16 = 50;
-
-// ---------------------------------------------------------------------------
-// Traffic wire format (match services/runtime-rs/src/traffic_api.rs:40-47)
-// ---------------------------------------------------------------------------
-
-pub const TRAFFIC_WIRE_MAGIC: [u8; 4] = *b"AVTR";
-pub const TRAFFIC_WIRE_VERSION: u16 = 3;
-pub const TRAFFIC_WIRE_HEADER_BYTES: usize = 64;
-pub const TRAFFIC_FLAG_HAS_ERROR: u32 = 1;
-
-// ---------------------------------------------------------------------------
-// Echo-top wire format (match services/runtime-rs/src/api/wire.rs encoder)
-// ---------------------------------------------------------------------------
-
-pub const ECHO_TOP_WIRE_MAGIC: [u8; 4] = *b"AVET";
-pub const ECHO_TOP_WIRE_VERSION: u16 = 2;
-/// Fixed header: 4 magic + 2 version + 2 header_bytes + 4 cell_count
-/// + 4 source_cell_count + 2 footprint_x_milli + 2 footprint_y_milli
-/// + 8 generated_at_ms + 8 scan_time_ms
-/// + 2 max_top18 + 2 max_top30 + 2 max_top50 + 2 max_top60
-/// + 24 reserved = 64 bytes
-pub const ECHO_TOP_WIRE_HEADER_BYTES: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Phase codes
@@ -63,10 +38,9 @@ pub const MIN_VOXEL_HEIGHT_NM: f64 = 0.04;
 // Decoded types
 // ---------------------------------------------------------------------------
 
-/// Decoded MRMS volume from AVMR wire format (SoA layout).
+/// Decoded MRMS volume from AVMR FlatBuffers payload (SoA layout).
 #[derive(Debug, Clone)]
 pub struct DecodedMrmsVolume {
-    pub version: u16,
     pub voxel_count: u32,
     pub layer_count: u16,
     pub generated_at_ms: i64,
@@ -193,16 +167,6 @@ pub struct CrossSectionData {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn wire_constants_match_runtime() {
-        assert_eq!(MRMS_WIRE_MAGIC, *b"AVMR");
-        assert_eq!(TRAFFIC_WIRE_MAGIC, *b"AVTR");
-        assert_eq!(ECHO_TOP_WIRE_MAGIC, *b"AVET");
-        assert_eq!(MRMS_WIRE_HEADER_BYTES, 64);
-        assert_eq!(TRAFFIC_WIRE_HEADER_BYTES, 64);
-        assert_eq!(ECHO_TOP_WIRE_HEADER_BYTES, 64);
-    }
 
     #[test]
     fn altitude_scale_consistent() {

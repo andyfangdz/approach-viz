@@ -8,7 +8,7 @@ pub(crate) mod types;
 #[allow(unused_imports)]
 pub use cache_worker::decode_bincraft_aircraft;
 #[allow(unused_imports)]
-pub use encoding::encode_traffic_binary_payload;
+pub use encoding::encode_traffic_fb;
 #[allow(unused_imports)]
 pub use types::{
     distance_nm, TrafficAircraft, TrafficBinaryPayload, TrafficHistoryPoint,

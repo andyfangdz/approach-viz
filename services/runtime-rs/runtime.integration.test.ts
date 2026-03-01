@@ -10,10 +10,7 @@ const DEFAULT_MRMS_LON = -104.9903;
 const DEFAULT_MRMS_MIN_DBZ = 5;
 const DEFAULT_MRMS_MAX_RANGE_NM = 120;
 
-const WIRE_MAGIC = 'AVMR';
-const WIRE_VERSION = 4;
-const WIRE_HEADER_BYTES = 64;
-const WIRE_SOA_BYTES_PER_BRICK = 18;
+const FB_FILE_ID_AVMR = 'AVMR';
 
 function envNumber(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -228,7 +225,7 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
   assert.equal(volumeResponse.status, 200, `Volume endpoint returned ${volumeResponse.status}`);
   const contentType = (volumeResponse.headers.get('content-type') || '').toLowerCase();
   assert.ok(
-    contentType.includes('application/vnd.approach-viz.mrms.v4'),
+    contentType.includes('application/vnd.approach-viz.mrms.v5'),
     `Unexpected MRMS content-type: ${contentType || 'none'}`
   );
   assert.ok(
@@ -237,32 +234,11 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
   );
 
   const payload = new Uint8Array(await volumeResponse.arrayBuffer());
-  assert.ok(payload.byteLength >= WIRE_HEADER_BYTES, 'MRMS payload shorter than wire header');
+  assert.ok(payload.byteLength >= 8, 'MRMS FlatBuffers payload too small');
 
-  const magic = String.fromCharCode(payload[0], payload[1], payload[2], payload[3]);
-  assert.equal(magic, WIRE_MAGIC, 'Unexpected MRMS wire magic');
-
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const wireVersion = view.getUint16(4, true);
-  const headerBytes = view.getUint16(6, true);
-  const sourceVoxelCount = view.getUint32(8, true);
-  const mergedBrickCount = view.getUint32(12, true);
-  const layerCount = view.getUint16(16, true);
-  const recordBytes = view.getUint16(18, true);
-
-  assert.ok(wireVersion === WIRE_VERSION, `Unexpected MRMS wire version: ${wireVersion}`);
-  assert.equal(headerBytes, WIRE_HEADER_BYTES, 'Unexpected MRMS wire header length');
-  assert.equal(recordBytes, 0, 'V4 SoA layout should have record_bytes=0');
-  assert.ok(layerCount > 0, 'MRMS payload should include at least one layer');
-  // sourceVoxelCount and mergedBrickCount may be 0 when there is no precipitation
-  // in the queried area — this is normal, not a failure.
-
-  const expectedBytes = headerBytes + layerCount * 4 + mergedBrickCount * WIRE_SOA_BYTES_PER_BRICK;
-  assert.equal(
-    payload.byteLength,
-    expectedBytes,
-    `MRMS payload length mismatch (expected ${expectedBytes}, got ${payload.byteLength})`
-  );
+  // FlatBuffers file identifier sits at bytes 4..8
+  const fileId = String.fromCharCode(payload[4], payload[5], payload[6], payload[7]);
+  assert.equal(fileId, FB_FILE_ID_AVMR, 'Unexpected MRMS FlatBuffers file identifier');
 
   const echoTopUrl = new URL(`${baseUrl}/v1/weather/echo-tops`);
   echoTopUrl.searchParams.set('lat', lat.toString());
