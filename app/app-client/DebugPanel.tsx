@@ -334,7 +334,7 @@ export function DebugPanel({
                 : chartDebug.zoom !== null
                   ? `z${chartDebug.zoom}`
                   : 'off'}
-              {chartDebug.fullMs !== null ? ` · ${Math.round(chartDebug.fullMs)} ms` : ''}
+              {chartDebug.loadMs !== null ? ` · ${Math.round(chartDebug.loadMs)} ms` : ''}
             </span>
             <svg
               className={`debug-chevron${chartExpanded ? ' debug-chevron-open' : ''}`}
@@ -364,24 +364,16 @@ export function DebugPanel({
                 <span>{chartDebug.zoom ?? 'n/a'}</span>
               </div>
               <div className="debug-row">
-                <span>Preview Zoom</span>
-                <span>{chartDebug.previewZoom ?? 'n/a'}</span>
-              </div>
-              <div className="debug-row">
                 <span>Tiles</span>
-                <span>{chartDebug.tileCount ?? 'n/a'}</span>
+                <span>
+                  {chartDebug.tileCount !== null
+                    ? `${chartDebug.tilesLoaded} / ${chartDebug.tileCount}`
+                    : 'n/a'}
+                </span>
               </div>
               <div className="debug-row">
-                <span>Preview</span>
-                <span>{formatMs(chartDebug.previewMs)}</span>
-              </div>
-              <div className="debug-row">
-                <span>Full Load</span>
-                <span>{formatMs(chartDebug.fullMs)}</span>
-              </div>
-              <div className="debug-row">
-                <span>Texture</span>
-                <span>{chartDebug.textureDim ?? 'n/a'}</span>
+                <span>Load Time</span>
+                <span>{formatMs(chartDebug.loadMs)}</span>
               </div>
             </div>
           )}

@@ -15,7 +15,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import type { ApproachPlate } from '@/lib/types';
 import type { ChartType } from '@/app/app-client/types';
 import type { ChartTextureData } from '@/app/scene/ChartMapSurface';
-import { buildChartTextureData } from '@/app/scene/ChartMapSurface';
+import { startChartTextureStream } from '@/app/scene/ChartMapSurface';
 
 const METERS_TO_NM = 1 / 1852;
 const FEET_TO_METERS = 0.3048;
@@ -515,56 +515,47 @@ export const SatelliteSurface = memo(function SatelliteSurface({
 
   // --- Chart overlay loading ---
   useEffect(() => {
-    let cancelled = false;
-
     if (!chartOverlay) {
       setChartHomography(null);
       setChartTexture((previous) => {
         previous?.dispose();
         return null;
       });
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
     const { chartType, radiusNm } = chartOverlay;
 
-    async function loadChart() {
+    setChartHomography(null);
+    setChartTexture((previous) => {
+      previous?.dispose();
+      return null;
+    });
+
+    const cancel = startChartTextureStream(safeLat, safeLon, radiusNm, chartType, (data) => {
+      const { corners } = data;
+      const source = [corners.sw, corners.se, corners.ne, corners.nw];
+      const target = [
+        { u: 0, v: 0 },
+        { u: 1, v: 0 },
+        { u: 1, v: 1 },
+        { u: 0, v: 1 }
+      ];
+      const homography = solveHomography(source, target);
+      if (!homography) {
+        data.texture.dispose();
+        return;
+      }
+      setChartTexture(data.texture);
+      setChartHomography(homography);
+    });
+
+    return () => {
+      cancel();
       setChartHomography(null);
       setChartTexture((previous) => {
         previous?.dispose();
         return null;
       });
-
-      try {
-        const data = await buildChartTextureData(safeLat, safeLon, radiusNm, chartType);
-        if (cancelled || !data) return;
-
-        const { corners } = data;
-        // UV mapping: SW=(0,0), SE=(1,0), NE=(1,1), NW=(0,1)
-        const source = [corners.sw, corners.se, corners.ne, corners.nw];
-        const target = [
-          { u: 0, v: 0 },
-          { u: 1, v: 0 },
-          { u: 1, v: 1 },
-          { u: 0, v: 1 }
-        ];
-        const homography = solveHomography(source, target);
-        if (!homography) {
-          data.texture.dispose();
-          return;
-        }
-
-        setChartTexture(data.texture);
-        setChartHomography(homography);
-      } catch {
-        // Chart tile load failure — leave overlay off
-      }
-    }
-
-    loadChart();
-    return () => {
-      cancelled = true;
     };
   }, [chartOverlay?.chartType, chartOverlay?.radiusNm, safeLat, safeLon]);
 

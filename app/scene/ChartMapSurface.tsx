@@ -44,27 +44,20 @@ const MAX_TILE_COUNT_OVERLAY = 800;
 const MAX_TEXTURE_DIM = 8192;
 const TILE_SIZE = 256;
 
-// Preview pass uses a small tile budget for fast initial render.
-const PREVIEW_TILE_COUNT = 50;
-
 export interface ChartDebugState {
   loading: boolean;
   zoom: number | null;
-  previewZoom: number | null;
   tileCount: number | null;
-  previewMs: number | null;
-  fullMs: number | null;
-  textureDim: string | null;
+  tilesLoaded: number;
+  loadMs: number | null;
 }
 
 export const CHART_DEBUG_INITIAL: ChartDebugState = {
   loading: false,
   zoom: null,
-  previewZoom: null,
   tileCount: null,
-  previewMs: null,
-  fullMs: null,
-  textureDim: null
+  tilesLoaded: 0,
+  loadMs: null
 };
 
 interface ChartMapSurfaceProps {
@@ -129,7 +122,8 @@ function computeZoom(
   chartType: ChartType,
   radiusNm: number,
   refLat: number,
-  maxTileCount = MAX_TILE_COUNT
+  maxTileCount = MAX_TILE_COUNT,
+  maxTextureDim = Infinity
 ): number {
   const range = CHART_ZOOM_RANGES[chartType];
   for (let z = range.max; z > range.min; z--) {
@@ -139,8 +133,8 @@ function computeZoom(
     const tilesHigh = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
     if (
       tilesWide * tilesHigh <= maxTileCount &&
-      tilesWide * TILE_SIZE <= MAX_TEXTURE_DIM &&
-      tilesHigh * TILE_SIZE <= MAX_TEXTURE_DIM
+      tilesWide * TILE_SIZE <= maxTextureDim &&
+      tilesHigh * TILE_SIZE <= maxTextureDim
     )
       return z;
   }
@@ -169,9 +163,10 @@ function computeTileRange(
   refLon: number,
   radiusNm: number,
   chartType: ChartType,
-  maxTileCount = MAX_TILE_COUNT
+  maxTileCount = MAX_TILE_COUNT,
+  maxTextureDim = Infinity
 ): TileRange {
-  const zoom = computeZoom(chartType, radiusNm, refLat, maxTileCount);
+  const zoom = computeZoom(chartType, radiusNm, refLat, maxTileCount, maxTextureDim);
   const baseUrl = CHART_TILE_URLS[chartType];
 
   const latRadius = radiusNm / 60;
@@ -216,61 +211,61 @@ function getChartWorker(): Worker {
   return chartWorker;
 }
 
-function requestChartBitmap(range: TileRange): Promise<ImageBitmap> {
-  const worker = getChartWorker();
-  const requestId = nextRequestId++;
+// --- Shared tile plane geometry ---
 
-  return new Promise<ImageBitmap>((resolve, reject) => {
-    function handler(event: MessageEvent<ChartTilesResponse>) {
-      const response = event.data;
-      if (response.type !== 'build-result' || response.requestId !== requestId) return;
-      worker.removeEventListener('message', handler);
+const TILE_PLANE = new THREE.PlaneGeometry(1, 1);
+TILE_PLANE.rotateX(-Math.PI / 2);
 
-      if (response.error || !response.bitmap) {
-        reject(new Error(response.error ?? 'No bitmap returned'));
-        return;
-      }
-      resolve(response.bitmap);
-    }
+// --- Tile entry type and helpers ---
 
-    worker.addEventListener('message', handler);
-
-    const request: ChartTilesRequest = {
-      type: 'build',
-      requestId,
-      baseUrl: range.baseUrl,
-      zoom: range.zoom,
-      minTileX: range.minTileX,
-      maxTileX: range.maxTileX,
-      minTileY: range.minTileY,
-      maxTileY: range.maxTileY
-    };
-    worker.postMessage(request);
-  });
+interface TileEntry {
+  key: string;
+  texture: THREE.Texture;
+  centerX: number;
+  centerZ: number;
+  width: number;
+  height: number;
 }
 
-// --- Bitmap → Texture helper ---
-
-/**
- * Create a Three.js CanvasTexture from an ImageBitmap, then close the bitmap.
- * Drawing to a canvas first ensures Three.js gets a standard HTMLCanvasElement
- * source it can upload to the GPU in a single pass without repeated re-uploads.
- */
-function bitmapToTexture(bitmap: ImageBitmap): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-
-  const texture = new THREE.CanvasTexture(canvas);
+function bitmapToTexture(bitmap: ImageBitmap): THREE.Texture {
+  const texture = new THREE.Texture(bitmap as any);
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.generateMipmaps = false;
   texture.needsUpdate = true;
+  // Free ImageBitmap backing memory after GPU upload
+  texture.onUpdate = () => {
+    bitmap.close();
+    texture.onUpdate = null;
+  };
   return texture;
+}
+
+function computeTileEntry(
+  tileX: number,
+  tileY: number,
+  zoom: number,
+  texture: THREE.Texture,
+  refLat: number,
+  refLon: number
+): TileEntry {
+  const westLon = tileXToLon(tileX, zoom);
+  const eastLon = tileXToLon(tileX + 1, zoom);
+  const northLat = tileYToLat(tileY, zoom);
+  const southLat = tileYToLat(tileY + 1, zoom);
+
+  const sw = latLonToLocal(southLat, westLon, refLat, refLon);
+  const ne = latLonToLocal(northLat, eastLon, refLat, refLon);
+
+  return {
+    key: `${zoom}/${tileX}/${tileY}`,
+    texture,
+    centerX: (sw.x + ne.x) / 2,
+    centerZ: (sw.z + ne.z) / 2,
+    width: ne.x - sw.x,
+    height: sw.z - ne.z
+  };
 }
 
 // --- Exports ---
@@ -290,82 +285,7 @@ export interface ChartTextureData {
   };
 }
 
-/** Build chart tile texture + world-space corners (for 3D tile shader overlay). */
-export async function buildChartTextureData(
-  refLat: number,
-  refLon: number,
-  radiusNm: number,
-  chartType: ChartType
-): Promise<ChartTextureData | null> {
-  const range = computeTileRange(refLat, refLon, radiusNm, chartType, MAX_TILE_COUNT_OVERLAY);
-  const bitmap = await requestChartBitmap(range);
-
-  // Convert corners to local ENU coordinates
-  const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
-  const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
-  const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
-  const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
-
-  const texture = bitmapToTexture(bitmap);
-  return { texture, corners: { sw, se, ne, nw } };
-}
-
-// --- Surface building ---
-
-interface ChartSurfaceState {
-  texture: THREE.CanvasTexture;
-  geometry: THREE.BufferGeometry;
-}
-
-function buildGeometry(
-  range: TileRange,
-  refLat: number,
-  refLon: number,
-  airportElevationFeet: number
-): THREE.BufferGeometry {
-  const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
-  const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
-  const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
-  const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
-
-  const surfaceY = airportElevationFeet * ALTITUDE_SCALE + SURFACE_OFFSET_NM;
-
-  const positions = new Float32Array([
-    sw.x,
-    surfaceY,
-    sw.z,
-    se.x,
-    surfaceY,
-    se.z,
-    ne.x,
-    surfaceY,
-    ne.z,
-    nw.x,
-    surfaceY,
-    nw.z
-  ]);
-
-  const uvs = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  geometry.setIndex([0, 1, 2, 0, 2, 3]);
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
-async function buildChartSurface(
-  range: TileRange,
-  refLat: number,
-  refLon: number,
-  airportElevationFeet: number
-): Promise<ChartSurfaceState> {
-  const bitmap = await requestChartBitmap(range);
-  const geometry = buildGeometry(range, refLat, refLon, airportElevationFeet);
-  const texture = bitmapToTexture(bitmap);
-  return { texture, geometry };
-}
+// --- ChartMapSurface component ---
 
 export const ChartMapSurface = memo(function ChartMapSurface({
   refLat,
@@ -376,8 +296,9 @@ export const ChartMapSurface = memo(function ChartMapSurface({
   airportElevationFeet,
   onDebugChange
 }: ChartMapSurfaceProps) {
-  const [chartTexture, setChartTexture] = useState<THREE.CanvasTexture | null>(null);
-  const [chartGeometry, setChartGeometry] = useState<THREE.BufferGeometry | null>(null);
+  const tilesRef = useRef<Map<string, TileEntry>>(new Map());
+  const [tileVersion, setTileVersion] = useState(0);
+  const rafPending = useRef(false);
   const onDebugChangeRef = useRef(onDebugChange);
   onDebugChangeRef.current = onDebugChange;
 
@@ -385,131 +306,201 @@ export const ChartMapSurface = memo(function ChartMapSurface({
     let cancelled = false;
     const t0 = performance.now();
 
-    setChartTexture((previous) => {
-      previous?.dispose();
-      return null;
-    });
-    setChartGeometry((previous) => {
-      previous?.dispose();
-      return null;
-    });
+    // Dispose previous tiles
+    for (const entry of tilesRef.current.values()) entry.texture.dispose();
+    tilesRef.current.clear();
+    setTileVersion(0);
 
-    const previewRange = computeTileRange(refLat, refLon, radiusNm, chartType, PREVIEW_TILE_COUNT);
-    const fullRange = computeTileRange(refLat, refLon, radiusNm, chartType);
-
-    const needsUpgrade = fullRange.zoom > previewRange.zoom;
+    const range = computeTileRange(refLat, refLon, radiusNm, chartType);
+    const totalTiles = range.tilesWide * range.tilesHigh;
+    let tilesLoaded = 0;
 
     onDebugChangeRef.current?.({
       loading: true,
-      zoom: fullRange.zoom,
-      previewZoom: needsUpgrade ? previewRange.zoom : null,
-      tileCount: fullRange.tilesWide * fullRange.tilesHigh,
-      previewMs: null,
-      fullMs: null,
-      textureDim: null
+      zoom: range.zoom,
+      tileCount: totalTiles,
+      tilesLoaded: 0,
+      loadMs: null
     });
 
-    function applyResult(result: ChartSurfaceState) {
-      setChartTexture((previous) => {
-        previous?.dispose();
-        return result.texture;
-      });
-      setChartGeometry((previous) => {
-        previous?.dispose();
-        return result.geometry;
-      });
-    }
+    const worker = getChartWorker();
+    const requestId = nextRequestId++;
 
-    async function load() {
-      // Pass 1: fast low-res preview (only if full-res needs more tiles)
-      if (needsUpgrade) {
-        try {
-          const preview = await buildChartSurface(
-            previewRange,
-            refLat,
-            refLon,
-            airportElevationFeet
-          );
-          if (cancelled) {
-            preview.texture.dispose();
-            preview.geometry.dispose();
-            return;
-          }
-          applyResult(preview);
-          const previewMs = performance.now() - t0;
-          onDebugChangeRef.current?.({
-            loading: true,
-            zoom: fullRange.zoom,
-            previewZoom: previewRange.zoom,
-            tileCount: fullRange.tilesWide * fullRange.tilesHigh,
-            previewMs,
-            fullMs: null,
-            textureDim: `${previewRange.tilesWide * TILE_SIZE}x${previewRange.tilesHigh * TILE_SIZE}`
+    function handler(event: MessageEvent<ChartTilesResponse>) {
+      if (cancelled) return;
+      const response = event.data;
+
+      if (response.type === 'tile-ready' && response.requestId === requestId) {
+        const texture = bitmapToTexture(response.bitmap);
+        const entry = computeTileEntry(
+          response.tileX,
+          response.tileY,
+          range.zoom,
+          texture,
+          refLat,
+          refLon
+        );
+        tilesRef.current.set(entry.key, entry);
+        tilesLoaded += 1;
+
+        if (!rafPending.current) {
+          rafPending.current = true;
+          requestAnimationFrame(() => {
+            rafPending.current = false;
+            if (!cancelled) {
+              setTileVersion((v) => v + 1);
+              onDebugChangeRef.current?.({
+                loading: true,
+                zoom: range.zoom,
+                tileCount: totalTiles,
+                tilesLoaded,
+                loadMs: null
+              });
+            }
           });
-        } catch {
-          // Preview failed — skip to full load
         }
-      }
-
-      // Pass 2: full resolution
-      try {
-        const full = await buildChartSurface(fullRange, refLat, refLon, airportElevationFeet);
-        if (cancelled) {
-          full.texture.dispose();
-          full.geometry.dispose();
-          return;
+      } else if (response.type === 'stream-complete' && response.requestId === requestId) {
+        worker.removeEventListener('message', handler);
+        if (!cancelled) {
+          setTileVersion((v) => v + 1);
+          onDebugChangeRef.current?.({
+            loading: false,
+            zoom: range.zoom,
+            tileCount: totalTiles,
+            tilesLoaded,
+            loadMs: performance.now() - t0
+          });
         }
-        applyResult(full);
-        const fullMs = performance.now() - t0;
-        onDebugChangeRef.current?.({
-          loading: false,
-          zoom: fullRange.zoom,
-          previewZoom: needsUpgrade ? previewRange.zoom : null,
-          tileCount: fullRange.tilesWide * fullRange.tilesHigh,
-          previewMs: null,
-          fullMs,
-          textureDim: `${fullRange.tilesWide * TILE_SIZE}x${fullRange.tilesHigh * TILE_SIZE}`
-        });
-      } catch {
-        onDebugChangeRef.current?.({ ...CHART_DEBUG_INITIAL });
       }
     }
 
-    load();
+    worker.addEventListener('message', handler);
+    worker.postMessage({
+      type: 'stream',
+      requestId,
+      baseUrl: range.baseUrl,
+      zoom: range.zoom,
+      minTileX: range.minTileX,
+      maxTileX: range.maxTileX,
+      minTileY: range.minTileY,
+      maxTileY: range.maxTileY
+    } satisfies ChartTilesRequest);
 
     return () => {
       cancelled = true;
+      worker.removeEventListener('message', handler);
+      for (const entry of tilesRef.current.values()) entry.texture.dispose();
+      tilesRef.current.clear();
     };
   }, [refLat, refLon, radiusNm, chartType, airportElevationFeet]);
 
-  useEffect(
-    () => () => {
-      chartTexture?.dispose();
-    },
-    [chartTexture]
-  );
+  const surfaceY = airportElevationFeet * ALTITUDE_SCALE + SURFACE_OFFSET_NM;
+  const tiles = Array.from(tilesRef.current.values());
+  void tileVersion;
 
-  useEffect(
-    () => () => {
-      chartGeometry?.dispose();
-    },
-    [chartGeometry]
-  );
-
-  if (!chartTexture || !chartGeometry) {
-    return null;
-  }
+  if (tiles.length === 0) return null;
 
   return (
-    <mesh geometry={chartGeometry} scale={[1, verticalScale, 1]}>
-      <meshBasicMaterial
-        map={chartTexture}
-        transparent
-        opacity={0.92}
-        side={THREE.DoubleSide}
-        depthWrite={false}
-        toneMapped={false}
-      />
-    </mesh>
+    <group scale={[1, verticalScale, 1]}>
+      {tiles.map((tile) => (
+        <mesh
+          key={tile.key}
+          position={[tile.centerX, surfaceY, tile.centerZ]}
+          scale={[tile.width, 1, tile.height]}
+          geometry={TILE_PLANE}
+        >
+          <meshBasicMaterial
+            map={tile.texture}
+            transparent
+            opacity={0.92}
+            side={THREE.DoubleSide}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
   );
 });
+
+// --- startChartTextureStream (for 3dmap overlay) ---
+
+const DARK_FILL = '#1a1a2e';
+
+export function startChartTextureStream(
+  refLat: number,
+  refLon: number,
+  radiusNm: number,
+  chartType: ChartType,
+  onTextureReady: (data: ChartTextureData) => void,
+  onTileDrawn?: () => void
+): () => void {
+  const range = computeTileRange(
+    refLat,
+    refLon,
+    radiusNm,
+    chartType,
+    MAX_TILE_COUNT_OVERLAY,
+    MAX_TEXTURE_DIM
+  );
+
+  const width = range.tilesWide * TILE_SIZE;
+  const height = range.tilesHigh * TILE_SIZE;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = DARK_FILL;
+  ctx.fillRect(0, 0, width, height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+
+  const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
+  const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
+  const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
+  const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
+
+  onTextureReady({ texture, corners: { sw, se, ne, nw } });
+
+  let cancelled = false;
+  const worker = getChartWorker();
+  const requestId = nextRequestId++;
+
+  function handler(event: MessageEvent<ChartTilesResponse>) {
+    if (cancelled) return;
+    const response = event.data;
+
+    if (response.type === 'tile-ready' && response.requestId === requestId) {
+      const col = response.tileX - range.minTileX;
+      const row = response.tileY - range.minTileY;
+      ctx.drawImage(response.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      response.bitmap.close();
+      texture.needsUpdate = true;
+      onTileDrawn?.();
+    } else if (response.type === 'stream-complete' && response.requestId === requestId) {
+      worker.removeEventListener('message', handler);
+    }
+  }
+
+  worker.addEventListener('message', handler);
+  worker.postMessage({
+    type: 'stream',
+    requestId,
+    baseUrl: range.baseUrl,
+    zoom: range.zoom,
+    minTileX: range.minTileX,
+    maxTileX: range.maxTileX,
+    minTileY: range.minTileY,
+    maxTileY: range.maxTileY
+  } satisfies ChartTilesRequest);
+
+  return () => {
+    cancelled = true;
+    worker.removeEventListener('message', handler);
+  };
+}
