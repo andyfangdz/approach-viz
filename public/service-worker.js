@@ -5,6 +5,8 @@ const ELEVATION_TILES_CACHE_PREFIX = 'approach-viz-elevation-tiles-';
 const PLATE_CACHE_PREFIX = 'approach-viz-faa-plates-cycle-';
 const ELEVATION_TILES_MAX_ENTRIES = 800;
 const TILE_CACHE_TRIM_EVERY_WRITES = 128;
+const CHART_TILES_CACHE = `approach-viz-chart-tiles-${SW_VERSION}`;
+const CHART_TILES_MAX_ENTRIES = 1200;
 const SET_DTPP_CYCLE_MESSAGE = 'approach-viz:set-dtpp-cycle';
 
 let currentDtppCycle = null;
@@ -28,6 +30,13 @@ function isElevationTilesRequest(url) {
   return (
     url.hostname === 'elevation-tiles-prod.s3.amazonaws.com' &&
     url.pathname.startsWith('/terrarium/')
+  );
+}
+
+function isChartTileRequest(url) {
+  return (
+    url.hostname === 'tiles.arcgis.com' &&
+    url.pathname.includes('/MapServer/tile/')
   );
 }
 
@@ -178,6 +187,13 @@ self.addEventListener('fetch', (event) => {
   if (isElevationTilesRequest(url)) {
     event.respondWith(
       cacheFirstTileRequest(event, request, ELEVATION_TILES_CACHE, ELEVATION_TILES_MAX_ENTRIES)
+    );
+    return;
+  }
+
+  if (isChartTileRequest(url)) {
+    event.respondWith(
+      cacheFirstTileRequest(event, request, CHART_TILES_CACHE, CHART_TILES_MAX_ENTRIES)
     );
   }
 });
