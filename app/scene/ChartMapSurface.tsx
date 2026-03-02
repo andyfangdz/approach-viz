@@ -47,6 +47,7 @@ const TILE_SIZE = 256;
 export interface ChartDebugState {
   loading: boolean;
   zoom: number | null;
+  previewZoom: number | null;
   tileCount: number | null;
   tilesLoaded: number;
   loadMs: number | null;
@@ -55,6 +56,7 @@ export interface ChartDebugState {
 export const CHART_DEBUG_INITIAL: ChartDebugState = {
   loading: false,
   zoom: null,
+  previewZoom: null,
   tileCount: null,
   tilesLoaded: 0,
   loadMs: null
@@ -224,8 +226,11 @@ for (let i = 0; i < tileUv.count; i++) {
 
 // --- Tile entry type and helpers ---
 
+const PREVIEW_Y_OFFSET = -0.001;
+
 interface TileEntry {
   key: string;
+  layer: 'preview' | 'detail';
   texture: THREE.Texture;
   centerX: number;
   centerZ: number;
@@ -258,7 +263,8 @@ function computeTileEntry(
   zoom: number,
   texture: THREE.Texture,
   refLat: number,
-  refLon: number
+  refLon: number,
+  layer: 'preview' | 'detail'
 ): TileEntry {
   const westLon = tileXToLon(tileX, zoom);
   const eastLon = tileXToLon(tileX + 1, zoom);
@@ -269,7 +275,8 @@ function computeTileEntry(
   const ne = latLonToLocal(northLat, eastLon, refLat, refLon);
 
   return {
-    key: `${zoom}/${tileX}/${tileY}`,
+    key: `${layer}/${zoom}/${tileX}/${tileY}`,
+    layer,
     texture,
     centerX: (sw.x + ne.x) / 2,
     centerZ: (sw.z + ne.z) / 2,
@@ -321,84 +328,170 @@ export const ChartMapSurface = memo(function ChartMapSurface({
     tilesRef.current.clear();
     setTileVersion(0);
 
-    const range = computeTileRange(refLat, refLon, radiusNm, chartType);
-    const totalTiles = range.tilesWide * range.tilesHigh;
-    let tilesLoaded = 0;
+    // Detail range — no maxTextureDim constraint for flat-map individual quads
+    const detailRange = computeTileRange(refLat, refLon, radiusNm, chartType);
+    const totalDetailTiles = detailRange.tilesWide * detailRange.tilesHigh;
+    let detailTilesLoaded = 0;
+
+    // Preview pass: use a lower zoom if the delta is >= 2
+    const previewZoom = Math.max(
+      CHART_ZOOM_RANGES[chartType].min,
+      detailRange.zoom - 3
+    );
+    const usePreview = detailRange.zoom - previewZoom >= 2;
 
     onDebugChangeRef.current?.({
       loading: true,
-      zoom: range.zoom,
-      tileCount: totalTiles,
+      zoom: detailRange.zoom,
+      previewZoom: usePreview ? previewZoom : null,
+      tileCount: totalDetailTiles,
       tilesLoaded: 0,
       loadMs: null
     });
 
     const worker = getChartWorker();
-    const requestId = nextRequestId++;
 
-    function handler(event: MessageEvent<ChartTilesResponse>) {
-      if (cancelled) return;
-      const response = event.data;
-
-      if (response.type === 'tile-ready' && response.requestId === requestId) {
-        const texture = bitmapToTexture(response.bitmap);
-        const entry = computeTileEntry(
-          response.tileX,
-          response.tileY,
-          range.zoom,
-          texture,
-          refLat,
-          refLon
-        );
-        tilesRef.current.set(entry.key, entry);
-        tilesLoaded += 1;
-
-        if (!rafPending.current) {
-          rafPending.current = true;
-          requestAnimationFrame(() => {
-            rafPending.current = false;
-            if (!cancelled) {
-              setTileVersion((v) => v + 1);
-              onDebugChangeRef.current?.({
-                loading: true,
-                zoom: range.zoom,
-                tileCount: totalTiles,
-                tilesLoaded,
-                loadMs: null
-              });
-            }
-          });
-        }
-      } else if (response.type === 'stream-complete' && response.requestId === requestId) {
-        worker.removeEventListener('message', handler);
-        if (!cancelled) {
-          setTileVersion((v) => v + 1);
-          onDebugChangeRef.current?.({
-            loading: false,
-            zoom: range.zoom,
-            tileCount: totalTiles,
-            tilesLoaded,
-            loadMs: performance.now() - t0
-          });
-        }
+    function scheduleBatchUpdate() {
+      if (!rafPending.current) {
+        rafPending.current = true;
+        requestAnimationFrame(() => {
+          rafPending.current = false;
+          if (!cancelled) {
+            setTileVersion((v) => v + 1);
+          }
+        });
       }
     }
 
-    worker.addEventListener('message', handler);
-    worker.postMessage({
-      type: 'stream',
-      requestId,
-      baseUrl: range.baseUrl,
-      zoom: range.zoom,
-      minTileX: range.minTileX,
-      maxTileX: range.maxTileX,
-      minTileY: range.minTileY,
-      maxTileY: range.maxTileY
-    } satisfies ChartTilesRequest);
+    // --- Detail stream handler ---
+    const detailRequestId = nextRequestId++;
+    let detailHandler: ((event: MessageEvent<ChartTilesResponse>) => void) | null = null;
+
+    function startDetailStream() {
+      detailHandler = (event: MessageEvent<ChartTilesResponse>) => {
+        if (cancelled) return;
+        const response = event.data;
+
+        if (response.type === 'tile-ready' && response.requestId === detailRequestId) {
+          const texture = bitmapToTexture(response.bitmap);
+          const entry = computeTileEntry(
+            response.tileX,
+            response.tileY,
+            detailRange.zoom,
+            texture,
+            refLat,
+            refLon,
+            'detail'
+          );
+          tilesRef.current.set(entry.key, entry);
+          detailTilesLoaded += 1;
+
+          onDebugChangeRef.current?.({
+            loading: true,
+            zoom: detailRange.zoom,
+            previewZoom: usePreview ? previewZoom : null,
+            tileCount: totalDetailTiles,
+            tilesLoaded: detailTilesLoaded,
+            loadMs: null
+          });
+          scheduleBatchUpdate();
+        } else if (response.type === 'stream-complete' && response.requestId === detailRequestId) {
+          worker.removeEventListener('message', detailHandler!);
+          detailHandler = null;
+          if (!cancelled) {
+            // Dispose all preview tiles
+            for (const [key, entry] of tilesRef.current) {
+              if (entry.layer === 'preview') {
+                entry.texture.dispose();
+                tilesRef.current.delete(key);
+              }
+            }
+            setTileVersion((v) => v + 1);
+            onDebugChangeRef.current?.({
+              loading: false,
+              zoom: detailRange.zoom,
+              previewZoom: null,
+              tileCount: totalDetailTiles,
+              tilesLoaded: detailTilesLoaded,
+              loadMs: performance.now() - t0
+            });
+          }
+        }
+      };
+
+      worker.addEventListener('message', detailHandler);
+      worker.postMessage({
+        type: 'stream',
+        requestId: detailRequestId,
+        baseUrl: detailRange.baseUrl,
+        zoom: detailRange.zoom,
+        minTileX: detailRange.minTileX,
+        maxTileX: detailRange.maxTileX,
+        minTileY: detailRange.minTileY,
+        maxTileY: detailRange.maxTileY
+      } satisfies ChartTilesRequest);
+    }
+
+    // --- Preview stream (optional) ---
+    let previewHandler: ((event: MessageEvent<ChartTilesResponse>) => void) | null = null;
+
+    if (usePreview) {
+      const latRadius = radiusNm / 60;
+      const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
+      const pMinTileX = lonToTileX(refLon - lonRadius, previewZoom);
+      const pMaxTileX = lonToTileX(refLon + lonRadius, previewZoom);
+      const pMinTileY = latToTileY(refLat + latRadius, previewZoom);
+      const pMaxTileY = latToTileY(refLat - latRadius, previewZoom);
+
+      const previewRequestId = nextRequestId++;
+
+      previewHandler = (event: MessageEvent<ChartTilesResponse>) => {
+        if (cancelled) return;
+        const response = event.data;
+
+        if (response.type === 'tile-ready' && response.requestId === previewRequestId) {
+          const texture = bitmapToTexture(response.bitmap);
+          const entry = computeTileEntry(
+            response.tileX,
+            response.tileY,
+            previewZoom,
+            texture,
+            refLat,
+            refLon,
+            'preview'
+          );
+          tilesRef.current.set(entry.key, entry);
+          scheduleBatchUpdate();
+        } else if (response.type === 'stream-complete' && response.requestId === previewRequestId) {
+          worker.removeEventListener('message', previewHandler!);
+          previewHandler = null;
+          if (!cancelled) {
+            // Preview done — start detail stream
+            startDetailStream();
+          }
+        }
+      };
+
+      worker.addEventListener('message', previewHandler);
+      worker.postMessage({
+        type: 'stream',
+        requestId: previewRequestId,
+        baseUrl: detailRange.baseUrl,
+        zoom: previewZoom,
+        minTileX: pMinTileX,
+        maxTileX: pMaxTileX,
+        minTileY: pMinTileY,
+        maxTileY: pMaxTileY
+      } satisfies ChartTilesRequest);
+    } else {
+      // No preview — go straight to detail
+      startDetailStream();
+    }
 
     return () => {
       cancelled = true;
-      worker.removeEventListener('message', handler);
+      if (previewHandler) worker.removeEventListener('message', previewHandler);
+      if (detailHandler) worker.removeEventListener('message', detailHandler);
       for (const entry of tilesRef.current.values()) entry.texture.dispose();
       tilesRef.current.clear();
     };
@@ -415,7 +508,11 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       {tiles.map((tile) => (
         <mesh
           key={tile.key}
-          position={[tile.centerX, surfaceY, tile.centerZ]}
+          position={[
+            tile.centerX,
+            surfaceY + (tile.layer === 'preview' ? PREVIEW_Y_OFFSET : 0),
+            tile.centerZ
+          ]}
           scale={[tile.width, 1, tile.height]}
           geometry={TILE_PLANE}
         >
@@ -433,18 +530,14 @@ export const ChartMapSurface = memo(function ChartMapSurface({
   );
 });
 
-// --- startChartTextureStream (for 3dmap overlay) ---
+// --- buildChartTexture (for 3dmap overlay — single GPU upload) ---
 
-const DARK_FILL = '#1a1a2e';
-
-export function startChartTextureStream(
+export function buildChartTexture(
   refLat: number,
   refLon: number,
   radiusNm: number,
-  chartType: ChartType,
-  onTextureReady: (data: ChartTextureData) => void,
-  onTileDrawn?: () => void
-): () => void {
+  chartType: ChartType
+): { promise: Promise<ChartTextureData>; cancel: () => void } {
   const range = computeTileRange(
     refLat,
     refLon,
@@ -454,63 +547,83 @@ export function startChartTextureStream(
     MAX_TEXTURE_DIM
   );
 
-  const width = range.tilesWide * TILE_SIZE;
-  const height = range.tilesHigh * TILE_SIZE;
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = DARK_FILL;
-  ctx.fillRect(0, 0, width, height);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.minFilter = THREE.LinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
-
-  const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
-  const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
-  const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
-  const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
-
-  onTextureReady({ texture, corners: { sw, se, ne, nw } });
-
   let cancelled = false;
-  const worker = getChartWorker();
-  const requestId = nextRequestId++;
+  let rejectPromise: ((reason: Error) => void) | undefined;
 
-  function handler(event: MessageEvent<ChartTilesResponse>) {
-    if (cancelled) return;
-    const response = event.data;
+  const promise = new Promise<ChartTextureData>((resolve, reject) => {
+    rejectPromise = reject;
 
-    if (response.type === 'tile-ready' && response.requestId === requestId) {
-      const col = response.tileX - range.minTileX;
-      const row = response.tileY - range.minTileY;
-      ctx.drawImage(response.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-      response.bitmap.close();
-      texture.needsUpdate = true;
-      onTileDrawn?.();
-    } else if (response.type === 'stream-complete' && response.requestId === requestId) {
-      worker.removeEventListener('message', handler);
+    const worker = getChartWorker();
+    const requestId = nextRequestId++;
+    const pendingBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
+
+    function handler(event: MessageEvent<ChartTilesResponse>) {
+      if (cancelled) return;
+      const response = event.data;
+
+      if (response.type === 'tile-ready' && response.requestId === requestId) {
+        pendingBitmaps.push({
+          tileX: response.tileX,
+          tileY: response.tileY,
+          bitmap: response.bitmap
+        });
+      } else if (response.type === 'stream-complete' && response.requestId === requestId) {
+        worker.removeEventListener('message', handler);
+        if (cancelled) {
+          for (const p of pendingBitmaps) p.bitmap.close();
+          return;
+        }
+
+        const width = range.tilesWide * TILE_SIZE;
+        const height = range.tilesHigh * TILE_SIZE;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, width, height);
+
+        for (const p of pendingBitmaps) {
+          const col = p.tileX - range.minTileX;
+          const row = p.tileY - range.minTileY;
+          ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+          p.bitmap.close();
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+
+        const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
+        const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
+        const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
+        const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
+
+        resolve({ texture, corners: { sw, se, ne, nw } });
+      }
     }
-  }
 
-  worker.addEventListener('message', handler);
-  worker.postMessage({
-    type: 'stream',
-    requestId,
-    baseUrl: range.baseUrl,
-    zoom: range.zoom,
-    minTileX: range.minTileX,
-    maxTileX: range.maxTileX,
-    minTileY: range.minTileY,
-    maxTileY: range.maxTileY
-  } satisfies ChartTilesRequest);
+    worker.addEventListener('message', handler);
+    worker.postMessage({
+      type: 'stream',
+      requestId,
+      baseUrl: range.baseUrl,
+      zoom: range.zoom,
+      minTileX: range.minTileX,
+      maxTileX: range.maxTileX,
+      minTileY: range.minTileY,
+      maxTileY: range.maxTileY
+    } satisfies ChartTilesRequest);
+  });
 
-  return () => {
-    cancelled = true;
-    worker.removeEventListener('message', handler);
+  return {
+    promise,
+    cancel: () => {
+      cancelled = true;
+      rejectPromise?.(new Error('Cancelled'));
+    }
   };
 }

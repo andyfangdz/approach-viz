@@ -15,7 +15,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import type { ApproachPlate } from '@/lib/types';
 import type { ChartType } from '@/app/app-client/types';
 import type { ChartTextureData } from '@/app/scene/ChartMapSurface';
-import { startChartTextureStream } from '@/app/scene/ChartMapSurface';
+import { buildChartTexture } from '@/app/scene/ChartMapSurface';
 
 const METERS_TO_NM = 1 / 1852;
 const FEET_TO_METERS = 0.3048;
@@ -531,25 +531,37 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       return null;
     });
 
-    const cancel = startChartTextureStream(safeLat, safeLon, radiusNm, chartType, (data) => {
-      const { corners } = data;
-      const source = [corners.sw, corners.se, corners.ne, corners.nw];
-      const target = [
-        { u: 0, v: 0 },
-        { u: 1, v: 0 },
-        { u: 1, v: 1 },
-        { u: 0, v: 1 }
-      ];
-      const homography = solveHomography(source, target);
-      if (!homography) {
-        data.texture.dispose();
-        return;
-      }
-      setChartTexture(data.texture);
-      setChartHomography(homography);
-    });
+    const { promise, cancel } = buildChartTexture(safeLat, safeLon, radiusNm, chartType);
+    let active = true;
+
+    promise
+      .then((data) => {
+        if (!active) {
+          data.texture.dispose();
+          return;
+        }
+        const { corners } = data;
+        const source = [corners.sw, corners.se, corners.ne, corners.nw];
+        const target = [
+          { u: 0, v: 0 },
+          { u: 1, v: 0 },
+          { u: 1, v: 1 },
+          { u: 0, v: 1 }
+        ];
+        const homography = solveHomography(source, target);
+        if (!homography) {
+          data.texture.dispose();
+          return;
+        }
+        setChartTexture(data.texture);
+        setChartHomography(homography);
+      })
+      .catch(() => {
+        // Cancelled or failed — no action needed
+      });
 
     return () => {
+      active = false;
       cancel();
       setChartHomography(null);
       setChartTexture((previous) => {

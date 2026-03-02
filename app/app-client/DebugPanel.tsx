@@ -363,6 +363,12 @@ export function DebugPanel({
                 <span>Zoom</span>
                 <span>{chartDebug.zoom ?? 'n/a'}</span>
               </div>
+              {chartDebug.previewZoom !== null && (
+                <div className="debug-row">
+                  <span>Preview</span>
+                  <span>z{chartDebug.previewZoom}</span>
+                </div>
+              )}
               <div className="debug-row">
                 <span>Tiles</span>
                 <span>
