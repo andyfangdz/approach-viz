@@ -91,7 +91,22 @@ function latLonToLocal(
 // Tiles are small PNGs (~10-30 KB) and service-worker cached after first load.
 const MAX_TILE_COUNT = 600;
 
-function computeZoom(chartType: ChartType, radiusNm: number, refLat: number): number {
+// Lower budget for the 3dmap overlay — the chart is blended on top of Google
+// 3D Tiles so lower resolution is acceptable, and we must not starve the
+// Google tile connection pool.
+const MAX_TILE_COUNT_OVERLAY = 100;
+
+// Browser connection concurrency limit per host (~6).  We throttle chart tile
+// fetches so they don't flood the connection pool when running alongside
+// Google 3D Tiles downloads.
+const TILE_FETCH_CONCURRENCY = 6;
+
+function computeZoom(
+  chartType: ChartType,
+  radiusNm: number,
+  refLat: number,
+  maxTileCount = MAX_TILE_COUNT
+): number {
   const range = CHART_ZOOM_RANGES[chartType];
   // Start from the sharpest zoom and step down if the tile count is too high.
   for (let z = range.max; z > range.min; z--) {
@@ -99,7 +114,7 @@ function computeZoom(chartType: ChartType, radiusNm: number, refLat: number): nu
     const tilesWide =
       Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
     const tilesHigh = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
-    if (tilesWide * tilesHigh <= MAX_TILE_COUNT) return z;
+    if (tilesWide * tilesHigh <= maxTileCount) return z;
   }
   return range.min;
 }
@@ -121,6 +136,29 @@ async function loadChartTile(
   } catch {
     return null;
   }
+}
+
+/** Fetch tiles with a concurrency limit to avoid saturating browser connections. */
+async function loadChartTilesThrottled(
+  tiles: Array<{ baseUrl: string; z: number; x: number; y: number }>,
+  concurrency: number,
+  cancelled: () => boolean
+): Promise<Array<ImageBitmap | null>> {
+  const results: Array<ImageBitmap | null> = new Array(tiles.length).fill(null);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tiles.length) {
+      if (cancelled()) return;
+      const i = nextIndex;
+      nextIndex += 1;
+      const t = tiles[i];
+      results[i] = await loadChartTile(t.baseUrl, t.z, t.x, t.y);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, tiles.length) }, () => worker()));
+  return results;
 }
 
 export interface ChartTextureCorner {
@@ -268,7 +306,8 @@ export async function buildChartTextureData(
   chartType: ChartType,
   cancelled: () => boolean
 ): Promise<ChartTextureData | null> {
-  const zoom = computeZoom(chartType, radiusNm, refLat);
+  // Use lower tile budget — this is an overlay on 3D tiles, not the primary surface.
+  const zoom = computeZoom(chartType, radiusNm, refLat, MAX_TILE_COUNT_OVERLAY);
   const baseUrl = CHART_TILE_URLS[chartType];
 
   const latRadius = radiusNm / 60;
@@ -285,14 +324,14 @@ export async function buildChartTextureData(
   const tilesWide = maxTileX - minTileX + 1;
   const tilesHigh = maxTileY - minTileY + 1;
 
-  const tilePromises: Array<Promise<ImageBitmap | null>> = [];
+  const tileSpecs: Array<{ baseUrl: string; z: number; x: number; y: number }> = [];
   for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
     for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
-      tilePromises.push(loadChartTile(baseUrl, zoom, tileX, tileY));
+      tileSpecs.push({ baseUrl, z: zoom, x: tileX, y: tileY });
     }
   }
 
-  const tiles = await Promise.all(tilePromises);
+  const tiles = await loadChartTilesThrottled(tileSpecs, TILE_FETCH_CONCURRENCY, cancelled);
   if (cancelled()) {
     tiles.forEach((tile) => tile?.close());
     return null;
