@@ -334,10 +334,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
     let detailTilesLoaded = 0;
 
     // Preview pass: use a lower zoom if the delta is >= 2
-    const previewZoom = Math.max(
-      CHART_ZOOM_RANGES[chartType].min,
-      detailRange.zoom - 3
-    );
+    const previewZoom = Math.max(CHART_ZOOM_RANGES[chartType].min, detailRange.zoom - 3);
     const usePreview = detailRange.zoom - previewZoom >= 2;
 
     onDebugChangeRef.current?.({
