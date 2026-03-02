@@ -358,6 +358,14 @@ export const ChartMapSurface = memo(function ChartMapSurface({
           rafPending.current = false;
           if (!cancelled) {
             setTileVersion((v) => v + 1);
+            onDebugChangeRef.current?.({
+              loading: true,
+              zoom: detailRange.zoom,
+              previewZoom: usePreview ? previewZoom : null,
+              tileCount: totalDetailTiles,
+              tilesLoaded: detailTilesLoaded,
+              loadMs: null
+            });
           }
         });
       }
@@ -385,15 +393,6 @@ export const ChartMapSurface = memo(function ChartMapSurface({
           );
           tilesRef.current.set(entry.key, entry);
           detailTilesLoaded += 1;
-
-          onDebugChangeRef.current?.({
-            loading: true,
-            zoom: detailRange.zoom,
-            previewZoom: usePreview ? previewZoom : null,
-            tileCount: totalDetailTiles,
-            tilesLoaded: detailTilesLoaded,
-            loadMs: null
-          });
           scheduleBatchUpdate();
         } else if (response.type === 'stream-complete' && response.requestId === detailRequestId) {
           worker.removeEventListener('message', detailHandler!);
@@ -548,81 +547,82 @@ export function buildChartTexture(
   );
 
   let cancelled = false;
+  const worker = getChartWorker();
+  const requestId = nextRequestId++;
+  const pendingBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
+
+  let resolvePromise: ((data: ChartTextureData) => void) | undefined;
   let rejectPromise: ((reason: Error) => void) | undefined;
 
-  const promise = new Promise<ChartTextureData>((resolve, reject) => {
-    rejectPromise = reject;
+  function handler(event: MessageEvent<ChartTilesResponse>) {
+    if (cancelled) return;
+    const response = event.data;
 
-    const worker = getChartWorker();
-    const requestId = nextRequestId++;
-    const pendingBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
+    if (response.type === 'tile-ready' && response.requestId === requestId) {
+      pendingBitmaps.push({
+        tileX: response.tileX,
+        tileY: response.tileY,
+        bitmap: response.bitmap
+      });
+    } else if (response.type === 'stream-complete' && response.requestId === requestId) {
+      worker.removeEventListener('message', handler);
 
-    function handler(event: MessageEvent<ChartTilesResponse>) {
-      if (cancelled) return;
-      const response = event.data;
+      const width = range.tilesWide * TILE_SIZE;
+      const height = range.tilesHigh * TILE_SIZE;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, width, height);
 
-      if (response.type === 'tile-ready' && response.requestId === requestId) {
-        pendingBitmaps.push({
-          tileX: response.tileX,
-          tileY: response.tileY,
-          bitmap: response.bitmap
-        });
-      } else if (response.type === 'stream-complete' && response.requestId === requestId) {
-        worker.removeEventListener('message', handler);
-        if (cancelled) {
-          for (const p of pendingBitmaps) p.bitmap.close();
-          return;
-        }
-
-        const width = range.tilesWide * TILE_SIZE;
-        const height = range.tilesHigh * TILE_SIZE;
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d')!;
-        ctx.fillStyle = '#1a1a2e';
-        ctx.fillRect(0, 0, width, height);
-
-        for (const p of pendingBitmaps) {
-          const col = p.tileX - range.minTileX;
-          const row = p.tileY - range.minTileY;
-          ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-          p.bitmap.close();
-        }
-
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.minFilter = THREE.LinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.generateMipmaps = false;
-        texture.needsUpdate = true;
-
-        const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
-        const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
-        const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
-        const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
-
-        resolve({ texture, corners: { sw, se, ne, nw } });
+      for (const p of pendingBitmaps) {
+        const col = p.tileX - range.minTileX;
+        const row = p.tileY - range.minTileY;
+        ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        p.bitmap.close();
       }
-    }
 
-    worker.addEventListener('message', handler);
-    worker.postMessage({
-      type: 'stream',
-      requestId,
-      baseUrl: range.baseUrl,
-      zoom: range.zoom,
-      minTileX: range.minTileX,
-      maxTileX: range.maxTileX,
-      minTileY: range.minTileY,
-      maxTileY: range.maxTileY
-    } satisfies ChartTilesRequest);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.generateMipmaps = false;
+      texture.needsUpdate = true;
+
+      const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
+      const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
+      const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
+      const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
+
+      resolvePromise?.({ texture, corners: { sw, se, ne, nw } });
+    }
+  }
+
+  const promise = new Promise<ChartTextureData>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
   });
+
+  worker.addEventListener('message', handler);
+  worker.postMessage({
+    type: 'stream',
+    requestId,
+    baseUrl: range.baseUrl,
+    zoom: range.zoom,
+    minTileX: range.minTileX,
+    maxTileX: range.maxTileX,
+    minTileY: range.minTileY,
+    maxTileY: range.maxTileY
+  } satisfies ChartTilesRequest);
 
   return {
     promise,
     cancel: () => {
       cancelled = true;
+      worker.removeEventListener('message', handler);
+      for (const p of pendingBitmaps) p.bitmap.close();
+      pendingBitmaps.length = 0;
       rejectPromise?.(new Error('Cancelled'));
     }
   };
