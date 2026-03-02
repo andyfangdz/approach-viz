@@ -20,7 +20,6 @@ import { ProbSevereOverlay } from '@/app/scene/ProbSevereOverlay';
 import {
   CAMERA_POSITION,
   DIRECTIONAL_LIGHT_POSITION,
-  FOG_ARGS,
   ORBIT_TARGET,
   SATELLITE_MAX_RETRIES
 } from './constants';
@@ -403,7 +402,7 @@ export const SceneCanvas = memo(function SceneCanvas({
       }}
     >
       <color attach="background" args={['#0a0a14']} />
-      <fog attach="fog" args={FOG_ARGS} />
+
 
       <Suspense fallback={<LoadingFallback />}>
         <AdaptiveDprController retinaRendering={retinaRendering} />
