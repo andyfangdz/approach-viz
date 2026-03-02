@@ -62,6 +62,15 @@ self.addEventListener('message', async (event: MessageEvent<ChartTilesRequest>) 
     }
   }
 
+  // Sort radially from center so the most relevant tiles stream first.
+  const cx = (minTileX + maxTileX) / 2;
+  const cy = (minTileY + maxTileY) / 2;
+  specs.sort((a, b) => {
+    const da = (a.x - cx) ** 2 + (a.y - cy) ** 2;
+    const db = (b.x - cx) ** 2 + (b.y - cy) ** 2;
+    return da - db;
+  });
+
   let failedTiles = 0;
   let nextIndex = 0;
 
