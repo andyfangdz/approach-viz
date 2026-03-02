@@ -69,6 +69,7 @@ import type {
   TrafficDebugState,
   NexradDeclutterMode
 } from '@/app/app-client/types';
+import { CHART_DEBUG_INITIAL, type ChartDebugState } from '@/app/scene/ChartMapSurface';
 import type { AirportOption, SceneData } from '@/lib/types';
 
 interface AppClientProps {
@@ -341,6 +342,7 @@ export function AppClient({
   const [recenterNonce, setRecenterNonce] = useState(0);
   const [nexradDebug, setNexradDebug] = useState<NexradDebugState>(EMPTY_NEXRAD_DEBUG_STATE);
   const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
+  const [chartDebug, setChartDebug] = useState<ChartDebugState>(CHART_DEBUG_INITIAL);
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<RuntimeCapabilities>(
     EMPTY_RUNTIME_CAPABILITIES
   );
@@ -1000,6 +1002,7 @@ export function AppClient({
             onSatelliteRuntimeError={handleSatelliteRuntimeError}
             onNexradDebugChange={setNexradDebug}
             onTrafficDebugChange={setTrafficDebug}
+            onChartDebugChange={setChartDebug}
           />
         )}
 
@@ -1046,6 +1049,7 @@ export function AppClient({
           serviceWorkerDebug={serviceWorkerDebug}
           nexradDebug={nexradDebug}
           trafficDebug={trafficDebug}
+          chartDebug={chartDebug}
           cycleInfo={sceneData.cycleInfo}
           currentApproach={sceneData.currentApproach}
         />

@@ -537,13 +537,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       });
 
       try {
-        const data = await buildChartTextureData(
-          safeLat,
-          safeLon,
-          radiusNm,
-          chartType,
-          () => cancelled
-        );
+        const data = await buildChartTextureData(safeLat, safeLon, radiusNm, chartType);
         if (cancelled || !data) return;
 
         const { corners } = data;

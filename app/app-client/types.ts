@@ -2,6 +2,7 @@ import type { Approach } from '@/lib/cifp/parser';
 import type { Waypoint } from '@/lib/cifp/parser';
 import type { SelectOption } from '@/app/app-client-utils';
 import type { SceneData } from '@/lib/types';
+import type { ChartDebugState } from '@/app/scene/ChartMapSurface';
 
 export type SurfaceMode = 'terrain' | 'satellite' | 'map' | '3dmap';
 export type ChartType = 'vfr' | 'low' | 'high';
@@ -167,6 +168,7 @@ export interface SceneCanvasProps {
   onSatelliteRuntimeError: (message: string, error?: Error) => void;
   onNexradDebugChange?: (debug: NexradDebugState) => void;
   onTrafficDebugChange?: (debug: TrafficDebugState) => void;
+  onChartDebugChange?: (debug: ChartDebugState) => void;
 }
 
 export interface InfoPanelProps {

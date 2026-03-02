@@ -358,7 +358,8 @@ export const SceneCanvas = memo(function SceneCanvas({
   missedApproachClimbRequirement,
   onSatelliteRuntimeError,
   onNexradDebugChange,
-  onTrafficDebugChange
+  onTrafficDebugChange,
+  onChartDebugChange
 }: SceneCanvasProps) {
   const approachVisible = layers.approach;
   const airspaceVisible = layers.airspace;
@@ -433,6 +434,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             verticalScale={verticalScale}
             chartType={chartType}
             airportElevationFeet={airport.elevation}
+            onDebugChange={onChartDebugChange}
           />
         )}
 

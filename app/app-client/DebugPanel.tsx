@@ -8,6 +8,7 @@ import type {
 } from './types';
 import type { CycleInfo, SerializedApproach } from '@/lib/types';
 import type { ApproachLeg } from '@/lib/cifp/parser';
+import type { ChartDebugState } from '@/app/scene/ChartMapSurface';
 
 interface DebugPanelProps {
   debugCollapsed: boolean;
@@ -19,6 +20,7 @@ interface DebugPanelProps {
   serviceWorkerDebug: ServiceWorkerCacheDebugState;
   nexradDebug: NexradDebugState;
   trafficDebug: TrafficDebugState;
+  chartDebug: ChartDebugState;
   cycleInfo: CycleInfo | null;
   currentApproach: SerializedApproach | null;
 }
@@ -112,6 +114,7 @@ export function DebugPanel({
   serviceWorkerDebug,
   nexradDebug,
   trafficDebug,
+  chartDebug,
   cycleInfo,
   currentApproach
 }: DebugPanelProps) {
@@ -119,6 +122,7 @@ export function DebugPanel({
   const [mrmsExpanded, setMrmsExpanded] = useState(false);
   const [procedureExpanded, setProcedureExpanded] = useState(false);
   const [trafficExpanded, setTrafficExpanded] = useState(false);
+  const [chartExpanded, setChartExpanded] = useState(false);
 
   if (debugCollapsed) {
     return (
@@ -310,6 +314,75 @@ export function DebugPanel({
               ))}
               <LegTable label="Final" legs={currentApproach.finalLegs} />
               <LegTable label="Missed" legs={currentApproach.missedLegs} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {(surfaceMode === 'map' || surfaceMode === '3dmap') && (
+        <div className="debug-section">
+          <button
+            type="button"
+            className="debug-section-toggle"
+            onClick={() => setChartExpanded((v) => !v)}
+            aria-expanded={chartExpanded}
+          >
+            <span className="debug-title">Chart</span>
+            <span className="debug-summary">
+              {chartDebug.loading
+                ? 'loading'
+                : chartDebug.zoom !== null
+                  ? `z${chartDebug.zoom}`
+                  : 'off'}
+              {chartDebug.fullMs !== null ? ` · ${Math.round(chartDebug.fullMs)} ms` : ''}
+            </span>
+            <svg
+              className={`debug-chevron${chartExpanded ? ' debug-chevron-open' : ''}`}
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              aria-hidden="true"
+            >
+              <path
+                d="M2.5 3.5L5 6.5L7.5 3.5"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          {chartExpanded && (
+            <div className="debug-section-body">
+              <div className="debug-row">
+                <span>Loading</span>
+                <span>{boolLabel(chartDebug.loading)}</span>
+              </div>
+              <div className="debug-row">
+                <span>Zoom</span>
+                <span>{chartDebug.zoom ?? 'n/a'}</span>
+              </div>
+              <div className="debug-row">
+                <span>Preview Zoom</span>
+                <span>{chartDebug.previewZoom ?? 'n/a'}</span>
+              </div>
+              <div className="debug-row">
+                <span>Tiles</span>
+                <span>{chartDebug.tileCount ?? 'n/a'}</span>
+              </div>
+              <div className="debug-row">
+                <span>Preview</span>
+                <span>{formatMs(chartDebug.previewMs)}</span>
+              </div>
+              <div className="debug-row">
+                <span>Full Load</span>
+                <span>{formatMs(chartDebug.fullMs)}</span>
+              </div>
+              <div className="debug-row">
+                <span>Texture</span>
+                <span>{chartDebug.textureDim ?? 'n/a'}</span>
+              </div>
             </div>
           )}
         </div>
