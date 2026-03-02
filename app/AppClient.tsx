@@ -8,6 +8,7 @@ import {
   formatApproachLabel,
   isMobileViewport,
   parseLayersParam,
+  readChartTypeFromSearch,
   readDeclutterModeFromSearch,
   readPhaseModeFromSearch,
   readShowCallsignsFromSearch,
@@ -57,6 +58,7 @@ import {
   syncServiceWorkerDtppCycle
 } from '@/app/app-client/service-worker-cache';
 import type {
+  ChartType,
   LayerState,
   NexradDebugState,
   NexradPhaseMode,
@@ -67,6 +69,7 @@ import type {
   TrafficDebugState,
   NexradDeclutterMode
 } from '@/app/app-client/types';
+import { CHART_DEBUG_INITIAL, type ChartDebugState } from '@/app/scene/ChartMapSurface';
 import type { AirportOption, SceneData } from '@/lib/types';
 
 interface AppClientProps {
@@ -295,6 +298,8 @@ export function AppClient({
     initialSceneData.selectedApproachId || initialApproachId
   );
   const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>('terrain');
+  const [plateOverlayEnabled, setPlateOverlayEnabled] = useState(false);
+  const [chartType, setChartType] = useState<ChartType>('vfr');
   const [didInitFromLocation, setDidInitFromLocation] = useState(false);
   const [didInitFromStorage, setDidInitFromStorage] = useState(false);
   const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
@@ -337,6 +342,7 @@ export function AppClient({
   const [recenterNonce, setRecenterNonce] = useState(0);
   const [nexradDebug, setNexradDebug] = useState<NexradDebugState>(EMPTY_NEXRAD_DEBUG_STATE);
   const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
+  const [chartDebug, setChartDebug] = useState<ChartDebugState>(CHART_DEBUG_INITIAL);
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<RuntimeCapabilities>(
     EMPTY_RUNTIME_CAPABILITIES
   );
@@ -384,7 +390,12 @@ export function AppClient({
     }
     const modeFromQuery = readSurfaceModeFromSearch(window.location.search);
     if (modeFromQuery) {
-      setSurfaceMode(modeFromQuery);
+      setSurfaceMode(modeFromQuery.surfaceMode);
+      setPlateOverlayEnabled(modeFromQuery.plateOverlay);
+    }
+    const chartFromQuery = readChartTypeFromSearch(window.location.search);
+    if (chartFromQuery) {
+      setChartType(chartFromQuery);
     }
     try {
       const raw = window.localStorage.getItem(OPTIONS_STORAGE_KEY);
@@ -640,6 +651,16 @@ export function AppClient({
     const nextPath = `/${selectedAirport}${encodedApproach}`;
     const params = new URLSearchParams(window.location.search);
     params.set('surface', surfaceMode);
+    if (plateOverlayEnabled) {
+      params.set('plate', 'on');
+    } else {
+      params.delete('plate');
+    }
+    if ((surfaceMode === 'map' || surfaceMode === '3dmap') && chartType !== 'vfr') {
+      params.set('chart', chartType);
+    } else {
+      params.delete('chart');
+    }
     const layersSerialized = serializeLayersParam(layers);
     if (layersSerialized) {
       params.set('layers', layersSerialized);
@@ -683,6 +704,8 @@ export function AppClient({
     selectedAirport,
     selectedApproach,
     surfaceMode,
+    plateOverlayEnabled,
+    chartType,
     layers,
     nexradPhaseMode,
     nexradDeclutterMode,
@@ -813,36 +836,38 @@ export function AppClient({
     useParsedMissedClimbGradient && hasParsedMissedClimbRequirement
       ? sceneData.missedApproachClimbRequirement
       : null;
-  const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' =
-    surfaceMode === 'plate'
-      ? hasApproachPlate
-        ? 'plate'
-        : 'terrain'
-      : surfaceMode === '3dplate'
-        ? hasApproachPlate
-          ? 'plate'
-          : 'satellite'
-        : surfaceMode === 'satellite'
-          ? 'satellite'
+  const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' | 'map' =
+    plateOverlayEnabled && hasApproachPlate
+      ? 'plate'
+      : surfaceMode === 'satellite' || surfaceMode === '3dmap'
+        ? 'satellite'
+        : surfaceMode === 'map'
+          ? 'map'
           : 'terrain';
+
+  const SURFACE_LEGEND_LABELS: Record<SurfaceMode, string> = {
+    terrain: 'Terrain Wireframe',
+    satellite: 'Satellite Surface',
+    map: 'FAA Chart Map',
+    '3dmap': '3D Chart Map'
+  };
   const surfaceLegendLabel =
-    surfaceMode === 'plate'
-      ? hasApproachPlate
-        ? 'FAA Plate Surface'
-        : 'Terrain Wireframe'
-      : surfaceMode === '3dplate'
-        ? hasApproachPlate
-          ? '3D Plate Surface'
-          : 'Satellite Surface'
-        : surfaceLegendClass === 'satellite'
-          ? 'Satellite Surface'
-          : 'Terrain Wireframe';
+    plateOverlayEnabled && hasApproachPlate
+      ? `FAA Plate + ${SURFACE_LEGEND_LABELS[surfaceMode]}`
+      : SURFACE_LEGEND_LABELS[surfaceMode];
 
   const handleSurfaceModeSelected = (mode: SurfaceMode) => {
     setSurfaceErrorMessage('');
     setSatelliteRetryCount(0);
     setSatelliteRetryNonce(0);
     setSurfaceMode(mode);
+  };
+
+  const handleChartTypeSelected = (chart: ChartType) => {
+    setChartType(chart);
+  };
+  const handlePlateOverlayToggle = (enabled: boolean) => {
+    setPlateOverlayEnabled(enabled);
   };
 
   const handleSatelliteRuntimeError = useCallback((message: string, error?: Error) => {
@@ -927,6 +952,11 @@ export function AppClient({
         }}
         surfaceMode={surfaceMode}
         onSurfaceModeSelected={handleSurfaceModeSelected}
+        plateOverlayEnabled={plateOverlayEnabled}
+        onPlateOverlayToggle={handlePlateOverlayToggle}
+        hasApproachPlate={hasApproachPlate}
+        chartType={chartType}
+        onChartTypeSelected={handleChartTypeSelected}
         menuPortalTarget={menuPortalTarget}
         onControlsHeightChange={setControlsOverlayHeight}
       />
@@ -958,6 +988,8 @@ export function AppClient({
             nexradCrossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
             nexradCrossSectionRangeNm={nexradCrossSectionRangeNm}
             surfaceMode={surfaceMode}
+            plateOverlayEnabled={plateOverlayEnabled}
+            chartType={chartType}
             satelliteRetryNonce={satelliteRetryNonce}
             satelliteRetryCount={satelliteRetryCount}
             surfaceErrorMessage={surfaceErrorMessage}
@@ -970,6 +1002,7 @@ export function AppClient({
             onSatelliteRuntimeError={handleSatelliteRuntimeError}
             onNexradDebugChange={setNexradDebug}
             onTrafficDebugChange={setTrafficDebug}
+            onChartDebugChange={setChartDebug}
           />
         )}
 
@@ -1016,6 +1049,7 @@ export function AppClient({
           serviceWorkerDebug={serviceWorkerDebug}
           nexradDebug={nexradDebug}
           trafficDebug={trafficDebug}
+          chartDebug={chartDebug}
           cycleInfo={sceneData.cycleInfo}
           currentApproach={sceneData.currentApproach}
         />
@@ -1028,6 +1062,7 @@ export function AppClient({
           surfaceMode={surfaceMode}
           layers={layers}
           hasApproachPlate={hasApproachPlate}
+          plateOverlayEnabled={plateOverlayEnabled}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
         />

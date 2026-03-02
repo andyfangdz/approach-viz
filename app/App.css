@@ -157,6 +157,20 @@ header {
   color: var(--text-primary);
 }
 
+.plate-overlay-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.plate-overlay-label input[type='checkbox'] {
+  accent-color: rgba(0, 255, 204, 0.7);
+}
+
 .library-select {
   width: 100%;
   min-width: 220px;
@@ -796,6 +810,10 @@ textarea,
 .legend-color.satellite {
   background: #8ac926;
   box-shadow: 0 0 8px rgba(138, 201, 38, 0.55);
+}
+
+.legend-color.map {
+  background-color: #e8a838;
 }
 
 .legend-color.traffic {

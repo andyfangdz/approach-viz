@@ -39,6 +39,9 @@ output/playwright
 # Local tools (flatc, etc.)
 tools/
 
+# Service worker (bundled from sw/ via esbuild)
+public/service-worker.js
+
 # WASM build output — all wasm-pack artifacts are checked in (102KB binary + JS glue +
 # type declarations) for CI typecheck/build and Vercel deployment without requiring
 # wasm-pack/Rust toolchain.

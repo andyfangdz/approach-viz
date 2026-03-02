@@ -2,7 +2,7 @@ import type { StylesConfig } from 'react-select';
 import type { Approach, Waypoint } from '@/lib/cifp/parser';
 import type { MinimumsValueSummary, SceneData } from '@/lib/types';
 import { DEFAULT_LAYER_STATE, LAYER_IDS } from '@/app/app-client/constants';
-import type { LayerId, LayerState } from '@/app/app-client/types';
+import type { ChartType, LayerId, LayerState, SurfaceMode } from '@/app/app-client/types';
 
 export { DEFAULT_LAYER_STATE };
 
@@ -38,12 +38,27 @@ export function isMobileViewport(): boolean {
   );
 }
 
-export function readSurfaceModeFromSearch(
-  search: string
-): 'terrain' | 'plate' | '3dplate' | 'satellite' | null {
+export type SurfaceModeUrlMigration = {
+  surfaceMode: SurfaceMode;
+  plateOverlay: boolean;
+};
+
+export function readSurfaceModeFromSearch(search: string): SurfaceModeUrlMigration | null {
   const params = new URLSearchParams(search);
   const value = params.get('surface');
-  if (value === 'terrain' || value === 'plate' || value === '3dplate' || value === 'satellite') {
+  if (value === 'plate') return { surfaceMode: 'terrain', plateOverlay: true };
+  if (value === '3dplate') return { surfaceMode: 'satellite', plateOverlay: true };
+  if (value === 'terrain' || value === 'satellite' || value === 'map' || value === '3dmap') {
+    const plateOverlay = params.get('plate') === 'on';
+    return { surfaceMode: value, plateOverlay };
+  }
+  return null;
+}
+
+export function readChartTypeFromSearch(search: string): ChartType | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('chart');
+  if (value === 'vfr' || value === 'low' || value === 'high') {
     return value;
   }
   return null;
