@@ -324,7 +324,12 @@ export const ChartMapSurface = memo(function ChartMapSurface({
     const t0 = performance.now();
 
     // Dispose previous tiles
-    for (const entry of tilesRef.current.values()) entry.texture.dispose();
+    for (const entry of tilesRef.current.values()) {
+      if (entry.texture.image instanceof ImageBitmap) {
+        entry.texture.image.close();
+      }
+      entry.texture.dispose();
+    }
     tilesRef.current.clear();
     setTileVersion(0);
 
@@ -398,6 +403,9 @@ export const ChartMapSurface = memo(function ChartMapSurface({
             // Dispose all preview tiles
             for (const [key, entry] of tilesRef.current) {
               if (entry.layer === 'preview') {
+                if (entry.texture.image instanceof ImageBitmap) {
+                  entry.texture.image.close();
+                }
                 entry.texture.dispose();
                 tilesRef.current.delete(key);
               }
@@ -488,7 +496,12 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       cancelled = true;
       if (previewHandler) worker.removeEventListener('message', previewHandler);
       if (detailHandler) worker.removeEventListener('message', detailHandler);
-      for (const entry of tilesRef.current.values()) entry.texture.dispose();
+      for (const entry of tilesRef.current.values()) {
+        if (entry.texture.image instanceof ImageBitmap) {
+          entry.texture.image.close();
+        }
+        entry.texture.dispose();
+      }
       tilesRef.current.clear();
     };
   }, [refLat, refLon, radiusNm, chartType, airportElevationFeet]);

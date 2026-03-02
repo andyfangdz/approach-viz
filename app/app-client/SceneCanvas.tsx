@@ -394,6 +394,10 @@ export const SceneCanvas = memo(function SceneCanvas({
   const showTerrainSurface = surfaceMode === 'terrain' && !showFlatPlateSurface;
   const showChartMapSurface = surfaceMode === 'map';
   const showTiledSurface = isTiledSurface;
+  const chartOverlay = useMemo(
+    () => (surfaceMode === '3dmap' ? { chartType, radiusNm: terrainRadiusNm } : null),
+    [surfaceMode, chartType, terrainRadiusNm]
+  );
 
   return (
     <Canvas
@@ -473,9 +477,7 @@ export const SceneCanvas = memo(function SceneCanvas({
                 plateOverlay={
                   plateOverlayEnabled && isTiledSurface ? sceneData.approachPlate : null
                 }
-                chartOverlay={
-                  surfaceMode === '3dmap' ? { chartType, radiusNm: terrainRadiusNm } : null
-                }
+                chartOverlay={chartOverlay}
                 onRuntimeError={onSatelliteRuntimeError}
               />
             )}
