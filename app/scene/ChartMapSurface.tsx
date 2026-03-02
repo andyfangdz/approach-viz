@@ -215,6 +215,12 @@ function getChartWorker(): Worker {
 
 const TILE_PLANE = new THREE.PlaneGeometry(1, 1);
 TILE_PLANE.rotateX(-Math.PI / 2);
+// Flip V so textures with flipY=false (ImageBitmap source) map correctly:
+// without the WebGL flip, image row 0 (north) lands at v=0 instead of v=1.
+const tileUv = TILE_PLANE.getAttribute('uv');
+for (let i = 0; i < tileUv.count; i++) {
+  tileUv.setY(i, 1 - tileUv.getY(i));
+}
 
 // --- Tile entry type and helpers ---
 
@@ -227,24 +233,22 @@ interface TileEntry {
   height: number;
 }
 
-function bitmapToTexture(bitmap: ImageBitmap): THREE.CanvasTexture {
-  // Draw to a canvas first — UNPACK_FLIP_Y_WEBGL is unreliable with
-  // ImageBitmap sources, so CanvasTexture (which flips correctly) avoids
-  // the N-S inversion.  Closing the bitmap immediately frees its backing
-  // memory (~256 KB per tile).
-  const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-
-  const texture = new THREE.CanvasTexture(canvas);
+function bitmapToTexture(bitmap: ImageBitmap): THREE.Texture {
+  // Use the ImageBitmap directly — no canvas copy.  flipY is disabled
+  // because UNPACK_FLIP_Y_WEBGL is unreliable with ImageBitmap sources;
+  // the UV flip is handled on TILE_PLANE instead.
+  const texture = new THREE.Texture(bitmap as any);
+  texture.flipY = false;
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.generateMipmaps = false;
   texture.needsUpdate = true;
+  // Free ImageBitmap backing memory after GPU upload
+  texture.onUpdate = () => {
+    bitmap.close();
+    texture.onUpdate = null;
+  };
   return texture;
 }
 
