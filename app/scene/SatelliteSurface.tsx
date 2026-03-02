@@ -13,6 +13,9 @@ import { Ellipsoid, Geodetic, radians } from '@takram/three-geospatial';
 import * as THREE from 'three';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import type { ApproachPlate } from '@/lib/types';
+import type { ChartType } from '@/app/app-client/types';
+import type { ChartTextureData } from '@/app/scene/ChartMapSurface';
+import { buildChartTextureData } from '@/app/scene/ChartMapSurface';
 
 const METERS_TO_NM = 1 / 1852;
 const FEET_TO_METERS = 0.3048;
@@ -36,6 +39,11 @@ dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
 const EMPTY_TEXTURE = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
 EMPTY_TEXTURE.needsUpdate = true;
 
+interface ChartOverlayConfig {
+  chartType: ChartType;
+  radiusNm: number;
+}
+
 interface SatelliteSurfaceProps {
   refLat: number;
   refLon: number;
@@ -44,6 +52,7 @@ interface SatelliteSurfaceProps {
   verticalScale: number;
   flattenBathymetry: boolean;
   plateOverlay: ApproachPlate | null;
+  chartOverlay: ChartOverlayConfig | null;
   onRuntimeError?: (message: string, error?: Error) => void;
 }
 
@@ -69,6 +78,9 @@ interface PatchedMaterialUniforms {
   uPlateMap: { value: THREE.Texture };
   uPlateEnabled: { value: number };
   uPlateHomography: { value: THREE.Matrix3 };
+  uChartMap: { value: THREE.Texture };
+  uChartEnabled: { value: number };
+  uChartHomography: { value: THREE.Matrix3 };
   uSeaLevelY: { value: number };
   uFlattenBathymetry: { value: number };
   uEarthRadiusNm: { value: number };
@@ -398,6 +410,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   verticalScale,
   flattenBathymetry,
   plateOverlay,
+  chartOverlay,
   onRuntimeError
 }: SatelliteSurfaceProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
@@ -413,12 +426,15 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   const [plateHomography, setPlateHomography] = useState<THREE.Matrix3 | null>(null);
   const [plateLoading, setPlateLoading] = useState(false);
   const [plateError, setPlateError] = useState('');
+  const [chartTexture, setChartTexture] = useState<THREE.CanvasTexture | null>(null);
+  const [chartHomography, setChartHomography] = useState<THREE.Matrix3 | null>(null);
   const safeLat = Number.isFinite(refLat) ? refLat : 0;
   const safeLon = Number.isFinite(refLon) ? refLon : 0;
   const safeAirportElevationFeet = Number.isFinite(airportElevationFeet) ? airportElevationFeet : 0;
   const safeGeoidSeparationFeet = Number.isFinite(geoidSeparationFeet) ? geoidSeparationFeet : 0;
 
   const overlayEnabled = Boolean(plateOverlay && plateTexture && plateHomography);
+  const chartOverlayEnabled = Boolean(chartOverlay && chartTexture && chartHomography);
   const flattenBathymetryUniformValue = flattenBathymetry ? 1 : 0;
 
   const ecefToLocal = useMemo(
@@ -497,6 +513,74 @@ export const SatelliteSurface = memo(function SatelliteSurface({
     [plateTexture]
   );
 
+  // --- Chart overlay loading ---
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!chartOverlay) {
+      setChartHomography(null);
+      setChartTexture((previous) => {
+        previous?.dispose();
+        return null;
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    const { chartType, radiusNm } = chartOverlay;
+
+    async function loadChart() {
+      setChartHomography(null);
+      setChartTexture((previous) => {
+        previous?.dispose();
+        return null;
+      });
+
+      try {
+        const data = await buildChartTextureData(
+          safeLat,
+          safeLon,
+          radiusNm,
+          chartType,
+          () => cancelled
+        );
+        if (cancelled || !data) return;
+
+        const { corners } = data;
+        // UV mapping: SW=(0,0), SE=(1,0), NE=(1,1), NW=(0,1)
+        const source = [corners.sw, corners.se, corners.ne, corners.nw];
+        const target = [
+          { u: 0, v: 0 },
+          { u: 1, v: 0 },
+          { u: 1, v: 1 },
+          { u: 0, v: 1 }
+        ];
+        const homography = solveHomography(source, target);
+        if (!homography) {
+          data.texture.dispose();
+          return;
+        }
+
+        setChartTexture(data.texture);
+        setChartHomography(homography);
+      } catch {
+        // Chart tile load failure — leave overlay off
+      }
+    }
+
+    loadChart();
+    return () => {
+      cancelled = true;
+    };
+  }, [chartOverlay?.chartType, chartOverlay?.radiusNm, safeLat, safeLon]);
+
+  useEffect(
+    () => () => {
+      chartTexture?.dispose();
+    },
+    [chartTexture]
+  );
+
   useEffect(
     () => () => {
       for (const material of patchedMaterialsRef.current) {
@@ -517,12 +601,17 @@ export const SatelliteSurface = memo(function SatelliteSurface({
     const textureValue = overlayEnabled && plateTexture ? plateTexture : EMPTY_TEXTURE;
     const enabledValue = overlayEnabled ? 1 : 0;
     const homographyValue = overlayEnabled && plateHomography ? plateHomography : null;
+    const chartTextureValue = chartOverlayEnabled && chartTexture ? chartTexture : EMPTY_TEXTURE;
+    const chartEnabledValue = chartOverlayEnabled ? 1 : 0;
+    const chartHomographyValue = chartOverlayEnabled && chartHomography ? chartHomography : null;
 
     for (const material of patchedMaterialsRef.current) {
       const state = patchedStateRef.current.get(material);
       if (!state) continue;
       state.uniforms.uPlateMap.value = textureValue;
       state.uniforms.uPlateEnabled.value = enabledValue;
+      state.uniforms.uChartMap.value = chartTextureValue;
+      state.uniforms.uChartEnabled.value = chartEnabledValue;
       state.uniforms.uFlattenBathymetry.value = flattenBathymetryUniformValue;
       state.uniforms.uEarthRadiusNm.value = EARTH_RADIUS_NM;
       state.uniforms.uVerticalScale.value = verticalScale;
@@ -531,8 +620,22 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       } else {
         state.uniforms.uPlateHomography.value.identity();
       }
+      if (chartHomographyValue) {
+        state.uniforms.uChartHomography.value.copy(chartHomographyValue);
+      } else {
+        state.uniforms.uChartHomography.value.identity();
+      }
     }
-  }, [overlayEnabled, plateTexture, plateHomography, flattenBathymetryUniformValue, verticalScale]);
+  }, [
+    overlayEnabled,
+    plateTexture,
+    plateHomography,
+    chartOverlayEnabled,
+    chartTexture,
+    chartHomography,
+    flattenBathymetryUniformValue,
+    verticalScale
+  ]);
 
   const patchMaterial = useCallback(
     (material: THREE.Material) => {
@@ -552,6 +655,16 @@ export const SatelliteSurface = memo(function SatelliteSurface({
               ? plateHomography.clone()
               : new THREE.Matrix3().identity()
         },
+        uChartMap: {
+          value: chartOverlayEnabled && chartTexture ? chartTexture : EMPTY_TEXTURE
+        },
+        uChartEnabled: { value: chartOverlayEnabled ? 1 : 0 },
+        uChartHomography: {
+          value:
+            chartOverlayEnabled && chartHomography
+              ? chartHomography.clone()
+              : new THREE.Matrix3().identity()
+        },
         uSeaLevelY: { value: SEA_LEVEL_Y },
         uFlattenBathymetry: { value: flattenBathymetryUniformValue },
         uEarthRadiusNm: { value: EARTH_RADIUS_NM },
@@ -562,6 +675,9 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         shader.uniforms.uPlateMap = uniforms.uPlateMap;
         shader.uniforms.uPlateEnabled = uniforms.uPlateEnabled;
         shader.uniforms.uPlateHomography = uniforms.uPlateHomography;
+        shader.uniforms.uChartMap = uniforms.uChartMap;
+        shader.uniforms.uChartEnabled = uniforms.uChartEnabled;
+        shader.uniforms.uChartHomography = uniforms.uChartHomography;
         shader.uniforms.uSeaLevelY = uniforms.uSeaLevelY;
         shader.uniforms.uFlattenBathymetry = uniforms.uFlattenBathymetry;
         shader.uniforms.uEarthRadiusNm = uniforms.uEarthRadiusNm;
@@ -614,11 +730,24 @@ vec4 worldPosition = seaLevelClampedWorldPosition;
 uniform sampler2D uPlateMap;
 uniform float uPlateEnabled;
 uniform mat3 uPlateHomography;
+uniform sampler2D uChartMap;
+uniform float uChartEnabled;
+uniform mat3 uChartHomography;
 varying vec3 vPlateWorldPos;`
         );
         shader.fragmentShader = shader.fragmentShader.replace(
           '#include <map_fragment>',
           `#include <map_fragment>
+if (uChartEnabled > 0.5) {
+  vec3 chartUvH = uChartHomography * vec3(vPlateWorldPos.x, vPlateWorldPos.z, 1.0);
+  if (abs(chartUvH.z) > 1e-5) {
+    vec2 chartUv = chartUvH.xy / chartUvH.z;
+    if (chartUv.x >= 0.0 && chartUv.x <= 1.0 && chartUv.y >= 0.0 && chartUv.y <= 1.0) {
+      vec4 chartTexel = texture2D(uChartMap, chartUv);
+      diffuseColor.rgb = mix(diffuseColor.rgb, chartTexel.rgb, 0.88);
+    }
+  }
+}
 if (uPlateEnabled > 0.5) {
   vec3 plateUvH = uPlateHomography * vec3(vPlateWorldPos.x, vPlateWorldPos.z, 1.0);
   if (abs(plateUvH.z) > 1e-5) {
@@ -638,7 +767,7 @@ if (uPlateEnabled > 0.5) {
       };
       patchable.customProgramCacheKey = () => {
         const baseKey = originalCustomProgramCacheKey ? originalCustomProgramCacheKey() : '';
-        return `${baseKey}|faa-plate-overlay-v4`;
+        return `${baseKey}|faa-overlay-v5`;
       };
 
       patchedMaterialsRef.current.add(material);
@@ -656,7 +785,16 @@ if (uPlateEnabled > 0.5) {
       material.addEventListener('dispose', handleDispose);
       material.needsUpdate = true;
     },
-    [overlayEnabled, plateHomography, plateTexture, flattenBathymetryUniformValue, verticalScale]
+    [
+      overlayEnabled,
+      plateHomography,
+      plateTexture,
+      chartOverlayEnabled,
+      chartHomography,
+      chartTexture,
+      flattenBathymetryUniformValue,
+      verticalScale
+    ]
   );
 
   const patchSceneMaterials = useCallback(

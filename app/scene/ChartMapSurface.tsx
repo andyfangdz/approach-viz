@@ -123,6 +123,21 @@ async function loadChartTile(
   }
 }
 
+export interface ChartTextureCorner {
+  x: number;
+  z: number;
+}
+
+export interface ChartTextureData {
+  texture: THREE.CanvasTexture;
+  corners: {
+    sw: ChartTextureCorner;
+    se: ChartTextureCorner;
+    ne: ChartTextureCorner;
+    nw: ChartTextureCorner;
+  };
+}
+
 interface ChartSurfaceState {
   texture: THREE.CanvasTexture;
   geometry: THREE.BufferGeometry;
@@ -243,6 +258,84 @@ async function buildChartSurface(
   texture.needsUpdate = true;
 
   return { texture, geometry };
+}
+
+/** Build chart tile texture + world-space corners (for 3D tile shader overlay). */
+export async function buildChartTextureData(
+  refLat: number,
+  refLon: number,
+  radiusNm: number,
+  chartType: ChartType,
+  cancelled: () => boolean
+): Promise<ChartTextureData | null> {
+  const zoom = computeZoom(chartType, radiusNm, refLat);
+  const baseUrl = CHART_TILE_URLS[chartType];
+
+  const latRadius = radiusNm / 60;
+  const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
+  const minLat = refLat - latRadius;
+  const maxLat = refLat + latRadius;
+  const minLon = refLon - lonRadius;
+  const maxLon = refLon + lonRadius;
+
+  const minTileX = lonToTileX(minLon, zoom);
+  const maxTileX = lonToTileX(maxLon, zoom);
+  const minTileY = latToTileY(maxLat, zoom);
+  const maxTileY = latToTileY(minLat, zoom);
+  const tilesWide = maxTileX - minTileX + 1;
+  const tilesHigh = maxTileY - minTileY + 1;
+
+  const tilePromises: Array<Promise<ImageBitmap | null>> = [];
+  for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
+    for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
+      tilePromises.push(loadChartTile(baseUrl, zoom, tileX, tileY));
+    }
+  }
+
+  const tiles = await Promise.all(tilePromises);
+  if (cancelled()) {
+    tiles.forEach((tile) => tile?.close());
+    return null;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = tilesWide * TILE_SIZE;
+  canvas.height = tilesHigh * TILE_SIZE;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    tiles.forEach((tile) => tile?.close());
+    return null;
+  }
+
+  ctx.fillStyle = DARK_FILL;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let row = 0; row < tilesHigh; row += 1) {
+    for (let col = 0; col < tilesWide; col += 1) {
+      const tile = tiles[row * tilesWide + col];
+      if (!tile) continue;
+      ctx.drawImage(tile, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+  }
+  tiles.forEach((tile) => tile?.close());
+
+  const westLon = tileXToLon(minTileX, zoom);
+  const eastLon = tileXToLon(maxTileX + 1, zoom);
+  const northLat = tileYToLat(minTileY, zoom);
+  const southLat = tileYToLat(maxTileY + 1, zoom);
+
+  const sw = latLonToLocal(southLat, westLon, refLat, refLon);
+  const se = latLonToLocal(southLat, eastLon, refLat, refLon);
+  const ne = latLonToLocal(northLat, eastLon, refLat, refLon);
+  const nw = latLonToLocal(northLat, westLon, refLat, refLon);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+
+  return { texture, corners: { sw, se, ne, nw } };
 }
 
 export const ChartMapSurface = memo(function ChartMapSurface({

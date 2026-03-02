@@ -471,6 +471,9 @@ export const SceneCanvas = memo(function SceneCanvas({
                 plateOverlay={
                   plateOverlayEnabled && isTiledSurface ? sceneData.approachPlate : null
                 }
+                chartOverlay={
+                  surfaceMode === '3dmap' ? { chartType, radiusNm: terrainRadiusNm } : null
+                }
                 onRuntimeError={onSatelliteRuntimeError}
               />
             )}
