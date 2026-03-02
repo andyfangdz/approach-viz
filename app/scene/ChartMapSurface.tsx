@@ -87,7 +87,9 @@ function latLonToLocal(
 // --- Zoom level selection ---
 
 // Maximum number of tile fetches before stepping down a zoom level.
-const MAX_TILE_COUNT = 200;
+// At max zoom (12) with 50 NM radius at mid-latitudes this is ~520 tiles.
+// Tiles are small PNGs (~10-30 KB) and service-worker cached after first load.
+const MAX_TILE_COUNT = 600;
 
 function computeZoom(chartType: ChartType, radiusNm: number, refLat: number): number {
   const range = CHART_ZOOM_RANGES[chartType];
