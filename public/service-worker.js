@@ -34,10 +34,7 @@ function isElevationTilesRequest(url) {
 }
 
 function isChartTileRequest(url) {
-  return (
-    url.hostname === 'tiles.arcgis.com' &&
-    url.pathname.includes('/MapServer/tile/')
-  );
+  return url.hostname === 'tiles.arcgis.com' && url.pathname.includes('/MapServer/tile/');
 }
 
 async function trimCache(cacheName, maxEntries) {

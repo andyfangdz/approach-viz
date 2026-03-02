@@ -8,12 +8,12 @@ Add two new surface modes (`map`, `3dmap`) for FAA aeronautical chart tiles, and
 
 Replace the current four modes (`terrain | plate | 3dplate | satellite`) with:
 
-| Mode | Description |
-|------|-------------|
-| `terrain` | Terrarium wireframe (unchanged) |
+| Mode        | Description                                |
+| ----------- | ------------------------------------------ |
+| `terrain`   | Terrarium wireframe (unchanged)            |
 | `satellite` | Google Photorealistic 3D Tiles (unchanged) |
-| `map` | Flat textured plane with FAA chart tiles |
-| `3dmap` | FAA chart tiles draped on Google 3D Tiles |
+| `map`       | Flat textured plane with FAA chart tiles   |
+| `3dmap`     | FAA chart tiles draped on Google 3D Tiles  |
 
 The `plate` and `3dplate` modes are removed as surface modes.
 

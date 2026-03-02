@@ -389,8 +389,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   }, [airport, sceneData.elevationAirports]);
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const isTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dmap';
-  const showFlatPlateSurface =
-    plateOverlayEnabled && hasApproachPlate && !isTiledSurface;
+  const showFlatPlateSurface = plateOverlayEnabled && hasApproachPlate && !isTiledSurface;
   const showTerrainSurface = surfaceMode === 'terrain' && !showFlatPlateSurface;
   const showChartMapSurface = surfaceMode === 'map';
   const showTiledSurface = isTiledSurface;
@@ -407,7 +406,6 @@ export const SceneCanvas = memo(function SceneCanvas({
       }}
     >
       <color attach="background" args={['#0a0a14']} />
-
 
       <Suspense fallback={<LoadingFallback />}>
         <AdaptiveDprController retinaRendering={retinaRendering} />
@@ -470,7 +468,9 @@ export const SceneCanvas = memo(function SceneCanvas({
                 geoidSeparationFeet={sceneData.geoidSeparationFeet}
                 verticalScale={verticalScale}
                 flattenBathymetry={flattenBathymetry}
-                plateOverlay={plateOverlayEnabled && isTiledSurface ? sceneData.approachPlate : null}
+                plateOverlay={
+                  plateOverlayEnabled && isTiledSurface ? sceneData.approachPlate : null
+                }
                 onRuntimeError={onSatelliteRuntimeError}
               />
             )}

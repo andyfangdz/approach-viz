@@ -43,9 +43,7 @@ export type SurfaceModeUrlMigration = {
   plateOverlay: boolean;
 };
 
-export function readSurfaceModeFromSearch(
-  search: string
-): SurfaceModeUrlMigration | null {
+export function readSurfaceModeFromSearch(search: string): SurfaceModeUrlMigration | null {
   const params = new URLSearchParams(search);
   const value = params.get('surface');
   if (value === 'plate') return { surfaceMode: 'terrain', plateOverlay: true };

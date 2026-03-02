@@ -13,6 +13,7 @@
 ## Task 1: Update SurfaceMode Type and Add ChartType
 
 **Files:**
+
 - Modify: `app/app-client/types.ts:6` (SurfaceMode type)
 - Modify: `app/app-client/types.ts:111-127` (HeaderControlsProps)
 - Modify: `app/app-client/types.ts:129-162` (SceneCanvasProps)
@@ -21,10 +22,13 @@
 **Step 1: Update the SurfaceMode type**
 
 In `app/app-client/types.ts`, change line 6 from:
+
 ```typescript
 export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
 ```
+
 to:
+
 ```typescript
 export type SurfaceMode = 'terrain' | 'satellite' | 'map' | '3dmap';
 ```
@@ -32,6 +36,7 @@ export type SurfaceMode = 'terrain' | 'satellite' | 'map' | '3dmap';
 **Step 2: Add ChartType type**
 
 Below the updated SurfaceMode line, add:
+
 ```typescript
 export type ChartType = 'vfr' | 'low' | 'high';
 ```
@@ -39,6 +44,7 @@ export type ChartType = 'vfr' | 'low' | 'high';
 **Step 3: Update HeaderControlsProps**
 
 Add new props to `HeaderControlsProps` (after line 124):
+
 ```typescript
 plateOverlayEnabled: boolean;
 onPlateOverlayToggle: (enabled: boolean) => void;
@@ -50,6 +56,7 @@ onChartTypeSelected: (chart: ChartType) => void;
 **Step 4: Update SceneCanvasProps**
 
 Add to `SceneCanvasProps` (after `surfaceMode` at line 149):
+
 ```typescript
 plateOverlayEnabled: boolean;
 chartType: ChartType;
@@ -58,10 +65,13 @@ chartType: ChartType;
 **Step 5: Update InfoPanelProps**
 
 Change `surfaceLegendClass` at line 167 from:
+
 ```typescript
 surfaceLegendClass: 'terrain' | 'plate' | 'satellite';
 ```
+
 to:
+
 ```typescript
 surfaceLegendClass: 'terrain' | 'plate' | 'satellite' | 'map';
 ```
@@ -85,20 +95,20 @@ git commit -m "refactor: update SurfaceMode type, add ChartType and plate overla
 ## Task 2: Update URL State Parsing with Migration
 
 **Files:**
+
 - Modify: `app/app-client-utils.ts:41-50` (readSurfaceModeFromSearch)
 
 **Step 1: Rewrite readSurfaceModeFromSearch with migration**
 
 Replace the function at lines 41-50 with:
+
 ```typescript
 export type SurfaceModeUrlMigration = {
   surfaceMode: SurfaceMode;
   plateOverlay: boolean;
 };
 
-export function readSurfaceModeFromSearch(
-  search: string
-): SurfaceModeUrlMigration | null {
+export function readSurfaceModeFromSearch(search: string): SurfaceModeUrlMigration | null {
   const params = new URLSearchParams(search);
   const value = params.get('surface');
   // Migrate legacy plate modes
@@ -115,6 +125,7 @@ export function readSurfaceModeFromSearch(
 **Step 2: Add readChartTypeFromSearch**
 
 Below the function above, add:
+
 ```typescript
 export function readChartTypeFromSearch(search: string): ChartType | null {
   const params = new URLSearchParams(search);
@@ -140,11 +151,13 @@ git commit -m "feat: URL state parsing with plate/3dplate migration and chart ty
 ## Task 3: Update AppClient State Management
 
 **Files:**
+
 - Modify: `app/AppClient.tsx`
 
 **Step 1: Add new state variables**
 
 After `surfaceMode` state at line 297, add:
+
 ```typescript
 const [plateOverlayEnabled, setPlateOverlayEnabled] = useState(false);
 const [chartType, setChartType] = useState<ChartType>('vfr');
@@ -155,6 +168,7 @@ Import `ChartType` from types.
 **Step 2: Update URL initialization**
 
 At lines 385-388, the current code reads:
+
 ```typescript
 const modeFromQuery = readSurfaceModeFromSearch(window.location.search);
 if (modeFromQuery) {
@@ -163,6 +177,7 @@ if (modeFromQuery) {
 ```
 
 Replace with:
+
 ```typescript
 const modeFromQuery = readSurfaceModeFromSearch(window.location.search);
 if (modeFromQuery) {
@@ -180,6 +195,7 @@ Import `readChartTypeFromSearch` at top.
 **Step 3: Update URL sync effect**
 
 At line 642, `params.set('surface', surfaceMode)` — after that line, add:
+
 ```typescript
 if (plateOverlayEnabled) {
   params.set('plate', 'on');
@@ -198,6 +214,7 @@ Add `plateOverlayEnabled` and `chartType` to the effect's dependency array (at l
 **Step 4: Update legend logic**
 
 Replace the `surfaceLegendClass` and `surfaceLegendLabel` computation (lines 816-839) with:
+
 ```typescript
 const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' | 'map' =
   plateOverlayEnabled && hasApproachPlate
@@ -212,7 +229,7 @@ const SURFACE_LEGEND_LABELS: Record<SurfaceMode, string> = {
   terrain: 'Terrain Wireframe',
   satellite: 'Satellite Surface',
   map: 'FAA Chart Map',
-  '3dmap': '3D Chart Map',
+  '3dmap': '3D Chart Map'
 };
 const surfaceLegendLabel =
   plateOverlayEnabled && hasApproachPlate
@@ -227,6 +244,7 @@ No change needed — the handler at lines 841-846 already clears errors and sets
 **Step 6: Add chart type and plate overlay handlers**
 
 After `handleSurfaceModeSelected`:
+
 ```typescript
 const handleChartTypeSelected = (chart: ChartType) => {
   setChartType(chart);
@@ -240,20 +258,22 @@ const handlePlateOverlayToggle = (enabled: boolean) => {
 **Step 7: Update prop passing to HeaderControls**
 
 At lines 928-929, add the new props:
+
 ```typescript
-plateOverlayEnabled={plateOverlayEnabled}
-onPlateOverlayToggle={handlePlateOverlayToggle}
-hasApproachPlate={hasApproachPlate}
-chartType={chartType}
-onChartTypeSelected={handleChartTypeSelected}
+plateOverlayEnabled = { plateOverlayEnabled };
+onPlateOverlayToggle = { handlePlateOverlayToggle };
+hasApproachPlate = { hasApproachPlate };
+chartType = { chartType };
+onChartTypeSelected = { handleChartTypeSelected };
 ```
 
 **Step 8: Update prop passing to SceneCanvas**
 
 After `surfaceMode` at line 960, add:
+
 ```typescript
-plateOverlayEnabled={plateOverlayEnabled}
-chartType={chartType}
+plateOverlayEnabled = { plateOverlayEnabled };
+chartType = { chartType };
 ```
 
 **Step 9: Update prop passing to InfoPanel**
@@ -272,6 +292,7 @@ git commit -m "feat: add plate overlay + chart type state management with URL sy
 ## Task 4: Update HeaderControls UI
 
 **Files:**
+
 - Modify: `app/app-client/HeaderControls.tsx:186-218`
 
 **Step 1: Replace surface toggle buttons**
@@ -311,49 +332,53 @@ Replace the surface toggle section (lines 186-218) with four new buttons and a p
       3D Map
     </button>
   </div>
-</div>
+</div>;
 
-{(surfaceMode === 'map' || surfaceMode === '3dmap') && (
-  <div className="control-group">
-    <label>Chart</label>
-    <div className="surface-toggle" role="group" aria-label="Chart type">
-      <button
-        type="button"
-        className={`surface-toggle-button ${chartType === 'vfr' ? 'active' : ''}`}
-        onClick={() => onChartTypeSelected('vfr')}
-      >
-        VFR
-      </button>
-      <button
-        type="button"
-        className={`surface-toggle-button ${chartType === 'low' ? 'active' : ''}`}
-        onClick={() => onChartTypeSelected('low')}
-      >
-        IFR Low
-      </button>
-      <button
-        type="button"
-        className={`surface-toggle-button ${chartType === 'high' ? 'active' : ''}`}
-        onClick={() => onChartTypeSelected('high')}
-      >
-        IFR High
-      </button>
+{
+  (surfaceMode === 'map' || surfaceMode === '3dmap') && (
+    <div className="control-group">
+      <label>Chart</label>
+      <div className="surface-toggle" role="group" aria-label="Chart type">
+        <button
+          type="button"
+          className={`surface-toggle-button ${chartType === 'vfr' ? 'active' : ''}`}
+          onClick={() => onChartTypeSelected('vfr')}
+        >
+          VFR
+        </button>
+        <button
+          type="button"
+          className={`surface-toggle-button ${chartType === 'low' ? 'active' : ''}`}
+          onClick={() => onChartTypeSelected('low')}
+        >
+          IFR Low
+        </button>
+        <button
+          type="button"
+          className={`surface-toggle-button ${chartType === 'high' ? 'active' : ''}`}
+          onClick={() => onChartTypeSelected('high')}
+        >
+          IFR High
+        </button>
+      </div>
     </div>
-  </div>
-)}
+  );
+}
 
-{hasApproachPlate && (
-  <div className="control-group">
-    <label className="plate-overlay-label">
-      <input
-        type="checkbox"
-        checked={plateOverlayEnabled}
-        onChange={(e) => onPlateOverlayToggle(e.target.checked)}
-      />
-      FAA Plate Overlay
-    </label>
-  </div>
-)}
+{
+  hasApproachPlate && (
+    <div className="control-group">
+      <label className="plate-overlay-label">
+        <input
+          type="checkbox"
+          checked={plateOverlayEnabled}
+          onChange={(e) => onPlateOverlayToggle(e.target.checked)}
+        />
+        FAA Plate Overlay
+      </label>
+    </div>
+  );
+}
 ```
 
 Destructure the new props from the component's props object.
@@ -370,22 +395,29 @@ git commit -m "feat: update header controls with new surface modes, chart picker
 ## Task 5: Update InfoPanel
 
 **Files:**
+
 - Modify: `app/app-client/InfoPanel.tsx:108-110`
 
 **Step 1: Update the plate warning note**
 
 Replace the plate warning conditional at lines 108-110:
+
 ```tsx
-{(surfaceMode === 'plate' || surfaceMode === '3dplate') && !hasApproachPlate && (
-  <div className="legend-note">No FAA plate matched this approach.</div>
-)}
+{
+  (surfaceMode === 'plate' || surfaceMode === '3dplate') && !hasApproachPlate && (
+    <div className="legend-note">No FAA plate matched this approach.</div>
+  );
+}
 ```
 
 with:
+
 ```tsx
-{plateOverlayEnabled && !hasApproachPlate && (
-  <div className="legend-note">No FAA plate matched this approach.</div>
-)}
+{
+  plateOverlayEnabled && !hasApproachPlate && (
+    <div className="legend-note">No FAA plate matched this approach.</div>
+  );
+}
 ```
 
 Destructure `plateOverlayEnabled` from props.
@@ -406,6 +438,7 @@ git commit -m "feat: update InfoPanel for plate overlay toggle"
 ## Task 6: Create ChartMapSurface Component
 
 **Files:**
+
 - Create: `app/scene/ChartMapSurface.tsx`
 
 **Step 1: Create the flat chart tile surface component**
@@ -655,11 +688,13 @@ git commit -m "feat: add ChartMapSurface component for flat FAA chart tile rende
 ## Task 7: Update SceneCanvas Rendering Logic
 
 **Files:**
+
 - Modify: `app/app-client/SceneCanvas.tsx:387-462`
 
 **Step 1: Import ChartMapSurface**
 
 Add at the top of the file:
+
 ```typescript
 import ChartMapSurface from '@/app/scene/ChartMapSurface';
 ```
@@ -671,6 +706,7 @@ Destructure `plateOverlayEnabled` and `chartType` from props.
 **Step 3: Update computed surface booleans**
 
 Replace lines 388-391:
+
 ```typescript
 const showFlatPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
 const showTerrainSurface =
@@ -679,33 +715,39 @@ const showTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dplate
 ```
 
 with:
+
 ```typescript
 const showTerrainSurface = surfaceMode === 'terrain';
 const showChartMapSurface = surfaceMode === 'map';
 const showTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dmap';
-const showFlatPlateOverlay = plateOverlayEnabled && hasApproachPlate && (surfaceMode === 'terrain' || surfaceMode === 'map');
+const showFlatPlateOverlay =
+  plateOverlayEnabled && hasApproachPlate && (surfaceMode === 'terrain' || surfaceMode === 'map');
 const showTiledPlateOverlay = plateOverlayEnabled && hasApproachPlate && showTiledSurface;
 ```
 
 **Step 4: Add ChartMapSurface rendering**
 
 After the terrain section (line 423), add:
+
 ```tsx
-{showChartMapSurface && (
-  <ChartMapSurface
-    refLat={airport.lat}
-    refLon={airport.lon}
-    radiusNm={terrainRadiusNm}
-    verticalScale={verticalScale}
-    chartType={chartType}
-    airportElevationFeet={airport.elevation}
-  />
-)}
+{
+  showChartMapSurface && (
+    <ChartMapSurface
+      refLat={airport.lat}
+      refLon={airport.lon}
+      radiusNm={terrainRadiusNm}
+      verticalScale={verticalScale}
+      chartType={chartType}
+      airportElevationFeet={airport.elevation}
+    />
+  );
+}
 ```
 
 **Step 5: Update flat plate rendering condition**
 
 Replace the existing flat plate block (lines 425-433):
+
 ```tsx
 {showFlatPlateSurface && sceneData.approachPlate && (
   <ApproachPlateSurface ... />
@@ -713,25 +755,31 @@ Replace the existing flat plate block (lines 425-433):
 ```
 
 with:
+
 ```tsx
-{showFlatPlateOverlay && sceneData.approachPlate && (
-  <ApproachPlateSurface
-    plate={sceneData.approachPlate}
-    refLat={airport.lat}
-    refLon={airport.lon}
-    airportElevationFeet={airport.elevation}
-    verticalScale={verticalScale}
-  />
-)}
+{
+  showFlatPlateOverlay && sceneData.approachPlate && (
+    <ApproachPlateSurface
+      plate={sceneData.approachPlate}
+      refLat={airport.lat}
+      refLon={airport.lon}
+      airportElevationFeet={airport.elevation}
+      verticalScale={verticalScale}
+    />
+  );
+}
 ```
 
 **Step 6: Update tiled surface plate overlay**
 
 In the SatelliteSurface section, change the `plateOverlay` prop at line 457 from:
+
 ```typescript
 plateOverlay={surfaceMode === '3dplate' ? sceneData.approachPlate : null}
 ```
+
 to:
+
 ```typescript
 plateOverlay={showTiledPlateOverlay ? sceneData.approachPlate : null}
 ```
@@ -760,11 +808,13 @@ git commit -m "feat: update SceneCanvas with chart map surface and plate overlay
 ## Task 8: Add CSS for Map Legend and Plate Overlay Toggle
 
 **Files:**
+
 - Modify: `app/App.css`
 
 **Step 1: Add map legend color**
 
 After the existing `.legend-color.satellite` rule (around line 797), add:
+
 ```css
 .legend-color.map {
   background-color: #e8a838;
@@ -774,6 +824,7 @@ After the existing `.legend-color.satellite` rule (around line 797), add:
 **Step 2: Add plate overlay label style**
 
 After the surface toggle styles (around line 158), add:
+
 ```css
 .plate-overlay-label {
   display: flex;
@@ -785,7 +836,7 @@ After the surface toggle styles (around line 158), add:
   cursor: pointer;
 }
 
-.plate-overlay-label input[type="checkbox"] {
+.plate-overlay-label input[type='checkbox'] {
   accent-color: rgba(0, 255, 204, 0.7);
 }
 ```
@@ -802,29 +853,30 @@ git commit -m "feat: add CSS for map legend color and plate overlay toggle"
 ## Task 9: Update Service Worker for Chart Tile Caching
 
 **Files:**
+
 - Modify: `public/service-worker.js`
 
 **Step 1: Add chart tile cache and detection**
 
 After the constants at the top (line 8), add:
+
 ```javascript
 const CHART_TILES_CACHE = `approach-viz-chart-tiles-${SW_VERSION}`;
 const CHART_TILES_MAX_ENTRIES = 1200;
 ```
 
 After `isElevationTilesRequest` (line 32), add:
+
 ```javascript
 function isChartTileRequest(url) {
-  return (
-    url.hostname === 'tiles.arcgis.com' &&
-    url.pathname.includes('/MapServer/tile/')
-  );
+  return url.hostname === 'tiles.arcgis.com' && url.pathname.includes('/MapServer/tile/');
 }
 ```
 
 **Step 2: Add fetch handler for chart tiles**
 
 In the fetch event listener (after the elevation tiles handler at line 182), add:
+
 ```javascript
 if (isChartTileRequest(url)) {
   event.respondWith(
@@ -845,6 +897,7 @@ git commit -m "feat: add service worker caching for FAA chart tiles"
 ## Task 10: Update Documentation
 
 **Files:**
+
 - Modify: `docs/rendering-surface-modes.md`
 - Modify: `AGENTS.md`
 
@@ -855,6 +908,7 @@ Update the supported modes section to reflect the new four modes plus plate over
 **Step 2: Update AGENTS.md**
 
 In the "Current Behavior" section, update:
+
 - Surface modes from `terrain | plate | 3dplate | satellite` to `terrain | satellite | map | 3dmap`
 - Add: plate overlay is an independent toggle, not a surface mode
 - Add: chart type picker (`vfr | low | high`) for map/3dmap modes

@@ -191,10 +191,34 @@ export function HeaderControls({
           <div className="control-group">
             <label>Surface</label>
             <div className="surface-toggle" role="group" aria-label="Surface mode">
-              <button type="button" className={`surface-toggle-button ${surfaceMode === 'terrain' ? 'active' : ''}`} onClick={() => onSurfaceModeSelected('terrain')}>Terrain</button>
-              <button type="button" className={`surface-toggle-button ${surfaceMode === 'satellite' ? 'active' : ''}`} onClick={() => onSurfaceModeSelected('satellite')}>Satellite</button>
-              <button type="button" className={`surface-toggle-button ${surfaceMode === 'map' ? 'active' : ''}`} onClick={() => onSurfaceModeSelected('map')}>Map</button>
-              <button type="button" className={`surface-toggle-button ${surfaceMode === '3dmap' ? 'active' : ''}`} onClick={() => onSurfaceModeSelected('3dmap')}>3D Map</button>
+              <button
+                type="button"
+                className={`surface-toggle-button ${surfaceMode === 'terrain' ? 'active' : ''}`}
+                onClick={() => onSurfaceModeSelected('terrain')}
+              >
+                Terrain
+              </button>
+              <button
+                type="button"
+                className={`surface-toggle-button ${surfaceMode === 'satellite' ? 'active' : ''}`}
+                onClick={() => onSurfaceModeSelected('satellite')}
+              >
+                Satellite
+              </button>
+              <button
+                type="button"
+                className={`surface-toggle-button ${surfaceMode === 'map' ? 'active' : ''}`}
+                onClick={() => onSurfaceModeSelected('map')}
+              >
+                Map
+              </button>
+              <button
+                type="button"
+                className={`surface-toggle-button ${surfaceMode === '3dmap' ? 'active' : ''}`}
+                onClick={() => onSurfaceModeSelected('3dmap')}
+              >
+                3D Map
+              </button>
             </div>
           </div>
 
@@ -202,9 +226,27 @@ export function HeaderControls({
             <div className="control-group">
               <label>Chart</label>
               <div className="surface-toggle" role="group" aria-label="Chart type">
-                <button type="button" className={`surface-toggle-button ${chartType === 'vfr' ? 'active' : ''}`} onClick={() => onChartTypeSelected('vfr')}>VFR</button>
-                <button type="button" className={`surface-toggle-button ${chartType === 'low' ? 'active' : ''}`} onClick={() => onChartTypeSelected('low')}>IFR Low</button>
-                <button type="button" className={`surface-toggle-button ${chartType === 'high' ? 'active' : ''}`} onClick={() => onChartTypeSelected('high')}>IFR High</button>
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${chartType === 'vfr' ? 'active' : ''}`}
+                  onClick={() => onChartTypeSelected('vfr')}
+                >
+                  VFR
+                </button>
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${chartType === 'low' ? 'active' : ''}`}
+                  onClick={() => onChartTypeSelected('low')}
+                >
+                  IFR Low
+                </button>
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${chartType === 'high' ? 'active' : ''}`}
+                  onClick={() => onChartTypeSelected('high')}
+                >
+                  IFR High
+                </button>
               </div>
             </div>
           )}
@@ -212,7 +254,11 @@ export function HeaderControls({
           {hasApproachPlate && (
             <div className="control-group">
               <label className="plate-overlay-label">
-                <input type="checkbox" checked={plateOverlayEnabled} onChange={(e) => onPlateOverlayToggle(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={plateOverlayEnabled}
+                  onChange={(e) => onPlateOverlayToggle(e.target.checked)}
+                />
                 FAA Plate Overlay
               </label>
             </div>

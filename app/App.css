@@ -167,7 +167,7 @@ header {
   cursor: pointer;
 }
 
-.plate-overlay-label input[type="checkbox"] {
+.plate-overlay-label input[type='checkbox'] {
   accent-color: rgba(0, 255, 204, 0.7);
 }
 

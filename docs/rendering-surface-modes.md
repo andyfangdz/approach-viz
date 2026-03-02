@@ -10,6 +10,7 @@
 ## FAA Plate Overlay
 
 FAA approach plates are an independent overlay toggle (not a surface mode) available on all four surface modes. When enabled:
+
 - On flat modes (Terrain, Map): plate mesh rendered above the base surface.
 - On tiled modes (Satellite, 3D Map): plate texture projected onto Google 3D Tiles via shader patching.
 - Only visible when an approach with plate metadata is selected.

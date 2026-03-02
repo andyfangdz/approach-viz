@@ -847,7 +847,7 @@ export function AppClient({
     terrain: 'Terrain Wireframe',
     satellite: 'Satellite Surface',
     map: 'FAA Chart Map',
-    '3dmap': '3D Chart Map',
+    '3dmap': '3D Chart Map'
   };
   const surfaceLegendLabel =
     plateOverlayEnabled && hasApproachPlate
