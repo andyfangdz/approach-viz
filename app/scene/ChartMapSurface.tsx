@@ -86,11 +86,20 @@ function latLonToLocal(
 
 // --- Zoom level selection ---
 
-function computeZoom(chartType: ChartType, radiusNm: number): number {
+// Maximum number of tile fetches before stepping down a zoom level.
+const MAX_TILE_COUNT = 200;
+
+function computeZoom(chartType: ChartType, radiusNm: number, refLat: number): number {
   const range = CHART_ZOOM_RANGES[chartType];
-  // Heuristic: 50 NM radius maps to ~zoom 10 for VFR
-  const targetZoom = Math.round(14 - Math.log2(Math.max(1, radiusNm)));
-  return Math.max(range.min, Math.min(range.max, targetZoom));
+  // Start from the sharpest zoom and step down if the tile count is too high.
+  for (let z = range.max; z > range.min; z--) {
+    const degPerTile = 360 / 2 ** z;
+    const tilesWide =
+      Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
+    const tilesHigh = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
+    if (tilesWide * tilesHigh <= MAX_TILE_COUNT) return z;
+  }
+  return range.min;
 }
 
 // --- Tile loading ---
@@ -125,7 +134,7 @@ async function buildChartSurface(
   airportElevationFeet: number,
   cancelled: () => boolean
 ): Promise<ChartSurfaceState | null> {
-  const zoom = computeZoom(chartType, radiusNm);
+  const zoom = computeZoom(chartType, radiusNm, refLat);
   const baseUrl = CHART_TILE_URLS[chartType];
 
   // Compute geographic bounds from radius
