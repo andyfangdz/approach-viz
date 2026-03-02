@@ -28,12 +28,15 @@ const WGS84_FLATTENING = 1 / 298.257223563;
 const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 
 // Maximum number of tile fetches before stepping down a zoom level.
-const MAX_TILE_COUNT = 600;
+// 800 keeps VFR/IFR Low z12 through ~60nm radius (744 tiles at 60nm).
+// Beyond 60nm, MAX_TEXTURE_DIM (8192) becomes the binding constraint.
+const MAX_TILE_COUNT = 800;
 
-// Lower budget for the 3dmap overlay — the chart is blended on top of Google
-// 3D Tiles so lower resolution is acceptable, and we must not starve the
-// Google tile connection pool.
-const MAX_TILE_COUNT_OVERLAY = 200;
+// Budget for the 3dmap overlay — chart tiles use a different hostname
+// (tiles.arcgis.com) from Google 3D Tiles so no connection pool contention.
+// 800 matches the flat map budget since the overlay is the only chart texture
+// in 3dmap mode (no progressive preview pass).
+const MAX_TILE_COUNT_OVERLAY = 800;
 
 // Maximum texture dimension (width or height) in pixels.  Zoom steps down
 // when the composite canvas would exceed this.  8192 is universally supported
