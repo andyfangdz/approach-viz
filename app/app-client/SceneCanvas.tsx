@@ -11,6 +11,7 @@ import { COLORS } from '@/app/scene/approach-path/constants';
 import { AirspaceVolumes } from '@/app/scene/AirspaceVolumes';
 import { ApproachPath } from '@/app/scene/ApproachPath';
 import { ApproachPlateSurface } from '@/app/scene/ApproachPlateSurface';
+import { ChartMapSurface } from '@/app/scene/ChartMapSurface';
 import { SatelliteSurface } from '@/app/scene/SatelliteSurface';
 import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
 import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
@@ -390,8 +391,8 @@ export const SceneCanvas = memo(function SceneCanvas({
   const isTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dmap';
   const showFlatPlateSurface =
     plateOverlayEnabled && hasApproachPlate && !isTiledSurface;
-  const showTerrainSurface =
-    (surfaceMode === 'terrain' || surfaceMode === 'map') && !showFlatPlateSurface;
+  const showTerrainSurface = surfaceMode === 'terrain' && !showFlatPlateSurface;
+  const showChartMapSurface = surfaceMode === 'map';
   const showTiledSurface = isTiledSurface;
 
   return (
@@ -423,6 +424,17 @@ export const SceneCanvas = memo(function SceneCanvas({
             refLon={airport.lon}
             radiusNm={terrainRadiusNm}
             verticalScale={verticalScale}
+          />
+        )}
+
+        {showChartMapSurface && (
+          <ChartMapSurface
+            refLat={airport.lat}
+            refLon={airport.lon}
+            radiusNm={terrainRadiusNm}
+            verticalScale={verticalScale}
+            chartType={chartType}
+            airportElevationFeet={airport.elevation}
           />
         )}
 
