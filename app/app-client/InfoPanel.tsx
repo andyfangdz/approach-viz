@@ -9,6 +9,7 @@ export function InfoPanel({
   surfaceMode,
   layers,
   hasApproachPlate,
+  plateOverlayEnabled,
   sceneData,
   selectedApproachSource
 }: InfoPanelProps) {
@@ -105,7 +106,7 @@ export function InfoPanel({
           <span>D</span>
         </div>
       </div>
-      {(surfaceMode === 'plate' || surfaceMode === '3dplate') && !hasApproachPlate && (
+      {plateOverlayEnabled && !hasApproachPlate && (
         <div className="legend-note">No FAA plate matched this approach.</div>
       )}
 

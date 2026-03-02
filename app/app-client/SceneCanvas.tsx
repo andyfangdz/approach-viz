@@ -344,6 +344,8 @@ export const SceneCanvas = memo(function SceneCanvas({
   nexradCrossSectionHeadingDeg,
   nexradCrossSectionRangeNm,
   surfaceMode,
+  plateOverlayEnabled,
+  chartType,
   satelliteRetryNonce,
   satelliteRetryCount,
   surfaceErrorMessage,
@@ -385,10 +387,12 @@ export const SceneCanvas = memo(function SceneCanvas({
     return list;
   }, [airport, sceneData.elevationAirports]);
   const hasApproachPlate = Boolean(sceneData.approachPlate);
-  const showFlatPlateSurface = surfaceMode === 'plate' && hasApproachPlate;
+  const isTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dmap';
+  const showFlatPlateSurface =
+    plateOverlayEnabled && hasApproachPlate && !isTiledSurface;
   const showTerrainSurface =
-    surfaceMode === 'terrain' || (surfaceMode === 'plate' && !hasApproachPlate);
-  const showTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dplate';
+    (surfaceMode === 'terrain' || surfaceMode === 'map') && !showFlatPlateSurface;
+  const showTiledSurface = isTiledSurface;
 
   return (
     <Canvas
@@ -454,7 +458,7 @@ export const SceneCanvas = memo(function SceneCanvas({
                 geoidSeparationFeet={sceneData.geoidSeparationFeet}
                 verticalScale={verticalScale}
                 flattenBathymetry={flattenBathymetry}
-                plateOverlay={surfaceMode === '3dplate' ? sceneData.approachPlate : null}
+                plateOverlay={plateOverlayEnabled && isTiledSurface ? sceneData.approachPlate : null}
                 onRuntimeError={onSatelliteRuntimeError}
               />
             )}
@@ -470,7 +474,7 @@ export const SceneCanvas = memo(function SceneCanvas({
           runwayColor={COLORS.runway}
           airportLabelColor={COLORS.runway}
           showRunwayLabels
-          applyEarthCurvatureCompensation={surfaceMode === 'satellite' || surfaceMode === '3dplate'}
+          applyEarthCurvatureCompensation={isTiledSurface}
         />
 
         {sceneData.nearbyAirports.map(({ airport: nearbyAirport, runways: nearbyRunways }) => (
@@ -484,9 +488,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             runwayColor={COLORS.nearbyRunway}
             airportLabelColor={COLORS.nearbyAirport}
             showRunwayLabels={false}
-            applyEarthCurvatureCompensation={
-              surfaceMode === 'satellite' || surfaceMode === '3dplate'
-            }
+            applyEarthCurvatureCompensation={isTiledSurface}
           />
         ))}
 
@@ -523,9 +525,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             hideGroundCallsignLabels={hideGroundTrafficCallsigns}
             showDepartedTrafficTrails={showDepartedTrafficTrails}
             historyMinutes={trafficHistoryMinutes}
-            applyEarthCurvatureCompensation={
-              surfaceMode === 'satellite' || surfaceMode === '3dplate'
-            }
+            applyEarthCurvatureCompensation={isTiledSurface}
             onDebugChange={onTrafficDebugChange}
           />
         )}
@@ -546,9 +546,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             showCrossSection={nexradCrossSectionEnabled}
             crossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
             crossSectionRangeNm={nexradCrossSectionRangeNm}
-            applyEarthCurvatureCompensation={
-              surfaceMode === 'satellite' || surfaceMode === '3dplate'
-            }
+            applyEarthCurvatureCompensation={isTiledSurface}
             onDebugChange={onNexradDebugChange}
           />
         )}
@@ -559,9 +557,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             refLon={airport.lon}
             verticalScale={verticalScale}
             enabled={probSevereEnabled}
-            applyEarthCurvatureCompensation={
-              surfaceMode === 'satellite' || surfaceMode === '3dplate'
-            }
+            applyEarthCurvatureCompensation={isTiledSurface}
           />
         )}
 

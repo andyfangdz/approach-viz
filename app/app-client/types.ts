@@ -3,7 +3,8 @@ import type { Waypoint } from '@/lib/cifp/parser';
 import type { SelectOption } from '@/app/app-client-utils';
 import type { SceneData } from '@/lib/types';
 
-export type SurfaceMode = 'terrain' | 'plate' | '3dplate' | 'satellite';
+export type SurfaceMode = 'terrain' | 'satellite' | 'map' | '3dmap';
+export type ChartType = 'vfr' | 'low' | 'high';
 export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high';
 export type NexradPhaseMode = 'thermo' | 'surface';
 export type CameraControlMode = 'orbit' | 'arcball' | 'map';
@@ -122,6 +123,11 @@ export interface HeaderControlsProps {
   onApproachSelected: (approachId: string) => void;
   surfaceMode: SurfaceMode;
   onSurfaceModeSelected: (mode: SurfaceMode) => void;
+  plateOverlayEnabled: boolean;
+  onPlateOverlayToggle: (enabled: boolean) => void;
+  hasApproachPlate: boolean;
+  chartType: ChartType;
+  onChartTypeSelected: (chart: ChartType) => void;
   menuPortalTarget?: HTMLElement;
   onControlsHeightChange?: (height: number) => void;
 }
@@ -147,6 +153,8 @@ export interface SceneCanvasProps {
   nexradCrossSectionHeadingDeg: number;
   nexradCrossSectionRangeNm: number;
   surfaceMode: SurfaceMode;
+  plateOverlayEnabled: boolean;
+  chartType: ChartType;
   satelliteRetryNonce: number;
   satelliteRetryCount: number;
   surfaceErrorMessage: string;
@@ -164,11 +172,12 @@ export interface SceneCanvasProps {
 export interface InfoPanelProps {
   legendCollapsed: boolean;
   onToggleLegend: () => void;
-  surfaceLegendClass: 'terrain' | 'plate' | 'satellite';
+  surfaceLegendClass: 'terrain' | 'plate' | 'satellite' | 'map';
   surfaceLegendLabel: string;
   surfaceMode: SurfaceMode;
   layers: LayerState;
   hasApproachPlate: boolean;
+  plateOverlayEnabled: boolean;
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
 }
