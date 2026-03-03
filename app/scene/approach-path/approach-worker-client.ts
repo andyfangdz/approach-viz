@@ -1,23 +1,16 @@
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
 import type { TurnConstraintLabel, VerticalLineData } from './types';
-import type { ApproachWorkerResponseMessage } from './approach-worker-types';
-import { BaseWorkerClient } from '@/app/scene/shared/base-worker-client';
+import { ComlinkedWorkerClient } from '@/app/scene/shared/comlinked-worker-client';
+import type {
+  ApproachWorkerApi,
+  AltitudeResult,
+  BuildPathGeometryParams,
+  GeometryResult,
+  ResolveAltitudesParams
+} from './approach.worker';
 
-type AltitudeResult = {
-  finalAltitudes: number[];
-  transitionAltitudes: [string, number[]][];
-  missedAltitudes: number[];
-  missedPathAltitudes: number[];
-};
-
-type GeometryResult = {
-  pointsFlat: Float32Array;
-  verticalLines: VerticalLineData[];
-  turnConstraintLabels: TurnConstraintLabel[];
-};
-
-class ApproachWorkerClient extends BaseWorkerClient<ApproachWorkerResponseMessage> {
+class ApproachWorkerClient extends ComlinkedWorkerClient<ApproachWorkerApi> {
   constructor() {
     super(new Worker(new URL('./approach.worker.ts', import.meta.url), { type: 'module' }), {
       name: 'Approach',
@@ -25,64 +18,12 @@ class ApproachWorkerClient extends BaseWorkerClient<ApproachWorkerResponseMessag
     });
   }
 
-  resolveAltitudes(params: {
-    finalLegs: ApproachLeg[];
-    transitionEntries: [string, ApproachLeg[]][];
-    missedLegs: ApproachLeg[];
-    waypoints: [string, Waypoint][];
-    refLat: number;
-    refLon: number;
-    airportElevation: number;
-    missedApproachStartAltitudeFeet?: number;
-    missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
-  }): Promise<AltitudeResult> {
-    const requestId = this.allocateRequestId();
-    return this.send<AltitudeResult>(requestId, {
-      type: 'resolve-altitudes',
-      requestId,
-      ...params
-    });
+  resolveAltitudes(params: ResolveAltitudesParams): Promise<AltitudeResult> {
+    return this.withTimeout(() => this.proxy.resolveAltitudes(params));
   }
 
-  buildPathGeometry(params: {
-    legs: ApproachLeg[];
-    waypoints: [string, Waypoint][];
-    resolvedAltitudes: number[];
-    initialAltitudeFeet: number;
-    verticalScale: number;
-    refLat: number;
-    refLon: number;
-    magVar: number;
-    showTurnConstraintLabels?: boolean;
-  }): Promise<GeometryResult> {
-    const requestId = this.allocateRequestId();
-    return this.send<GeometryResult>(requestId, {
-      type: 'build-path-geometry',
-      requestId,
-      ...params
-    });
-  }
-
-  protected resolveResponse(response: ApproachWorkerResponseMessage): unknown {
-    if (response.type === 'resolve-altitudes-result') {
-      return {
-        finalAltitudes: response.finalAltitudes ?? [],
-        transitionAltitudes: response.transitionAltitudes ?? [],
-        missedAltitudes: response.missedAltitudes ?? [],
-        missedPathAltitudes: response.missedPathAltitudes ?? []
-      } satisfies AltitudeResult;
-    }
-    if (response.type === 'build-path-geometry-result') {
-      if (!response.pointsFlat) {
-        throw new Error('Approach worker returned no geometry point buffer.');
-      }
-      return {
-        pointsFlat: response.pointsFlat,
-        verticalLines: response.verticalLines ?? [],
-        turnConstraintLabels: response.turnConstraintLabels ?? []
-      } satisfies GeometryResult;
-    }
-    throw new Error('Approach worker response type mismatch.');
+  buildPathGeometry(params: BuildPathGeometryParams): Promise<GeometryResult> {
+    return this.withTimeout(() => this.proxy.buildPathGeometry(params));
   }
 }
 

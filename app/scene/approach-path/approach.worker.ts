@@ -1,18 +1,50 @@
+import * as Comlink from 'comlink';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
+import type { MissedApproachClimbRequirement } from '@/lib/types';
+import type { TurnConstraintLabel, VerticalLineData } from './types';
 import {
   applyGlidepathInsideFaf,
   resolveMissedApproachAltitudes,
   resolveSegmentAltitudes
 } from './altitudes';
 import { buildPathGeometry } from './path-builder';
-import type {
-  ApproachWorkerRequestMessage,
-  ApproachWorkerResponseMessage
-} from './approach-worker-types';
 
-type WorkerEndpoint = {
-  postMessage: (message: ApproachWorkerResponseMessage, transfer?: Transferable[]) => void;
-};
+export interface ResolveAltitudesParams {
+  finalLegs: ApproachLeg[];
+  transitionEntries: [string, ApproachLeg[]][];
+  missedLegs: ApproachLeg[];
+  waypoints: [string, Waypoint][];
+  refLat: number;
+  refLon: number;
+  airportElevation: number;
+  missedApproachStartAltitudeFeet?: number;
+  missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
+}
+
+export interface AltitudeResult {
+  finalAltitudes: number[];
+  transitionAltitudes: [string, number[]][];
+  missedAltitudes: number[];
+  missedPathAltitudes: number[];
+}
+
+export interface BuildPathGeometryParams {
+  legs: ApproachLeg[];
+  waypoints: [string, Waypoint][];
+  resolvedAltitudes: number[];
+  initialAltitudeFeet: number;
+  verticalScale: number;
+  refLat: number;
+  refLon: number;
+  magVar: number;
+  showTurnConstraintLabels?: boolean;
+}
+
+export interface GeometryResult {
+  pointsFlat: Float32Array;
+  verticalLines: VerticalLineData[];
+  turnConstraintLabels: TurnConstraintLabel[];
+}
 
 function resolveAltitudesForApproach(
   finalLegs: ApproachLeg[],
@@ -71,54 +103,41 @@ function resolveAltitudesForApproach(
   };
 }
 
-function handleMessage(endpoint: WorkerEndpoint, message: ApproachWorkerRequestMessage): void {
-  if (message.type === 'resolve-altitudes') {
-    try {
-      const waypoints = new Map(message.waypoints);
-      const resolved = resolveAltitudesForApproach(
-        message.finalLegs,
-        message.transitionEntries,
-        message.missedLegs,
-        waypoints,
-        message.refLat,
-        message.refLon,
-        message.airportElevation,
-        message.missedApproachStartAltitudeFeet,
-        message.missedApproachClimbRequirement
-      );
-      endpoint.postMessage({
-        type: 'resolve-altitudes-result',
-        requestId: message.requestId,
-        ...resolved
-      });
-    } catch (error) {
-      endpoint.postMessage({
-        type: 'resolve-altitudes-result',
-        requestId: message.requestId,
-        error: error instanceof Error ? error.message : 'Failed to resolve approach altitudes.'
-      });
-    }
-    return;
+export class ApproachWorkerApi {
+  resolveAltitudes(params: ResolveAltitudesParams): AltitudeResult {
+    const waypoints = new Map(params.waypoints);
+    const resolved = resolveAltitudesForApproach(
+      params.finalLegs,
+      params.transitionEntries,
+      params.missedLegs,
+      waypoints,
+      params.refLat,
+      params.refLon,
+      params.airportElevation,
+      params.missedApproachStartAltitudeFeet,
+      params.missedApproachClimbRequirement
+    );
+    return resolved;
   }
 
-  try {
+  buildPathGeometry(params: BuildPathGeometryParams): GeometryResult {
     const resolvedAltitudes = new Map<ApproachLeg, number>();
-    for (let i = 0; i < message.legs.length; i += 1) {
+    for (let i = 0; i < params.legs.length; i += 1) {
       resolvedAltitudes.set(
-        message.legs[i],
-        message.resolvedAltitudes[i] ?? message.legs[i].altitude ?? 0
+        params.legs[i],
+        params.resolvedAltitudes[i] ?? params.legs[i].altitude ?? 0
       );
     }
     const result = buildPathGeometry({
-      legs: message.legs,
-      waypoints: new Map(message.waypoints),
+      legs: params.legs,
+      waypoints: new Map(params.waypoints),
       resolvedAltitudes,
-      initialAltitudeFeet: message.initialAltitudeFeet,
-      verticalScale: message.verticalScale,
-      refLat: message.refLat,
-      refLon: message.refLon,
-      magVar: message.magVar,
-      showTurnConstraintLabels: message.showTurnConstraintLabels
+      initialAltitudeFeet: params.initialAltitudeFeet,
+      verticalScale: params.verticalScale,
+      refLat: params.refLat,
+      refLon: params.refLon,
+      magVar: params.magVar,
+      showTurnConstraintLabels: params.showTurnConstraintLabels
     });
     const pointsFlat = new Float32Array(result.points.length * 3);
     let pointOffset = 0;
@@ -127,37 +146,15 @@ function handleMessage(endpoint: WorkerEndpoint, message: ApproachWorkerRequestM
       pointsFlat[pointOffset++] = point.y;
       pointsFlat[pointOffset++] = point.z;
     }
-    endpoint.postMessage(
+    return Comlink.transfer(
       {
-        type: 'build-path-geometry-result',
-        requestId: message.requestId,
         pointsFlat,
         verticalLines: result.verticalLines,
         turnConstraintLabels: result.turnConstraintLabels
       },
       [pointsFlat.buffer]
     );
-  } catch (error) {
-    endpoint.postMessage({
-      type: 'build-path-geometry-result',
-      requestId: message.requestId,
-      error: error instanceof Error ? error.message : 'Failed to build approach path geometry.'
-    });
   }
 }
 
-const scope = self as unknown as {
-  postMessage: WorkerEndpoint['postMessage'];
-  onmessage: ((event: MessageEvent<ApproachWorkerRequestMessage>) => void) | null;
-};
-
-scope.onmessage = (event) => {
-  handleMessage(
-    {
-      postMessage: (message, transfer) => scope.postMessage(message, transfer ?? [])
-    },
-    event.data
-  );
-};
-
-export {};
+Comlink.expose(new ApproachWorkerApi());

@@ -1,13 +1,8 @@
 import type { SelectOption } from '@/app/app-client-utils';
-import { BaseWorkerClient } from '@/app/scene/shared/base-worker-client';
+import { ComlinkedWorkerClient } from '@/app/scene/shared/comlinked-worker-client';
+import type { FilterWorkerApi } from './filter.worker';
 
-interface FilterResponseMessage {
-  requestId: number;
-  filteredOptions?: SelectOption[];
-  error?: string;
-}
-
-class FilterWorkerClient extends BaseWorkerClient<FilterResponseMessage> {
+class FilterWorkerClient extends ComlinkedWorkerClient<FilterWorkerApi> {
   constructor() {
     super(new Worker(new URL('./filter.worker.ts', import.meta.url), { type: 'module' }), {
       name: 'Filter',
@@ -15,13 +10,8 @@ class FilterWorkerClient extends BaseWorkerClient<FilterResponseMessage> {
     });
   }
 
-  async filter(options: SelectOption[], query: string): Promise<SelectOption[]> {
-    const requestId = this.allocateRequestId();
-    return this.send<SelectOption[]>(requestId, { requestId, options, query });
-  }
-
-  protected resolveResponse(response: FilterResponseMessage): SelectOption[] {
-    return response.filteredOptions ?? [];
+  filter(options: SelectOption[], query: string): Promise<SelectOption[]> {
+    return this.withTimeout(() => this.proxy.filter(options, query));
   }
 }
 

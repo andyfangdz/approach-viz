@@ -75,7 +75,7 @@
   - `GET /v1/weather/volume` -> `application/vnd.approach-viz.mrms.v5` content-type (wire format AVMR v5, FlatBuffers) (legacy alias `/v1/volume`)
   - `GET /v1/weather/echo-tops` -> JSON by default; AVET binary with `Accept: application/vnd.approach-viz.echo-tops.v3` content-type (wire format AVET v3, FlatBuffers) (legacy alias `/v1/echo-tops`)
   - `GET /v1/traffic/adsbx` -> JSON or binary (`format=binary`, `application/vnd.approach-viz.traffic.v4` content-type, wire format AVTR v4, FlatBuffers)
-- Worker-first execution: approach geometry, MRMS decode/prepare, traffic ingest/merge/recompute, and selector filtering run in workers; no synchronous compute fallback.
+- Worker-first execution: approach geometry, MRMS decode/prepare, traffic ingest/merge/recompute, selector filtering, and chart tile streaming run in workers via Comlink typed proxies; no synchronous compute fallback. WASM output arrays transfer to main thread via `Comlink.transfer()` (zero-copy).
 - ADS-B overlay polling: initial full-history query on context reset (`historyMinutes`), then live-only primary polls plus targeted `historyHexes` follow-up backfill when departed trails are enabled.
 - ADS-B runtime payloads with `error` metadata are treated as poll failures in the traffic worker (no silent empty merge), and traffic worker request timeout budget is `12s`.
 - Runtime traffic "current aircraft" staleness window is `60s` (`CACHE_CURRENT_STALE_MS`); responses expose stale/freshness markers via `x-approach-viz-traffic-stale-current` and `x-approach-viz-traffic-snapshot-age-ms` headers (proxy passthrough enabled), and JSON payloads include `staleCurrent` + `snapshotAgeMs`.

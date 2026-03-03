@@ -5,15 +5,14 @@ import type { TrafficDebugState, TrafficTimingDebugState } from '@/app/app-clien
 import {
   EMPTY_TRAFFIC_RENDER_BUFFERS,
   TrafficWorkerClient,
+  TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
+  TRAFFIC_FLAG_IS_ON_GROUND,
   type TrafficProcessResult,
   type TrafficRenderBuffers
 } from './traffic/traffic-worker-client';
-import {
-  TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
-  TRAFFIC_FLAG_IS_ON_GROUND
-} from './traffic/traffic-sab';
-import type { SceneAirport } from './traffic/traffic-worker-types';
-export type { SceneAirport } from './traffic/traffic-worker-types';
+import { WorkerClientError } from './shared/worker-errors';
+import type { SceneAirport } from './traffic/traffic-worker-client';
+export type { SceneAirport } from './traffic/traffic-worker-client';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
@@ -44,6 +43,10 @@ function toWorkerFetchUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
   if (typeof window === 'undefined') return url;
   return new URL(url, window.location.origin).toString();
+}
+
+function isCancelledError(error: unknown): boolean {
+  return error instanceof WorkerClientError && error.code === 'cancelled';
 }
 
 function formatTrafficWorkerErrorReason(error: unknown, context: string): string {
@@ -147,6 +150,9 @@ export function LiveTrafficOverlay({
   const pollContextKeyRef = useRef<string | null>(null);
   const previousShowDepartedRef = useRef(showDepartedTrafficTrails);
   const needsHistoryBackfillRef = useRef(false);
+  const historyMinutesRef = useRef(normalizedHistoryMinutes);
+  const previousHistoryMinutesRef = useRef(normalizedHistoryMinutes);
+  historyMinutesRef.current = normalizedHistoryMinutes;
   const [trafficMode, setTrafficMode] = useState<TrafficMode>(() =>
     typeof Worker !== 'undefined' ? 'worker' : 'worker-error'
   );
@@ -240,7 +246,6 @@ export function LiveTrafficOverlay({
       refLon.toFixed(6),
       radiusNm,
       limit,
-      normalizedHistoryMinutes,
       hideGroundTargets ? 1 : 0,
       verticalScale.toFixed(3),
       applyEarthCurvatureCompensation ? 1 : 0,
@@ -298,7 +303,7 @@ export function LiveTrafficOverlay({
       let processMs: number | null = null;
       let pruneMs: number | null = null;
       const pollNowMs = Date.now();
-      const historyWindowMs = normalizedHistoryMinutes * 60_000;
+      const historyWindowMs = historyMinutesRef.current * 60_000;
       const fullBackfillIntervalMs = Math.min(
         MAX_FULL_BACKFILL_INTERVAL_MS,
         Math.max(MIN_FULL_BACKFILL_INTERVAL_MS, Math.round(historyWindowMs / 2))
@@ -326,7 +331,7 @@ export function LiveTrafficOverlay({
       let requestedHistoryHexes: string[] = [];
       if (showDepartedTrafficTrails) {
         if (shouldRequestHistoryBackfill) {
-          params.set('historyMinutes', String(normalizedHistoryMinutes));
+          params.set('historyMinutes', String(historyMinutesRef.current));
         } else if (pendingBackfillHexesRef.current.size > 0) {
           requestedHistoryHexes = Array.from(pendingBackfillHexesRef.current).slice(
             0,
@@ -349,7 +354,7 @@ export function LiveTrafficOverlay({
         followupParams.set('radiusNm', String(radiusNm));
         followupParams.set('limit', String(limit));
         followupParams.set('hideGround', hideGroundTargets ? '1' : '0');
-        followupParams.set('historyMinutes', String(normalizedHistoryMinutes));
+        followupParams.set('historyMinutes', String(historyMinutesRef.current));
         followupParams.set('format', 'binary');
         followupParams.set('historyHexes', requestedHistoryHexes.join(','));
         followupUrl = toWorkerFetchUrl(`/api/traffic/adsbx?${followupParams.toString()}`);
@@ -368,7 +373,7 @@ export function LiveTrafficOverlay({
           followupUrl,
           {
             nowMs,
-            historyMinutes: normalizedHistoryMinutes,
+            historyMinutes: historyMinutesRef.current,
             hideGroundTargets,
             showDepartedTrafficTrails,
             refLat,
@@ -433,7 +438,7 @@ export function LiveTrafficOverlay({
         shouldRequestHistoryBackfill = false;
         needsHistoryBackfillRef.current = false;
       } catch (error) {
-        if (cancelled) return;
+        if (cancelled || isCancelledError(error)) return;
         setLastError(error instanceof Error ? error.message : 'Traffic poll failed');
         setLastPollAt(new Date().toISOString());
         const nowMs = Date.now();
@@ -447,7 +452,7 @@ export function LiveTrafficOverlay({
             const pruneStartedAt = performance.now();
             const result = await pruneWorker.pruneError({
               nowMs,
-              historyMinutes: normalizedHistoryMinutes,
+              historyMinutes: historyMinutesRef.current,
               hideGroundTargets,
               showDepartedTrafficTrails,
               refLat,
@@ -461,7 +466,7 @@ export function LiveTrafficOverlay({
               applyWorkerResult(result);
             }
           } catch (pruneError) {
-            if (cancelled) return;
+            if (cancelled || isCancelledError(pruneError)) return;
             setTrafficMode('worker-error');
             setWorkerErrorReason(
               formatTrafficWorkerErrorReason(pruneError, 'Traffic worker prune failed')
@@ -509,7 +514,6 @@ export function LiveTrafficOverlay({
     refLon,
     radiusNm,
     limit,
-    normalizedHistoryMinutes,
     hideGroundTargets,
     showDepartedTrafficTrails,
     verticalScale,
@@ -547,7 +551,8 @@ export function LiveTrafficOverlay({
           applyWorkerResult(result);
         })
         .catch((error) => {
-          if (cancelled || trafficWorkerRef.current !== recomputeWorker) return;
+          if (cancelled || isCancelledError(error)) return;
+          if (trafficWorkerRef.current !== recomputeWorker) return;
           const message = formatTrafficWorkerErrorReason(error, 'Traffic worker recompute failed');
           setLastError(message);
         });
@@ -568,6 +573,17 @@ export function LiveTrafficOverlay({
     applyWorkerResult,
     patchTimings
   ]);
+
+  // When the history window grows and departed trails are active, flag an
+  // early backfill so the next poll cycle fetches the wider range immediately
+  // instead of waiting for the scheduled backfill interval.
+  useEffect(() => {
+    const prev = previousHistoryMinutesRef.current;
+    previousHistoryMinutesRef.current = normalizedHistoryMinutes;
+    if (normalizedHistoryMinutes > prev && showDepartedTrafficTrails) {
+      needsHistoryBackfillRef.current = true;
+    }
+  }, [normalizedHistoryMinutes, showDepartedTrafficTrails]);
 
   useEffect(() => {
     if (trafficMode === 'worker') return;

@@ -2,8 +2,13 @@
 
 import { memo, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import * as Comlink from 'comlink';
 import type { ChartType } from '@/app/app-client/types';
-import type { ChartTilesRequest, ChartTilesResponse } from '@/app/scene/chart/chart-tiles.worker';
+import type {
+  ChartTilesWorkerApi,
+  ChartTileReady,
+  ChartTilesParams
+} from '@/app/scene/chart/chart-tiles.worker';
 
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 const SURFACE_OFFSET_NM = -0.002;
@@ -199,20 +204,6 @@ function computeTileRange(
   };
 }
 
-// --- Worker singleton ---
-
-let chartWorker: Worker | null = null;
-let nextRequestId = 1;
-
-function getChartWorker(): Worker {
-  if (!chartWorker) {
-    chartWorker = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
-      type: 'module'
-    });
-  }
-  return chartWorker;
-}
-
 // --- Shared tile plane geometry ---
 
 const TILE_PLANE = new THREE.PlaneGeometry(1, 1);
@@ -319,12 +310,41 @@ export const ChartMapSurface = memo(function ChartMapSurface({
   const onDebugChangeRef = useRef(onDebugChange);
   onDebugChangeRef.current = onDebugChange;
 
+  // Warm worker singleton — created once per mount, reused across re-renders
+  // so that rapid prop changes (airport switch, slider drag) skip the OS
+  // thread + JIT + Comlink.expose() startup cost.
+  const workerRef = useRef<Comlink.Remote<ChartTilesWorkerApi> | null>(null);
+  const rawWorkerRef = useRef<Worker | null>(null);
+
   useEffect(() => {
+    const raw = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
+      type: 'module'
+    });
+    rawWorkerRef.current = raw;
+    workerRef.current = Comlink.wrap<ChartTilesWorkerApi>(raw);
+    return () => {
+      workerRef.current?.[Comlink.releaseProxy]();
+      rawWorkerRef.current?.terminate();
+      workerRef.current = null;
+      rawWorkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!workerRef.current) return;
+    // Copy to local const so TypeScript narrows to non-null in nested closures.
+    const api: Comlink.Remote<ChartTilesWorkerApi> = workerRef.current;
+
     let cancelled = false;
     const t0 = performance.now();
 
     // Dispose previous tiles
-    for (const entry of tilesRef.current.values()) entry.texture.dispose();
+    for (const entry of tilesRef.current.values()) {
+      if (entry.texture.image instanceof ImageBitmap) {
+        entry.texture.image.close();
+      }
+      entry.texture.dispose();
+    }
     tilesRef.current.clear();
     setTileVersion(0);
 
@@ -346,8 +366,6 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       loadMs: null
     });
 
-    const worker = getChartWorker();
-
     function scheduleBatchUpdate() {
       if (!rafPending.current) {
         rafPending.current = true;
@@ -368,20 +386,73 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       }
     }
 
-    // --- Detail stream handler ---
-    const detailRequestId = nextRequestId++;
-    let detailHandler: ((event: MessageEvent<ChartTilesResponse>) => void) | null = null;
+    // --- Run preview (optional) then detail stream sequentially ---
 
-    function startDetailStream() {
-      detailHandler = (event: MessageEvent<ChartTilesResponse>) => {
-        if (cancelled) return;
-        const response = event.data;
+    async function run() {
+      // Preview pass
+      if (usePreview) {
+        const latRadius = radiusNm / 60;
+        const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
+        const pMinTileX = lonToTileX(refLon - lonRadius, previewZoom);
+        const pMaxTileX = lonToTileX(refLon + lonRadius, previewZoom);
+        const pMinTileY = latToTileY(refLat + latRadius, previewZoom);
+        const pMaxTileY = latToTileY(refLat - latRadius, previewZoom);
 
-        if (response.type === 'tile-ready' && response.requestId === detailRequestId) {
-          const texture = bitmapToTexture(response.bitmap);
+        const previewParams: ChartTilesParams = {
+          baseUrl: detailRange.baseUrl,
+          zoom: previewZoom,
+          minTileX: pMinTileX,
+          maxTileX: pMaxTileX,
+          minTileY: pMinTileY,
+          maxTileY: pMaxTileY
+        };
+
+        await api.streamTiles(
+          previewParams,
+          Comlink.proxy((tile: ChartTileReady) => {
+            if (cancelled) {
+              tile.bitmap.close();
+              return;
+            }
+            const texture = bitmapToTexture(tile.bitmap);
+            const entry = computeTileEntry(
+              tile.tileX,
+              tile.tileY,
+              previewZoom,
+              texture,
+              refLat,
+              refLon,
+              'preview'
+            );
+            tilesRef.current.set(entry.key, entry);
+            scheduleBatchUpdate();
+          })
+        );
+      }
+
+      if (cancelled) return;
+
+      // Detail pass
+      const detailParams: ChartTilesParams = {
+        baseUrl: detailRange.baseUrl,
+        zoom: detailRange.zoom,
+        minTileX: detailRange.minTileX,
+        maxTileX: detailRange.maxTileX,
+        minTileY: detailRange.minTileY,
+        maxTileY: detailRange.maxTileY
+      };
+
+      await api.streamTiles(
+        detailParams,
+        Comlink.proxy((tile: ChartTileReady) => {
+          if (cancelled) {
+            tile.bitmap.close();
+            return;
+          }
+          const texture = bitmapToTexture(tile.bitmap);
           const entry = computeTileEntry(
-            response.tileX,
-            response.tileY,
+            tile.tileX,
+            tile.tileY,
             detailRange.zoom,
             texture,
             refLat,
@@ -391,104 +462,46 @@ export const ChartMapSurface = memo(function ChartMapSurface({
           tilesRef.current.set(entry.key, entry);
           detailTilesLoaded += 1;
           scheduleBatchUpdate();
-        } else if (response.type === 'stream-complete' && response.requestId === detailRequestId) {
-          worker.removeEventListener('message', detailHandler!);
-          detailHandler = null;
-          if (!cancelled) {
-            // Dispose all preview tiles
-            for (const [key, entry] of tilesRef.current) {
-              if (entry.layer === 'preview') {
-                entry.texture.dispose();
-                tilesRef.current.delete(key);
-              }
-            }
-            setTileVersion((v) => v + 1);
-            onDebugChangeRef.current?.({
-              loading: false,
-              zoom: detailRange.zoom,
-              previewZoom: null,
-              tileCount: totalDetailTiles,
-              tilesLoaded: detailTilesLoaded,
-              loadMs: performance.now() - t0
-            });
-          }
-        }
-      };
+        })
+      );
 
-      worker.addEventListener('message', detailHandler);
-      worker.postMessage({
-        type: 'stream',
-        requestId: detailRequestId,
-        baseUrl: detailRange.baseUrl,
+      if (cancelled) return;
+
+      // Detail complete — dispose all preview tiles
+      for (const [key, entry] of tilesRef.current) {
+        if (entry.layer === 'preview') {
+          if (entry.texture.image instanceof ImageBitmap) {
+            entry.texture.image.close();
+          }
+          entry.texture.dispose();
+          tilesRef.current.delete(key);
+        }
+      }
+      setTileVersion((v) => v + 1);
+      onDebugChangeRef.current?.({
+        loading: false,
         zoom: detailRange.zoom,
-        minTileX: detailRange.minTileX,
-        maxTileX: detailRange.maxTileX,
-        minTileY: detailRange.minTileY,
-        maxTileY: detailRange.maxTileY
-      } satisfies ChartTilesRequest);
+        previewZoom: null,
+        tileCount: totalDetailTiles,
+        tilesLoaded: detailTilesLoaded,
+        loadMs: performance.now() - t0
+      });
     }
 
-    // --- Preview stream (optional) ---
-    let previewHandler: ((event: MessageEvent<ChartTilesResponse>) => void) | null = null;
-
-    if (usePreview) {
-      const latRadius = radiusNm / 60;
-      const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
-      const pMinTileX = lonToTileX(refLon - lonRadius, previewZoom);
-      const pMaxTileX = lonToTileX(refLon + lonRadius, previewZoom);
-      const pMinTileY = latToTileY(refLat + latRadius, previewZoom);
-      const pMaxTileY = latToTileY(refLat - latRadius, previewZoom);
-
-      const previewRequestId = nextRequestId++;
-
-      previewHandler = (event: MessageEvent<ChartTilesResponse>) => {
-        if (cancelled) return;
-        const response = event.data;
-
-        if (response.type === 'tile-ready' && response.requestId === previewRequestId) {
-          const texture = bitmapToTexture(response.bitmap);
-          const entry = computeTileEntry(
-            response.tileX,
-            response.tileY,
-            previewZoom,
-            texture,
-            refLat,
-            refLon,
-            'preview'
-          );
-          tilesRef.current.set(entry.key, entry);
-          scheduleBatchUpdate();
-        } else if (response.type === 'stream-complete' && response.requestId === previewRequestId) {
-          worker.removeEventListener('message', previewHandler!);
-          previewHandler = null;
-          if (!cancelled) {
-            // Preview done — start detail stream
-            startDetailStream();
-          }
-        }
-      };
-
-      worker.addEventListener('message', previewHandler);
-      worker.postMessage({
-        type: 'stream',
-        requestId: previewRequestId,
-        baseUrl: detailRange.baseUrl,
-        zoom: previewZoom,
-        minTileX: pMinTileX,
-        maxTileX: pMaxTileX,
-        minTileY: pMinTileY,
-        maxTileY: pMaxTileY
-      } satisfies ChartTilesRequest);
-    } else {
-      // No preview — go straight to detail
-      startDetailStream();
-    }
+    run().catch((err: unknown) => {
+      if (!cancelled) {
+        console.error('[ChartMapSurface] Unexpected tile streaming error:', err);
+      }
+    });
 
     return () => {
       cancelled = true;
-      if (previewHandler) worker.removeEventListener('message', previewHandler);
-      if (detailHandler) worker.removeEventListener('message', detailHandler);
-      for (const entry of tilesRef.current.values()) entry.texture.dispose();
+      for (const entry of tilesRef.current.values()) {
+        if (entry.texture.image instanceof ImageBitmap) {
+          entry.texture.image.close();
+        }
+        entry.texture.dispose();
+      }
       tilesRef.current.clear();
     };
   }, [refLat, refLon, radiusNm, chartType, airportElevationFeet]);
@@ -544,83 +557,97 @@ export function buildChartTexture(
   );
 
   let cancelled = false;
-  const worker = getChartWorker();
-  const requestId = nextRequestId++;
+  let released = false;
+  let rejectCancellation: ((reason: Error) => void) | null = null;
+  const rawWorker = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
+    type: 'module'
+  });
+  const api = Comlink.wrap<ChartTilesWorkerApi>(rawWorker);
   const pendingBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
 
-  let resolvePromise: ((data: ChartTextureData) => void) | undefined;
-  let rejectPromise: ((reason: Error) => void) | undefined;
-
-  function handler(event: MessageEvent<ChartTilesResponse>) {
-    if (cancelled) return;
-    const response = event.data;
-
-    if (response.type === 'tile-ready' && response.requestId === requestId) {
-      pendingBitmaps.push({
-        tileX: response.tileX,
-        tileY: response.tileY,
-        bitmap: response.bitmap
-      });
-    } else if (response.type === 'stream-complete' && response.requestId === requestId) {
-      worker.removeEventListener('message', handler);
-
-      const width = range.tilesWide * TILE_SIZE;
-      const height = range.tilesHigh * TILE_SIZE;
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d')!;
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(0, 0, width, height);
-
-      for (const p of pendingBitmaps) {
-        const col = p.tileX - range.minTileX;
-        const row = p.tileY - range.minTileY;
-        ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        p.bitmap.close();
-      }
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.minFilter = THREE.LinearFilter;
-      texture.magFilter = THREE.LinearFilter;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.generateMipmaps = false;
-      texture.needsUpdate = true;
-
-      const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
-      const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
-      const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
-      const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
-
-      resolvePromise?.({ texture, corners: { sw, se, ne, nw } });
-    }
+  function releaseWorker() {
+    if (released) return;
+    released = true;
+    api[Comlink.releaseProxy]();
+    rawWorker.terminate();
   }
 
-  const promise = new Promise<ChartTextureData>((resolve, reject) => {
-    resolvePromise = resolve;
-    rejectPromise = reject;
+  // Race the Comlink stream against an explicit cancellation promise so that
+  // cancel() always settles the returned promise (worker termination alone
+  // orphans the MessageChannel without rejecting).
+  const cancellationPromise = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
   });
 
-  worker.addEventListener('message', handler);
-  worker.postMessage({
-    type: 'stream',
-    requestId,
-    baseUrl: range.baseUrl,
-    zoom: range.zoom,
-    minTileX: range.minTileX,
-    maxTileX: range.maxTileX,
-    minTileY: range.minTileY,
-    maxTileY: range.maxTileY
-  } satisfies ChartTilesRequest);
+  const promise = Promise.race([
+    cancellationPromise,
+    api
+      .streamTiles(
+        {
+          baseUrl: range.baseUrl,
+          zoom: range.zoom,
+          minTileX: range.minTileX,
+          maxTileX: range.maxTileX,
+          minTileY: range.minTileY,
+          maxTileY: range.maxTileY
+        },
+        Comlink.proxy((tile: ChartTileReady) => {
+          if (cancelled) {
+            tile.bitmap.close();
+            return;
+          }
+          pendingBitmaps.push({
+            tileX: tile.tileX,
+            tileY: tile.tileY,
+            bitmap: tile.bitmap
+          });
+        })
+      )
+      .then(() => {
+        if (cancelled) throw new Error('Cancelled');
+
+        const width = range.tilesWide * TILE_SIZE;
+        const height = range.tilesHigh * TILE_SIZE;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, width, height);
+
+        for (const p of pendingBitmaps) {
+          const col = p.tileX - range.minTileX;
+          const row = p.tileY - range.minTileY;
+          ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+          p.bitmap.close();
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+
+        const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
+        const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
+        const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
+        const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
+
+        releaseWorker();
+
+        return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
+      })
+  ]);
 
   return {
     promise,
     cancel: () => {
       cancelled = true;
-      worker.removeEventListener('message', handler);
+      rejectCancellation?.(new Error('Cancelled'));
+      releaseWorker();
       for (const p of pendingBitmaps) p.bitmap.close();
       pendingBitmaps.length = 0;
-      rejectPromise?.(new Error('Cancelled'));
     }
   };
 }

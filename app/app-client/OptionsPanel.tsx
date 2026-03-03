@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { OptionsPanelProps } from './types';
 import {
   MAX_TRAFFIC_HISTORY_MINUTES,
@@ -13,6 +14,48 @@ import {
   MAX_NEXRAD_CROSS_SECTION_RANGE_NM
 } from './constants';
 import type { CameraControlMode, NexradDeclutterMode, NexradPhaseMode } from './types';
+
+const SLIDER_DEBOUNCE_MS = 150;
+
+/**
+ * Keeps a local value that tracks the slider thumb immediately, debouncing
+ * the commit to parent state. Prevents replaceState / localStorage / re-render
+ * flooding on rapid slider drags (especially touch).
+ */
+function useDebouncedSlider(
+  parentValue: number,
+  onCommit: (value: number) => void,
+  debounceMs = SLIDER_DEBOUNCE_MS
+): [number, (rawValue: number) => void] {
+  const [localValue, setLocalValue] = useState(parentValue);
+  const commitRef = useRef(onCommit);
+  commitRef.current = onCommit;
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Sync from parent when value changes externally (e.g. URL init, reset).
+  // Cancel any pending debounce so a stale commit doesn't overwrite the new value.
+  useEffect(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setLocalValue(parentValue);
+  }, [parentValue]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  const handleChange = useCallback(
+    (rawValue: number) => {
+      setLocalValue(rawValue);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => commitRef.current(rawValue), debounceMs);
+    },
+    [debounceMs]
+  );
+
+  return [localValue, handleChange];
+}
 
 const DECLUTTER_MODE_LABELS: Record<NexradDeclutterMode, string> = {
   all: 'All Layers',
@@ -73,6 +116,35 @@ export function OptionsPanel({
   retinaRendering,
   onRetinaRenderingChange
 }: OptionsPanelProps) {
+  const [localVerticalScale, setLocalVerticalScale] = useDebouncedSlider(
+    verticalScale,
+    onVerticalScaleChange
+  );
+  const [localTerrainRadius, setLocalTerrainRadius] = useDebouncedSlider(
+    terrainRadiusNm,
+    onTerrainRadiusNmChange
+  );
+  const [localHistoryMinutes, setLocalHistoryMinutes] = useDebouncedSlider(
+    trafficHistoryMinutes,
+    onTrafficHistoryMinutesChange
+  );
+  const [localNexradMinDbz, setLocalNexradMinDbz] = useDebouncedSlider(
+    nexradMinDbz,
+    onNexradMinDbzChange
+  );
+  const [localNexradOpacity, setLocalNexradOpacity] = useDebouncedSlider(
+    nexradOpacity,
+    onNexradOpacityChange
+  );
+  const [localSliceHeading, setLocalSliceHeading] = useDebouncedSlider(
+    nexradCrossSectionHeadingDeg,
+    onNexradCrossSectionHeadingDegChange
+  );
+  const [localSliceRange, setLocalSliceRange] = useDebouncedSlider(
+    nexradCrossSectionRangeNm,
+    onNexradCrossSectionRangeNmChange
+  );
+
   if (optionsCollapsed) {
     return (
       <button
@@ -141,30 +213,32 @@ export function OptionsPanel({
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">Vertical Scale ({verticalScale.toFixed(1)}x)</span>
+          <span className="options-toggle-title">
+            Vertical Scale ({localVerticalScale.toFixed(1)}x)
+          </span>
         </span>
         <input
           type="range"
           min={1}
           max={15}
           step={0.5}
-          value={verticalScale}
-          onChange={(event) => onVerticalScaleChange(parseFloat(event.target.value))}
+          value={localVerticalScale}
+          onChange={(event) => setLocalVerticalScale(parseFloat(event.target.value))}
           aria-label="Vertical scale"
         />
       </label>
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">Terrain Radius ({terrainRadiusNm} NM)</span>
+          <span className="options-toggle-title">Terrain Radius ({localTerrainRadius} NM)</span>
         </span>
         <input
           type="range"
           min={MIN_TERRAIN_RADIUS_NM}
           max={MAX_TERRAIN_RADIUS_NM}
           step={TERRAIN_RADIUS_STEP_NM}
-          value={terrainRadiusNm}
-          onChange={(event) => onTerrainRadiusNmChange(Number(event.target.value))}
+          value={localTerrainRadius}
+          onChange={(event) => setLocalTerrainRadius(Number(event.target.value))}
           aria-label="Terrain radius nautical miles"
         />
       </label>
@@ -263,18 +337,16 @@ export function OptionsPanel({
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">
-            Traffic History ({trafficHistoryMinutes} min)
-          </span>
+          <span className="options-toggle-title">Traffic History ({localHistoryMinutes} min)</span>
         </span>
         <input
           type="range"
           min={MIN_TRAFFIC_HISTORY_MINUTES}
           max={MAX_TRAFFIC_HISTORY_MINUTES}
           step={1}
-          value={trafficHistoryMinutes}
+          value={localHistoryMinutes}
           disabled={!layers.adsb}
-          onChange={(event) => onTrafficHistoryMinutesChange(Number(event.target.value))}
+          onChange={(event) => setLocalHistoryMinutes(Number(event.target.value))}
           aria-label="Traffic history minutes"
         />
       </label>
@@ -339,16 +411,16 @@ export function OptionsPanel({
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">MRMS Threshold ({nexradMinDbz} dBZ)</span>
+          <span className="options-toggle-title">MRMS Threshold ({localNexradMinDbz} dBZ)</span>
         </span>
         <input
           type="range"
           min={MIN_NEXRAD_MIN_DBZ}
           max={MAX_NEXRAD_MIN_DBZ}
           step={1}
-          value={nexradMinDbz}
+          value={localNexradMinDbz}
           disabled={!layers.mrms}
-          onChange={(event) => onNexradMinDbzChange(Number(event.target.value))}
+          onChange={(event) => setLocalNexradMinDbz(Number(event.target.value))}
           aria-label="MRMS reflectivity threshold dBZ"
         />
       </label>
@@ -356,7 +428,7 @@ export function OptionsPanel({
       <label className="options-slider-row">
         <span className="options-toggle-copy">
           <span className="options-toggle-title">
-            MRMS Opacity ({Math.round(nexradOpacity * 100)}%)
+            MRMS Opacity ({Math.round(localNexradOpacity * 100)}%)
           </span>
         </span>
         <input
@@ -364,9 +436,9 @@ export function OptionsPanel({
           min={MIN_NEXRAD_OPACITY}
           max={MAX_NEXRAD_OPACITY}
           step={0.05}
-          value={nexradOpacity}
+          value={localNexradOpacity}
           disabled={!layers.mrms}
-          onChange={(event) => onNexradOpacityChange(Number(event.target.value))}
+          onChange={(event) => setLocalNexradOpacity(Number(event.target.value))}
           aria-label="MRMS volume opacity"
         />
       </label>
@@ -378,34 +450,32 @@ export function OptionsPanel({
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">
-            Slice Heading ({nexradCrossSectionHeadingDeg}&deg;)
-          </span>
+          <span className="options-toggle-title">Slice Heading ({localSliceHeading}&deg;)</span>
         </span>
         <input
           type="range"
           min={0}
           max={359}
           step={1}
-          value={nexradCrossSectionHeadingDeg}
+          value={localSliceHeading}
           disabled={!layers.slice}
-          onChange={(event) => onNexradCrossSectionHeadingDegChange(Number(event.target.value))}
+          onChange={(event) => setLocalSliceHeading(Number(event.target.value))}
           aria-label="MRMS cross section heading degrees"
         />
       </label>
 
       <label className="options-slider-row">
         <span className="options-toggle-copy">
-          <span className="options-toggle-title">Slice Range ({nexradCrossSectionRangeNm} NM)</span>
+          <span className="options-toggle-title">Slice Range ({localSliceRange} NM)</span>
         </span>
         <input
           type="range"
           min={MIN_NEXRAD_CROSS_SECTION_RANGE_NM}
           max={MAX_NEXRAD_CROSS_SECTION_RANGE_NM}
           step={1}
-          value={nexradCrossSectionRangeNm}
+          value={localSliceRange}
           disabled={!layers.slice}
-          onChange={(event) => onNexradCrossSectionRangeNmChange(Number(event.target.value))}
+          onChange={(event) => setLocalSliceRange(Number(event.target.value))}
           aria-label="MRMS cross section range nautical miles"
         />
       </label>

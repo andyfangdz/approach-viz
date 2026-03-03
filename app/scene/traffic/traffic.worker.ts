@@ -1,31 +1,45 @@
-import type {
-  SceneAirport,
-  TrafficInitSabRequest,
-  TrafficWorkerRequestMessage,
-  TrafficWorkerResponseMessage
-} from './traffic-worker-types';
-import {
-  createTrafficSabViews,
-  type TrafficSabViews,
-  type TrafficSoAPayload,
-  writeTrafficSabResultSoA
-} from './traffic-sab';
+import * as Comlink from 'comlink';
 import { ensureWasm } from '../shared/wasm-loader';
 import { WasmTrafficState } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
-function roundMs(value: number): number {
-  return Math.round(value * 10) / 10;
+export interface SceneAirport {
+  lat: number;
+  lon: number;
+  elevation: number;
 }
 
-const sabViewsByChannel = new Map<number, TrafficSabViews>();
+export interface TrafficProcessOptions {
+  nowMs: number;
+  historyMinutes: number;
+  hideGroundTargets: boolean;
+  showDepartedTrafficTrails: boolean;
+  refLat: number;
+  refLon: number;
+  verticalScale: number;
+  applyEarthCurvatureCompensation: boolean;
+  sceneAirports: SceneAirport[];
+}
 
-let trafficState: WasmTrafficState | null = null;
+export interface TrafficWorkerResult {
+  trackCount: number;
+  renderedTrackCount: number;
+  historyPointCount: number;
+  renderHash: number | null;
+  markerPositions: Float32Array;
+  headingDeg: Float32Array;
+  flags: Uint8Array;
+  trailOffsets: Uint32Array;
+  trailCounts: Uint32Array;
+  points: Float32Array;
+  callsignLabels: (string | null)[];
+  trackedHexes: string[];
+  returnedHistoryHexes: string[];
+  workerProcessingMs: number;
+  fetchMs?: number;
+}
 
-function getTrafficState(): WasmTrafficState {
-  if (!trafficState) {
-    trafficState = new WasmTrafficState();
-  }
-  return trafficState;
+function roundMs(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 function normalizeFetchUrl(url: string): string {
@@ -85,8 +99,21 @@ function packAirportData(airports: SceneAirport[]): Float64Array {
   return flat;
 }
 
-/** Unpack WASM SoA build_render_tracks result into TrafficSoAPayload. */
-function unpackWasmSoA(wasmResult: any): TrafficSoAPayload {
+interface WasmSoA {
+  trackCount: number;
+  markerPositions: Float32Array;
+  headingDeg: Float32Array;
+  flags: Uint8Array;
+  trailPointsFlat: Float32Array;
+  trailOffsets: Uint32Array;
+  trailCounts: Uint32Array;
+  hexes: string[];
+  callsignLabels: (string | null)[];
+  hash: number;
+}
+
+/** Unpack WASM SoA build_render_tracks result. */
+function unpackWasmSoA(wasmResult: any): WasmSoA {
   return {
     trackCount: wasmResult.trackCount as number,
     markerPositions: wasmResult.markerPositions as Float32Array,
@@ -101,143 +128,146 @@ function unpackWasmSoA(wasmResult: any): TrafficSoAPayload {
   };
 }
 
-function handleInitSab(message: TrafficInitSabRequest): void {
-  sabViewsByChannel.set(message.channelId, createTrafficSabViews(message.buffers));
-}
+export class TrafficWorkerApi {
+  private readonly ready = ensureWasm();
+  private trafficState: WasmTrafficState | null = null;
 
-async function handleMessage(
-  message: Exclude<TrafficWorkerRequestMessage, TrafficInitSabRequest>
-): Promise<TrafficWorkerResponseMessage> {
-  const sabViews = sabViewsByChannel.get(message.sabChannelId) ?? null;
-  if (!sabViews) {
-    return {
-      type: 'result',
-      requestId: message.requestId,
-      operation: message.type,
-      error: 'Traffic SAB channel was not initialized for this request.'
-    };
+  async reset(options: TrafficProcessOptions): Promise<TrafficWorkerResult> {
+    await this.ready;
+    const processingStartedAt = performance.now();
+    this.trafficState?.free();
+    this.trafficState = new WasmTrafficState();
+    return this.buildAndTransferResult(options, [], [], undefined, processingStartedAt);
   }
 
-  const startedAt = performance.now();
-  await ensureWasm();
-
-  let trackedHexes: string[] = [];
-  let returnedHistoryHexes: string[] = [];
-  let fetchMs: number | undefined;
-
-  if (message.type === 'reset') {
-    trafficState?.free();
-    trafficState = new WasmTrafficState();
-  } else if (message.type === 'ingest-binary') {
-    const state = getTrafficState();
+  async ingestBinary(
+    payloadBuffer: ArrayBuffer,
+    historyPayloadBuffer: ArrayBuffer | undefined,
+    options: TrafficProcessOptions
+  ): Promise<TrafficWorkerResult> {
+    await this.ready;
+    const processingStartedAt = performance.now();
+    const state = this.getState();
     const mergeResult = state.merge(
-      new Uint8Array(message.payloadBuffer),
-      message.nowMs,
-      message.historyMinutes,
-      message.hideGroundTargets,
-      message.historyPayloadBuffer
-        ? new Uint8Array(message.historyPayloadBuffer)
-        : new Uint8Array(0)
-    ) as {
-      trackedHexes: string[];
-      returnedHistoryHexes: string[];
-      error: string | null;
-    };
+      new Uint8Array(payloadBuffer),
+      options.nowMs,
+      options.historyMinutes,
+      options.hideGroundTargets,
+      historyPayloadBuffer ? new Uint8Array(historyPayloadBuffer) : new Uint8Array(0)
+    ) as { trackedHexes: string[]; returnedHistoryHexes: string[]; error: string | null };
     if (typeof mergeResult.error === 'string' && mergeResult.error.trim().length > 0) {
       throw new Error(`Traffic feed error: ${mergeResult.error}`);
     }
-    trackedHexes = mergeResult.trackedHexes;
-    returnedHistoryHexes = mergeResult.returnedHistoryHexes;
-  } else if (message.type === 'ingest-runtime') {
-    const state = getTrafficState();
-    const runtimeData = await fetchRuntimeBinaryData(message.primaryUrl, message.followupUrl);
-    fetchMs = runtimeData.fetchMs;
+    return this.buildAndTransferResult(
+      options,
+      mergeResult.trackedHexes,
+      mergeResult.returnedHistoryHexes,
+      undefined,
+      processingStartedAt
+    );
+  }
+
+  async ingestRuntime(
+    primaryUrl: string,
+    followupUrl: string | undefined,
+    options: TrafficProcessOptions
+  ): Promise<TrafficWorkerResult> {
+    await this.ready;
+    const state = this.getState();
+    const runtimeData = await fetchRuntimeBinaryData(primaryUrl, followupUrl);
+    const processingStartedAt = performance.now();
     const mergeResult = state.merge(
       new Uint8Array(runtimeData.primaryBuffer),
-      message.nowMs,
-      message.historyMinutes,
-      message.hideGroundTargets,
+      options.nowMs,
+      options.historyMinutes,
+      options.hideGroundTargets,
       runtimeData.backfillBuffer ? new Uint8Array(runtimeData.backfillBuffer) : new Uint8Array(0)
     ) as { trackedHexes: string[]; returnedHistoryHexes: string[]; error: string | null };
     if (typeof mergeResult.error === 'string' && mergeResult.error.trim().length > 0) {
       throw new Error(`Traffic feed error: ${mergeResult.error}`);
     }
-    trackedHexes = mergeResult.trackedHexes;
-    returnedHistoryHexes = mergeResult.returnedHistoryHexes;
-  } else if (message.type === 'prune-error') {
-    getTrafficState().prune_for_error(message.nowMs, message.historyMinutes);
-  } else {
-    // recompute
-    getTrafficState().recompute(message.nowMs, message.historyMinutes, message.hideGroundTargets);
+    return this.buildAndTransferResult(
+      options,
+      mergeResult.trackedHexes,
+      mergeResult.returnedHistoryHexes,
+      runtimeData.fetchMs,
+      processingStartedAt
+    );
   }
 
-  const state = getTrafficState();
-  const airportData = packAirportData(message.sceneAirports);
-  const wasmRenderResult = state.build_render_tracks(
-    message.refLat,
-    message.refLon,
-    airportData,
-    message.verticalScale,
-    message.applyEarthCurvatureCompensation,
-    message.showDepartedTrafficTrails
-  ) as any;
+  async recompute(options: TrafficProcessOptions): Promise<TrafficWorkerResult> {
+    await this.ready;
+    const processingStartedAt = performance.now();
+    this.getState().recompute(options.nowMs, options.historyMinutes, options.hideGroundTargets);
+    return this.buildAndTransferResult(options, [], [], undefined, processingStartedAt);
+  }
 
-  const soa = unpackWasmSoA(wasmRenderResult);
-  const historyPointCount = Math.floor(soa.trailPointsFlat.length / 3);
-  const workerProcessingMs = roundMs(performance.now() - startedAt);
+  async pruneError(options: TrafficProcessOptions): Promise<TrafficWorkerResult> {
+    await this.ready;
+    const processingStartedAt = performance.now();
+    this.getState().prune_for_error(options.nowMs, options.historyMinutes);
+    return this.buildAndTransferResult(options, [], [], undefined, processingStartedAt);
+  }
 
-  const sabResult = writeTrafficSabResultSoA(sabViews, message.requestId, {
-    soa,
-    storeTrackCount: state.track_count,
-    historyPointCount,
-    workerProcessingMs
-  });
-  if (sabResult.usedSab) {
-    return {
-      type: 'result',
-      requestId: message.requestId,
-      operation: message.type,
-      usedSab: true,
+  private getState(): WasmTrafficState {
+    if (!this.trafficState) {
+      this.trafficState = new WasmTrafficState();
+    }
+    return this.trafficState;
+  }
+
+  private buildAndTransferResult(
+    options: TrafficProcessOptions,
+    trackedHexes: string[],
+    returnedHistoryHexes: string[],
+    fetchMs?: number,
+    processingStartedAt?: number
+  ): TrafficWorkerResult {
+    const startedAt = processingStartedAt ?? performance.now();
+    const state = this.getState();
+    const airportData = packAirportData(options.sceneAirports);
+    const wasmRenderResult = state.build_render_tracks(
+      options.refLat,
+      options.refLon,
+      airportData,
+      options.verticalScale,
+      options.applyEarthCurvatureCompensation,
+      options.showDepartedTrafficTrails
+    ) as any;
+
+    const soa = unpackWasmSoA(wasmRenderResult);
+    const historyPointCount = Math.floor(soa.trailPointsFlat.length / 3);
+    const workerProcessingMs = roundMs(performance.now() - startedAt);
+
+    const result: TrafficWorkerResult = {
+      trackCount: state.track_count,
+      renderedTrackCount: soa.trackCount,
+      historyPointCount,
+      renderHash: typeof soa.hash === 'number' ? soa.hash >>> 0 : null,
+      markerPositions: soa.markerPositions,
+      headingDeg: soa.headingDeg,
+      flags: soa.flags,
+      trailOffsets: soa.trailOffsets,
+      trailCounts: soa.trailCounts,
+      points: soa.trailPointsFlat,
+      callsignLabels: soa.callsignLabels,
       trackedHexes,
       returnedHistoryHexes,
+      workerProcessingMs,
       fetchMs
     };
+
+    const transferList: ArrayBuffer[] = [
+      soa.markerPositions.buffer as ArrayBuffer,
+      soa.headingDeg.buffer as ArrayBuffer,
+      soa.flags.buffer as ArrayBuffer,
+      soa.trailOffsets.buffer as ArrayBuffer,
+      soa.trailCounts.buffer as ArrayBuffer,
+      soa.trailPointsFlat.buffer as ArrayBuffer
+    ];
+
+    return Comlink.transfer(result, transferList);
   }
-  return {
-    type: 'result',
-    requestId: message.requestId,
-    operation: message.type,
-    workerProcessingMs,
-    sabOverflow: sabResult.overflow,
-    trackedHexes,
-    returnedHistoryHexes,
-    fetchMs
-  };
 }
 
-const scope = self as unknown as {
-  postMessage: (message: TrafficWorkerResponseMessage) => void;
-  onmessage: ((event: MessageEvent<TrafficWorkerRequestMessage>) => void) | null;
-};
-
-scope.onmessage = (event) => {
-  const message = event.data;
-  if (message.type === 'init-sab') {
-    handleInitSab(message);
-    return;
-  }
-  void (async () => {
-    try {
-      scope.postMessage(await handleMessage(message));
-    } catch (error) {
-      scope.postMessage({
-        type: 'result',
-        requestId: message.requestId,
-        operation: message.type,
-        error: error instanceof Error ? error.message : 'Traffic worker processing failed.'
-      });
-    }
-  })();
-};
-
-export {};
+Comlink.expose(new TrafficWorkerApi());
