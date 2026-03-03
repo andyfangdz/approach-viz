@@ -24,7 +24,7 @@ export interface TrafficWorkerResult {
   trackCount: number;
   renderedTrackCount: number;
   historyPointCount: number;
-  renderHash: number;
+  renderHash: number | null;
   markerPositions: Float32Array;
   headingDeg: Float32Array;
   flags: Uint8Array;
@@ -134,9 +134,10 @@ export class TrafficWorkerApi {
 
   async reset(options: TrafficProcessOptions): Promise<TrafficWorkerResult> {
     await this.ready;
+    const processingStartedAt = performance.now();
     this.trafficState?.free();
     this.trafficState = new WasmTrafficState();
-    return this.buildAndTransferResult(options, [], []);
+    return this.buildAndTransferResult(options, [], [], undefined, processingStartedAt);
   }
 
   async ingestBinary(
@@ -196,14 +197,16 @@ export class TrafficWorkerApi {
 
   async recompute(options: TrafficProcessOptions): Promise<TrafficWorkerResult> {
     await this.ready;
+    const processingStartedAt = performance.now();
     this.getState().recompute(options.nowMs, options.historyMinutes, options.hideGroundTargets);
-    return this.buildAndTransferResult(options, [], []);
+    return this.buildAndTransferResult(options, [], [], undefined, processingStartedAt);
   }
 
   async pruneError(options: TrafficProcessOptions): Promise<TrafficWorkerResult> {
     await this.ready;
+    const processingStartedAt = performance.now();
     this.getState().prune_for_error(options.nowMs, options.historyMinutes);
-    return this.buildAndTransferResult(options, [], []);
+    return this.buildAndTransferResult(options, [], [], undefined, processingStartedAt);
   }
 
   private getState(): WasmTrafficState {
@@ -240,7 +243,7 @@ export class TrafficWorkerApi {
       trackCount: state.track_count,
       renderedTrackCount: soa.trackCount,
       historyPointCount,
-      renderHash: typeof soa.hash === 'number' ? soa.hash >>> 0 : 0,
+      renderHash: typeof soa.hash === 'number' ? soa.hash >>> 0 : null,
       markerPositions: soa.markerPositions,
       headingDeg: soa.headingDeg,
       flags: soa.flags,
