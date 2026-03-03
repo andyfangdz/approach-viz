@@ -5,7 +5,7 @@ import type { SceneData } from '@/lib/types';
 import type { ChartDebugState } from '@/app/scene/ChartMapSurface';
 
 export type SurfaceMode = 'terrain' | 'satellite' | 'map' | '3dmap';
-export type ChartType = 'vfr' | 'low' | 'high';
+export type ChartType = 'vfr' | 'tac' | 'low' | 'high';
 export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high';
 export type NexradPhaseMode = 'thermo' | 'surface';
 export type CameraControlMode = 'orbit' | 'arcball' | 'map';

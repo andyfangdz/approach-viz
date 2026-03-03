@@ -235,6 +235,13 @@ export function HeaderControls({
                 </button>
                 <button
                   type="button"
+                  className={`surface-toggle-button ${chartType === 'tac' ? 'active' : ''}`}
+                  onClick={() => onChartTypeSelected('tac')}
+                >
+                  TAC
+                </button>
+                <button
+                  type="button"
                   className={`surface-toggle-button ${chartType === 'low' ? 'active' : ''}`}
                   onClick={() => onChartTypeSelected('low')}
                 >
