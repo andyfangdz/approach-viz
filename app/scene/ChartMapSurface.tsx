@@ -346,6 +346,14 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       type: 'module'
     });
     const api = Comlink.wrap<ChartTilesWorkerApi>(rawWorker);
+    let released = false;
+
+    function releaseWorker() {
+      if (released) return;
+      released = true;
+      api[Comlink.releaseProxy]();
+      rawWorker.terminate();
+    }
 
     function scheduleBatchUpdate() {
       if (!rafPending.current) {
@@ -462,16 +470,14 @@ export const ChartMapSurface = memo(function ChartMapSurface({
         loadMs: performance.now() - t0
       });
 
-      api[Comlink.releaseProxy]();
-      rawWorker.terminate();
+      releaseWorker();
     }
 
     run();
 
     return () => {
       cancelled = true;
-      api[Comlink.releaseProxy]();
-      rawWorker.terminate();
+      releaseWorker();
       for (const entry of tilesRef.current.values()) {
         if (entry.texture.image instanceof ImageBitmap) {
           entry.texture.image.close();
@@ -533,11 +539,19 @@ export function buildChartTexture(
   );
 
   let cancelled = false;
+  let released = false;
   const rawWorker = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
     type: 'module'
   });
   const api = Comlink.wrap<ChartTilesWorkerApi>(rawWorker);
   const pendingBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
+
+  function releaseWorker() {
+    if (released) return;
+    released = true;
+    api[Comlink.releaseProxy]();
+    rawWorker.terminate();
+  }
 
   const promise = api
     .streamTiles(
@@ -589,8 +603,7 @@ export function buildChartTexture(
       const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
       const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
 
-      api[Comlink.releaseProxy]();
-      rawWorker.terminate();
+      releaseWorker();
 
       return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
     });
@@ -599,8 +612,7 @@ export function buildChartTexture(
     promise,
     cancel: () => {
       cancelled = true;
-      api[Comlink.releaseProxy]();
-      rawWorker.terminate();
+      releaseWorker();
       for (const p of pendingBitmaps) p.bitmap.close();
       pendingBitmaps.length = 0;
     }
