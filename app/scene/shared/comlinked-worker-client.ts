@@ -14,7 +14,7 @@ interface ComlinkedWorkerClientOptions {
 /**
  * Base class for Comlink-based worker clients. Handles:
  * - Typed proxy via Comlink.wrap<T>()
- * - Per-call timeout via Promise.race
+ * - Per-call timeout with in-flight tracking
  * - Error mapping to WorkerClientError codes
  * - In-flight tracking for cancelAllPending() and dispose()
  * - Worker error/messageerror event handling
@@ -82,6 +82,7 @@ export class ComlinkedWorkerClient<T extends object> {
     this.disposed = true;
     this.rawWorker.removeEventListener('error', this.handleWorkerError);
     this.rawWorker.removeEventListener('messageerror', this.handleMessageError);
+    this.proxy[Comlink.releaseProxy]();
     this.rawWorker.terminate();
     this.rejectAll(new WorkerClientError('terminated', `${this.name} worker terminated.`));
     this.onDispose();
