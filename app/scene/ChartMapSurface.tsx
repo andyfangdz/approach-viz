@@ -310,7 +310,31 @@ export const ChartMapSurface = memo(function ChartMapSurface({
   const onDebugChangeRef = useRef(onDebugChange);
   onDebugChangeRef.current = onDebugChange;
 
+  // Warm worker singleton — created once per mount, reused across re-renders
+  // so that rapid prop changes (airport switch, slider drag) skip the OS
+  // thread + JIT + Comlink.expose() startup cost.
+  const workerRef = useRef<Comlink.Remote<ChartTilesWorkerApi> | null>(null);
+  const rawWorkerRef = useRef<Worker | null>(null);
+
   useEffect(() => {
+    const raw = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
+      type: 'module'
+    });
+    rawWorkerRef.current = raw;
+    workerRef.current = Comlink.wrap<ChartTilesWorkerApi>(raw);
+    return () => {
+      workerRef.current?.[Comlink.releaseProxy]();
+      rawWorkerRef.current?.terminate();
+      workerRef.current = null;
+      rawWorkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!workerRef.current) return;
+    // Copy to local const so TypeScript narrows to non-null in nested closures.
+    const api: Comlink.Remote<ChartTilesWorkerApi> = workerRef.current;
+
     let cancelled = false;
     const t0 = performance.now();
 
@@ -341,19 +365,6 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       tilesLoaded: 0,
       loadMs: null
     });
-
-    const rawWorker = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
-      type: 'module'
-    });
-    const api = Comlink.wrap<ChartTilesWorkerApi>(rawWorker);
-    let released = false;
-
-    function releaseWorker() {
-      if (released) return;
-      released = true;
-      api[Comlink.releaseProxy]();
-      rawWorker.terminate();
-    }
 
     function scheduleBatchUpdate() {
       if (!rafPending.current) {
@@ -475,8 +486,6 @@ export const ChartMapSurface = memo(function ChartMapSurface({
         tilesLoaded: detailTilesLoaded,
         loadMs: performance.now() - t0
       });
-
-      releaseWorker();
     }
 
     run().catch((err: unknown) => {
@@ -487,7 +496,6 @@ export const ChartMapSurface = memo(function ChartMapSurface({
 
     return () => {
       cancelled = true;
-      releaseWorker();
       for (const entry of tilesRef.current.values()) {
         if (entry.texture.image instanceof ImageBitmap) {
           entry.texture.image.close();

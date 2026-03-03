@@ -223,6 +223,10 @@ function crossSectionTransferables(crossSection: CrossSectionData | null): Array
 
 export class NexradWorkerApi {
   private readonly ready = ensureWasm();
+  // Retained between calls so rePrepare can re-decode without a network
+  // round-trip when the user adjusts visualization settings (threshold,
+  // phase mode, declutter, cross-section).  Costs 5-15 MB but is refreshed
+  // every pollAndPrepare cycle (~2 min), so a TTL is unnecessary.
   private cachedVolumeBuffer: ArrayBuffer | null = null;
   private cachedVolumeHeaders: Headers | null = null;
 
