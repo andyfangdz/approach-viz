@@ -151,6 +151,7 @@ export function LiveTrafficOverlay({
   const previousShowDepartedRef = useRef(showDepartedTrafficTrails);
   const needsHistoryBackfillRef = useRef(false);
   const historyMinutesRef = useRef(normalizedHistoryMinutes);
+  const previousHistoryMinutesRef = useRef(normalizedHistoryMinutes);
   historyMinutesRef.current = normalizedHistoryMinutes;
   const [trafficMode, setTrafficMode] = useState<TrafficMode>(() =>
     typeof Worker !== 'undefined' ? 'worker' : 'worker-error'
@@ -572,6 +573,17 @@ export function LiveTrafficOverlay({
     applyWorkerResult,
     patchTimings
   ]);
+
+  // When the history window grows and departed trails are active, flag an
+  // early backfill so the next poll cycle fetches the wider range immediately
+  // instead of waiting for the scheduled backfill interval.
+  useEffect(() => {
+    const prev = previousHistoryMinutesRef.current;
+    previousHistoryMinutesRef.current = normalizedHistoryMinutes;
+    if (normalizedHistoryMinutes > prev && showDepartedTrafficTrails) {
+      needsHistoryBackfillRef.current = true;
+    }
+  }, [normalizedHistoryMinutes, showDepartedTrafficTrails]);
 
   useEffect(() => {
     if (trafficMode === 'worker') return;
