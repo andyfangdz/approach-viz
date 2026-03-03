@@ -534,10 +534,7 @@ export const SceneCanvas = memo(function SceneCanvas({
         )}
 
         {liveTrafficEnabled && (
-          <SceneErrorBoundary
-            resetKey={`traffic:${airport.id}`}
-            fallback={null}
-          >
+          <SceneErrorBoundary resetKey={`traffic:${airport.id}`} fallback={null}>
             <LiveTrafficOverlay
               refLat={airport.lat}
               refLon={airport.lon}

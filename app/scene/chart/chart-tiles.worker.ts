@@ -42,7 +42,7 @@ async function fetchTile(
 export class ChartTilesWorkerApi {
   async streamTiles(
     params: ChartTilesParams,
-    onTile: (tile: ChartTileReady) => void
+    onTile: (tile: ChartTileReady) => void | Promise<void>
   ): Promise<ChartStreamSummary> {
     const specs: Array<{ x: number; y: number }> = [];
     for (let tileY = params.minTileY; tileY <= params.maxTileY; tileY += 1) {
@@ -70,7 +70,7 @@ export class ChartTilesWorkerApi {
         const s = specs[i];
         const bitmap = await fetchTile(params.baseUrl, params.zoom, s.x, s.y);
         if (bitmap) {
-          onTile(Comlink.transfer({ tileX: s.x, tileY: s.y, bitmap }, [bitmap]));
+          await onTile(Comlink.transfer({ tileX: s.x, tileY: s.y, bitmap }, [bitmap]));
         } else {
           failedTiles += 1;
         }
@@ -81,6 +81,7 @@ export class ChartTilesWorkerApi {
       Array.from({ length: Math.min(TILE_FETCH_CONCURRENCY, specs.length) }, () => worker())
     );
 
+    (onTile as unknown as { [Comlink.releaseProxy]: () => void })[Comlink.releaseProxy]();
     return { totalTiles: specs.length, failedTiles };
   }
 }
