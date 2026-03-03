@@ -10,6 +10,7 @@ import {
   type TrafficProcessResult,
   type TrafficRenderBuffers
 } from './traffic/traffic-worker-client';
+import { WorkerClientError } from './shared/worker-errors';
 import type { SceneAirport } from './traffic/traffic-worker-client';
 export type { SceneAirport } from './traffic/traffic-worker-client';
 
@@ -42,6 +43,10 @@ function toWorkerFetchUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
   if (typeof window === 'undefined') return url;
   return new URL(url, window.location.origin).toString();
+}
+
+function isCancelledError(error: unknown): boolean {
+  return error instanceof WorkerClientError && error.code === 'cancelled';
 }
 
 function formatTrafficWorkerErrorReason(error: unknown, context: string): string {
@@ -431,7 +436,7 @@ export function LiveTrafficOverlay({
         shouldRequestHistoryBackfill = false;
         needsHistoryBackfillRef.current = false;
       } catch (error) {
-        if (cancelled) return;
+        if (cancelled || isCancelledError(error)) return;
         setLastError(error instanceof Error ? error.message : 'Traffic poll failed');
         setLastPollAt(new Date().toISOString());
         const nowMs = Date.now();
@@ -459,7 +464,7 @@ export function LiveTrafficOverlay({
               applyWorkerResult(result);
             }
           } catch (pruneError) {
-            if (cancelled) return;
+            if (cancelled || isCancelledError(pruneError)) return;
             setTrafficMode('worker-error');
             setWorkerErrorReason(
               formatTrafficWorkerErrorReason(pruneError, 'Traffic worker prune failed')
@@ -545,7 +550,8 @@ export function LiveTrafficOverlay({
           applyWorkerResult(result);
         })
         .catch((error) => {
-          if (cancelled || trafficWorkerRef.current !== recomputeWorker) return;
+          if (cancelled || isCancelledError(error)) return;
+          if (trafficWorkerRef.current !== recomputeWorker) return;
           const message = formatTrafficWorkerErrorReason(error, 'Traffic worker recompute failed');
           setLastError(message);
         });

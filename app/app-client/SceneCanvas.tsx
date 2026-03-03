@@ -534,19 +534,24 @@ export const SceneCanvas = memo(function SceneCanvas({
         )}
 
         {liveTrafficEnabled && (
-          <LiveTrafficOverlay
-            refLat={airport.lat}
-            refLon={airport.lon}
-            sceneAirports={sceneAirports}
-            verticalScale={verticalScale}
-            hideGroundTargets={hideGroundTraffic}
-            showCallsignLabels={showTrafficCallsigns}
-            hideGroundCallsignLabels={hideGroundTrafficCallsigns}
-            showDepartedTrafficTrails={showDepartedTrafficTrails}
-            historyMinutes={trafficHistoryMinutes}
-            applyEarthCurvatureCompensation={isTiledSurface}
-            onDebugChange={onTrafficDebugChange}
-          />
+          <SceneErrorBoundary
+            resetKey={`traffic:${airport.id}`}
+            fallback={null}
+          >
+            <LiveTrafficOverlay
+              refLat={airport.lat}
+              refLon={airport.lon}
+              sceneAirports={sceneAirports}
+              verticalScale={verticalScale}
+              hideGroundTargets={hideGroundTraffic}
+              showCallsignLabels={showTrafficCallsigns}
+              hideGroundCallsignLabels={hideGroundTrafficCallsigns}
+              showDepartedTrafficTrails={showDepartedTrafficTrails}
+              historyMinutes={trafficHistoryMinutes}
+              applyEarthCurvatureCompensation={isTiledSurface}
+              onDebugChange={onTrafficDebugChange}
+            />
+          </SceneErrorBoundary>
         )}
 
         {(nexradVolumeEnabled || nexradShowEchoTops) && (
