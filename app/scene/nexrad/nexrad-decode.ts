@@ -1,6 +1,16 @@
 import type { NexradVolumePayload } from './nexrad-types';
 import { MRMS_BINARY_BASE_URL } from './nexrad-types';
-import type { PhaseDebugHeaderValues } from './nexrad-worker-types';
+
+export interface PhaseDebugHeaderValues {
+  phaseMode: string | null;
+  phaseDetail: string | null;
+  zdrAgeSeconds: number | null;
+  rhohvAgeSeconds: number | null;
+  zdrTimestamp: string | null;
+  rhohvTimestamp: string | null;
+  precipFlagTimestamp: string | null;
+  freezingLevelTimestamp: string | null;
+}
 
 export function buildNexradRequestUrl(params: URLSearchParams): string {
   if (!MRMS_BINARY_BASE_URL) {

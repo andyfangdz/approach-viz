@@ -1,24 +1,13 @@
+import * as Comlink from 'comlink';
 import { applyPhaseDebugValues, extractPhaseDebugHeaderValues } from './nexrad-decode';
 import type {
   NexradVolumePayload,
   NexradLayerSummary,
   NexradPreparedVolumeData,
-  EchoTopSoA
+  EchoTopSoA,
+  CrossSectionData
 } from './nexrad-types';
 import { MRMS_LEVEL_TAGS, EMPTY_ECHO_TOP_SOA } from './nexrad-types';
-import type {
-  NexradInitSabRequestMessage,
-  NexradWorkerRequestMessage,
-  NexradWorkerResponseMessage,
-  PollAndPrepareRequestMessage,
-  PollAndPrepareResponseMessage,
-  RePrepareRequestMessage
-} from './nexrad-worker-types';
-import {
-  createNexradPrepareSabViews,
-  type NexradPrepareSabViews,
-  writeNexradPrepareSabResult
-} from './nexrad-sab';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   decode_and_prepare_mrms,
@@ -27,40 +16,87 @@ import {
 
 import type { NexradPhaseMode, NexradDeclutterMode } from '../../app-client/types';
 
-type WorkerEndpoint = {
-  postMessage: (message: NexradWorkerResponseMessage, transfer?: Transferable[]) => void;
-};
-const prepareSabViewsByChannel = new Map<number, NexradPrepareSabViews>();
+// --- Types exported from worker (moved from nexrad-worker-types.ts) ---
 
-/** Cached raw binary ArrayBuffer from the most recent successful volume fetch. */
-let cachedVolumeBuffer: ArrayBuffer | null = null;
-/** Headers from the last successful volume fetch (for phase debug values). */
-let cachedVolumeHeaders: Headers | null = null;
-
-function errorResponseForRequest(
-  message: PollAndPrepareRequestMessage | RePrepareRequestMessage,
-  error: unknown
-): NexradWorkerResponseMessage {
-  const errorMessage = error instanceof Error ? error.message : 'MRMS worker request failed.';
-  const responseType =
-    message.type === 're-prepare'
-      ? ('re-prepare-result' as const)
-      : ('poll-and-prepare-result' as const);
-  return {
-    type: responseType,
-    requestId: message.requestId,
-    error: errorMessage
-  };
+export interface NexradPollAndPrepareOptions {
+  volumeUrl?: string;
+  echoTopUrl?: string;
+  includeVolume: boolean;
+  includeEchoTop: boolean;
+  minDbz: number;
+  phaseMode: NexradPhaseMode;
+  declutterMode: NexradDeclutterMode;
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
+  includeCrossSection: boolean;
+  normalizedCrossSectionRange: number;
+  crossSectionHalfWidthNm: number;
+  sliceAxis: { x: number; z: number };
+  slicePerpAxis: { x: number; z: number };
 }
 
-function volumeTransferables(payload: NexradVolumePayload): Transferable[] {
+export interface NexradVolumePrepareOptions {
+  minDbz: number;
+  phaseMode: NexradPhaseMode;
+  declutterMode: NexradDeclutterMode;
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
+  includeCrossSection: boolean;
+  normalizedCrossSectionRange: number;
+  crossSectionHalfWidthNm: number;
+  sliceAxis: { x: number; z: number };
+  slicePerpAxis: { x: number; z: number };
+}
+
+export interface PollAndPrepareTimings {
+  volumeFetchMs: number | null;
+  volumeDecodeMs: number | null;
+  volumePrepareMs: number | null;
+  echoTopFetchMs: number | null;
+  echoTopDecodeMs: number | null;
+  echoTopPrepareMs: number | null;
+}
+
+export interface PollAndPrepareEchoTopSummary {
+  sourceCellCount: number;
+  maxTop18Feet: number | null;
+  maxTop30Feet: number | null;
+  maxTop50Feet: number | null;
+  maxTop60Feet: number | null;
+  top18Timestamp: string | null;
+  top30Timestamp: string | null;
+  top50Timestamp: string | null;
+  top60Timestamp: string | null;
+  error: string | null;
+}
+
+export interface NexradPollAndPrepareResult {
+  volumePayload: NexradVolumePayload | null;
+  preparedVolume: NexradPreparedVolumeData;
+  crossSectionData: CrossSectionData | null;
+  echoTop18: EchoTopSoA;
+  echoTop30: EchoTopSoA;
+  echoTop50: EchoTopSoA;
+  echoTopSummary: PollAndPrepareEchoTopSummary | null;
+  timings: PollAndPrepareTimings | null;
+}
+
+export interface NexradRePrepareResult {
+  preparedVolume: NexradPreparedVolumeData;
+  crossSectionData: CrossSectionData | null;
+  timings: { volumePrepareMs: number | null } | null;
+}
+
+// --- Helpers ---
+
+function volumeTransferables(payload: NexradVolumePayload): ArrayBuffer[] {
   return [
-    payload.xNm.buffer,
-    payload.zNm.buffer,
-    payload.dbz.buffer,
-    payload.spanX.buffer,
-    payload.spanY.buffer,
-    payload.phaseCode.buffer
+    payload.xNm.buffer as ArrayBuffer,
+    payload.zNm.buffer as ArrayBuffer,
+    payload.dbz.buffer as ArrayBuffer,
+    payload.spanX.buffer as ArrayBuffer,
+    payload.spanY.buffer as ArrayBuffer,
+    payload.phaseCode.buffer as ArrayBuffer
   ];
 }
 
@@ -68,7 +104,7 @@ function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function emptyPreparedVolume() {
+function emptyPreparedVolume(): NexradPreparedVolumeData {
   return {
     validCount: 0,
     validIndices: new Int32Array(0),
@@ -159,69 +195,255 @@ function encodeDeclutterMode(mode: NexradDeclutterMode): number {
   }
 }
 
-async function handlePollAndPrepare(
-  endpoint: WorkerEndpoint,
-  message: PollAndPrepareRequestMessage
-): Promise<void> {
-  const prepareSabViews = prepareSabViewsByChannel.get(message.sabChannelId) ?? null;
-  if (!prepareSabViews) {
-    endpoint.postMessage({
-      type: 'poll-and-prepare-result',
-      requestId: message.requestId,
-      error: 'MRMS poll-and-prepare SAB channel was not initialized.'
-    });
-    return;
+/** Collect transferable ArrayBuffers from prepared volume data. */
+function preparedVolumeTransferables(prepared: NexradPreparedVolumeData): ArrayBuffer[] {
+  if (prepared.validCount === 0 && prepared.declutterCount === 0) return [];
+  return [
+    prepared.validIndices.buffer as ArrayBuffer,
+    prepared.yBase.buffer as ArrayBuffer,
+    prepared.heightBase.buffer as ArrayBuffer,
+    prepared.correctedBottomFeet.buffer as ArrayBuffer,
+    prepared.correctedTopFeet.buffer as ArrayBuffer,
+    prepared.effectivePhaseCode.buffer as ArrayBuffer,
+    prepared.declutterIndices.buffer as ArrayBuffer
+  ];
+}
+
+/** Collect transferable ArrayBuffers from cross-section data (if present). */
+function crossSectionTransferables(crossSection: CrossSectionData | null): ArrayBuffer[] {
+  if (!crossSection) return [];
+  return [
+    crossSection.grid.buffer as ArrayBuffer,
+    crossSection.phaseGrid.buffer as ArrayBuffer,
+    crossSection.topEnvelopeFeet.buffer as ArrayBuffer
+  ];
+}
+
+// --- Worker API class ---
+
+export class NexradWorkerApi {
+  private readonly ready = ensureWasm();
+  private cachedVolumeBuffer: ArrayBuffer | null = null;
+  private cachedVolumeHeaders: Headers | null = null;
+
+  async pollAndPrepare(options: NexradPollAndPrepareOptions): Promise<NexradPollAndPrepareResult> {
+    await this.ready;
+
+    const timings: PollAndPrepareTimings = {
+      volumeFetchMs: null,
+      volumeDecodeMs: null,
+      volumePrepareMs: null,
+      echoTopFetchMs: null,
+      echoTopDecodeMs: null,
+      echoTopPrepareMs: null
+    };
+
+    let volumePayload: NexradVolumePayload | null = null;
+    let preparedVolume: NexradPreparedVolumeData = emptyPreparedVolume();
+    let crossSectionData: CrossSectionData | null = null;
+
+    if (options.includeVolume) {
+      if (!options.volumeUrl) {
+        throw new Error('MRMS volume URL was missing for poll-and-prepare request.');
+      }
+      const volumeFetch = await fetchArrayBuffer(options.volumeUrl);
+      timings.volumeFetchMs = volumeFetch.fetchMs;
+      this.cachedVolumeBuffer = volumeFetch.buffer;
+      this.cachedVolumeHeaders = volumeFetch.headers;
+      const decodeAndPrepareStartedAt = performance.now();
+
+      // Single WASM call: decode + prepare + cross-section
+      const result = decode_and_prepare_mrms(
+        new Uint8Array(volumeFetch.buffer),
+        Math.round(options.minDbz * 10),
+        encodePhaseMode(options.phaseMode),
+        encodeDeclutterMode(options.declutterMode),
+        options.applyEarthCurvatureCompensation,
+        options.refLat,
+        options.includeCrossSection,
+        options.sliceAxis.x,
+        options.sliceAxis.z,
+        options.slicePerpAxis.x,
+        options.slicePerpAxis.z,
+        options.normalizedCrossSectionRange,
+        options.crossSectionHalfWidthNm
+      ) as any;
+
+      // Unpack prepared volume
+      const wasmPrepared = result.prepared;
+      preparedVolume = {
+        validCount: wasmPrepared.validCount as number,
+        validIndices: wasmPrepared.validIndices as Int32Array,
+        yBase: wasmPrepared.yBase as Float32Array,
+        heightBase: wasmPrepared.heightBase as Float32Array,
+        correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
+        correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
+        effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
+        declutterIndices: wasmPrepared.declutterIndices as Int32Array,
+        declutterCount: wasmPrepared.declutterCount as number
+      };
+
+      // Cross-section (null if not requested or empty volume)
+      crossSectionData = result.crossSection;
+
+      // Build NexradVolumePayload from WASM-converted fields
+      const vp = result.volumePayload;
+      const generatedAtMs: number = vp.generatedAtMs;
+      const scanTimeMs: number = vp.scanTimeMs;
+      const layerCount: number = vp.layerCount;
+      const layerVoxelCounts: Uint32Array = vp.layerVoxelCounts;
+
+      const generatedAt =
+        Number.isFinite(generatedAtMs) && generatedAtMs > 0
+          ? new Date(generatedAtMs).toISOString()
+          : new Date().toISOString();
+      const scanTime =
+        Number.isFinite(scanTimeMs) && scanTimeMs > 0
+          ? new Date(scanTimeMs).toISOString()
+          : generatedAt;
+
+      const layerSummaries: NexradLayerSummary[] = [];
+      for (let i = 0; i < layerCount; i++) {
+        const levelTag = MRMS_LEVEL_TAGS[i] ?? `${i}`;
+        const elevation = Number(levelTag);
+        layerSummaries.push({
+          product: `MergedReflectivityQC_${levelTag}`,
+          elevationAngleDeg: Number.isFinite(elevation) ? elevation : i,
+          sourceKey: `mrms-binary://${scanTime}/${levelTag}`,
+          scanTime,
+          voxelCount: layerVoxelCounts[i] ?? 0
+        });
+      }
+
+      volumePayload = applyPhaseDebugValues(
+        {
+          generatedAt,
+          radar: null,
+          layerSummaries,
+          voxelCount: vp.voxelCount as number,
+          xNm: vp.xNm as Float32Array,
+          zNm: vp.zNm as Float32Array,
+          dbz: vp.dbz as Float32Array,
+          footprintBaseXNm: vp.footprintBaseXNm as number,
+          footprintBaseYNm: vp.footprintBaseYNm as number,
+          spanX: vp.spanX as Uint16Array,
+          spanY: vp.spanY as Uint16Array,
+          phaseCode: vp.phaseCode as Uint8Array
+        },
+        extractPhaseDebugHeaderValues(volumeFetch.headers)
+      );
+
+      const elapsed = roundMs(performance.now() - decodeAndPrepareStartedAt);
+      timings.volumeDecodeMs = elapsed;
+      timings.volumePrepareMs = 0; // included in decode timing
+    }
+
+    // Echo tops
+    let echoTop18: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
+    let echoTop30: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
+    let echoTop50: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
+    let echoTopSummary: PollAndPrepareEchoTopSummary | null = null;
+
+    if (options.includeEchoTop && options.echoTopUrl) {
+      try {
+        const echoTopFetch = await fetchArrayBuffer(
+          options.echoTopUrl,
+          'application/vnd.approach-viz.echo-tops.v3'
+        );
+        timings.echoTopFetchMs = echoTopFetch.fetchMs;
+        const echoDecodeStartedAt = performance.now();
+
+        // Single WASM call: AVET binary decode + prepare surfaces
+        const result = decode_and_prepare_echo_top(
+          new Uint8Array(echoTopFetch.buffer),
+          options.applyEarthCurvatureCompensation,
+          options.refLat
+        ) as any;
+        echoTop18 = extractEchoTopSoA(result.top18);
+        echoTop30 = extractEchoTopSoA(result.top30);
+        echoTop50 = extractEchoTopSoA(result.top50);
+
+        const summary = result.summary;
+        echoTopSummary = {
+          sourceCellCount: summary.sourceCellCount ?? 0,
+          maxTop18Feet: summary.maxTop18Feet ?? null,
+          maxTop30Feet: summary.maxTop30Feet ?? null,
+          maxTop50Feet: summary.maxTop50Feet ?? null,
+          maxTop60Feet: summary.maxTop60Feet ?? null,
+          top18Timestamp: null,
+          top30Timestamp: null,
+          top50Timestamp: null,
+          top60Timestamp: null,
+          error: null
+        };
+
+        timings.echoTopDecodeMs = roundMs(performance.now() - echoDecodeStartedAt);
+        timings.echoTopPrepareMs = 0; // included in decode timing
+      } catch (error) {
+        echoTopSummary = {
+          sourceCellCount: 0,
+          maxTop18Feet: null,
+          maxTop30Feet: null,
+          maxTop50Feet: null,
+          maxTop60Feet: null,
+          top18Timestamp: null,
+          top30Timestamp: null,
+          top50Timestamp: null,
+          top60Timestamp: null,
+          error: error instanceof Error ? error.message : 'MRMS echo-top poll failed.'
+        };
+      }
+    }
+
+    // Build result and transfer list
+    const result: NexradPollAndPrepareResult = {
+      volumePayload,
+      preparedVolume,
+      crossSectionData,
+      echoTop18,
+      echoTop30,
+      echoTop50,
+      echoTopSummary,
+      timings
+    };
+
+    const transferList: ArrayBuffer[] = [
+      ...(volumePayload ? volumeTransferables(volumePayload) : []),
+      ...preparedVolumeTransferables(preparedVolume),
+      ...crossSectionTransferables(crossSectionData),
+      ...echoTopSoATransferables(echoTop18, echoTop30, echoTop50)
+    ];
+
+    return Comlink.transfer(result, transferList);
   }
 
-  const timings: PollAndPrepareResponseMessage['timings'] = {
-    volumeFetchMs: null,
-    volumeDecodeMs: null,
-    volumePrepareMs: null,
-    echoTopFetchMs: null,
-    echoTopDecodeMs: null,
-    echoTopPrepareMs: null
-  };
+  async rePrepare(options: NexradVolumePrepareOptions): Promise<NexradRePrepareResult> {
+    await this.ready;
 
-  await ensureWasm();
-
-  let volumePayload: NexradVolumePayload | undefined;
-  let preparedVolume: NexradPreparedVolumeData = emptyPreparedVolume();
-  let crossSectionData = null;
-  if (message.includeVolume) {
-    if (!message.volumeUrl) {
-      endpoint.postMessage({
-        type: 'poll-and-prepare-result',
-        requestId: message.requestId,
-        error: 'MRMS volume URL was missing for poll-and-prepare request.'
-      });
-      return;
+    if (!this.cachedVolumeBuffer) {
+      throw new Error('MRMS re-prepare called but no cached volume data available.');
     }
-    const volumeFetch = await fetchArrayBuffer(message.volumeUrl);
-    timings.volumeFetchMs = volumeFetch.fetchMs;
-    cachedVolumeBuffer = volumeFetch.buffer;
-    cachedVolumeHeaders = volumeFetch.headers;
-    const decodeAndPrepareStartedAt = performance.now();
 
-    // Single WASM call: decode + prepare + cross-section
+    const prepareStartedAt = performance.now();
+
     const result = decode_and_prepare_mrms(
-      new Uint8Array(volumeFetch.buffer),
-      Math.round(message.minDbz * 10),
-      encodePhaseMode(message.phaseMode),
-      encodeDeclutterMode(message.declutterMode),
-      message.applyEarthCurvatureCompensation,
-      message.refLat,
-      message.includeCrossSection,
-      message.sliceAxis.x,
-      message.sliceAxis.z,
-      message.slicePerpAxis.x,
-      message.slicePerpAxis.z,
-      message.normalizedCrossSectionRange,
-      message.crossSectionHalfWidthNm
+      new Uint8Array(this.cachedVolumeBuffer),
+      Math.round(options.minDbz * 10),
+      encodePhaseMode(options.phaseMode),
+      encodeDeclutterMode(options.declutterMode),
+      options.applyEarthCurvatureCompensation,
+      options.refLat,
+      options.includeCrossSection,
+      options.sliceAxis.x,
+      options.sliceAxis.z,
+      options.slicePerpAxis.x,
+      options.slicePerpAxis.z,
+      options.normalizedCrossSectionRange,
+      options.crossSectionHalfWidthNm
     ) as any;
 
-    // Unpack prepared volume
     const wasmPrepared = result.prepared;
-    preparedVolume = {
+    const preparedVolume: NexradPreparedVolumeData = {
       validCount: wasmPrepared.validCount as number,
       validIndices: wasmPrepared.validIndices as Int32Array,
       yBase: wasmPrepared.yBase as Float32Array,
@@ -232,306 +454,23 @@ async function handlePollAndPrepare(
       declutterIndices: wasmPrepared.declutterIndices as Int32Array,
       declutterCount: wasmPrepared.declutterCount as number
     };
+    const crossSectionData: CrossSectionData | null = result.crossSection;
 
-    // Cross-section (null if not requested or empty volume)
-    crossSectionData = result.crossSection;
+    const prepareMs = roundMs(performance.now() - prepareStartedAt);
 
-    // Build NexradVolumePayload from WASM-converted fields
-    const vp = result.volumePayload;
-    const generatedAtMs: number = vp.generatedAtMs;
-    const scanTimeMs: number = vp.scanTimeMs;
-    const layerCount: number = vp.layerCount;
-    const layerVoxelCounts: Uint32Array = vp.layerVoxelCounts;
-
-    const generatedAt =
-      Number.isFinite(generatedAtMs) && generatedAtMs > 0
-        ? new Date(generatedAtMs).toISOString()
-        : new Date().toISOString();
-    const scanTime =
-      Number.isFinite(scanTimeMs) && scanTimeMs > 0
-        ? new Date(scanTimeMs).toISOString()
-        : generatedAt;
-
-    const layerSummaries: NexradLayerSummary[] = [];
-    for (let i = 0; i < layerCount; i++) {
-      const levelTag = MRMS_LEVEL_TAGS[i] ?? `${i}`;
-      const elevation = Number(levelTag);
-      layerSummaries.push({
-        product: `MergedReflectivityQC_${levelTag}`,
-        elevationAngleDeg: Number.isFinite(elevation) ? elevation : i,
-        sourceKey: `mrms-binary://${scanTime}/${levelTag}`,
-        scanTime,
-        voxelCount: layerVoxelCounts[i] ?? 0
-      });
-    }
-
-    volumePayload = applyPhaseDebugValues(
-      {
-        generatedAt,
-        radar: null,
-        layerSummaries,
-        voxelCount: vp.voxelCount as number,
-        xNm: vp.xNm as Float32Array,
-        zNm: vp.zNm as Float32Array,
-        dbz: vp.dbz as Float32Array,
-        footprintBaseXNm: vp.footprintBaseXNm as number,
-        footprintBaseYNm: vp.footprintBaseYNm as number,
-        spanX: vp.spanX as Uint16Array,
-        spanY: vp.spanY as Uint16Array,
-        phaseCode: vp.phaseCode as Uint8Array
-      },
-      extractPhaseDebugHeaderValues(volumeFetch.headers)
-    );
-
-    const elapsed = roundMs(performance.now() - decodeAndPrepareStartedAt);
-    timings.volumeDecodeMs = elapsed;
-    timings.volumePrepareMs = 0; // included in decode timing
-  }
-
-  const sabResult = writeNexradPrepareSabResult(
-    prepareSabViews,
-    message.requestId,
-    preparedVolume,
-    crossSectionData
-  );
-  if (!sabResult.usedSab) {
-    endpoint.postMessage({
-      type: 'poll-and-prepare-result',
-      requestId: message.requestId,
-      usedSab: false,
-      sabOverflow: {
-        voxelCapacity: sabResult.requiredVoxelCapacity
-      },
-      timings
-    });
-    return;
-  }
-
-  let echoTop18: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
-  let echoTop30: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
-  let echoTop50: EchoTopSoA = EMPTY_ECHO_TOP_SOA;
-  let echoTopSummary: PollAndPrepareResponseMessage['echoTopSummary'] = null;
-
-  if (message.includeEchoTop && message.echoTopUrl) {
-    try {
-      const echoTopFetch = await fetchArrayBuffer(
-        message.echoTopUrl,
-        'application/vnd.approach-viz.echo-tops.v3'
-      );
-      timings.echoTopFetchMs = echoTopFetch.fetchMs;
-      const echoDecodeStartedAt = performance.now();
-
-      // Single WASM call: AVET binary decode + prepare surfaces
-      const result = decode_and_prepare_echo_top(
-        new Uint8Array(echoTopFetch.buffer),
-        message.applyEarthCurvatureCompensation,
-        message.refLat
-      ) as any;
-      echoTop18 = extractEchoTopSoA(result.top18);
-      echoTop30 = extractEchoTopSoA(result.top30);
-      echoTop50 = extractEchoTopSoA(result.top50);
-
-      const summary = result.summary;
-      echoTopSummary = {
-        sourceCellCount: summary.sourceCellCount ?? 0,
-        maxTop18Feet: summary.maxTop18Feet ?? null,
-        maxTop30Feet: summary.maxTop30Feet ?? null,
-        maxTop50Feet: summary.maxTop50Feet ?? null,
-        maxTop60Feet: summary.maxTop60Feet ?? null,
-        top18Timestamp: null,
-        top30Timestamp: null,
-        top50Timestamp: null,
-        top60Timestamp: null,
-        error: null
-      };
-
-      timings.echoTopDecodeMs = roundMs(performance.now() - echoDecodeStartedAt);
-      timings.echoTopPrepareMs = 0; // included in decode timing
-    } catch (error) {
-      echoTopSummary = {
-        sourceCellCount: 0,
-        maxTop18Feet: null,
-        maxTop30Feet: null,
-        maxTop50Feet: null,
-        maxTop60Feet: null,
-        top18Timestamp: null,
-        top30Timestamp: null,
-        top50Timestamp: null,
-        top60Timestamp: null,
-        error: error instanceof Error ? error.message : 'MRMS echo-top poll failed.'
-      };
-    }
-  }
-
-  const echoTopTransferables = echoTopSoATransferables(echoTop18, echoTop30, echoTop50);
-  const transferables = volumePayload
-    ? [...volumeTransferables(volumePayload), ...echoTopTransferables]
-    : echoTopTransferables;
-
-  endpoint.postMessage(
-    {
-      type: 'poll-and-prepare-result',
-      requestId: message.requestId,
-      usedSab: true,
-      volumePayload,
-      echoTop18,
-      echoTop30,
-      echoTop50,
-      echoTopSummary,
-      timings
-    },
-    transferables
-  );
-}
-
-async function handleRePrepare(
-  endpoint: WorkerEndpoint,
-  message: RePrepareRequestMessage
-): Promise<void> {
-  const prepareSabViews = prepareSabViewsByChannel.get(message.sabChannelId) ?? null;
-  if (!prepareSabViews) {
-    endpoint.postMessage({
-      type: 're-prepare-result',
-      requestId: message.requestId,
-      error: 'MRMS re-prepare SAB channel was not initialized.'
-    });
-    return;
-  }
-
-  if (!cachedVolumeBuffer) {
-    endpoint.postMessage({
-      type: 're-prepare-result',
-      requestId: message.requestId,
-      error: 'MRMS re-prepare called but no cached volume data available.'
-    });
-    return;
-  }
-
-  await ensureWasm();
-
-  const prepareStartedAt = performance.now();
-
-  const result = decode_and_prepare_mrms(
-    new Uint8Array(cachedVolumeBuffer),
-    Math.round(message.minDbz * 10),
-    encodePhaseMode(message.phaseMode),
-    encodeDeclutterMode(message.declutterMode),
-    message.applyEarthCurvatureCompensation,
-    message.refLat,
-    message.includeCrossSection,
-    message.sliceAxis.x,
-    message.sliceAxis.z,
-    message.slicePerpAxis.x,
-    message.slicePerpAxis.z,
-    message.normalizedCrossSectionRange,
-    message.crossSectionHalfWidthNm
-  ) as any;
-
-  const wasmPrepared = result.prepared;
-  const preparedVolume: NexradPreparedVolumeData = {
-    validCount: wasmPrepared.validCount as number,
-    validIndices: wasmPrepared.validIndices as Int32Array,
-    yBase: wasmPrepared.yBase as Float32Array,
-    heightBase: wasmPrepared.heightBase as Float32Array,
-    correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
-    correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
-    effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
-    declutterIndices: wasmPrepared.declutterIndices as Int32Array,
-    declutterCount: wasmPrepared.declutterCount as number
-  };
-  const crossSectionData = result.crossSection;
-
-  const prepareMs = roundMs(performance.now() - prepareStartedAt);
-
-  const sabResult = writeNexradPrepareSabResult(
-    prepareSabViews,
-    message.requestId,
-    preparedVolume,
-    crossSectionData
-  );
-
-  if (!sabResult.usedSab) {
-    endpoint.postMessage({
-      type: 're-prepare-result',
-      requestId: message.requestId,
-      usedSab: false,
-      sabOverflow: { voxelCapacity: sabResult.requiredVoxelCapacity }
-    });
-    return;
-  }
-
-  endpoint.postMessage({
-    type: 're-prepare-result',
-    requestId: message.requestId,
-    usedSab: true,
-    timings: { volumePrepareMs: prepareMs }
-  });
-}
-
-function handleInitSab(message: NexradInitSabRequestMessage): void {
-  prepareSabViewsByChannel.set(message.channelId, createNexradPrepareSabViews(message.buffers));
-}
-
-async function handleMessage(
-  endpoint: WorkerEndpoint,
-  message: NexradWorkerRequestMessage
-): Promise<void> {
-  if (message.type === 'init-sab') {
-    handleInitSab(message);
-    return;
-  }
-  if (message.type === 're-prepare') {
-    await handleRePrepare(endpoint, message);
-    return;
-  }
-  await handlePollAndPrepare(endpoint, message);
-}
-
-const scope = self as unknown as {
-  postMessage: WorkerEndpoint['postMessage'];
-  onmessage: ((event: MessageEvent<NexradWorkerRequestMessage>) => void) | null;
-  onconnect?: ((event: MessageEvent) => void) | null;
-};
-
-scope.onmessage = (event) => {
-  const message = event.data;
-  void (async () => {
-    try {
-      await handleMessage(
-        {
-          postMessage: (response, transfer) => scope.postMessage(response, transfer ?? [])
-        },
-        message
-      );
-    } catch (error) {
-      if (message.type === 'init-sab') return;
-      scope.postMessage(errorResponseForRequest(message, error));
-    }
-  })();
-};
-
-if (typeof scope.onconnect !== 'undefined') {
-  scope.onconnect = (event: MessageEvent) => {
-    const port = event.ports[0];
-    if (!port) return;
-    port.onmessage = (portEvent: MessageEvent<NexradWorkerRequestMessage>) => {
-      const message = portEvent.data;
-      void (async () => {
-        try {
-          await handleMessage(
-            {
-              postMessage: (response, transfer) => port.postMessage(response, transfer ?? [])
-            },
-            message
-          );
-        } catch (error) {
-          if (message.type === 'init-sab') return;
-          port.postMessage(errorResponseForRequest(message, error));
-        }
-      })();
+    const rePrepareResult: NexradRePrepareResult = {
+      preparedVolume,
+      crossSectionData,
+      timings: { volumePrepareMs: prepareMs }
     };
-    port.start();
-  };
+
+    const transferList: ArrayBuffer[] = [
+      ...preparedVolumeTransferables(preparedVolume),
+      ...crossSectionTransferables(crossSectionData)
+    ];
+
+    return Comlink.transfer(rePrepareResult, transferList);
+  }
 }
 
-export {};
+Comlink.expose(new NexradWorkerApi());
