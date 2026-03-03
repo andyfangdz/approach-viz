@@ -5,15 +5,13 @@ import type { TrafficDebugState, TrafficTimingDebugState } from '@/app/app-clien
 import {
   EMPTY_TRAFFIC_RENDER_BUFFERS,
   TrafficWorkerClient,
+  TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
+  TRAFFIC_FLAG_IS_ON_GROUND,
   type TrafficProcessResult,
   type TrafficRenderBuffers
 } from './traffic/traffic-worker-client';
-import {
-  TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
-  TRAFFIC_FLAG_IS_ON_GROUND
-} from './traffic/traffic-sab';
-import type { SceneAirport } from './traffic/traffic-worker-types';
-export type { SceneAirport } from './traffic/traffic-worker-types';
+import type { SceneAirport } from './traffic/traffic-worker-client';
+export type { SceneAirport } from './traffic/traffic-worker-client';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
