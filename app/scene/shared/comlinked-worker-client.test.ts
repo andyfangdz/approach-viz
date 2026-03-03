@@ -24,7 +24,7 @@ class TestWorkerClient extends ComlinkedWorkerClient<TestProxy> {
       name: 'test',
       defaultTimeoutMs: timeoutMs,
       wrap: () => proxy as unknown as Comlink.Remote<TestProxy>,
-      releaseProxySymbol: RELEASE_PROXY,
+      releaseProxySymbol: RELEASE_PROXY
     });
   }
 
@@ -40,7 +40,7 @@ function createClient(timeoutMs = 25) {
     invoke: () => Promise.resolve('ok'),
     [RELEASE_PROXY]: () => {
       releaseCount += 1;
-    },
+    }
   };
 
   const client = new TestWorkerClient(worker as unknown as Worker, proxy, timeoutMs);
@@ -51,7 +51,7 @@ function createClient(timeoutMs = 25) {
     proxy,
     get releaseCount() {
       return releaseCount;
-    },
+    }
   };
 }
 
@@ -124,11 +124,14 @@ test('withTimeout returns timeout error when call does not settle in time', asyn
     // intentionally unresolved
   });
 
-  await assert.rejects(client.run(() => pending), (error: unknown) => {
-    assert.ok(error instanceof WorkerClientError);
-    assert.equal(error.code, 'timeout');
-    return true;
-  });
+  await assert.rejects(
+    client.run(() => pending),
+    (error: unknown) => {
+      assert.ok(error instanceof WorkerClientError);
+      assert.equal(error.code, 'timeout');
+      return true;
+    }
+  );
 });
 
 test('withTimeout maps synchronous proxy call failures to terminated', async () => {
