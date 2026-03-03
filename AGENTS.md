@@ -34,7 +34,7 @@
 - Format check: `npm run format:check`
 - Lint: `npm run lint`
 - Typecheck: `npm run typecheck`
-- Tests (parser + geometry + layers + MRMS): `npm run test`
+- Tests (parser + geometry + layers + MRMS + worker lifecycle): `npm run test`
 - Runtime live integration tests: `npm run test:integration:runtime`
 
 ### Service Worker

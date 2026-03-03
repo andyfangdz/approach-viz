@@ -6,9 +6,11 @@ interface InFlightEntry {
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
-interface ComlinkedWorkerClientOptions {
+interface ComlinkedWorkerClientOptions<T extends object> {
   name: string;
   defaultTimeoutMs: number;
+  wrap?: (worker: Worker) => Comlink.Remote<T>;
+  releaseProxySymbol?: symbol;
 }
 
 /**
@@ -24,15 +26,17 @@ export class ComlinkedWorkerClient<T extends object> {
   private readonly rawWorker: Worker;
   private readonly name: string;
   private readonly defaultTimeoutMs: number;
+  private readonly releaseProxySymbol: symbol;
   private nextCallId = 1;
   private readonly inFlight = new Map<number, InFlightEntry>();
   private disposed = false;
 
-  constructor(worker: Worker, options: ComlinkedWorkerClientOptions) {
+  constructor(worker: Worker, options: ComlinkedWorkerClientOptions<T>) {
     this.rawWorker = worker;
     this.name = options.name;
     this.defaultTimeoutMs = options.defaultTimeoutMs;
-    this.proxy = Comlink.wrap<T>(worker);
+    this.proxy = (options.wrap ?? Comlink.wrap<T>)(worker);
+    this.releaseProxySymbol = options.releaseProxySymbol ?? Comlink.releaseProxy;
     worker.addEventListener('error', this.handleWorkerError);
     worker.addEventListener('messageerror', this.handleMessageError);
   }
@@ -113,7 +117,11 @@ export class ComlinkedWorkerClient<T extends object> {
   private teardown(): void {
     this.rawWorker.removeEventListener('error', this.handleWorkerError);
     this.rawWorker.removeEventListener('messageerror', this.handleMessageError);
-    this.proxy[Comlink.releaseProxy]();
+    const proxyWithRelease = this.proxy as Comlink.Remote<T> & Record<symbol, unknown>;
+    const release = proxyWithRelease[this.releaseProxySymbol];
+    if (typeof release === 'function') {
+      (release as () => void)();
+    }
     this.rawWorker.terminate();
     this.onDispose();
   }
