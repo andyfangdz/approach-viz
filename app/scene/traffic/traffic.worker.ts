@@ -145,6 +145,7 @@ export class TrafficWorkerApi {
     options: TrafficProcessOptions
   ): Promise<TrafficWorkerResult> {
     await this.ready;
+    const processingStartedAt = performance.now();
     const state = this.getState();
     const mergeResult = state.merge(
       new Uint8Array(payloadBuffer),
@@ -159,7 +160,9 @@ export class TrafficWorkerApi {
     return this.buildAndTransferResult(
       options,
       mergeResult.trackedHexes,
-      mergeResult.returnedHistoryHexes
+      mergeResult.returnedHistoryHexes,
+      undefined,
+      processingStartedAt
     );
   }
 
@@ -171,6 +174,7 @@ export class TrafficWorkerApi {
     await this.ready;
     const state = this.getState();
     const runtimeData = await fetchRuntimeBinaryData(primaryUrl, followupUrl);
+    const processingStartedAt = performance.now();
     const mergeResult = state.merge(
       new Uint8Array(runtimeData.primaryBuffer),
       options.nowMs,
@@ -185,7 +189,8 @@ export class TrafficWorkerApi {
       options,
       mergeResult.trackedHexes,
       mergeResult.returnedHistoryHexes,
-      runtimeData.fetchMs
+      runtimeData.fetchMs,
+      processingStartedAt
     );
   }
 
@@ -212,9 +217,10 @@ export class TrafficWorkerApi {
     options: TrafficProcessOptions,
     trackedHexes: string[],
     returnedHistoryHexes: string[],
-    fetchMs?: number
+    fetchMs?: number,
+    processingStartedAt?: number
   ): TrafficWorkerResult {
-    const startedAt = performance.now();
+    const startedAt = processingStartedAt ?? performance.now();
     const state = this.getState();
     const airportData = packAirportData(options.sceneAirports);
     const wasmRenderResult = state.build_render_tracks(

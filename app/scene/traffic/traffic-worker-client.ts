@@ -76,7 +76,7 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
   }
 
   reset(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
-    return this.wrapResult(this.proxy.reset(options), 'reset');
+    return this.wrapResult(() => this.proxy.reset(options), 'reset');
   }
 
   ingestBinary(
@@ -85,13 +85,14 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
     options: TrafficProcessOptions
   ): Promise<TrafficProcessResult> {
     return this.wrapResult(
-      this.proxy.ingestBinary(
-        Comlink.transfer(payloadBuffer, [payloadBuffer]),
-        historyPayloadBuffer
-          ? Comlink.transfer(historyPayloadBuffer, [historyPayloadBuffer])
-          : undefined,
-        options
-      ),
+      () =>
+        this.proxy.ingestBinary(
+          Comlink.transfer(payloadBuffer, [payloadBuffer]),
+          historyPayloadBuffer
+            ? Comlink.transfer(historyPayloadBuffer, [historyPayloadBuffer])
+            : undefined,
+          options
+        ),
       'ingest-binary',
       'binary'
     );
@@ -103,27 +104,27 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
     options: TrafficProcessOptions
   ): Promise<TrafficProcessResult> {
     return this.wrapResult(
-      this.proxy.ingestRuntime(primaryUrl, followupUrl, options),
+      () => this.proxy.ingestRuntime(primaryUrl, followupUrl, options),
       'ingest-runtime',
       'binary'
     );
   }
 
   recompute(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
-    return this.wrapResult(this.proxy.recompute(options), 'recompute');
+    return this.wrapResult(() => this.proxy.recompute(options), 'recompute');
   }
 
   pruneError(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
-    return this.wrapResult(this.proxy.pruneError(options), 'prune-error');
+    return this.wrapResult(() => this.proxy.pruneError(options), 'prune-error');
   }
 
   private async wrapResult(
-    promise: Promise<TrafficWorkerResult>,
+    createCall: () => Promise<TrafficWorkerResult>,
     operation: TrafficProcessResult['operation'],
     feedTransport: TrafficProcessResult['feedTransport'] = null
   ): Promise<TrafficProcessResult> {
     const startedAt = performance.now();
-    const result = await this.withTimeout(promise);
+    const result = await this.withTimeout(createCall);
     const roundTripMs = roundMs(performance.now() - startedAt);
     return {
       renderBuffers: {

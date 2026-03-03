@@ -150,6 +150,8 @@ export function LiveTrafficOverlay({
   const pollContextKeyRef = useRef<string | null>(null);
   const previousShowDepartedRef = useRef(showDepartedTrafficTrails);
   const needsHistoryBackfillRef = useRef(false);
+  const historyMinutesRef = useRef(normalizedHistoryMinutes);
+  historyMinutesRef.current = normalizedHistoryMinutes;
   const [trafficMode, setTrafficMode] = useState<TrafficMode>(() =>
     typeof Worker !== 'undefined' ? 'worker' : 'worker-error'
   );
@@ -243,7 +245,6 @@ export function LiveTrafficOverlay({
       refLon.toFixed(6),
       radiusNm,
       limit,
-      normalizedHistoryMinutes,
       hideGroundTargets ? 1 : 0,
       verticalScale.toFixed(3),
       applyEarthCurvatureCompensation ? 1 : 0,
@@ -301,7 +302,7 @@ export function LiveTrafficOverlay({
       let processMs: number | null = null;
       let pruneMs: number | null = null;
       const pollNowMs = Date.now();
-      const historyWindowMs = normalizedHistoryMinutes * 60_000;
+      const historyWindowMs = historyMinutesRef.current * 60_000;
       const fullBackfillIntervalMs = Math.min(
         MAX_FULL_BACKFILL_INTERVAL_MS,
         Math.max(MIN_FULL_BACKFILL_INTERVAL_MS, Math.round(historyWindowMs / 2))
@@ -329,7 +330,7 @@ export function LiveTrafficOverlay({
       let requestedHistoryHexes: string[] = [];
       if (showDepartedTrafficTrails) {
         if (shouldRequestHistoryBackfill) {
-          params.set('historyMinutes', String(normalizedHistoryMinutes));
+          params.set('historyMinutes', String(historyMinutesRef.current));
         } else if (pendingBackfillHexesRef.current.size > 0) {
           requestedHistoryHexes = Array.from(pendingBackfillHexesRef.current).slice(
             0,
@@ -352,7 +353,7 @@ export function LiveTrafficOverlay({
         followupParams.set('radiusNm', String(radiusNm));
         followupParams.set('limit', String(limit));
         followupParams.set('hideGround', hideGroundTargets ? '1' : '0');
-        followupParams.set('historyMinutes', String(normalizedHistoryMinutes));
+        followupParams.set('historyMinutes', String(historyMinutesRef.current));
         followupParams.set('format', 'binary');
         followupParams.set('historyHexes', requestedHistoryHexes.join(','));
         followupUrl = toWorkerFetchUrl(`/api/traffic/adsbx?${followupParams.toString()}`);
@@ -371,7 +372,7 @@ export function LiveTrafficOverlay({
           followupUrl,
           {
             nowMs,
-            historyMinutes: normalizedHistoryMinutes,
+            historyMinutes: historyMinutesRef.current,
             hideGroundTargets,
             showDepartedTrafficTrails,
             refLat,
@@ -450,7 +451,7 @@ export function LiveTrafficOverlay({
             const pruneStartedAt = performance.now();
             const result = await pruneWorker.pruneError({
               nowMs,
-              historyMinutes: normalizedHistoryMinutes,
+              historyMinutes: historyMinutesRef.current,
               hideGroundTargets,
               showDepartedTrafficTrails,
               refLat,
@@ -512,7 +513,6 @@ export function LiveTrafficOverlay({
     refLon,
     radiusNm,
     limit,
-    normalizedHistoryMinutes,
     hideGroundTargets,
     showDepartedTrafficTrails,
     verticalScale,

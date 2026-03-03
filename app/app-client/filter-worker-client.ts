@@ -11,7 +11,7 @@ class FilterWorkerClient extends ComlinkedWorkerClient<FilterWorkerApi> {
   }
 
   filter(options: SelectOption[], query: string): Promise<SelectOption[]> {
-    return this.withTimeout(this.proxy.filter(options, query));
+    return this.withTimeout(() => this.proxy.filter(options, query));
   }
 }
 

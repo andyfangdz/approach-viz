@@ -39,10 +39,12 @@ export class ComlinkedWorkerClient<T extends object> {
 
   /**
    * Wrap a Comlink proxy call with timeout and error mapping.
-   * Usage: `return this.withTimeout(this.proxy.someMethod(args))`.
+   * Accepts a factory to defer proxy evaluation until after the disposed guard,
+   * preventing a synchronous TypeError from a closed MessagePort.
+   * Usage: `return this.withTimeout(() => this.proxy.someMethod(args))`.
    */
   protected withTimeout<TResult>(
-    promise: Promise<TResult>,
+    createCall: () => Promise<TResult>,
     options?: { timeoutMs?: number }
   ): Promise<TResult> {
     if (this.disposed) {
@@ -50,6 +52,16 @@ export class ComlinkedWorkerClient<T extends object> {
         new WorkerClientError('terminated', `${this.name} worker is disposed.`)
       );
     }
+
+    let promise: Promise<TResult>;
+    try {
+      promise = createCall();
+    } catch {
+      return Promise.reject(
+        new WorkerClientError('terminated', `${this.name} worker is disposed.`)
+      );
+    }
+
     const callId = this.nextCallId++;
     const timeoutMs = options?.timeoutMs ?? this.defaultTimeoutMs;
 

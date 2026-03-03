@@ -83,11 +83,11 @@ class NexradDecodeWorkerClient extends ComlinkedWorkerClient<NexradWorkerApi> {
   }
 
   pollAndPrepare(options: NexradPollAndPrepareOptions): Promise<NexradPollAndPrepareResult> {
-    return this.withTimeout(this.proxy.pollAndPrepare(options));
+    return this.withTimeout(() => this.proxy.pollAndPrepare(options));
   }
 
   rePrepare(options: NexradVolumePrepareOptions): Promise<NexradRePrepareResult> {
-    return this.withTimeout(this.proxy.rePrepare(options));
+    return this.withTimeout(() => this.proxy.rePrepare(options));
   }
 }
 

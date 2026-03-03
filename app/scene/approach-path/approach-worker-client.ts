@@ -19,11 +19,11 @@ class ApproachWorkerClient extends ComlinkedWorkerClient<ApproachWorkerApi> {
   }
 
   resolveAltitudes(params: ResolveAltitudesParams): Promise<AltitudeResult> {
-    return this.withTimeout(this.proxy.resolveAltitudes(params));
+    return this.withTimeout(() => this.proxy.resolveAltitudes(params));
   }
 
   buildPathGeometry(params: BuildPathGeometryParams): Promise<GeometryResult> {
-    return this.withTimeout(this.proxy.buildPathGeometry(params));
+    return this.withTimeout(() => this.proxy.buildPathGeometry(params));
   }
 }
 
