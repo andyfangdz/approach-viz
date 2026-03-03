@@ -121,6 +121,7 @@ export class ComlinkedWorkerClient<T extends object> {
   };
 
   private handleMessageError = () => {
+    this.disposed = true;
     this.rejectAll(new WorkerClientError('message-error', `${this.name} worker message error.`));
   };
 }

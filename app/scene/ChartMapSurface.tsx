@@ -550,6 +550,7 @@ export function buildChartTexture(
 
   let cancelled = false;
   let released = false;
+  let rejectCancellation: ((reason: Error) => void) | null = null;
   const rawWorker = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
     type: 'module'
   });
@@ -563,68 +564,79 @@ export function buildChartTexture(
     rawWorker.terminate();
   }
 
-  const promise = api
-    .streamTiles(
-      {
-        baseUrl: range.baseUrl,
-        zoom: range.zoom,
-        minTileX: range.minTileX,
-        maxTileX: range.maxTileX,
-        minTileY: range.minTileY,
-        maxTileY: range.maxTileY
-      },
-      Comlink.proxy((tile: ChartTileReady) => {
-        if (cancelled) {
-          tile.bitmap.close();
-          return;
+  // Race the Comlink stream against an explicit cancellation promise so that
+  // cancel() always settles the returned promise (worker termination alone
+  // orphans the MessageChannel without rejecting).
+  const cancellationPromise = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+
+  const promise = Promise.race([
+    cancellationPromise,
+    api
+      .streamTiles(
+        {
+          baseUrl: range.baseUrl,
+          zoom: range.zoom,
+          minTileX: range.minTileX,
+          maxTileX: range.maxTileX,
+          minTileY: range.minTileY,
+          maxTileY: range.maxTileY
+        },
+        Comlink.proxy((tile: ChartTileReady) => {
+          if (cancelled) {
+            tile.bitmap.close();
+            return;
+          }
+          pendingBitmaps.push({
+            tileX: tile.tileX,
+            tileY: tile.tileY,
+            bitmap: tile.bitmap
+          });
+        })
+      )
+      .then(() => {
+        if (cancelled) throw new Error('Cancelled');
+
+        const width = range.tilesWide * TILE_SIZE;
+        const height = range.tilesHigh * TILE_SIZE;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, width, height);
+
+        for (const p of pendingBitmaps) {
+          const col = p.tileX - range.minTileX;
+          const row = p.tileY - range.minTileY;
+          ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+          p.bitmap.close();
         }
-        pendingBitmaps.push({
-          tileX: tile.tileX,
-          tileY: tile.tileY,
-          bitmap: tile.bitmap
-        });
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+
+        const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
+        const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
+        const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
+        const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
+
+        releaseWorker();
+
+        return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
       })
-    )
-    .then(() => {
-      if (cancelled) throw new Error('Cancelled');
-
-      const width = range.tilesWide * TILE_SIZE;
-      const height = range.tilesHigh * TILE_SIZE;
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d')!;
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(0, 0, width, height);
-
-      for (const p of pendingBitmaps) {
-        const col = p.tileX - range.minTileX;
-        const row = p.tileY - range.minTileY;
-        ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        p.bitmap.close();
-      }
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.minFilter = THREE.LinearFilter;
-      texture.magFilter = THREE.LinearFilter;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.generateMipmaps = false;
-      texture.needsUpdate = true;
-
-      const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
-      const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
-      const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
-      const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
-
-      releaseWorker();
-
-      return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
-    });
+  ]);
 
   return {
     promise,
     cancel: () => {
       cancelled = true;
+      rejectCancellation?.(new Error('Cancelled'));
       releaseWorker();
       for (const p of pendingBitmaps) p.bitmap.close();
       pendingBitmaps.length = 0;
