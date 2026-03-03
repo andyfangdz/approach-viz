@@ -97,6 +97,7 @@ export class ComlinkedWorkerClient<T extends object> {
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
     this.rawWorker.removeEventListener('error', this.handleWorkerError);
     this.rawWorker.removeEventListener('messageerror', this.handleMessageError);
