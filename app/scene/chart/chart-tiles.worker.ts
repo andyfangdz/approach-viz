@@ -70,7 +70,9 @@ export class ChartTilesWorkerApi {
         const s = specs[i];
         const bitmap = await fetchTile(params.baseUrl, params.zoom, s.x, s.y);
         if (bitmap) {
-          await onTile(Comlink.transfer({ tileX: s.x, tileY: s.y, bitmap }, [bitmap]));
+          // Fire-and-forget: tiles are composited by position, not arrival order,
+          // so no need to await the Comlink round-trip before fetching the next tile.
+          onTile(Comlink.transfer({ tileX: s.x, tileY: s.y, bitmap }, [bitmap]));
         } else {
           failedTiles += 1;
         }

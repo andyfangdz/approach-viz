@@ -61,6 +61,12 @@ export class ComlinkedWorkerClient<T extends object> {
 
       this.inFlight.set(callId, { reject, timeoutId });
 
+      // Note: if the timeout fires first, the underlying Comlink call is still in
+      // flight — the worker continues computing and any transferred buffers
+      // (TypedArrays via Comlink.transfer) will be received then silently dropped
+      // when the .then callback sees the callId is gone from inFlight. This is
+      // acceptable: the worker will be recycled on the next successful call, and
+      // the transient memory spike is bounded by a single response payload.
       promise.then(
         (result) => {
           if (!this.inFlight.has(callId)) return; // timed out already
