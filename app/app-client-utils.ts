@@ -58,7 +58,7 @@ export function readSurfaceModeFromSearch(search: string): SurfaceModeUrlMigrati
 export function readChartTypeFromSearch(search: string): ChartType | null {
   const params = new URLSearchParams(search);
   const value = params.get('chart');
-  if (value === 'vfr' || value === 'low' || value === 'high') {
+  if (value === 'vfr' || value === 'tac' || value === 'low' || value === 'high') {
     return value;
   }
   return null;
