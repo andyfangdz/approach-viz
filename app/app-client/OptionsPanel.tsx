@@ -32,8 +32,10 @@ function useDebouncedSlider(
   commitRef.current = onCommit;
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  // Sync from parent when value changes externally (e.g. URL init, reset)
+  // Sync from parent when value changes externally (e.g. URL init, reset).
+  // Cancel any pending debounce so a stale commit doesn't overwrite the new value.
   useEffect(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
     setLocalValue(parentValue);
   }, [parentValue]);
 

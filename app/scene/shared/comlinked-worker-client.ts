@@ -116,6 +116,7 @@ export class ComlinkedWorkerClient<T extends object> {
   }
 
   private handleWorkerError = () => {
+    this.disposed = true;
     this.rejectAll(new WorkerClientError('worker-error', `${this.name} worker runtime error.`));
   };
 
