@@ -18,14 +18,14 @@ export interface TrafficRenderBuffers {
   markerPositions: Float32Array;
   headingDeg: Float32Array;
   flags: Uint8Array;
-  trailOffsets: Int32Array;
-  trailCounts: Int32Array;
+  trailOffsets: Uint32Array;
+  trailCounts: Uint32Array;
   points: Float32Array;
   callsignLabels: (string | null)[];
 }
 
 const EMPTY_FLOAT32_ARRAY = new Float32Array(0);
-const EMPTY_INT32_ARRAY = new Int32Array(0);
+const EMPTY_UINT32_ARRAY = new Uint32Array(0);
 const EMPTY_UINT8_ARRAY = new Uint8Array(0);
 const EMPTY_CALLSIGN_LABELS: (string | null)[] = [];
 
@@ -34,8 +34,8 @@ export const EMPTY_TRAFFIC_RENDER_BUFFERS: TrafficRenderBuffers = {
   markerPositions: EMPTY_FLOAT32_ARRAY,
   headingDeg: EMPTY_FLOAT32_ARRAY,
   flags: EMPTY_UINT8_ARRAY,
-  trailOffsets: EMPTY_INT32_ARRAY,
-  trailCounts: EMPTY_INT32_ARRAY,
+  trailOffsets: EMPTY_UINT32_ARRAY,
+  trailCounts: EMPTY_UINT32_ARRAY,
   points: EMPTY_FLOAT32_ARRAY,
   callsignLabels: EMPTY_CALLSIGN_LABELS
 };
@@ -131,8 +131,8 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
         markerPositions: result.markerPositions,
         headingDeg: result.headingDeg,
         flags: result.flags,
-        trailOffsets: new Int32Array(result.trailOffsets.buffer),
-        trailCounts: new Int32Array(result.trailCounts.buffer),
+        trailOffsets: result.trailOffsets,
+        trailCounts: result.trailCounts,
         points: result.points,
         callsignLabels: result.callsignLabels
       },

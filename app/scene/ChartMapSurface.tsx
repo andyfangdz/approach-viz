@@ -399,7 +399,10 @@ export const ChartMapSurface = memo(function ChartMapSurface({
         await api.streamTiles(
           previewParams,
           Comlink.proxy((tile: ChartTileReady) => {
-            if (cancelled) return;
+            if (cancelled) {
+              tile.bitmap.close();
+              return;
+            }
             const texture = bitmapToTexture(tile.bitmap);
             const entry = computeTileEntry(
               tile.tileX,
@@ -431,7 +434,10 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       await api.streamTiles(
         detailParams,
         Comlink.proxy((tile: ChartTileReady) => {
-          if (cancelled) return;
+          if (cancelled) {
+            tile.bitmap.close();
+            return;
+          }
           const texture = bitmapToTexture(tile.bitmap);
           const entry = computeTileEntry(
             tile.tileX,
@@ -473,8 +479,10 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       releaseWorker();
     }
 
-    run().catch(() => {
-      // Worker terminated during cleanup — expected when effect re-fires.
+    run().catch((err: unknown) => {
+      if (!cancelled) {
+        console.error('[ChartMapSurface] Unexpected tile streaming error:', err);
+      }
     });
 
     return () => {
@@ -566,7 +574,10 @@ export function buildChartTexture(
         maxTileY: range.maxTileY
       },
       Comlink.proxy((tile: ChartTileReady) => {
-        if (cancelled) return;
+        if (cancelled) {
+          tile.bitmap.close();
+          return;
+        }
         pendingBitmaps.push({
           tileX: tile.tileX,
           tileY: tile.tileY,
