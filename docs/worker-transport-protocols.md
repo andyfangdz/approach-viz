@@ -8,79 +8,43 @@ This document defines client <-> worker communication for:
 - Approach-path compute (`app/scene/approach-path/approach.worker.ts`)
 - MRMS poll/decode/prepare (`app/scene/nexrad/nexrad.worker.ts`)
 - Traffic merge/render (`app/scene/traffic/traffic.worker.ts`)
+- Chart tile streaming (`app/scene/chart/chart-tiles.worker.ts`)
 
-## Base Worker Client
+## Comlink Worker Client
 
-All worker clients extend `BaseWorkerClient<TRes>` (`app/scene/shared/base-worker-client.ts`), which handles:
+All workers expose a typed class via `Comlink.expose()` on the worker side. Clients use `Comlink.wrap<T>()` to obtain a typed async proxy.
 
-- Pending request map with `requestId` routing and per-request timeouts
-- Worker event listener lifecycle (`message`, `messageerror`, `error`)
-- Dispose: removes listeners, terminates worker, rejects all pending
-- `cancelAllPending()` for external cancellation
-- Structured `WorkerClientError` with error codes (`timeout`, `worker-error`, `message-error`, `terminated`, `cancelled`, `overflow-exhausted`, `application`)
-- Accepts a `WorkerLike` interface, allowing both raw `Worker` and wrapper objects (used by MRMS)
+Most worker clients extend `ComlinkedWorkerClient<T>` (`app/scene/shared/comlinked-worker-client.ts`), which handles:
 
-Subclasses implement:
+- Typed proxy via `Comlink.wrap<T>()`
+- Per-call timeout with in-flight tracking
+- Error mapping to `WorkerClientError` codes (`timeout`, `worker-error`, `message-error`, `terminated`, `cancelled`, `application`)
+- In-flight tracking for `cancelAllPending()` and `dispose()`
+- Worker `error`/`messageerror` event handling
 
-- `resolveResponse(response)` — extract domain result from a response
-- `handleSpecialResponse(response, requestId)` — intercept overflow/retry responses before normal resolution (optional)
-- `onDispose()`, `onFatalError()`, `onRequestTimeout(requestId)` — lifecycle hooks for SAB cleanup (optional)
+The chart tiles worker uses `Comlink.wrap()` directly (no `ComlinkedWorkerClient`) since it creates per-use workers and doesn't need timeout/cancel/error-code tracking.
 
-### SAB Overflow Retry Helper
+## Transport
 
-`handleSabOverflowRetry(ctx, actions)` is a shared utility for SAB-using workers. It:
-
-1. Merges reported capacity into existing hints
-2. Tries in-place growth on the current channel first (avoids a contention window where another concurrent request could steal a released channel)
-3. Falls back to release + reclaim if in-place growth fails
-4. Resets timeout and resubmits the request
-
-Both traffic and MRMS overflow handlers delegate to this function.
-
-## Common Protocol Shape
-
-Across all workers:
-
-- Requests include a numeric `requestId`.
-- Responses echo the same `requestId`.
-- Errors are returned as `error` strings in response payloads.
-- Clients maintain per-request timeout maps and reject timed-out requests.
-- `messageerror` and `error` events invalidate in-flight requests and reject all pending promises.
+All workers use `Comlink.transfer()` to zero-copy transfer typed arrays (`ArrayBuffer`, `ImageBitmap`) from worker to main thread. No SharedArrayBuffer is used.
 
 ## Transport Matrix
 
-| Pipeline                                                                              | Primary Transport                   | Binary/SAB | Fallback Policy                                                                                                      |
-| ------------------------------------------------------------------------------------- | ----------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| Filter                                                                                | `postMessage`                       | No         | Dispose + recreate worker on failure; no sync fallback                                                               |
-| Approach altitude/path                                                                | `postMessage`                       | No         | Dispose + recreate worker on failure; no sync fallback                                                               |
-| MRMS `poll-and-prepare` (worker fetch + decode + prepare)                             | `postMessage` control + SAB payload | Yes        | Dispose + recreate on failure; overflow retries with SAB growth                                                      |
-| Traffic (`reset`/`ingest`/`ingest-binary`/`ingest-runtime`/`recompute`/`prune-error`) | `postMessage` control + SAB payload | Yes        | Transient errors surface without permanent disable; debounced recompute/poll restart prevents SAB channel exhaustion |
-
-## Shared SAB Utilities
-
-### `app/scene/shared/growable-sab.ts`
-
-- Creates growable `SharedArrayBuffer` instances with `maxByteLength`.
-- `tryGrowSharedArrayBuffer(buffer, nextByteLength)` attempts in-place growth via `buffer.grow(...)`.
-- Growth failure returns `false` (no throw propagation).
-
-### `app/scene/shared/sab-channel-pool.ts`
-
-- Manages multiple SAB channels (`id`, `buffers`, `views`, `inFlightRequestId`).
-- Supports initial channel bootstrap and bounded channel count growth.
-- `claimBestFitSabChannelForRequest(...)` chooses a free channel that fits requested capacity, or:
-  1. grows the best candidate channel,
-  2. creates a new channel if under cap,
-  3. falls back to claiming any free channel that can be grown.
-
-This allows concurrent requests while minimizing over-allocation.
+| Pipeline                                                                  | Transport                | Transferables                                                        | Failure Policy                                     |
+| ------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------- |
+| Filter                                                                    | Comlink proxy            | No                                                                   | Dispose + recreate worker on failure               |
+| Approach altitude/path                                                    | Comlink proxy + transfer | `pointsFlat.buffer`                                                  | Dispose + recreate worker on failure               |
+| MRMS `pollAndPrepare`                                                     | Comlink proxy + transfer | Volume payload, prepared volume, cross-section, echo-top SoA buffers | Dispose + recreate worker on failure               |
+| MRMS `rePrepare`                                                          | Comlink proxy + transfer | Prepared volume, cross-section buffers                               | Dispose + recreate worker on failure               |
+| Traffic (`reset`/`ingestBinary`/`ingestRuntime`/`recompute`/`pruneError`) | Comlink proxy + transfer | Render buffers (markers, trails, strings)                            | Transient errors surface without permanent disable |
+| Chart tiles `streamTiles`                                                 | Comlink proxy + callback | `ImageBitmap` per tile via `Comlink.transfer()` in callback          | Worker terminated on cleanup/cancel                |
 
 ## Traffic Runtime Wire Format
 
-- Runtime endpoint `/v1/traffic/adsbx` accepts `format=binary` and emits `application/vnd.approach-viz.traffic.v3`.
-- Payload layout (AVTR v3, SoA, widest-first): fixed 64-byte header (`AVTR` magic + version + section offsets/counts), followed by contiguous per-field column arrays with widest-first column ordering (u32/f32 before u16, i64 before f32) and inter-section alignment padding (history groups 4-byte aligned, history points 8-byte aligned). Aircraft (38 bytes/ac, 11 columns), history groups (14 bytes/group, 4 columns), history points (20 bytes/point, 4 columns), and a trailing UTF-8 string table.
-- Worker uses `decodeTrafficBinaryPayload(...)` to deserialize full aircraft/history payloads before merge/prune/projection.
-- Main thread now only constructs URLs/backfill policy; worker performs network fetch + decode for `ingest-runtime`.
+- Runtime endpoint `/v1/traffic/adsbx` accepts `format=binary` and emits `application/vnd.approach-viz.traffic.v4`.
+- Payload layout (AVTR v4, SoA, FlatBuffers).
+- Worker uses WASM to deserialize and merge/prune/project.
+- Main thread only constructs URLs/backfill policy; worker performs network fetch + decode for `ingestRuntime`.
 
 ## Traffic Worker Protocol
 
@@ -88,57 +52,17 @@ This allows concurrent requests while minimizing over-allocation.
 
 - Client: `app/scene/traffic/traffic-worker-client.ts`
 - Worker: `app/scene/traffic/traffic.worker.ts`
-- Types: `app/scene/traffic/traffic-worker-types.ts`
-- SAB layout/read-write: `app/scene/traffic/traffic-sab.ts`
 - Binary payload decode: handled by WASM (`crates/approach-viz-core/src/traffic_codec.rs`)
 
-### Handshake
+### Operations
 
-1. Client creates SAB channel pool.
-2. For each channel, client sends:
-   - `type: 'init-sab'`
-   - `channelId`
-   - SAB buffer set (`control`, marker arrays, trail arrays, string arrays)
-3. Worker stores views in `sabViewsByChannel` keyed by `channelId`.
+- `reset()` — clear state
+- `ingestBinary(payloadBuffer, historyPayloadBuffer, options)` — decode + merge binary payloads
+- `ingestRuntime(primaryUrl, followupUrl, options)` — worker fetches + decodes runtime payloads
+- `recompute(options)` — recompute render buffers from current state
+- `pruneError(options)` — mark errored aircraft for pruning
 
-### Request Contract
-
-`TrafficBaseRequest` requires:
-
-- `preferSab: true`
-- `sabChannelId: number`
-
-Operations:
-
-- `reset`
-- `ingest` (`aircraftList`, optional `historyByHex`)
-- `ingest-binary` (`payloadBuffer`, optional `historyPayloadBuffer`; request buffers are transferable)
-- `ingest-runtime` (`primaryUrl`, optional `followupUrl`; worker fetches/parses runtime payloads directly)
-- `recompute`
-- `prune-error`
-
-### Response Contract
-
-`TrafficWorkerResponseMessage`:
-
-- Success: `usedSab: true` (payload is read from SAB)
-- Capacity miss: `sabOverflow` with required capacities (`trackCapacity`, `pointCapacity`, `stringCapacity`)
-- Runtime-ingest metadata: `feedTransport` (`binary`/`json`), `fetchMs`, `parseMs`, `trackedHexes`, `returnedHistoryHexes`
-- Failure: `error`
-
-Worker does not return object payload track arrays anymore; SAB is authoritative. WASM `build_render_tracks` returns SoA typed arrays (parallel `Float32Array`/`Uint8Array`/`Uint32Array` + string arrays) instead of per-track JS objects, and `writeTrafficSabResultSoA` bulk-copies these into SAB without per-track property extraction.
-
-### Overflow and Retry
-
-- Worker writes `Overflow` control state and required capacities.
-- Client delegates to `handleSabOverflowRetry`, which first attempts in-place growth on the current channel, falling back to release + reclaim.
-- Retry up to `MAX_SAB_OVERFLOW_RETRIES` times.
-- Growth uses in-place growable SAB (no buffer replacement transport).
-- For transferable `ingest-binary` requests, overflow updates capacity hints but the specific request cannot be replayed from detached buffers; client surfaces an explicit fresh-request error and retries on the next poll.
-
-### Render Semantics
-
-- Client reads flat render buffers from SAB and updates line/instance geometry directly.
+All methods return `TrafficWorkerResult` with render buffers transferred via `Comlink.transfer()`. Client wraps result into `TrafficProcessResult` with typed array views.
 
 ## MRMS Worker Protocol
 
@@ -146,42 +70,15 @@ Worker does not return object payload track arrays anymore; SAB is authoritative
 
 - Client: `app/scene/nexrad/nexrad-worker-client.ts`
 - Worker: `app/scene/nexrad/nexrad.worker.ts`
-- Types: `app/scene/nexrad/nexrad-worker-types.ts`
-- SAB layout/read-write: `app/scene/nexrad/nexrad-sab.ts`
 
-### Poll-And-Prepare (single-flight worker request)
+### Operations
 
-Handshake:
+- `pollAndPrepare(options)` — fetch volume + echo-tops from runtime, decode via WASM, prepare volume/cross-section, return all data via `Comlink.transfer()`
+- `rePrepare(options)` — re-decode cached volume buffer with new parameters (minDbz, phaseMode, declutterMode, cross-section settings)
 
-- `init-sab` with `channelId` and MRMS prepare SAB buffer set.
+Transfer lists include all typed array buffers from: volume payload (`xNm`, `zNm`, `dbz`, `spanX`, `spanY`, `phaseCode`), prepared volume (`validIndices`, `yBase`, `heightBase`, `correctedBottomFeet`, `correctedTopFeet`, `effectivePhaseCode`, `declutterIndices`), cross-section (`grid`, `phaseGrid`, `topEnvelopeFeet`), and echo-top SoA (`x`, `z`, `yBase` per threshold).
 
-Request:
-
-- `poll-and-prepare` with `preferSab: true`, `sabChannelId`, runtime URLs (`volumeUrl`, `echoTopUrl`), and preprocess options (`minDbz`, `phaseMode`, `declutterMode`, cross-section settings, curvature settings).
-- Worker fetches MRMS volume/echo-top endpoints directly, decodes payloads, then runs volume/echo-top prepare in the same request. Echo-top fetch requests AVET binary wire format via `Accept: application/vnd.approach-viz.echo-tops.v2`.
-
-Response:
-
-- Success: `usedSab: true`
-- Prepared volume/cross-section arrays are read from SAB
-- Decoded volume payload typed arrays are returned as transferables (`volumePayload`) for final mesh upload inputs
-- Prepared echo-top surfaces (`echoTop18/30/50Cells`) and echo-top summary metadata are returned in the response object
-- Overflow: `sabOverflow.voxelCapacity`
-- Failure: `error`
-
-Worker does not return non-SAB fallback payload for prepared volume/cross-section.
-
-Retry:
-
-- Both `prepare-volume` and `poll-and-prepare` overflow responses are handled by a single `handleSpecialResponse` path that delegates to `handleSabOverflowRetry`.
-- Client tracks required voxel capacity hint and retries up to `MAX_PREPARE_SAB_OVERFLOW_RETRIES`.
-- Channel is re-claimed with best-fit capacity; SAB buffers grow in place when needed.
-- Poll-and-prepare retries replay the full poll request after capacity growth (same request options, larger SAB channel).
-
-### Legacy Decode/Prepare Operations
-
-- `decode-volume`, `decode-echo-top`, `prepare-volume`, and `prepare-echo-top` remain in the worker contract for test coverage/compatibility paths.
-- Active overlay runtime path uses `poll-and-prepare`.
+Singleton management: module-level `sharedClient` with `activePollPromise` guard to serialize concurrent polls.
 
 ## Approach Worker Protocol
 
@@ -189,18 +86,13 @@ Retry:
 
 - Client: `app/scene/approach-path/approach-worker-client.ts`
 - Worker: `app/scene/approach-path/approach.worker.ts`
-- Types: `app/scene/approach-path/approach-worker-types.ts`
 
 ### Operations
 
-- `resolve-altitudes`
-- `build-path-geometry`
+- `resolveAltitudes(params)` — synchronous altitude resolution
+- `buildPathGeometry(params)` — builds path geometry, transfers `pointsFlat.buffer`
 
-Transport is plain `postMessage` (no SAB). `build-path-geometry` returns `pointsFlat: Float32Array` and transfers its buffer back to main thread.
-
-Failure policy:
-
-- If a request fails, client disposes the current worker and recreates a fresh one on the next attempt, allowing recovery from transient errors without permanent disable (no synchronous compute fallback).
+Failure policy: client disposes the current worker and recreates on next attempt.
 
 ## Filter Worker Protocol
 
@@ -211,19 +103,29 @@ Failure policy:
 
 ### Operation
 
-- Request: `{ requestId, options, query }`
-- Response: `{ requestId, filteredOptions }` or `{ requestId, error }`
+- `filter(options, query)` — returns filtered `SelectOption[]`
 
-Failure policy:
+Failure policy: client disposes the current worker and recreates on next attempt.
 
-- On request failure, client disposes the current worker and recreates a fresh one on the next attempt, allowing recovery from transient errors (no synchronous in-thread filter fallback).
+## Chart Tiles Worker Protocol
+
+### Files
+
+- Worker: `app/scene/chart/chart-tiles.worker.ts`
+- Consumer: `app/scene/ChartMapSurface.tsx`
+
+### Operation
+
+- `streamTiles(params, onTile)` — fetches tiles with concurrency pool, streams each `ImageBitmap` back via `Comlink.proxy()` callback with `Comlink.transfer()`, returns `ChartStreamSummary` on completion
+
+Consumer creates per-use workers (not singleton). Two-pass preview+detail streaming for flat map mode. Workers are terminated on effect cleanup.
 
 ## Runtime and Debug Telemetry
 
 Runtime debug panel fields currently expose:
 
-- Capability flags: `Worker`, `SharedArrayBuffer`, `Atomics`, `crossOriginIsolated`
-- MRMS: offload mode, decode transport (`sab` / `worker-error`), prepare transport (`sab` / `worker-error`), worker failure diagnostics
-- Traffic: offload mode, feed transport (`binary` / `json`), worker transport (`sab`), worker error reason, stage timings
+- Capability flags: `Worker`, `crossOriginIsolated`
+- MRMS: offload mode, decode transport (`transfer` / `worker-error`), prepare transport (`transfer` / `worker-error`), worker failure diagnostics
+- Traffic: offload mode, feed transport (`binary` / `json`), worker transport (`transfer`), worker error reason, stage timings
 
-These fields are intended to explain whether the active worker protocol is healthy and which transport path is in use.
+These fields explain whether the active worker protocol is healthy and which transport path is in use.
