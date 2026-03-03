@@ -99,12 +99,8 @@ export class ComlinkedWorkerClient<T extends object> {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.rawWorker.removeEventListener('error', this.handleWorkerError);
-    this.rawWorker.removeEventListener('messageerror', this.handleMessageError);
-    this.proxy[Comlink.releaseProxy]();
-    this.rawWorker.terminate();
+    this.teardown();
     this.rejectAll(new WorkerClientError('terminated', `${this.name} worker terminated.`));
-    this.onDispose();
   }
 
   cancelAllPending(): void {
@@ -113,6 +109,14 @@ export class ComlinkedWorkerClient<T extends object> {
 
   /** Hook for subclass cleanup on dispose. */
   protected onDispose(): void {}
+
+  private teardown(): void {
+    this.rawWorker.removeEventListener('error', this.handleWorkerError);
+    this.rawWorker.removeEventListener('messageerror', this.handleMessageError);
+    this.proxy[Comlink.releaseProxy]();
+    this.rawWorker.terminate();
+    this.onDispose();
+  }
 
   private mapError(error: unknown): WorkerClientError {
     if (error instanceof WorkerClientError) return error;
@@ -129,12 +133,16 @@ export class ComlinkedWorkerClient<T extends object> {
   }
 
   private handleWorkerError = () => {
+    if (this.disposed) return;
     this.disposed = true;
+    this.teardown();
     this.rejectAll(new WorkerClientError('worker-error', `${this.name} worker runtime error.`));
   };
 
   private handleMessageError = () => {
+    if (this.disposed) return;
     this.disposed = true;
+    this.teardown();
     this.rejectAll(new WorkerClientError('message-error', `${this.name} worker message error.`));
   };
 }
