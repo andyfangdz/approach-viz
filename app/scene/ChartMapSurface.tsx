@@ -473,7 +473,9 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       releaseWorker();
     }
 
-    run();
+    run().catch(() => {
+      // Worker terminated during cleanup — expected when effect re-fires.
+    });
 
     return () => {
       cancelled = true;

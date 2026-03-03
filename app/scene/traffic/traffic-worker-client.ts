@@ -92,7 +92,8 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
           : undefined,
         options
       ),
-      'ingest-binary'
+      'ingest-binary',
+      'binary'
     );
   }
 
@@ -103,7 +104,8 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
   ): Promise<TrafficProcessResult> {
     return this.wrapResult(
       this.proxy.ingestRuntime(primaryUrl, followupUrl, options),
-      'ingest-runtime'
+      'ingest-runtime',
+      'binary'
     );
   }
 
@@ -117,7 +119,8 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
 
   private async wrapResult(
     promise: Promise<TrafficWorkerResult>,
-    operation: TrafficProcessResult['operation']
+    operation: TrafficProcessResult['operation'],
+    feedTransport: TrafficProcessResult['feedTransport'] = null
   ): Promise<TrafficProcessResult> {
     const startedAt = performance.now();
     const result = await this.withTimeout(promise);
@@ -142,7 +145,7 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
       workerProcessingMs: result.workerProcessingMs,
       trackedHexes: result.trackedHexes,
       returnedHistoryHexes: result.returnedHistoryHexes,
-      feedTransport: 'binary',
+      feedTransport,
       fetchMs: result.fetchMs ?? null,
       parseMs: null
     };
