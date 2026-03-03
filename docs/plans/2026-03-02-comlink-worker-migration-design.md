@@ -22,6 +22,7 @@ Comlink replaces all of this with typed async method calls. Workers become plain
 Workers expose classes via `Comlink.expose()`. A generic `ComlinkedWorkerClient<T>` wraps `Comlink.wrap()` to add per-call timeout, structured error codes (`WorkerClientError`), dispose, and `cancelAllPending()`.
 
 Rejected alternatives:
+
 - **Pure Comlink, no wrapper** — timeout/error handling duplicated per consumer
 - **Proxy interceptor** — metaprogramming is hard to debug, fragile type inference
 
@@ -30,6 +31,7 @@ Rejected alternatives:
 Current SAB flow for traffic/MRMS: WASM produces fresh typed arrays, then **copies** them into SharedArrayBuffer, then main thread reads SAB views. Transferables skip the copy entirely — WASM output arrays transfer directly to the main thread (zero-copy pointer move).
 
 SAB overhead eliminated:
+
 - `sab-channel-pool.ts` (236 lines)
 - `growable-sab.ts` (~80 lines)
 - `traffic-sab.ts` (~200 lines)
@@ -52,10 +54,15 @@ The `onconnect` handler in `nexrad.worker.ts` is dead code — `nexrad-worker-cl
 ### Base infrastructure
 
 **`app/scene/shared/worker-errors.ts`** — extracted from `base-worker-client.ts`:
+
 ```typescript
 export type WorkerErrorCode =
-  | 'timeout' | 'worker-error' | 'message-error'
-  | 'terminated' | 'cancelled' | 'application';
+  | 'timeout'
+  | 'worker-error'
+  | 'message-error'
+  | 'terminated'
+  | 'cancelled'
+  | 'application';
 
 export class WorkerClientError extends Error {
   readonly code: WorkerErrorCode;
@@ -63,6 +70,7 @@ export class WorkerClientError extends Error {
 ```
 
 **`app/scene/shared/comlinked-worker-client.ts`**:
+
 ```typescript
 export class ComlinkedWorkerClient<T extends object> {
   protected readonly proxy: Comlink.Remote<T>;
@@ -77,6 +85,7 @@ export class ComlinkedWorkerClient<T extends object> {
 ```
 
 Responsibilities:
+
 - Wraps `Comlink.wrap<T>(worker)` to create typed proxy
 - `withTimeout()` races any proxy call against a timeout, maps errors to `WorkerClientError`
 - Tracks in-flight calls in a `Map<callId, { reject, timeoutId }>` for cancellation
@@ -93,6 +102,7 @@ Worker class exposes `filter(options, query) → SelectOption[]`. Client extends
 #### Approach
 
 Worker class exposes:
+
 - `resolveAltitudes(params) → AltitudeResult` (synchronous)
 - `buildPathGeometry(params) → GeometryResult` (returns `Comlink.transfer()` with `pointsFlat.buffer`)
 
@@ -101,6 +111,7 @@ Client wraps both with `withTimeout`. Singleton pattern preserved.
 #### Traffic (was SAB)
 
 Worker class exposes:
+
 - `reset(options) → TrafficWorkerResult`
 - `ingestBinary(payload, historyPayload, options) → TrafficWorkerResult`
 - `ingestRuntime(url, followupUrl, options) → TrafficWorkerResult`
@@ -116,6 +127,7 @@ WASM loading kicked off eagerly in constructor: `private readonly ready = ensure
 #### MRMS / Nexrad (was SAB)
 
 Worker class exposes:
+
 - `pollAndPrepare(options) → PollAndPrepareResult`
 - `rePrepare(options) → RePrepareResult`
 
@@ -128,6 +140,7 @@ Client preserves existing module-level diagnostics, singleton management, and `a
 #### Chart Tiles (streaming)
 
 Worker class exposes:
+
 - `streamTiles(params, onTile) → { totalTiles, failedTiles }`
 
 The `onTile` callback receives `{ tileX, tileY, bitmap }` with ImageBitmap transferred via `Comlink.transfer()` on the worker side. Radial sort and concurrent fetch pool (60) preserved.
@@ -136,28 +149,28 @@ Consumer in `ChartMapSurface.tsx` uses `Comlink.wrap()` + `Comlink.proxy(onTile)
 
 ## File changes
 
-| Action | File |
-|--------|------|
-| New | `app/scene/shared/worker-errors.ts` |
-| New | `app/scene/shared/comlinked-worker-client.ts` |
-| Rewrite | `app/app-client/filter.worker.ts` |
-| Rewrite | `app/app-client/filter-worker-client.ts` |
-| Rewrite | `app/scene/approach-path/approach.worker.ts` |
+| Action  | File                                                |
+| ------- | --------------------------------------------------- |
+| New     | `app/scene/shared/worker-errors.ts`                 |
+| New     | `app/scene/shared/comlinked-worker-client.ts`       |
+| Rewrite | `app/app-client/filter.worker.ts`                   |
+| Rewrite | `app/app-client/filter-worker-client.ts`            |
+| Rewrite | `app/scene/approach-path/approach.worker.ts`        |
 | Rewrite | `app/scene/approach-path/approach-worker-client.ts` |
-| Rewrite | `app/scene/traffic/traffic.worker.ts` |
-| Rewrite | `app/scene/traffic/traffic-worker-client.ts` |
-| Rewrite | `app/scene/nexrad/nexrad.worker.ts` |
-| Rewrite | `app/scene/nexrad/nexrad-worker-client.ts` |
-| Rewrite | `app/scene/chart/chart-tiles.worker.ts` |
-| Modify | `app/scene/ChartMapSurface.tsx` |
-| Delete | `app/scene/shared/base-worker-client.ts` |
-| Delete | `app/scene/shared/sab-channel-pool.ts` |
-| Delete | `app/scene/shared/growable-sab.ts` |
-| Delete | `app/scene/traffic/traffic-sab.ts` |
-| Delete | `app/scene/nexrad/nexrad-sab.ts` |
-| Delete | `app/scene/approach-path/approach-worker-types.ts` |
-| Delete | `app/scene/traffic/traffic-worker-types.ts` |
-| Delete | `app/scene/nexrad/nexrad-worker-types.ts` |
+| Rewrite | `app/scene/traffic/traffic.worker.ts`               |
+| Rewrite | `app/scene/traffic/traffic-worker-client.ts`        |
+| Rewrite | `app/scene/nexrad/nexrad.worker.ts`                 |
+| Rewrite | `app/scene/nexrad/nexrad-worker-client.ts`          |
+| Rewrite | `app/scene/chart/chart-tiles.worker.ts`             |
+| Modify  | `app/scene/ChartMapSurface.tsx`                     |
+| Delete  | `app/scene/shared/base-worker-client.ts`            |
+| Delete  | `app/scene/shared/sab-channel-pool.ts`              |
+| Delete  | `app/scene/shared/growable-sab.ts`                  |
+| Delete  | `app/scene/traffic/traffic-sab.ts`                  |
+| Delete  | `app/scene/nexrad/nexrad-sab.ts`                    |
+| Delete  | `app/scene/approach-path/approach-worker-types.ts`  |
+| Delete  | `app/scene/traffic/traffic-worker-types.ts`         |
+| Delete  | `app/scene/nexrad/nexrad-worker-types.ts`           |
 
 ## Dependencies
 

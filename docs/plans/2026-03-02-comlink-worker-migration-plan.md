@@ -15,6 +15,7 @@
 ## Task 1: Install comlink + create shared infrastructure
 
 ### Files
+
 - Modify: `package.json`
 - Create: `app/scene/shared/worker-errors.ts`
 - Create: `app/scene/shared/comlinked-worker-client.ts`
@@ -167,15 +168,11 @@ export class ComlinkedWorkerClient<T extends object> {
   }
 
   private handleWorkerError = () => {
-    this.rejectAll(
-      new WorkerClientError('worker-error', `${this.name} worker runtime error.`)
-    );
+    this.rejectAll(new WorkerClientError('worker-error', `${this.name} worker runtime error.`));
   };
 
   private handleMessageError = () => {
-    this.rejectAll(
-      new WorkerClientError('message-error', `${this.name} worker message error.`)
-    );
+    this.rejectAll(new WorkerClientError('message-error', `${this.name} worker message error.`));
   };
 }
 ```
@@ -200,6 +197,7 @@ git commit -m "feat(worker): add comlink dependency and ComlinkedWorkerClient ba
 The simplest worker — validates the Comlink pattern end-to-end.
 
 ### Files
+
 - Rewrite: `app/app-client/filter.worker.ts`
 - Rewrite: `app/app-client/filter-worker-client.ts`
 
@@ -310,6 +308,7 @@ git commit -m "feat(worker): migrate filter worker to comlink"
 Introduces transferable returns via `Comlink.transfer()` for `pointsFlat`.
 
 ### Files
+
 - Rewrite: `app/scene/approach-path/approach.worker.ts`
 - Rewrite: `app/scene/approach-path/approach-worker-client.ts`
 - Delete: `app/scene/approach-path/approach-worker-types.ts`
@@ -319,6 +318,7 @@ Introduces transferable returns via `Comlink.transfer()` for `pointsFlat`.
 Convert to a class with `resolveAltitudes()` and `buildPathGeometry()` methods. Keep all domain logic (`resolveAltitudesForApproach`, `buildPathGeometry` import, point packing). Remove `WorkerEndpoint` type and `scope.onmessage` dispatch.
 
 Key details:
+
 - `resolveAltitudes()` is synchronous — returns directly
 - `buildPathGeometry()` uses `Comlink.transfer()` to transfer `pointsFlat.buffer`
 - Export the class and all param/result types so the client can import them as `import type`
@@ -440,6 +440,7 @@ git commit -m "feat(worker): migrate approach worker to comlink"
 The largest migration — drops SAB transport entirely, moves shared types.
 
 ### Files
+
 - Rewrite: `app/scene/traffic/traffic.worker.ts`
 - Rewrite: `app/scene/traffic/traffic-worker-client.ts`
 - Modify: `app/scene/LiveTrafficOverlay.tsx` (update imports)
@@ -524,6 +525,7 @@ Comlink.expose(new TrafficWorkerApi());
 ```
 
 Key details:
+
 - Each method calls `await this.ready` before WASM operations
 - `reset()` frees and recreates `WasmTrafficState`
 - `ingestBinary()` receives `payloadBuffer` as a transferred ArrayBuffer (Comlink handles this from the caller side)
@@ -648,14 +650,23 @@ Note: `workerTransport` changes from `'sab'` to `'transfer'` — update the `Tra
 ### Step 3: Update `LiveTrafficOverlay.tsx` imports
 
 Change:
+
 ```typescript
-import { TRAFFIC_FLAG_IS_CURRENTLY_PRESENT, TRAFFIC_FLAG_IS_ON_GROUND } from './traffic/traffic-sab';
+import {
+  TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
+  TRAFFIC_FLAG_IS_ON_GROUND
+} from './traffic/traffic-sab';
 import type { SceneAirport } from './traffic/traffic-worker-types';
 export type { SceneAirport } from './traffic/traffic-worker-types';
 ```
+
 To:
+
 ```typescript
-import { TRAFFIC_FLAG_IS_CURRENTLY_PRESENT, TRAFFIC_FLAG_IS_ON_GROUND } from './traffic/traffic-worker-client';
+import {
+  TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
+  TRAFFIC_FLAG_IS_ON_GROUND
+} from './traffic/traffic-worker-client';
 export type { SceneAirport } from './traffic/traffic-worker-client';
 ```
 
@@ -686,6 +697,7 @@ git commit -m "feat(worker): migrate traffic worker to comlink, drop SAB transpo
 Similar pattern to traffic. Additional complexity: diagnostics, `activePollPromise` serialization, and `PhaseDebugHeaderValues` relocation.
 
 ### Files
+
 - Rewrite: `app/scene/nexrad/nexrad.worker.ts`
 - Rewrite: `app/scene/nexrad/nexrad-worker-client.ts`
 - Modify: `app/scene/nexrad/nexrad-decode.ts` (move `PhaseDebugHeaderValues` here)
@@ -697,9 +709,11 @@ Similar pattern to traffic. Additional complexity: diagnostics, `activePollPromi
 Currently defined in `nexrad-worker-types.ts`, only imported by `nexrad-decode.ts`. Move the interface definition into `nexrad-decode.ts` and export it from there.
 
 Change `nexrad-decode.ts` line 3 from:
+
 ```typescript
 import type { PhaseDebugHeaderValues } from './nexrad-worker-types';
 ```
+
 To defining it inline (move the interface from nexrad-worker-types.ts).
 
 ### Step 2: Rewrite `nexrad.worker.ts`
@@ -764,6 +778,7 @@ Comlink.expose(new NexradWorkerApi());
 ```
 
 Key details:
+
 - `cachedVolumeBuffer` and `cachedVolumeHeaders` become instance fields (were module-level)
 - Each method returns prepared volume data (validIndices, yBase, heightBase, etc.) directly in the result, NOT via SAB
 - `pollAndPrepare` returns `volumePayload`, `preparedVolume`, `crossSectionData`, `echoTop18/30/50`, `echoTopSummary`, `timings` — all in one object
@@ -829,6 +844,7 @@ git commit -m "feat(worker): migrate nexrad worker to comlink, drop SAB transpor
 Replaces the streaming `addEventListener('message')` pattern with `Comlink.proxy()` callback.
 
 ### Files
+
 - Rewrite: `app/scene/chart/chart-tiles.worker.ts`
 - Modify: `app/scene/ChartMapSurface.tsx`
 
@@ -934,6 +950,7 @@ This is the most involved consumer change. The component currently creates ad-ho
 Replace with `Comlink.wrap()` + `Comlink.proxy()`. Key changes:
 
 **For flat map mode** (the `useEffect` that creates detail/preview streams):
+
 - Replace `new Worker(...)` + `addEventListener` with `Comlink.wrap<ChartTilesWorkerApi>(new Worker(...))`
 - Replace `worker.postMessage({ type: 'stream', requestId, ... })` with `api.streamTiles(params, Comlink.proxy(onTile))`
 - The `stream-complete` handling moves to the `.then()` of the `streamTiles` promise
@@ -942,13 +959,17 @@ Replace with `Comlink.wrap()` + `Comlink.proxy()`. Key changes:
 - Worker termination for cleanup stays the same (`worker.terminate()`)
 
 **For 3dmap overlay** (`buildChartTexture`):
+
 - Same pattern: wrap worker, call `streamTiles` with proxy callback
 - The callback collects pending bitmaps, the `.then()` draws them all to canvas
 - Or: draw incrementally in the callback (as tiles arrive)
 
 **Key pattern for each stream:**
+
 ```typescript
-const worker = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), { type: 'module' });
+const worker = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
+  type: 'module'
+});
 const api = Comlink.wrap<ChartTilesWorkerApi>(worker);
 
 const streamPromise = api.streamTiles(
@@ -964,7 +985,9 @@ streamPromise.then((summary) => {
 });
 
 // cleanup:
-return () => { worker.terminate(); };
+return () => {
+  worker.terminate();
+};
 ```
 
 Note: The old `ChartTilesRequest`, `ChartTileReadyResponse`, `ChartStreamCompleteResponse` types were defined inline in the worker file. The new `ChartTilesParams`, `ChartTileReady`, `ChartStreamSummary` are exported from the new worker file. Update imports in `ChartMapSurface.tsx`.
@@ -987,6 +1010,7 @@ git commit -m "feat(worker): migrate chart tiles worker to comlink streaming cal
 ## Task 7: Delete old infrastructure + final verification
 
 ### Files
+
 - Delete: `app/scene/shared/base-worker-client.ts`
 - Delete: `app/scene/shared/sab-channel-pool.ts`
 - Delete: `app/scene/shared/growable-sab.ts`
@@ -1028,11 +1052,13 @@ git commit -m "chore(worker): delete old BaseWorkerClient and SAB infrastructure
 ## Task 8: Update AGENTS.md and docs
 
 ### Files
+
 - Modify: `AGENTS.md`
 
 ### Step 1: Update current behavior section
 
 Update the "Current Behavior" section in AGENTS.md:
+
 - Change "Worker-first execution: approach geometry, MRMS decode/prepare, traffic ingest/merge/recompute, and selector filtering run in workers; no synchronous compute fallback" to note they use Comlink
 - Remove any SAB-specific references
 - Note that cross-origin isolation headers are no longer required for worker communication (though may still be useful for other features)
@@ -1048,20 +1074,20 @@ git commit -m "docs: update AGENTS.md for comlink worker migration"
 
 ## Summary of deleted code (~2000 lines)
 
-| File | Lines | What it did |
-|------|-------|-------------|
-| `base-worker-client.ts` | 287 | BaseWorkerClient, WorkerClientError, handleSabOverflowRetry |
-| `sab-channel-pool.ts` | 236 | SharedSabChannelPool, claimBestFitSabChannelForRequest |
-| `growable-sab.ts` | 58 | createSharedArrayBuffer, tryGrowSharedArrayBuffer |
-| `traffic-sab.ts` | ~200 | Traffic SAB buffer schema, read/write |
-| `nexrad-sab.ts` | ~200 | MRMS SAB buffer schema, read/write |
-| `approach-worker-types.ts` | 55 | Approach request/response message unions |
-| `traffic-worker-types.ts` | 96 | Traffic request/response message unions |
-| `nexrad-worker-types.ts` | 128 | MRMS request/response message unions |
+| File                       | Lines | What it did                                                 |
+| -------------------------- | ----- | ----------------------------------------------------------- |
+| `base-worker-client.ts`    | 287   | BaseWorkerClient, WorkerClientError, handleSabOverflowRetry |
+| `sab-channel-pool.ts`      | 236   | SharedSabChannelPool, claimBestFitSabChannelForRequest      |
+| `growable-sab.ts`          | 58    | createSharedArrayBuffer, tryGrowSharedArrayBuffer           |
+| `traffic-sab.ts`           | ~200  | Traffic SAB buffer schema, read/write                       |
+| `nexrad-sab.ts`            | ~200  | MRMS SAB buffer schema, read/write                          |
+| `approach-worker-types.ts` | 55    | Approach request/response message unions                    |
+| `traffic-worker-types.ts`  | 96    | Traffic request/response message unions                     |
+| `nexrad-worker-types.ts`   | 128   | MRMS request/response message unions                        |
 
 ## New code (~150 lines)
 
-| File | Lines | What it does |
-|------|-------|--------------|
-| `worker-errors.ts` | ~20 | WorkerClientError + WorkerErrorCode |
-| `comlinked-worker-client.ts` | ~120 | Generic Comlink wrapper with timeout + lifecycle |
+| File                         | Lines | What it does                                     |
+| ---------------------------- | ----- | ------------------------------------------------ |
+| `worker-errors.ts`           | ~20   | WorkerClientError + WorkerErrorCode              |
+| `comlinked-worker-client.ts` | ~120  | Generic Comlink wrapper with timeout + lifecycle |
