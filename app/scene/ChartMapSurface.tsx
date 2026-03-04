@@ -660,9 +660,10 @@ export function buildChartTexture(
       if (cancelled) throw new Error('Cancelled');
 
       // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
-      let tacZoom = range.zoom;
+      const tacZoom = isComposite
+        ? Math.max(TAC_OVERLAY_ZOOM.min, Math.min(range.zoom, TAC_OVERLAY_ZOOM.max))
+        : 0; // unused when !isComposite; overlayBitmaps stays empty
       if (isComposite) {
-        tacZoom = Math.max(TAC_OVERLAY_ZOOM.min, Math.min(range.zoom, TAC_OVERLAY_ZOOM.max));
         const latRadius = radiusNm / 60;
         const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
         await api.streamTiles(
