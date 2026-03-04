@@ -13,7 +13,11 @@ use tracing::{error, info, warn};
 use super::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
 use super::processor::ingest_timestamp;
 use super::storage::persist_snapshot;
-use crate::constants::{MAX_BASE_KEYS_LOOKUP, MAX_PENDING_ATTEMPTS};
+use crate::constants::{
+    MAX_BASE_KEYS_LOOKUP, MAX_PENDING_ATTEMPTS, NOT_FOUND_INITIAL_RETRY_SECONDS,
+    NOT_FOUND_MAX_ATTEMPTS,
+};
+use crate::http_client::HttpStatusError;
 use crate::types::{AppState, PendingIngest};
 
 pub async fn spawn_background_workers(state: AppState) -> Result<()> {
@@ -311,19 +315,33 @@ async fn ingest_scheduler_loop(state: AppState) {
                 }
             }
             Err(error) => {
+                let is_not_found = error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<HttpStatusError>()
+                        .is_some_and(|e| e.status == 404)
+                });
+                let (max_attempts, retry_delay) = if is_not_found {
+                    // Exponential backoff: 5s, 10s, 20s, … (capped at 3 attempts)
+                    let delay = Duration::from_secs(NOT_FOUND_INITIAL_RETRY_SECONDS)
+                        * 2u32.pow(pending_entry.attempts);
+                    (NOT_FOUND_MAX_ATTEMPTS, delay)
+                } else {
+                    (MAX_PENDING_ATTEMPTS, state.cfg.pending_retry_delay)
+                };
+
+                let next_attempt = pending_entry.attempts + 1;
                 warn!(
-                    "Ingest attempt {} failed (attempt {}): {error:#}",
-                    timestamp,
-                    pending_entry.attempts + 1
+                    "Ingest attempt {} failed (attempt {}/{}): {error:#}",
+                    timestamp, next_attempt, max_attempts,
                 );
 
-                if pending_entry.attempts + 1 < MAX_PENDING_ATTEMPTS {
+                if next_attempt < max_attempts {
                     let mut pending = state.pending.lock().await;
                     pending.insert(
                         timestamp,
                         PendingIngest {
-                            attempts: pending_entry.attempts + 1,
-                            next_attempt_at: Instant::now() + state.cfg.pending_retry_delay,
+                            attempts: next_attempt,
+                            next_attempt_at: Instant::now() + retry_delay,
                         },
                     );
                 }

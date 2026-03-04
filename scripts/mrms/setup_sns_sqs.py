@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--queue-name",
-        default="approach-viz-runtime-mrms-oci-useast-arm-4",
+        default="approach-viz-mrms-oci-useast-arm-4",
         help="SQS queue name to create/update",
     )
     parser.add_argument(
@@ -84,11 +84,32 @@ def main() -> None:
         Attributes={"Policy": json.dumps(policy)},
     )
 
+    # Only forward S3 notifications for the base-level reflectivity product.
+    # Without this filter the queue receives all ~241 MRMS products, adding
+    # ~240x unnecessary SQS API calls (and cost).
+    filter_policy = json.dumps(
+        {
+            "Records": {
+                "s3": {
+                    "object": {
+                        "key": [
+                            {"prefix": "CONUS/MergedReflectivityQC_00.50/"}
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
     response = sns.subscribe(
         TopicArn=args.topic_arn,
         Protocol="sqs",
         Endpoint=queue_arn,
-        Attributes={"RawMessageDelivery": "true"},
+        Attributes={
+            "RawMessageDelivery": "true",
+            "FilterPolicy": filter_policy,
+            "FilterPolicyScope": "MessageBody",
+        },
         ReturnSubscriptionArn=True,
     )
 
