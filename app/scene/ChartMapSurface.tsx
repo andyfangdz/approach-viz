@@ -39,20 +39,11 @@ const WGS84_SEMI_MAJOR_METERS = 6378137;
 const WGS84_FLATTENING = 1 / 298.257223563;
 const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 
-// Maximum number of tile fetches before stepping down a zoom level.
-// 800 keeps VFR/IFR Low z12 through ~60nm radius (744 tiles at 60nm).
-// Beyond 60nm, MAX_TEXTURE_DIM (8192) becomes the binding constraint.
-const MAX_TILE_COUNT = 800;
-
-// Budget for the 3dmap base tiles — chart tiles use a different hostname
-// (tiles.arcgis.com) from Google 3D Tiles so no connection pool contention.
-// 800 matches the flat map budget since the base chart is the only texture
-// in 3dmap mode (no progressive preview pass).
-const MAX_TILE_COUNT_3DMAP = 800;
-
-// Maximum texture dimension (width or height) in pixels.  Zoom steps down
-// when the composite canvas would exceed this.  8192 is universally supported
-// by modern GPUs and allows zoom 12 VFR (~6656 px) without downgrade.
+// Maximum texture dimension (width or height) in pixels for 3dmap canvas
+// compositing.  Zoom steps down when the canvas would exceed this.  8192 is
+// universally supported by modern GPUs and allows zoom 12 VFR (~6656 px)
+// without downgrade.  Flat-map mode renders individual tile quads and is not
+// subject to this constraint.
 const MAX_TEXTURE_DIM = 8192;
 const TILE_SIZE = 256;
 
@@ -136,7 +127,6 @@ function computeZoom(
   chartType: ChartType,
   radiusNm: number,
   refLat: number,
-  maxTileCount = MAX_TILE_COUNT,
   maxTextureDim = Infinity
 ): number {
   const range = CHART_ZOOM_RANGES[chartType];
@@ -145,12 +135,7 @@ function computeZoom(
     const tilesWide =
       Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
     const tilesHigh = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
-    if (
-      tilesWide * tilesHigh <= maxTileCount &&
-      tilesWide * TILE_SIZE <= maxTextureDim &&
-      tilesHigh * TILE_SIZE <= maxTextureDim
-    )
-      return z;
+    if (tilesWide * TILE_SIZE <= maxTextureDim && tilesHigh * TILE_SIZE <= maxTextureDim) return z;
   }
   return range.min;
 }
@@ -177,10 +162,9 @@ function computeTileRange(
   refLon: number,
   radiusNm: number,
   chartType: ChartType,
-  maxTileCount = MAX_TILE_COUNT,
   maxTextureDim = Infinity
 ): TileRange {
-  const zoom = computeZoom(chartType, radiusNm, refLat, maxTileCount, maxTextureDim);
+  const zoom = computeZoom(chartType, radiusNm, refLat, maxTextureDim);
   const baseUrl = CHART_TILE_URLS[chartType];
 
   const latRadius = radiusNm / 60;
@@ -609,14 +593,7 @@ export function buildChartTexture(
   radiusNm: number,
   chartType: ChartType
 ): { promise: Promise<ChartTextureData>; cancel: () => void } {
-  const range = computeTileRange(
-    refLat,
-    refLon,
-    radiusNm,
-    chartType,
-    MAX_TILE_COUNT_3DMAP,
-    MAX_TEXTURE_DIM
-  );
+  const range = computeTileRange(refLat, refLon, radiusNm, chartType, MAX_TEXTURE_DIM);
 
   let cancelled = false;
   let released = false;
