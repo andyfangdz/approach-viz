@@ -662,33 +662,36 @@ export function buildChartTexture(
       if (cancelled) throw new Error('Cancelled');
 
       // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
-      const tacZoom = isComposite
-        ? Math.max(TAC_OVERLAY_ZOOM.min, Math.min(range.zoom, TAC_OVERLAY_ZOOM.max))
-        : 0; // unused when !isComposite; overlayBitmaps stays empty
+      let tacZoom = 0;
       if (isComposite) {
+        tacZoom = Math.max(TAC_OVERLAY_ZOOM.min, Math.min(range.zoom, TAC_OVERLAY_ZOOM.max));
         const latRadius = radiusNm / 60;
         const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
-        await api.streamTiles(
-          {
-            baseUrl: TAC_OVERLAY_URL,
-            zoom: tacZoom,
-            minTileX: lonToTileX(refLon - lonRadius, tacZoom),
-            maxTileX: lonToTileX(refLon + lonRadius, tacZoom),
-            minTileY: latToTileY(refLat + latRadius, tacZoom),
-            maxTileY: latToTileY(refLat - latRadius, tacZoom)
-          },
-          Comlink.proxy((tile: ChartTileReady) => {
-            if (cancelled) {
-              tile.bitmap.close();
-              return;
-            }
-            overlayBitmaps.push({
-              tileX: tile.tileX,
-              tileY: tile.tileY,
-              bitmap: tile.bitmap
-            });
-          })
-        );
+        try {
+          await api.streamTiles(
+            {
+              baseUrl: TAC_OVERLAY_URL,
+              zoom: tacZoom,
+              minTileX: lonToTileX(refLon - lonRadius, tacZoom),
+              maxTileX: lonToTileX(refLon + lonRadius, tacZoom),
+              minTileY: latToTileY(refLat + latRadius, tacZoom),
+              maxTileY: latToTileY(refLat - latRadius, tacZoom)
+            },
+            Comlink.proxy((tile: ChartTileReady) => {
+              if (cancelled) {
+                tile.bitmap.close();
+                return;
+              }
+              overlayBitmaps.push({
+                tileX: tile.tileX,
+                tileY: tile.tileY,
+                bitmap: tile.bitmap
+              });
+            })
+          );
+        } catch {
+          // worker was terminated by cancel(); overlayBitmaps already cleaned up
+        }
         if (cancelled) throw new Error('Cancelled');
       }
 
