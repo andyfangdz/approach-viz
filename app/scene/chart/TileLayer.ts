@@ -38,7 +38,10 @@ export class TileLayer {
 
     this.material = createTileArrayMaterial(this.texture, opts);
 
-    this.mesh = new THREE.InstancedMesh(geometry, this.material, capacity);
+    // Clone geometry so the per-instance layerIndex attribute is independent
+    // of other TileLayer instances that share the same source geometry.
+    const geo = geometry.clone();
+    this.mesh = new THREE.InstancedMesh(geo, this.material, capacity);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -47,7 +50,7 @@ export class TileLayer {
     const layerData = new Float32Array(capacity);
     this._layerAttr = new THREE.InstancedBufferAttribute(layerData, 1);
     this._layerAttr.setUsage(THREE.DynamicDrawUsage);
-    this.mesh.geometry.setAttribute('layerIndex', this._layerAttr);
+    geo.setAttribute('layerIndex', this._layerAttr);
   }
 
   get count(): number {
@@ -123,6 +126,6 @@ export class TileLayer {
   dispose(): void {
     this.texture.dispose();
     this.material.dispose();
-    this.mesh.geometry.deleteAttribute('layerIndex');
+    this.mesh.geometry.dispose();
   }
 }
