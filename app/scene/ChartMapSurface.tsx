@@ -341,16 +341,11 @@ export const ChartMapSurface = memo(function ChartMapSurface({
     const t0 = performance.now();
     const surfaceY = airportElevationFeet * ALTITUDE_SCALE + SURFACE_OFFSET_NM;
 
-    // Dispose previous
-    textureRef.current?.dispose();
-    textureRef.current = null;
-    geometryRef.current?.dispose();
-    geometryRef.current = null;
-    if (canvasRef.current) {
-      canvasRef.current.width = 0;
-      canvasRef.current.height = 0;
-      canvasRef.current = null;
-    }
+    // Keep old texture visible until new one is ready — avoids black flash.
+    // Capture refs so we can dispose them after the new texture is set.
+    const prevTexture = textureRef.current;
+    const prevGeometry = geometryRef.current;
+    const prevCanvas = canvasRef.current;
 
     const range = computeTileRange(refLat, refLon, radiusNm, chartType, MAX_TEXTURE_DIM);
     const totalTiles = range.tilesWide * range.tilesHigh;
@@ -390,9 +385,16 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       const { texture, canvas } = bitmapToCanvasTexture(result.bitmap);
       const geometry = buildFlatMapGeometry(range, refLat, refLon, surfaceY);
 
+      // Replace refs and dispose old resources
       textureRef.current = texture;
       geometryRef.current = geometry;
       canvasRef.current = canvas;
+      prevTexture?.dispose();
+      prevGeometry?.dispose();
+      if (prevCanvas) {
+        prevCanvas.width = 0;
+        prevCanvas.height = 0;
+      }
       setVersion((v) => v + 1);
 
       onDebugChangeRef.current?.({
