@@ -387,11 +387,10 @@ export const ApproachPlateSurface = memo(function ApproachPlateSurface({
   }
 
   return (
-    <mesh geometry={plateGeometry} scale={[1, verticalScale, 1]}>
+    <mesh geometry={plateGeometry} scale={[1, verticalScale, 1]} renderOrder={1}>
       <meshBasicMaterial
         map={plateTexture}
         transparent
-        opacity={0.92}
         side={THREE.DoubleSide}
         depthWrite={false}
         toneMapped={false}

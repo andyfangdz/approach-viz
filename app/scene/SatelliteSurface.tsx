@@ -751,7 +751,7 @@ if (uPlateEnabled > 0.5) {
     vec2 plateUv = plateUvH.xy / plateUvH.z;
     if (plateUv.x >= 0.0 && plateUv.x <= 1.0 && plateUv.y >= 0.0 && plateUv.y <= 1.0) {
       vec4 plateTexel = texture2D(uPlateMap, plateUv);
-      float plateAlpha = clamp(plateTexel.a * 0.92, 0.0, 1.0);
+      float plateAlpha = plateTexel.a;
       diffuseColor.rgb = mix(diffuseColor.rgb, plateTexel.rgb, plateAlpha);
     }
   }
