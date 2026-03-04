@@ -584,8 +584,6 @@ export const ChartMapSurface = memo(function ChartMapSurface({
         >
           <meshBasicMaterial
             map={tile.texture}
-            transparent
-            opacity={tile.layer === 'overlay' ? 1 : 0.92}
             side={THREE.DoubleSide}
             depthWrite={false}
             toneMapped={false}

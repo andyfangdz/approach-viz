@@ -741,7 +741,7 @@ if (uChartEnabled > 0.5) {
     vec2 chartUv = chartUvH.xy / chartUvH.z;
     if (chartUv.x >= 0.0 && chartUv.x <= 1.0 && chartUv.y >= 0.0 && chartUv.y <= 1.0) {
       vec4 chartTexel = texture2D(uChartMap, chartUv);
-      diffuseColor.rgb = mix(diffuseColor.rgb, chartTexel.rgb, 0.88);
+      diffuseColor.rgb = chartTexel.rgb;
     }
   }
 }
@@ -751,8 +751,7 @@ if (uPlateEnabled > 0.5) {
     vec2 plateUv = plateUvH.xy / plateUvH.z;
     if (plateUv.x >= 0.0 && plateUv.x <= 1.0 && plateUv.y >= 0.0 && plateUv.y <= 1.0) {
       vec4 plateTexel = texture2D(uPlateMap, plateUv);
-      float plateAlpha = plateTexel.a;
-      diffuseColor.rgb = mix(diffuseColor.rgb, plateTexel.rgb, plateAlpha);
+      diffuseColor.rgb = mix(diffuseColor.rgb, plateTexel.rgb, plateTexel.a);
     }
   }
 }`
