@@ -169,6 +169,21 @@ interface TileRange {
   southLat: number;
 }
 
+/**
+ * Find the highest TAC overlay zoom that fits within the tile-count budget.
+ * Returns null if no zoom level fits (e.g. very wide radius).
+ */
+function computeOverlayZoom(refLat: number, radiusNm: number, maxTileCount: number): number | null {
+  for (let z = TAC_OVERLAY_ZOOM.max; z >= TAC_OVERLAY_ZOOM.min; z--) {
+    const degPerTile = 360 / 2 ** z;
+    const tilesWide =
+      Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
+    const tilesHigh = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
+    if (tilesWide * tilesHigh <= maxTileCount) return z;
+  }
+  return null;
+}
+
 function computeTileRange(
   refLat: number,
   refLon: number,
@@ -435,11 +450,9 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       // Detail complete — dispose preview
       disposeLayer(previewLayerRef);
 
-      // TAC overlay pass
+      // TAC overlay pass — budget-checked to avoid OOM from large DataArrayTexture
       const tacZoom =
-        chartType === 'tac'
-          ? Math.min(Math.max(detailRange.zoom, TAC_OVERLAY_ZOOM.min), TAC_OVERLAY_ZOOM.max)
-          : null;
+        chartType === 'tac' ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT) : null;
 
       if (tacZoom != null && !cancelled) {
         const latRadius = radiusNm / 60;
@@ -586,12 +599,10 @@ export function buildChartTexture(
       if (cancelled) throw new Error('Cancelled');
 
       // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
-      let overlayZoomUsed: number | null = null;
-      if (isComposite) {
-        overlayZoomUsed = Math.min(
-          Math.max(range.zoom, TAC_OVERLAY_ZOOM.min),
-          TAC_OVERLAY_ZOOM.max
-        );
+      const overlayZoomUsed = isComposite
+        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP)
+        : null;
+      if (overlayZoomUsed != null) {
         const latRadius = radiusNm / 60;
         const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
         try {
