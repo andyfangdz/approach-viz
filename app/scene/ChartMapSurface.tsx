@@ -157,11 +157,7 @@ function computeZoom(
 
 /** Pick the highest overlay zoom within TAC_OVERLAY_ZOOM that fits the tile
  *  budget, or return null if even the minimum zoom exceeds it. */
-function computeOverlayZoom(
-  radiusNm: number,
-  refLat: number,
-  maxTileCount: number
-): number | null {
+function computeOverlayZoom(radiusNm: number, refLat: number, maxTileCount: number): number | null {
   for (let z = TAC_OVERLAY_ZOOM.max; z >= TAC_OVERLAY_ZOOM.min; z--) {
     const degPerTile = 360 / 2 ** z;
     const tw = Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
@@ -505,9 +501,10 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       setTileVersion((v) => v + 1);
 
       // TAC overlay pass — stream Terminal Area Chart tiles on top of VFR sectionals
-      const tacZoom = chartType === 'tac' && !cancelled
-        ? computeOverlayZoom(radiusNm, refLat, MAX_TILE_COUNT)
-        : null;
+      const tacZoom =
+        chartType === 'tac' && !cancelled
+          ? computeOverlayZoom(radiusNm, refLat, MAX_TILE_COUNT)
+          : null;
       if (tacZoom != null) {
         const latRadius = radiusNm / 60;
         const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
