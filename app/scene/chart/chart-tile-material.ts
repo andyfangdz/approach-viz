@@ -13,9 +13,9 @@ export function createTileArrayMaterial(
       tileArray: { value: tileArray }
     },
     vertexShader: /* glsl */ `
-      attribute float layerIndex;
-      varying float vLayer;
-      varying vec2 vUv;
+      in float layerIndex;
+      out float vLayer;
+      out vec2 vUv;
 
       void main() {
         vLayer = layerIndex;
@@ -27,12 +27,12 @@ export function createTileArrayMaterial(
       precision highp float;
       precision highp sampler2DArray;
       uniform sampler2DArray tileArray;
-      varying float vLayer;
-      varying vec2 vUv;
+      in float vLayer;
+      in vec2 vUv;
+      out vec4 fragColor;
 
       void main() {
-        vec4 color = texture(tileArray, vec3(vUv, vLayer));
-        gl_FragColor = color;
+        fragColor = texture(tileArray, vec3(vUv, vLayer));
       }
     `,
     glslVersion: THREE.GLSL3,
