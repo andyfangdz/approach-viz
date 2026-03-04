@@ -547,7 +547,13 @@ export const ChartMapSurface = memo(function ChartMapSurface({
 
     return () => {
       cancelled = true;
-      api.cancelStream();
+      // cancelStream may throw if the worker lifecycle effect already released
+      // the Comlink proxy (React runs cleanups in definition order on unmount).
+      try {
+        api.cancelStream();
+      } catch {
+        // Proxy already released — worker is being terminated anyway.
+      }
       for (const entry of tilesRef.current.values()) {
         if (entry.texture.image instanceof ImageBitmap) {
           entry.texture.image.close();
