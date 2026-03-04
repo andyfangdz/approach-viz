@@ -44,11 +44,11 @@ const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 // Beyond 60nm, MAX_TEXTURE_DIM (8192) becomes the binding constraint.
 const MAX_TILE_COUNT = 800;
 
-// Budget for the 3dmap overlay — chart tiles use a different hostname
+// Budget for the 3dmap base tiles — chart tiles use a different hostname
 // (tiles.arcgis.com) from Google 3D Tiles so no connection pool contention.
-// 800 matches the flat map budget since the overlay is the only chart texture
+// 800 matches the flat map budget since the base chart is the only texture
 // in 3dmap mode (no progressive preview pass).
-const MAX_TILE_COUNT_OVERLAY = 800;
+const MAX_TILE_COUNT_3DMAP = 800;
 
 // Maximum texture dimension (width or height) in pixels.  Zoom steps down
 // when the composite canvas would exceed this.  8192 is universally supported
@@ -153,18 +153,6 @@ function computeZoom(
       return z;
   }
   return range.min;
-}
-
-/** Pick the highest overlay zoom within TAC_OVERLAY_ZOOM that fits the tile
- *  budget, or return null if even the minimum zoom exceeds it. */
-function computeOverlayZoom(radiusNm: number, refLat: number, maxTileCount: number): number | null {
-  for (let z = TAC_OVERLAY_ZOOM.max; z >= TAC_OVERLAY_ZOOM.min; z--) {
-    const degPerTile = 360 / 2 ** z;
-    const tw = Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
-    const th = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
-    if (tw * th <= maxTileCount) return z;
-  }
-  return null; // even zoom 10 exceeds the budget — skip overlay
 }
 
 // --- Shared tile range computation ---
@@ -497,14 +485,14 @@ export const ChartMapSurface = memo(function ChartMapSurface({
           tilesRef.current.delete(key);
         }
       }
-      // Flush detail tiles to screen before potentially-slow overlay pass
-      setTileVersion((v) => v + 1);
-
       // TAC overlay pass — stream Terminal Area Chart tiles on top of VFR sectionals
       const tacZoom =
         chartType === 'tac' && !cancelled
-          ? computeOverlayZoom(radiusNm, refLat, MAX_TILE_COUNT)
+          ? Math.min(Math.max(detailRange.zoom, TAC_OVERLAY_ZOOM.min), TAC_OVERLAY_ZOOM.max)
           : null;
+
+      // Flush detail tiles to screen before the potentially-slow overlay pass
+      if (tacZoom != null) setTileVersion((v) => v + 1);
       if (tacZoom != null) {
         const latRadius = radiusNm / 60;
         const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
@@ -621,7 +609,7 @@ export function buildChartTexture(
     refLon,
     radiusNm,
     chartType,
-    MAX_TILE_COUNT_OVERLAY,
+    MAX_TILE_COUNT_3DMAP,
     MAX_TEXTURE_DIM
   );
 
@@ -679,36 +667,36 @@ export function buildChartTexture(
       // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
       let overlayZoomUsed: number | null = null;
       if (isComposite) {
-        const overlayZoom = computeOverlayZoom(radiusNm, refLat, MAX_TILE_COUNT_OVERLAY);
-        if (overlayZoom != null) {
-          overlayZoomUsed = overlayZoom;
-          const latRadius = radiusNm / 60;
-          const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
-          try {
-            await api.streamTiles(
-              {
-                baseUrl: TAC_OVERLAY_URL,
-                zoom: overlayZoom,
-                minTileX: lonToTileX(refLon - lonRadius, overlayZoom),
-                maxTileX: lonToTileX(refLon + lonRadius, overlayZoom),
-                minTileY: latToTileY(refLat + latRadius, overlayZoom),
-                maxTileY: latToTileY(refLat - latRadius, overlayZoom)
-              },
-              Comlink.proxy((tile: ChartTileReady) => {
-                if (cancelled) {
-                  tile.bitmap.close();
-                  return;
-                }
-                overlayBitmaps.push({
-                  tileX: tile.tileX,
-                  tileY: tile.tileY,
-                  bitmap: tile.bitmap
-                });
-              })
-            );
-          } catch (err) {
-            if (!cancelled) throw err; // re-throw genuine errors
-          }
+        overlayZoomUsed = Math.min(
+          Math.max(range.zoom, TAC_OVERLAY_ZOOM.min),
+          TAC_OVERLAY_ZOOM.max
+        );
+        const latRadius = radiusNm / 60;
+        const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
+        try {
+          await api.streamTiles(
+            {
+              baseUrl: TAC_OVERLAY_URL,
+              zoom: overlayZoomUsed,
+              minTileX: lonToTileX(refLon - lonRadius, overlayZoomUsed),
+              maxTileX: lonToTileX(refLon + lonRadius, overlayZoomUsed),
+              minTileY: latToTileY(refLat + latRadius, overlayZoomUsed),
+              maxTileY: latToTileY(refLat - latRadius, overlayZoomUsed)
+            },
+            Comlink.proxy((tile: ChartTileReady) => {
+              if (cancelled) {
+                tile.bitmap.close();
+                return;
+              }
+              overlayBitmaps.push({
+                tileX: tile.tileX,
+                tileY: tile.tileY,
+                bitmap: tile.bitmap
+              });
+            })
+          );
+        } catch (err) {
+          if (!cancelled) throw err; // re-throw genuine errors
         }
         if (cancelled) throw new Error('Cancelled');
       }
