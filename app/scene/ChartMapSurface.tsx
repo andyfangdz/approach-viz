@@ -225,6 +225,7 @@ for (let i = 0; i < tileUv.count; i++) {
 // --- Tile entry type and helpers ---
 
 const PREVIEW_Y_OFFSET = -0.001;
+const OVERLAY_Y_OFFSET = 0.001;
 
 interface TileEntry {
   key: string;
@@ -571,7 +572,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
               (tile.layer === 'preview'
                 ? PREVIEW_Y_OFFSET
                 : tile.layer === 'overlay'
-                  ? -PREVIEW_Y_OFFSET
+                  ? OVERLAY_Y_OFFSET
                   : 0),
             tile.centerZ
           ]}
@@ -712,8 +713,8 @@ export function buildChartTexture(
         const scale = Math.pow(2, tacZoom - range.zoom);
         const overlayTileSize = TILE_SIZE / scale;
         for (const p of overlayBitmaps) {
-          const canvasX = (p.tileX / scale - range.minTileX) * TILE_SIZE;
-          const canvasY = (p.tileY / scale - range.minTileY) * TILE_SIZE;
+          const canvasX = Math.round((p.tileX / scale - range.minTileX) * TILE_SIZE);
+          const canvasY = Math.round((p.tileY / scale - range.minTileY) * TILE_SIZE);
           ctx.drawImage(p.bitmap, canvasX, canvasY, overlayTileSize, overlayTileSize);
           p.bitmap.close();
         }
@@ -734,7 +735,7 @@ export function buildChartTexture(
       releaseWorker();
 
       return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
-    })()
+    })().catch(() => undefined as never)
   ]);
 
   return {
