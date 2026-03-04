@@ -26,11 +26,12 @@ async function fetchTile(
   baseUrl: string,
   z: number,
   x: number,
-  y: number
+  y: number,
+  signal?: AbortSignal
 ): Promise<ImageBitmap | null> {
   const url = `${baseUrl}/${z}/${y}/${x}`;
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, signal ? { signal } : undefined);
     if (!response.ok) return null;
     const blob = await response.blob();
     return await createImageBitmap(blob);
@@ -40,10 +41,23 @@ async function fetchTile(
 }
 
 export class ChartTilesWorkerApi {
+  private _abortController: AbortController | null = null;
+
+  cancelStream(): void {
+    this._abortController?.abort();
+    this._abortController = null;
+  }
+
   async streamTiles(
     params: ChartTilesParams,
     onTile: (tile: ChartTileReady) => void | Promise<void>
   ): Promise<ChartStreamSummary> {
+    // Abort any prior in-flight stream
+    this._abortController?.abort();
+    const ac = new AbortController();
+    this._abortController = ac;
+    const { signal } = ac;
+
     const specs: Array<{ x: number; y: number }> = [];
     for (let tileY = params.minTileY; tileY <= params.maxTileY; tileY += 1) {
       for (let tileX = params.minTileX; tileX <= params.maxTileX; tileX += 1) {
@@ -64,11 +78,15 @@ export class ChartTilesWorkerApi {
     let nextIndex = 0;
 
     async function worker() {
-      while (nextIndex < specs.length) {
+      while (nextIndex < specs.length && !signal.aborted) {
         const i = nextIndex;
         nextIndex += 1;
         const s = specs[i];
-        const bitmap = await fetchTile(params.baseUrl, params.zoom, s.x, s.y);
+        const bitmap = await fetchTile(params.baseUrl, params.zoom, s.x, s.y, signal);
+        if (signal.aborted) {
+          bitmap?.close();
+          return;
+        }
         if (bitmap) {
           // Fire-and-forget: tiles are composited by position, not arrival order,
           // so no need to await the Comlink round-trip before fetching the next tile.

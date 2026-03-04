@@ -485,6 +485,8 @@ export const ChartMapSurface = memo(function ChartMapSurface({
           tilesRef.current.delete(key);
         }
       }
+      // Flush detail tiles to screen before potentially-slow overlay pass
+      setTileVersion((v) => v + 1);
 
       // TAC overlay pass — stream Terminal Area Chart tiles on top of VFR sectionals
       if (chartType === 'tac' && !cancelled) {
@@ -545,6 +547,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
 
     return () => {
       cancelled = true;
+      api.cancelStream();
       for (const entry of tilesRef.current.values()) {
         if (entry.texture.image instanceof ImageBitmap) {
           entry.texture.image.close();
