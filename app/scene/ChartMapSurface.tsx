@@ -677,22 +677,22 @@ export function buildChartTexture(
       if (cancelled) throw new Error('Cancelled');
 
       // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
-      let tacZoom = 0;
+      let overlayZoomUsed: number | null = null;
       if (isComposite) {
         const overlayZoom = computeOverlayZoom(radiusNm, refLat, MAX_TILE_COUNT_OVERLAY);
         if (overlayZoom != null) {
-          tacZoom = overlayZoom;
+          overlayZoomUsed = overlayZoom;
           const latRadius = radiusNm / 60;
           const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
           try {
             await api.streamTiles(
               {
                 baseUrl: TAC_OVERLAY_URL,
-                zoom: tacZoom,
-                minTileX: lonToTileX(refLon - lonRadius, tacZoom),
-                maxTileX: lonToTileX(refLon + lonRadius, tacZoom),
-                minTileY: latToTileY(refLat + latRadius, tacZoom),
-                maxTileY: latToTileY(refLat - latRadius, tacZoom)
+                zoom: overlayZoom,
+                minTileX: lonToTileX(refLon - lonRadius, overlayZoom),
+                maxTileX: lonToTileX(refLon + lonRadius, overlayZoom),
+                minTileY: latToTileY(refLat + latRadius, overlayZoom),
+                maxTileY: latToTileY(refLat - latRadius, overlayZoom)
               },
               Comlink.proxy((tile: ChartTileReady) => {
                 if (cancelled) {
@@ -706,8 +706,8 @@ export function buildChartTexture(
                 });
               })
             );
-          } catch {
-            // worker was terminated by cancel(); overlayBitmaps already cleaned up
+          } catch (err) {
+            if (!cancelled) throw err; // re-throw genuine errors
           }
         }
         if (cancelled) throw new Error('Cancelled');
@@ -731,8 +731,8 @@ export function buildChartTexture(
       pendingBitmaps.length = 0;
 
       // Draw TAC overlay tiles on top of sectionals
-      if (overlayBitmaps.length > 0) {
-        const scale = Math.pow(2, tacZoom - range.zoom);
+      if (overlayBitmaps.length > 0 && overlayZoomUsed != null) {
+        const scale = Math.pow(2, overlayZoomUsed - range.zoom);
         const overlayTileSize = TILE_SIZE / scale;
         for (const p of overlayBitmaps) {
           const canvasX = Math.round((p.tileX / scale - range.minTileX) * TILE_SIZE);
