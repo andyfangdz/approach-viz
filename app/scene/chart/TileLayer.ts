@@ -14,6 +14,7 @@ export class TileLayer {
   readonly mesh: THREE.InstancedMesh;
   readonly texture: THREE.DataArrayTexture;
   readonly material: THREE.ShaderMaterial;
+  private readonly _capacity: number;
   private readonly _layerAttr: THREE.InstancedBufferAttribute;
   private readonly _dummy = new THREE.Object3D();
   private _count = 0;
@@ -28,6 +29,7 @@ export class TileLayer {
     // Data starts as zeroed (black/transparent), filled per-tile via
     // copyTextureToTexture.  The CPU backing buffer is freed after the
     // initial GPU upload to avoid holding hundreds of MB resident.
+    this._capacity = capacity;
     const data = new Uint8Array(TILE_PX * TILE_PX * 4 * capacity);
     this.texture = new THREE.DataArrayTexture(data, TILE_PX, TILE_PX, capacity);
     this.texture.minFilter = THREE.LinearFilter;
@@ -78,6 +80,11 @@ export class TileLayer {
     surfaceY: number,
     renderer: THREE.WebGLRenderer
   ): void {
+    if (this._count >= this._capacity) {
+      bitmap.close();
+      return;
+    }
+
     const layerIndex = this._count;
     this._count += 1;
 
@@ -124,6 +131,11 @@ export class TileLayer {
   }
 
   dispose(): void {
+    if (!this._gpuInitialized) {
+      // No tiles arrived — free the CPU backing buffer explicitly rather
+      // than waiting for GC (common for rural TAC areas where all 404).
+      (this.texture.image as { data: Uint8Array | null }).data = null;
+    }
     this.texture.dispose();
     this.material.dispose();
     this.mesh.geometry.dispose();

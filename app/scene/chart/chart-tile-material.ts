@@ -14,7 +14,7 @@ export function createTileArrayMaterial(
     },
     vertexShader: /* glsl */ `
       in float layerIndex;
-      out float vLayer;
+      flat out float vLayer;
       out vec2 vUv;
 
       void main() {
@@ -27,7 +27,7 @@ export function createTileArrayMaterial(
       precision highp float;
       precision highp sampler2DArray;
       uniform sampler2DArray tileArray;
-      in float vLayer;
+      flat in float vLayer;
       in vec2 vUv;
       out vec4 fragColor;
 
