@@ -3,20 +3,8 @@ import { createTileArrayMaterial } from './chart-tile-material';
 
 const TILE_PX = 256;
 
-/** Scratch canvas for extracting ImageBitmap pixels as ImageData. */
-let _scratchCanvas: OffscreenCanvas | null = null;
-let _scratchCtx: OffscreenCanvasRenderingContext2D | null = null;
-
-function getScratchCanvas(): {
-  canvas: OffscreenCanvas;
-  ctx: OffscreenCanvasRenderingContext2D;
-} {
-  if (!_scratchCanvas || !_scratchCtx) {
-    _scratchCanvas = new OffscreenCanvas(TILE_PX, TILE_PX);
-    _scratchCtx = _scratchCanvas.getContext('2d')!;
-  }
-  return { canvas: _scratchCanvas, ctx: _scratchCtx };
-}
+/** Reusable Vector3 for copyTextureToTexture destination position. */
+const _dstPos = new THREE.Vector3();
 
 /**
  * Manages a single instanced tile layer (detail, preview, or overlay).
@@ -29,7 +17,7 @@ export class TileLayer {
   private readonly _layerAttr: THREE.InstancedBufferAttribute;
   private readonly _dummy = new THREE.Object3D();
   private _count = 0;
-  private _glTextureInitialized = false;
+  private _gpuInitialized = false;
 
   constructor(
     capacity: number,
@@ -37,7 +25,9 @@ export class TileLayer {
     opts: { transparent?: boolean } = {}
   ) {
     // Pre-allocate DataArrayTexture with `capacity` layers.
-    // Data starts as zeroed (black/transparent), filled per-tile via texSubImage3D.
+    // Data starts as zeroed (black/transparent), filled per-tile via
+    // copyTextureToTexture.  The CPU backing buffer is freed after the
+    // initial GPU upload to avoid holding hundreds of MB resident.
     const data = new Uint8Array(TILE_PX * TILE_PX * 4 * capacity);
     this.texture = new THREE.DataArrayTexture(data, TILE_PX, TILE_PX, capacity);
     this.texture.minFilter = THREE.LinearFilter;
@@ -67,6 +57,14 @@ export class TileLayer {
   /**
    * Add a tile to this layer. Uploads the bitmap to the DataArrayTexture
    * at the next available layer index and sets the instance transform.
+   *
+   * @param bitmap - The decoded tile image (256×256). Will be closed after upload.
+   * @param centerX - ENU X position in NM
+   * @param centerZ - ENU Z position in NM
+   * @param width - Tile width in NM
+   * @param height - Tile height in NM (depth along Z)
+   * @param surfaceY - Y position in NM
+   * @param renderer - Three.js WebGLRenderer for texture copy
    */
   addTile(
     bitmap: ImageBitmap,
@@ -80,8 +78,31 @@ export class TileLayer {
     const layerIndex = this._count;
     this._count += 1;
 
-    // Upload bitmap pixels to the specific layer via texSubImage3D
-    this._uploadLayer(bitmap, layerIndex, renderer);
+    // Ensure the DataArrayTexture has been allocated on the GPU and free
+    // the CPU backing buffer — it's only needed for the initial glTexImage3D.
+    if (!this._gpuInitialized) {
+      renderer.initTexture(this.texture);
+      // Free the large Uint8Array backing buffer now that the GPU has it.
+      // Three.js retains texture.image.data indefinitely; nulling it avoids
+      // holding capacity × 256 KB of CPU memory for the TileLayer lifetime.
+      (this.texture.image as { data: Uint8Array | null }).data = null;
+      this._gpuInitialized = true;
+    }
+
+    // Upload bitmap to the target layer using the stable public API.
+    // copyTextureToTexture handles binding, format conversion, and
+    // texSubImage3D internally — no access to __webglTexture needed.
+    const srcTexture = new THREE.Texture(bitmap as unknown as HTMLImageElement);
+    srcTexture.flipY = false;
+    srcTexture.minFilter = THREE.LinearFilter;
+    srcTexture.magFilter = THREE.LinearFilter;
+    srcTexture.generateMipmaps = false;
+    srcTexture.needsUpdate = true;
+
+    _dstPos.set(0, 0, layerIndex);
+    renderer.copyTextureToTexture(srcTexture, this.texture, null, _dstPos);
+
+    srcTexture.dispose();
     bitmap.close();
 
     // Set instance transform
@@ -97,48 +118,6 @@ export class TileLayer {
     this.mesh.count = this._count;
     this.mesh.instanceMatrix.needsUpdate = true;
     this._layerAttr.needsUpdate = true;
-  }
-
-  private _uploadLayer(
-    bitmap: ImageBitmap,
-    layerIndex: number,
-    renderer: THREE.WebGLRenderer
-  ): void {
-    const gl = renderer.getContext() as WebGL2RenderingContext;
-
-    // Ensure the DataArrayTexture has been allocated on the GPU
-    if (!this._glTextureInitialized) {
-      renderer.initTexture(this.texture);
-      this._glTextureInitialized = true;
-    }
-
-    const glTexture = (renderer.properties.get(this.texture) as Record<string, unknown>)
-      .__webglTexture as WebGLTexture | undefined;
-    if (!glTexture) return;
-
-    // Extract pixel data from ImageBitmap via scratch canvas
-    const { ctx } = getScratchCanvas();
-    ctx.clearRect(0, 0, TILE_PX, TILE_PX);
-    ctx.drawImage(bitmap, 0, 0, TILE_PX, TILE_PX);
-    const imageData = ctx.getImageData(0, 0, TILE_PX, TILE_PX);
-
-    // Upload to specific layer
-    const prevTexture = gl.getParameter(gl.TEXTURE_BINDING_2D_ARRAY);
-    gl.bindTexture(gl.TEXTURE_2D_ARRAY, glTexture);
-    gl.texSubImage3D(
-      gl.TEXTURE_2D_ARRAY,
-      0, // mip level
-      0,
-      0, // x, y offset
-      layerIndex, // z offset (layer)
-      TILE_PX,
-      TILE_PX,
-      1, // width, height, depth
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      new Uint8Array(imageData.data.buffer)
-    );
-    gl.bindTexture(gl.TEXTURE_2D_ARRAY, prevTexture);
   }
 
   dispose(): void {

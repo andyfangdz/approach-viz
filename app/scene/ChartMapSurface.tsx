@@ -42,6 +42,14 @@ const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 // universally supported by modern GPUs and allows zoom 12 VFR (~6656 px)
 // without downgrade.  Flat-map mode renders individual tile quads and is not
 // subject to this constraint.
+// Maximum tiles for flat-map instanced rendering.  Each tile occupies one
+// DataArrayTexture layer (256×256×4 = 256 KB), so 800 tiles ≈ 200 MB VRAM.
+// Zoom steps down when the tile count would exceed this budget.
+const MAX_TILE_COUNT = 800;
+
+// Budget for 3dmap canvas compositing (same base chart, no preview pass).
+const MAX_TILE_COUNT_3DMAP = 800;
+
 const MAX_TEXTURE_DIM = 8192;
 const TILE_SIZE = 256;
 
@@ -125,6 +133,7 @@ function computeZoom(
   chartType: ChartType,
   radiusNm: number,
   refLat: number,
+  maxTileCount = MAX_TILE_COUNT,
   maxTextureDim = Infinity
 ): number {
   const range = CHART_ZOOM_RANGES[chartType];
@@ -133,7 +142,12 @@ function computeZoom(
     const tilesWide =
       Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
     const tilesHigh = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
-    if (tilesWide * TILE_SIZE <= maxTextureDim && tilesHigh * TILE_SIZE <= maxTextureDim) return z;
+    if (
+      tilesWide * tilesHigh <= maxTileCount &&
+      tilesWide * TILE_SIZE <= maxTextureDim &&
+      tilesHigh * TILE_SIZE <= maxTextureDim
+    )
+      return z;
   }
   return range.min;
 }
@@ -160,9 +174,10 @@ function computeTileRange(
   refLon: number,
   radiusNm: number,
   chartType: ChartType,
+  maxTileCount = MAX_TILE_COUNT,
   maxTextureDim = Infinity
 ): TileRange {
-  const zoom = computeZoom(chartType, radiusNm, refLat, maxTextureDim);
+  const zoom = computeZoom(chartType, radiusNm, refLat, maxTileCount, maxTextureDim);
   const baseUrl = CHART_TILE_URLS[chartType];
 
   const latRadius = radiusNm / 60;
@@ -510,7 +525,14 @@ export function buildChartTexture(
   radiusNm: number,
   chartType: ChartType
 ): { promise: Promise<ChartTextureData>; cancel: () => void } {
-  const range = computeTileRange(refLat, refLon, radiusNm, chartType, MAX_TEXTURE_DIM);
+  const range = computeTileRange(
+    refLat,
+    refLon,
+    radiusNm,
+    chartType,
+    MAX_TILE_COUNT_3DMAP,
+    MAX_TEXTURE_DIM
+  );
 
   let cancelled = false;
   let released = false;
