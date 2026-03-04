@@ -77,6 +77,10 @@ export class ChartTilesWorkerApi {
     let failedTiles = 0;
     let nextIndex = 0;
 
+    // Each concurrent worker claims a unique index synchronously (before the
+    // first await), so nextIndex sharing is safe in single-threaded JS.  If
+    // the signal is aborted between the loop check and fetchTile, fetch()
+    // receives the signal and returns null via the AbortError catch path.
     async function worker() {
       while (nextIndex < specs.length && !signal.aborted) {
         const i = nextIndex;

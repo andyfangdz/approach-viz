@@ -490,10 +490,18 @@ export const ChartMapSurface = memo(function ChartMapSurface({
 
       // TAC overlay pass — stream Terminal Area Chart tiles on top of VFR sectionals
       if (chartType === 'tac' && !cancelled) {
-        const tacZoom = Math.max(
-          TAC_OVERLAY_ZOOM.min,
-          Math.min(detailRange.zoom, TAC_OVERLAY_ZOOM.max)
-        );
+        // Pick the highest zoom in TAC_OVERLAY_ZOOM range that stays within the
+        // tile budget. Without this cap, large radii at zoom 10 can produce 16×
+        // more tiles than the base pass (most returning 404 outside terminal areas).
+        let tacZoom = Math.min(detailRange.zoom, TAC_OVERLAY_ZOOM.max);
+        for (; tacZoom > TAC_OVERLAY_ZOOM.min; tacZoom--) {
+          const degPerTile = 360 / 2 ** tacZoom;
+          const tw =
+            Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
+          const th = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
+          if (tw * th <= MAX_TILE_COUNT) break;
+        }
+        tacZoom = Math.max(tacZoom, TAC_OVERLAY_ZOOM.min);
         const latRadius = radiusNm / 60;
         const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
         const tacParams: ChartTilesParams = {
@@ -713,6 +721,7 @@ export function buildChartTexture(
         ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         p.bitmap.close();
       }
+      pendingBitmaps.length = 0;
 
       // Draw TAC overlay tiles on top of sectionals
       if (overlayBitmaps.length > 0) {
@@ -725,6 +734,7 @@ export function buildChartTexture(
           p.bitmap.close();
         }
       }
+      overlayBitmaps.length = 0;
 
       const texture = new THREE.CanvasTexture(canvas);
       texture.minFilter = THREE.LinearFilter;
@@ -741,7 +751,10 @@ export function buildChartTexture(
       releaseWorker();
 
       return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
-    })().catch(() => undefined as never)
+    })().catch((err) => {
+      if (!cancelled) throw err; // re-throw genuine errors
+      return undefined as never;
+    })
   ]);
 
   return {
