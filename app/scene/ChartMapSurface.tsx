@@ -526,6 +526,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
     run().catch((err: unknown) => {
       if (!cancelled) {
         console.error('[ChartMapSurface] Unexpected tile streaming error:', err);
+        onDebugChangeRef.current?.({ ...CHART_DEBUG_INITIAL });
       }
     });
 
