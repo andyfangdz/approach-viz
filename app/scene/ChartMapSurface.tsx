@@ -524,6 +524,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
         );
       }
 
+      if (cancelled) return;
       setTileVersion((v) => v + 1);
       onDebugChangeRef.current?.({
         loading: false,
