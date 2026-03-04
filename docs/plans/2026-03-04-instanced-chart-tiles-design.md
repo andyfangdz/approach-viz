@@ -87,21 +87,21 @@ Optional lower-zoom preview uses a third InstancedMesh. Disposed when all detail
 
 ### What Changes
 
-| File | Change |
-|------|--------|
-| `ChartMapSurface.tsx` | Replace per-tile mesh rendering with InstancedMesh + DataArrayTexture |
-| `chart-tiles.worker.ts` | No changes — same streaming API |
-| `buildChartTexture()` | No changes — 3dmap still uses canvas compositing |
+| File                    | Change                                                                |
+| ----------------------- | --------------------------------------------------------------------- |
+| `ChartMapSurface.tsx`   | Replace per-tile mesh rendering with InstancedMesh + DataArrayTexture |
+| `chart-tiles.worker.ts` | No changes — same streaming API                                       |
+| `buildChartTexture()`   | No changes — 3dmap still uses canvas compositing                      |
 
 ### Performance Impact
 
-| Metric | Before | After |
-|--------|--------|-------|
-| React elements | 576 | 1-3 |
-| React re-renders | 10-20 × full reconciliation | 0 (imperative) |
-| Draw calls/frame | 576 | 1-3 |
-| GPU uploads | 576 × `texImage2D` (full) | 576 × `texSubImage3D` (partial, faster) |
-| VRAM | ~150 MB (fragmented) | ~150 MB (contiguous) |
+| Metric           | Before                      | After                                   |
+| ---------------- | --------------------------- | --------------------------------------- |
+| React elements   | 576                         | 1-3                                     |
+| React re-renders | 10-20 × full reconciliation | 0 (imperative)                          |
+| Draw calls/frame | 576                         | 1-3                                     |
+| GPU uploads      | 576 × `texImage2D` (full)   | 576 × `texSubImage3D` (partial, faster) |
+| VRAM             | ~150 MB (fragmented)        | ~150 MB (contiguous)                    |
 
 ### Risks
 
