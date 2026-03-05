@@ -1,4 +1,5 @@
 import { Html } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GLTFExtensionsPlugin,
@@ -414,6 +415,11 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   onRuntimeError
 }: SatelliteSurfaceProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+  const gl = useThree((s) => s.gl);
+  const maxTextureDim = useMemo(() => {
+    const ctx = gl.getContext() as WebGL2RenderingContext;
+    return ctx.getParameter(ctx.MAX_TEXTURE_SIZE) as number;
+  }, [gl]);
   const tilesRendererRef = useRef<TilesRendererImpl | null>(null);
   const loadErrorCountRef = useRef(0);
   const fatalErrorReportedRef = useRef(false);
@@ -531,7 +537,13 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       return null;
     });
 
-    const { promise, cancel } = buildChartTexture(safeLat, safeLon, radiusNm, chartType);
+    const { promise, cancel } = buildChartTexture(
+      safeLat,
+      safeLon,
+      radiusNm,
+      chartType,
+      maxTextureDim
+    );
     let active = true;
 
     promise
@@ -569,7 +581,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         return null;
       });
     };
-  }, [chartOverlay?.chartType, chartOverlay?.radiusNm, safeLat, safeLon]);
+  }, [chartOverlay?.chartType, chartOverlay?.radiusNm, safeLat, safeLon, maxTextureDim]);
 
   useEffect(
     () => () => {
@@ -741,7 +753,7 @@ if (uChartEnabled > 0.5) {
     vec2 chartUv = chartUvH.xy / chartUvH.z;
     if (chartUv.x >= 0.0 && chartUv.x <= 1.0 && chartUv.y >= 0.0 && chartUv.y <= 1.0) {
       vec4 chartTexel = texture2D(uChartMap, chartUv);
-      diffuseColor.rgb = mix(diffuseColor.rgb, chartTexel.rgb, 0.88);
+      diffuseColor.rgb = chartTexel.rgb;
     }
   }
 }
@@ -751,8 +763,7 @@ if (uPlateEnabled > 0.5) {
     vec2 plateUv = plateUvH.xy / plateUvH.z;
     if (plateUv.x >= 0.0 && plateUv.x <= 1.0 && plateUv.y >= 0.0 && plateUv.y <= 1.0) {
       vec4 plateTexel = texture2D(uPlateMap, plateUv);
-      float plateAlpha = clamp(plateTexel.a * 0.92, 0.0, 1.0);
-      diffuseColor.rgb = mix(diffuseColor.rgb, plateTexel.rgb, plateAlpha);
+      diffuseColor.rgb = mix(diffuseColor.rgb, plateTexel.rgb, plateTexel.a);
     }
   }
 }`

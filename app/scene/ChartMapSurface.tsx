@@ -1,29 +1,34 @@
 'use client';
 
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import * as Comlink from 'comlink';
+import { useThree } from '@react-three/fiber';
 import type { ChartType } from '@/app/app-client/types';
-import type {
-  ChartTilesWorkerApi,
-  ChartTileReady,
-  ChartTilesParams
-} from '@/app/scene/chart/chart-tiles.worker';
+import type { ChartTilesWorkerApi, ChartTileReady } from '@/app/scene/chart/chart-tiles.worker';
+import { TileLayer } from './chart/TileLayer';
 
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 const SURFACE_OFFSET_NM = -0.002;
 
 const CHART_TILE_URLS: Record<ChartType, string> = {
   vfr: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile',
+  tac: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile',
   low: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/IFR_AreaLow/MapServer/tile',
   high: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/IFR_High/MapServer/tile'
 };
 
 const CHART_ZOOM_RANGES: Record<ChartType, { min: number; max: number }> = {
   vfr: { min: 8, max: 12 },
+  tac: { min: 8, max: 12 },
   low: { min: 7, max: 12 },
   high: { min: 5, max: 9 }
 };
+
+// TAC overlay: Terminal Area Charts drawn on top of VFR Sectionals
+const TAC_OVERLAY_URL =
+  'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Terminal/MapServer/tile';
+const TAC_OVERLAY_ZOOM = { min: 10, max: 12 };
 
 // WGS-84 ellipsoid constants
 const DEG_TO_RAD = Math.PI / 180;
@@ -32,20 +37,19 @@ const WGS84_SEMI_MAJOR_METERS = 6378137;
 const WGS84_FLATTENING = 1 / 298.257223563;
 const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 
-// Maximum number of tile fetches before stepping down a zoom level.
-// 800 keeps VFR/IFR Low z12 through ~60nm radius (744 tiles at 60nm).
-// Beyond 60nm, MAX_TEXTURE_DIM (8192) becomes the binding constraint.
+// Maximum texture dimension (width or height) in pixels for 3dmap canvas
+// compositing.  Zoom steps down when the canvas would exceed this.  8192 is
+// universally supported by modern GPUs and allows zoom 12 VFR (~6656 px)
+// without downgrade.  Flat-map mode renders individual tile quads and is not
+// subject to this constraint.
+// Maximum tiles for flat-map instanced rendering.  Each tile occupies one
+// DataArrayTexture layer (256×256×4 = 256 KB), so 800 tiles ≈ 200 MB VRAM.
+// Zoom steps down when the tile count would exceed this budget.
 const MAX_TILE_COUNT = 800;
 
-// Budget for the 3dmap overlay — chart tiles use a different hostname
-// (tiles.arcgis.com) from Google 3D Tiles so no connection pool contention.
-// 800 matches the flat map budget since the overlay is the only chart texture
-// in 3dmap mode (no progressive preview pass).
-const MAX_TILE_COUNT_OVERLAY = 800;
+// Budget for 3dmap canvas compositing (same base chart, no preview pass).
+const MAX_TILE_COUNT_3DMAP = 800;
 
-// Maximum texture dimension (width or height) in pixels.  Zoom steps down
-// when the composite canvas would exceed this.  8192 is universally supported
-// by modern GPUs and allows zoom 12 VFR (~6656 px) without downgrade.
 const MAX_TEXTURE_DIM = 8192;
 const TILE_SIZE = 256;
 
@@ -165,6 +169,31 @@ interface TileRange {
   southLat: number;
 }
 
+/**
+ * Find the highest TAC overlay zoom that fits within the tile-count budget.
+ * Returns null if no zoom level fits (e.g. very wide radius).
+ */
+function computeOverlayZoom(
+  refLat: number,
+  radiusNm: number,
+  maxTileCount: number,
+  maxTextureDim = Infinity
+): number | null {
+  for (let z = TAC_OVERLAY_ZOOM.max; z >= TAC_OVERLAY_ZOOM.min; z--) {
+    const degPerTile = 360 / 2 ** z;
+    const tilesWide =
+      Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
+    const tilesHigh = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
+    if (
+      tilesWide * tilesHigh <= maxTileCount &&
+      tilesWide * TILE_SIZE <= maxTextureDim &&
+      tilesHigh * TILE_SIZE <= maxTextureDim
+    )
+      return z;
+  }
+  return null;
+}
+
 function computeTileRange(
   refLat: number,
   refLon: number,
@@ -204,77 +233,19 @@ function computeTileRange(
   };
 }
 
-// --- Shared tile plane geometry ---
+// --- Shared tile quad geometry ---
 
-const TILE_PLANE = new THREE.PlaneGeometry(1, 1);
-TILE_PLANE.rotateX(-Math.PI / 2);
+const TILE_QUAD = new THREE.PlaneGeometry(1, 1);
+TILE_QUAD.rotateX(-Math.PI / 2);
 // Flip V so textures with flipY=false (ImageBitmap source) map correctly:
 // without the WebGL flip, image row 0 (north) lands at v=0 instead of v=1.
-const tileUv = TILE_PLANE.getAttribute('uv');
-for (let i = 0; i < tileUv.count; i++) {
-  tileUv.setY(i, 1 - tileUv.getY(i));
+const _uv = TILE_QUAD.getAttribute('uv');
+for (let i = 0; i < _uv.count; i++) {
+  _uv.setY(i, 1 - _uv.getY(i));
 }
-
-// --- Tile entry type and helpers ---
 
 const PREVIEW_Y_OFFSET = -0.001;
-
-interface TileEntry {
-  key: string;
-  layer: 'preview' | 'detail';
-  texture: THREE.Texture;
-  centerX: number;
-  centerZ: number;
-  width: number;
-  height: number;
-}
-
-function bitmapToTexture(bitmap: ImageBitmap): THREE.Texture {
-  // Use the ImageBitmap directly — no canvas copy.  flipY is disabled
-  // because UNPACK_FLIP_Y_WEBGL is unreliable with ImageBitmap sources;
-  // the UV flip is handled on TILE_PLANE instead.
-  const texture = new THREE.Texture(bitmap as any);
-  texture.flipY = false;
-  texture.minFilter = THREE.LinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
-  // Free ImageBitmap backing memory after GPU upload
-  texture.onUpdate = () => {
-    bitmap.close();
-    texture.onUpdate = null;
-  };
-  return texture;
-}
-
-function computeTileEntry(
-  tileX: number,
-  tileY: number,
-  zoom: number,
-  texture: THREE.Texture,
-  refLat: number,
-  refLon: number,
-  layer: 'preview' | 'detail'
-): TileEntry {
-  const westLon = tileXToLon(tileX, zoom);
-  const eastLon = tileXToLon(tileX + 1, zoom);
-  const northLat = tileYToLat(tileY, zoom);
-  const southLat = tileYToLat(tileY + 1, zoom);
-
-  const sw = latLonToLocal(southLat, westLon, refLat, refLon);
-  const ne = latLonToLocal(northLat, eastLon, refLat, refLon);
-
-  return {
-    key: `${layer}/${zoom}/${tileX}/${tileY}`,
-    layer,
-    texture,
-    centerX: (sw.x + ne.x) / 2,
-    centerZ: (sw.z + ne.z) / 2,
-    width: ne.x - sw.x,
-    height: sw.z - ne.z
-  };
-}
+const OVERLAY_Y_OFFSET = 0.001;
 
 // --- Exports ---
 
@@ -304,11 +275,13 @@ export const ChartMapSurface = memo(function ChartMapSurface({
   airportElevationFeet,
   onDebugChange
 }: ChartMapSurfaceProps) {
-  const tilesRef = useRef<Map<string, TileEntry>>(new Map());
-  const [tileVersion, setTileVersion] = useState(0);
-  const rafPending = useRef(false);
+  const groupRef = useRef<THREE.Group>(null);
+  const detailLayerRef = useRef<TileLayer | null>(null);
+  const previewLayerRef = useRef<TileLayer | null>(null);
+  const overlayLayerRef = useRef<TileLayer | null>(null);
   const onDebugChangeRef = useRef(onDebugChange);
   onDebugChangeRef.current = onDebugChange;
+  const renderer = useThree((s) => s.gl);
 
   // Warm worker singleton — created once per mount, reused across re-renders
   // so that rapid prop changes (airport switch, slider drag) skip the OS
@@ -331,29 +304,32 @@ export const ChartMapSurface = memo(function ChartMapSurface({
   }, []);
 
   useEffect(() => {
-    if (!workerRef.current) return;
-    // Copy to local const so TypeScript narrows to non-null in nested closures.
-    const api: Comlink.Remote<ChartTilesWorkerApi> = workerRef.current;
+    if (!workerRef.current || !groupRef.current || !renderer) return;
+    const api = workerRef.current;
+    const group = groupRef.current;
 
     let cancelled = false;
+    let progressInterval: ReturnType<typeof setInterval> | null = null;
     const t0 = performance.now();
 
-    // Dispose previous tiles
-    for (const entry of tilesRef.current.values()) {
-      if (entry.texture.image instanceof ImageBitmap) {
-        entry.texture.image.close();
+    // Dispose previous layers
+    function disposeLayer(ref: React.MutableRefObject<TileLayer | null>) {
+      if (ref.current) {
+        group.remove(ref.current.mesh);
+        ref.current.dispose();
+        ref.current = null;
       }
-      entry.texture.dispose();
     }
-    tilesRef.current.clear();
-    setTileVersion(0);
+    disposeLayer(detailLayerRef);
+    disposeLayer(previewLayerRef);
+    disposeLayer(overlayLayerRef);
 
-    // Detail range — no maxTextureDim constraint for flat-map individual quads
+    // Compute tile ranges
     const detailRange = computeTileRange(refLat, refLon, radiusNm, chartType);
     const totalDetailTiles = detailRange.tilesWide * detailRange.tilesHigh;
-    let detailTilesLoaded = 0;
+    const surfaceY = airportElevationFeet * ALTITUDE_SCALE + SURFACE_OFFSET_NM;
 
-    // Preview pass: use a lower zoom if the delta is >= 2
+    // Preview pass setup
     const previewZoom = Math.max(CHART_ZOOM_RANGES[chartType].min, detailRange.zoom - 3);
     const usePreview = detailRange.zoom - previewZoom >= 2;
 
@@ -366,66 +342,63 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       loadMs: null
     });
 
-    function scheduleBatchUpdate() {
-      if (!rafPending.current) {
-        rafPending.current = true;
-        requestAnimationFrame(() => {
-          rafPending.current = false;
-          if (!cancelled) {
-            setTileVersion((v) => v + 1);
-            onDebugChangeRef.current?.({
-              loading: true,
-              zoom: detailRange.zoom,
-              previewZoom: usePreview ? previewZoom : null,
-              tileCount: totalDetailTiles,
-              tilesLoaded: detailTilesLoaded,
-              loadMs: null
-            });
-          }
-        });
-      }
+    // Helper: compute tile ENU bounds
+    function tileBounds(tileX: number, tileY: number, zoom: number) {
+      const westLon = tileXToLon(tileX, zoom);
+      const eastLon = tileXToLon(tileX + 1, zoom);
+      const northLat = tileYToLat(tileY, zoom);
+      const southLat = tileYToLat(tileY + 1, zoom);
+      const sw = latLonToLocal(southLat, westLon, refLat, refLon);
+      const ne = latLonToLocal(northLat, eastLon, refLat, refLon);
+      return {
+        centerX: (sw.x + ne.x) / 2,
+        centerZ: (sw.z + ne.z) / 2,
+        width: ne.x - sw.x,
+        height: sw.z - ne.z
+      };
     }
 
-    // --- Run preview (optional) then detail stream sequentially ---
+    let detailTilesLoaded = 0;
 
     async function run() {
       // Preview pass
-      if (usePreview) {
+      if (usePreview && !cancelled) {
         const latRadius = radiusNm / 60;
         const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
         const pMinTileX = lonToTileX(refLon - lonRadius, previewZoom);
         const pMaxTileX = lonToTileX(refLon + lonRadius, previewZoom);
         const pMinTileY = latToTileY(refLat + latRadius, previewZoom);
         const pMaxTileY = latToTileY(refLat - latRadius, previewZoom);
+        const previewTileCount = (pMaxTileX - pMinTileX + 1) * (pMaxTileY - pMinTileY + 1);
 
-        const previewParams: ChartTilesParams = {
-          baseUrl: detailRange.baseUrl,
-          zoom: previewZoom,
-          minTileX: pMinTileX,
-          maxTileX: pMaxTileX,
-          minTileY: pMinTileY,
-          maxTileY: pMaxTileY
-        };
+        const previewLayer = new TileLayer(previewTileCount, TILE_QUAD, renderer);
+        previewLayerRef.current = previewLayer;
+        group.add(previewLayer.mesh);
 
         await api.streamTiles(
-          previewParams,
+          {
+            baseUrl: detailRange.baseUrl,
+            zoom: previewZoom,
+            minTileX: pMinTileX,
+            maxTileX: pMaxTileX,
+            minTileY: pMinTileY,
+            maxTileY: pMaxTileY
+          },
           Comlink.proxy((tile: ChartTileReady) => {
             if (cancelled) {
               tile.bitmap.close();
               return;
             }
-            const texture = bitmapToTexture(tile.bitmap);
-            const entry = computeTileEntry(
-              tile.tileX,
-              tile.tileY,
-              previewZoom,
-              texture,
-              refLat,
-              refLon,
-              'preview'
+            const b = tileBounds(tile.tileX, tile.tileY, previewZoom);
+            previewLayer.addTile(
+              tile.bitmap,
+              b.centerX,
+              b.centerZ,
+              b.width,
+              b.height,
+              surfaceY + PREVIEW_Y_OFFSET,
+              renderer
             );
-            tilesRef.current.set(entry.key, entry);
-            scheduleBatchUpdate();
           })
         );
       }
@@ -433,51 +406,108 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       if (cancelled) return;
 
       // Detail pass
-      const detailParams: ChartTilesParams = {
-        baseUrl: detailRange.baseUrl,
-        zoom: detailRange.zoom,
-        minTileX: detailRange.minTileX,
-        maxTileX: detailRange.maxTileX,
-        minTileY: detailRange.minTileY,
-        maxTileY: detailRange.maxTileY
-      };
+      const detailLayer = new TileLayer(totalDetailTiles, TILE_QUAD, renderer);
+      detailLayerRef.current = detailLayer;
+      group.add(detailLayer.mesh);
+
+      // Report progress periodically (not per-tile)
+      progressInterval = setInterval(() => {
+        if (!cancelled) {
+          onDebugChangeRef.current?.({
+            loading: true,
+            zoom: detailRange.zoom,
+            previewZoom: usePreview ? previewZoom : null,
+            tileCount: totalDetailTiles,
+            tilesLoaded: detailTilesLoaded,
+            loadMs: null
+          });
+        }
+      }, 200);
 
       await api.streamTiles(
-        detailParams,
+        {
+          baseUrl: detailRange.baseUrl,
+          zoom: detailRange.zoom,
+          minTileX: detailRange.minTileX,
+          maxTileX: detailRange.maxTileX,
+          minTileY: detailRange.minTileY,
+          maxTileY: detailRange.maxTileY
+        },
         Comlink.proxy((tile: ChartTileReady) => {
           if (cancelled) {
             tile.bitmap.close();
             return;
           }
-          const texture = bitmapToTexture(tile.bitmap);
-          const entry = computeTileEntry(
-            tile.tileX,
-            tile.tileY,
-            detailRange.zoom,
-            texture,
-            refLat,
-            refLon,
-            'detail'
+          const b = tileBounds(tile.tileX, tile.tileY, detailRange.zoom);
+          detailLayer.addTile(
+            tile.bitmap,
+            b.centerX,
+            b.centerZ,
+            b.width,
+            b.height,
+            surfaceY,
+            renderer
           );
-          tilesRef.current.set(entry.key, entry);
           detailTilesLoaded += 1;
-          scheduleBatchUpdate();
         })
       );
 
+      if (progressInterval) clearInterval(progressInterval);
+      progressInterval = null;
+
       if (cancelled) return;
 
-      // Detail complete — dispose all preview tiles
-      for (const [key, entry] of tilesRef.current) {
-        if (entry.layer === 'preview') {
-          if (entry.texture.image instanceof ImageBitmap) {
-            entry.texture.image.close();
-          }
-          entry.texture.dispose();
-          tilesRef.current.delete(key);
-        }
+      // Detail complete — dispose preview
+      disposeLayer(previewLayerRef);
+
+      // TAC overlay pass — budget-checked to avoid OOM from large DataArrayTexture
+      const tacZoom =
+        chartType === 'tac' ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT) : null;
+
+      if (tacZoom != null && !cancelled) {
+        const latRadius = radiusNm / 60;
+        const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
+        const oMinTileX = lonToTileX(refLon - lonRadius, tacZoom);
+        const oMaxTileX = lonToTileX(refLon + lonRadius, tacZoom);
+        const oMinTileY = latToTileY(refLat + latRadius, tacZoom);
+        const oMaxTileY = latToTileY(refLat - latRadius, tacZoom);
+        const overlayTileCount = (oMaxTileX - oMinTileX + 1) * (oMaxTileY - oMinTileY + 1);
+
+        const overlayLayer = new TileLayer(overlayTileCount, TILE_QUAD, renderer, {
+          transparent: true
+        });
+        overlayLayerRef.current = overlayLayer;
+        group.add(overlayLayer.mesh);
+
+        await api.streamTiles(
+          {
+            baseUrl: TAC_OVERLAY_URL,
+            zoom: tacZoom,
+            minTileX: oMinTileX,
+            maxTileX: oMaxTileX,
+            minTileY: oMinTileY,
+            maxTileY: oMaxTileY
+          },
+          Comlink.proxy((tile: ChartTileReady) => {
+            if (cancelled) {
+              tile.bitmap.close();
+              return;
+            }
+            const b = tileBounds(tile.tileX, tile.tileY, tacZoom);
+            overlayLayer.addTile(
+              tile.bitmap,
+              b.centerX,
+              b.centerZ,
+              b.width,
+              b.height,
+              surfaceY + OVERLAY_Y_OFFSET,
+              renderer
+            );
+          })
+        );
       }
-      setTileVersion((v) => v + 1);
+
+      if (cancelled) return;
       onDebugChangeRef.current?.({
         loading: false,
         zoom: detailRange.zoom,
@@ -491,52 +521,25 @@ export const ChartMapSurface = memo(function ChartMapSurface({
     run().catch((err: unknown) => {
       if (!cancelled) {
         console.error('[ChartMapSurface] Unexpected tile streaming error:', err);
+        onDebugChangeRef.current?.({ ...CHART_DEBUG_INITIAL });
       }
     });
 
     return () => {
       cancelled = true;
-      for (const entry of tilesRef.current.values()) {
-        if (entry.texture.image instanceof ImageBitmap) {
-          entry.texture.image.close();
-        }
-        entry.texture.dispose();
+      if (progressInterval) clearInterval(progressInterval);
+      try {
+        api.cancelStream();
+      } catch {
+        /* proxy released */
       }
-      tilesRef.current.clear();
+      disposeLayer(detailLayerRef);
+      disposeLayer(previewLayerRef);
+      disposeLayer(overlayLayerRef);
     };
-  }, [refLat, refLon, radiusNm, chartType, airportElevationFeet]);
+  }, [refLat, refLon, radiusNm, chartType, airportElevationFeet, renderer]);
 
-  const surfaceY = airportElevationFeet * ALTITUDE_SCALE + SURFACE_OFFSET_NM;
-  const tiles = Array.from(tilesRef.current.values());
-  void tileVersion;
-
-  if (tiles.length === 0) return null;
-
-  return (
-    <group scale={[1, verticalScale, 1]}>
-      {tiles.map((tile) => (
-        <mesh
-          key={tile.key}
-          position={[
-            tile.centerX,
-            surfaceY + (tile.layer === 'preview' ? PREVIEW_Y_OFFSET : 0),
-            tile.centerZ
-          ]}
-          scale={[tile.width, 1, tile.height]}
-          geometry={TILE_PLANE}
-        >
-          <meshBasicMaterial
-            map={tile.texture}
-            transparent
-            opacity={0.92}
-            side={THREE.DoubleSide}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-      ))}
-    </group>
-  );
+  return <group ref={groupRef} scale={[1, verticalScale, 1]} />;
 });
 
 // --- buildChartTexture (for 3dmap overlay — single GPU upload) ---
@@ -545,15 +548,16 @@ export function buildChartTexture(
   refLat: number,
   refLon: number,
   radiusNm: number,
-  chartType: ChartType
+  chartType: ChartType,
+  maxTextureDim = MAX_TEXTURE_DIM
 ): { promise: Promise<ChartTextureData>; cancel: () => void } {
   const range = computeTileRange(
     refLat,
     refLon,
     radiusNm,
     chartType,
-    MAX_TILE_COUNT_OVERLAY,
-    MAX_TEXTURE_DIM
+    MAX_TILE_COUNT_3DMAP,
+    maxTextureDim
   );
 
   let cancelled = false;
@@ -564,6 +568,8 @@ export function buildChartTexture(
   });
   const api = Comlink.wrap<ChartTilesWorkerApi>(rawWorker);
   const pendingBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
+  const overlayBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
+  const isComposite = chartType === 'tac';
 
   function releaseWorker() {
     if (released) return;
@@ -581,8 +587,8 @@ export function buildChartTexture(
 
   const promise = Promise.race([
     cancellationPromise,
-    api
-      .streamTiles(
+    (async () => {
+      await api.streamTiles(
         {
           baseUrl: range.baseUrl,
           zoom: range.zoom,
@@ -602,42 +608,93 @@ export function buildChartTexture(
             bitmap: tile.bitmap
           });
         })
-      )
-      .then(() => {
+      );
+      if (cancelled) throw new Error('Cancelled');
+
+      // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
+      const overlayZoomUsed = isComposite
+        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP)
+        : null;
+      if (overlayZoomUsed != null) {
+        const latRadius = radiusNm / 60;
+        const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
+        try {
+          await api.streamTiles(
+            {
+              baseUrl: TAC_OVERLAY_URL,
+              zoom: overlayZoomUsed,
+              minTileX: lonToTileX(refLon - lonRadius, overlayZoomUsed),
+              maxTileX: lonToTileX(refLon + lonRadius, overlayZoomUsed),
+              minTileY: latToTileY(refLat + latRadius, overlayZoomUsed),
+              maxTileY: latToTileY(refLat - latRadius, overlayZoomUsed)
+            },
+            Comlink.proxy((tile: ChartTileReady) => {
+              if (cancelled) {
+                tile.bitmap.close();
+                return;
+              }
+              overlayBitmaps.push({
+                tileX: tile.tileX,
+                tileY: tile.tileY,
+                bitmap: tile.bitmap
+              });
+            })
+          );
+        } catch (err) {
+          if (!cancelled) throw err; // re-throw genuine errors
+        }
         if (cancelled) throw new Error('Cancelled');
+      }
 
-        const width = range.tilesWide * TILE_SIZE;
-        const height = range.tilesHigh * TILE_SIZE;
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d')!;
-        ctx.fillStyle = '#1a1a2e';
-        ctx.fillRect(0, 0, width, height);
+      const width = range.tilesWide * TILE_SIZE;
+      const height = range.tilesHigh * TILE_SIZE;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, width, height);
 
-        for (const p of pendingBitmaps) {
-          const col = p.tileX - range.minTileX;
-          const row = p.tileY - range.minTileY;
-          ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      for (const p of pendingBitmaps) {
+        const col = p.tileX - range.minTileX;
+        const row = p.tileY - range.minTileY;
+        ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        p.bitmap.close();
+      }
+      pendingBitmaps.length = 0;
+
+      // Draw TAC overlay tiles on top of sectionals
+      if (overlayBitmaps.length > 0 && overlayZoomUsed != null) {
+        const scale = Math.pow(2, overlayZoomUsed - range.zoom);
+        const overlayTileSize = TILE_SIZE / scale;
+        for (const p of overlayBitmaps) {
+          const canvasX = Math.round((p.tileX / scale - range.minTileX) * TILE_SIZE);
+          const canvasY = Math.round((p.tileY / scale - range.minTileY) * TILE_SIZE);
+          ctx.drawImage(p.bitmap, canvasX, canvasY, overlayTileSize, overlayTileSize);
           p.bitmap.close();
         }
+      }
+      overlayBitmaps.length = 0;
 
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.minFilter = THREE.LinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.generateMipmaps = false;
-        texture.needsUpdate = true;
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.generateMipmaps = false;
+      texture.needsUpdate = true;
 
-        const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
-        const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
-        const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
-        const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
+      const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
+      const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
+      const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
+      const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
 
-        releaseWorker();
+      releaseWorker();
 
-        return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
-      })
+      return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
+    })().catch((err) => {
+      if (!cancelled) throw err; // re-throw genuine errors
+      return undefined as never;
+    })
   ]);
 
   return {
@@ -648,6 +705,8 @@ export function buildChartTexture(
       releaseWorker();
       for (const p of pendingBitmaps) p.bitmap.close();
       pendingBitmaps.length = 0;
+      for (const p of overlayBitmaps) p.bitmap.close();
+      overlayBitmaps.length = 0;
     }
   };
 }
