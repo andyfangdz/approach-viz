@@ -548,7 +548,8 @@ export function buildChartTexture(
   refLat: number,
   refLon: number,
   radiusNm: number,
-  chartType: ChartType
+  chartType: ChartType,
+  maxTextureDim = MAX_TEXTURE_DIM
 ): { promise: Promise<ChartTextureData>; cancel: () => void } {
   const range = computeTileRange(
     refLat,
@@ -556,7 +557,7 @@ export function buildChartTexture(
     radiusNm,
     chartType,
     MAX_TILE_COUNT_3DMAP,
-    MAX_TEXTURE_DIM
+    maxTextureDim
   );
 
   let cancelled = false;
@@ -612,7 +613,7 @@ export function buildChartTexture(
 
       // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
       const overlayZoomUsed = isComposite
-        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP, MAX_TEXTURE_DIM)
+        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP, maxTextureDim)
         : null;
       if (overlayZoomUsed != null) {
         const latRadius = radiusNm / 60;

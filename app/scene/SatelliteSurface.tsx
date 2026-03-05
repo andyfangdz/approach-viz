@@ -1,4 +1,5 @@
 import { Html } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GLTFExtensionsPlugin,
@@ -414,6 +415,11 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   onRuntimeError
 }: SatelliteSurfaceProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+  const gl = useThree((s) => s.gl);
+  const maxTextureDim = useMemo(() => {
+    const ctx = gl.getContext() as WebGL2RenderingContext;
+    return ctx.getParameter(ctx.MAX_TEXTURE_SIZE) as number;
+  }, [gl]);
   const tilesRendererRef = useRef<TilesRendererImpl | null>(null);
   const loadErrorCountRef = useRef(0);
   const fatalErrorReportedRef = useRef(false);
@@ -531,7 +537,13 @@ export const SatelliteSurface = memo(function SatelliteSurface({
       return null;
     });
 
-    const { promise, cancel } = buildChartTexture(safeLat, safeLon, radiusNm, chartType);
+    const { promise, cancel } = buildChartTexture(
+      safeLat,
+      safeLon,
+      radiusNm,
+      chartType,
+      maxTextureDim
+    );
     let active = true;
 
     promise
@@ -569,7 +581,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         return null;
       });
     };
-  }, [chartOverlay?.chartType, chartOverlay?.radiusNm, safeLat, safeLon]);
+  }, [chartOverlay?.chartType, chartOverlay?.radiusNm, safeLat, safeLon, maxTextureDim]);
 
   useEffect(
     () => () => {
