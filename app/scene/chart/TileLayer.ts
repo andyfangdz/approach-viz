@@ -17,6 +17,7 @@ export class TileLayer {
   private readonly _capacity: number;
   private readonly _layerAttr: THREE.InstancedBufferAttribute;
   private readonly _dummy = new THREE.Object3D();
+  private readonly _srcTexture: THREE.Texture;
   private _count = 0;
   private _gpuInitialized = false;
 
@@ -60,6 +61,14 @@ export class TileLayer {
     this._layerAttr = new THREE.InstancedBufferAttribute(layerData, 1);
     this._layerAttr.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('layerIndex', this._layerAttr);
+
+    // Reusable source texture for copyTextureToTexture — avoids allocating
+    // and disposing a fresh THREE.Texture wrapper for every tile upload.
+    this._srcTexture = new THREE.Texture();
+    this._srcTexture.flipY = false;
+    this._srcTexture.minFilter = THREE.LinearFilter;
+    this._srcTexture.magFilter = THREE.LinearFilter;
+    this._srcTexture.generateMipmaps = false;
   }
 
   get count(): number {
@@ -109,17 +118,13 @@ export class TileLayer {
     // Upload bitmap to the target layer using the stable public API.
     // copyTextureToTexture handles binding, format conversion, and
     // texSubImage3D internally — no access to __webglTexture needed.
-    const srcTexture = new THREE.Texture(bitmap as unknown as HTMLImageElement);
-    srcTexture.flipY = false;
-    srcTexture.minFilter = THREE.LinearFilter;
-    srcTexture.magFilter = THREE.LinearFilter;
-    srcTexture.generateMipmaps = false;
-    srcTexture.needsUpdate = true;
+    this._srcTexture.image = bitmap as unknown as HTMLImageElement;
+    this._srcTexture.needsUpdate = true;
 
     _dstPos.set(0, 0, layerIndex);
-    renderer.copyTextureToTexture(srcTexture, this.texture, null, _dstPos);
+    renderer.copyTextureToTexture(this._srcTexture, this.texture, null, _dstPos);
 
-    srcTexture.dispose();
+    this._srcTexture.image = null!; // release reference
     bitmap.close();
 
     // Set instance transform
@@ -144,6 +149,7 @@ export class TileLayer {
       (this.texture.image as { data: Uint8Array | null }).data = null;
     }
     this.texture.dispose();
+    this._srcTexture.dispose();
     this.material.dispose();
     this.mesh.geometry.dispose();
     this.mesh.dispose();

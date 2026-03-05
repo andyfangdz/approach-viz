@@ -613,7 +613,7 @@ export function buildChartTexture(
 
       // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
       const overlayZoomUsed = isComposite
-        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP, maxTextureDim)
+        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP)
         : null;
       if (overlayZoomUsed != null) {
         const latRadius = radiusNm / 60;

@@ -41,6 +41,7 @@ async function fetchTile(
   y: number,
   signal?: AbortSignal
 ): Promise<ImageBitmap | null> {
+  if (signal?.aborted) return null;
   const url = `${baseUrl}/${z}/${y}/${x}`;
   try {
     // Try direct cache read first — bypasses service worker fetch event overhead
