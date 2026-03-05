@@ -173,13 +173,23 @@ interface TileRange {
  * Find the highest TAC overlay zoom that fits within the tile-count budget.
  * Returns null if no zoom level fits (e.g. very wide radius).
  */
-function computeOverlayZoom(refLat: number, radiusNm: number, maxTileCount: number): number | null {
+function computeOverlayZoom(
+  refLat: number,
+  radiusNm: number,
+  maxTileCount: number,
+  maxTextureDim = Infinity
+): number | null {
   for (let z = TAC_OVERLAY_ZOOM.max; z >= TAC_OVERLAY_ZOOM.min; z--) {
     const degPerTile = 360 / 2 ** z;
     const tilesWide =
       Math.ceil((2 * radiusNm) / (degPerTile * 60 * Math.cos(refLat * DEG_TO_RAD))) + 1;
     const tilesHigh = Math.ceil((2 * radiusNm) / (degPerTile * 60)) + 1;
-    if (tilesWide * tilesHigh <= maxTileCount) return z;
+    if (
+      tilesWide * tilesHigh <= maxTileCount &&
+      tilesWide * TILE_SIZE <= maxTextureDim &&
+      tilesHigh * TILE_SIZE <= maxTextureDim
+    )
+      return z;
   }
   return null;
 }
@@ -602,7 +612,7 @@ export function buildChartTexture(
 
       // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
       const overlayZoomUsed = isComposite
-        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP)
+        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP, MAX_TEXTURE_DIM)
         : null;
       if (overlayZoomUsed != null) {
         const latRadius = radiusNm / 60;
