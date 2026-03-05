@@ -36,6 +36,7 @@ MRMS 3D volumetric weather is a surface-independent overlay (not a surface mode)
 - Zoom level is selected automatically based on terrain radius setting and chart type zoom range.
 - Chart tiles are fetched in parallel, composited onto a canvas, and rendered as a textured plane at airport elevation.
 - Chart tile uploads to `DataArrayTexture` use sRGB source/destination textures so `copyTextureToTexture` preserves chart color without gamma washout.
+- Flat-map chart tile shader applies Three.js output color-space conversion (`colorspace_fragment`) after sampling so Map and 3D Map chart colors stay aligned.
 - URL state: `?chart=vfr|low|high` (omitted when VFR or not in map mode).
 
 ## FAA Plate Overlay Specifics

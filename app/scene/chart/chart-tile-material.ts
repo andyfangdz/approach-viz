@@ -33,6 +33,7 @@ export function createTileArrayMaterial(
 
       void main() {
         fragColor = texture(tileArray, vec3(vUv, vLayer));
+        fragColor = linearToOutputTexel(fragColor);
       }
     `,
     glslVersion: THREE.GLSL3,
