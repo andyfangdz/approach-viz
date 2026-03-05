@@ -361,7 +361,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
         const pMaxTileY = latToTileY(refLat - latRadius, previewZoom);
         const previewTileCount = (pMaxTileX - pMinTileX + 1) * (pMaxTileY - pMinTileY + 1);
 
-        const previewLayer = new TileLayer(previewTileCount, TILE_QUAD);
+        const previewLayer = new TileLayer(previewTileCount, TILE_QUAD, renderer);
         previewLayerRef.current = previewLayer;
         group.add(previewLayer.mesh);
 
@@ -396,7 +396,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       if (cancelled) return;
 
       // Detail pass
-      const detailLayer = new TileLayer(totalDetailTiles, TILE_QUAD);
+      const detailLayer = new TileLayer(totalDetailTiles, TILE_QUAD, renderer);
       detailLayerRef.current = detailLayer;
       group.add(detailLayer.mesh);
 
@@ -463,7 +463,9 @@ export const ChartMapSurface = memo(function ChartMapSurface({
         const oMaxTileY = latToTileY(refLat - latRadius, tacZoom);
         const overlayTileCount = (oMaxTileX - oMinTileX + 1) * (oMaxTileY - oMinTileY + 1);
 
-        const overlayLayer = new TileLayer(overlayTileCount, TILE_QUAD, { transparent: true });
+        const overlayLayer = new TileLayer(overlayTileCount, TILE_QUAD, renderer, {
+          transparent: true
+        });
         overlayLayerRef.current = overlayLayer;
         group.add(overlayLayer.mesh);
 

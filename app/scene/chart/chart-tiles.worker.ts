@@ -47,7 +47,8 @@ async function fetchTile(
     const cache = await getChartCache();
     let response: Response | undefined;
     if (cache) {
-      response = await cache.match(url);
+      const cached = await cache.match(url);
+      if (cached?.ok) response = cached;
     }
 
     if (!response) {

@@ -23,15 +23,22 @@ export class TileLayer {
   constructor(
     capacity: number,
     geometry: THREE.BufferGeometry,
+    renderer: THREE.WebGLRenderer,
     opts: { transparent?: boolean } = {}
   ) {
-    // Pre-allocate DataArrayTexture with `capacity` layers.
+    // Clamp to the GPU's array texture layer limit (spec guarantees >= 256,
+    // desktop GPUs typically 2048; mobile GPUs may be exactly 256).
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    const maxLayers = gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) as number;
+    const safeCap = Math.min(capacity, maxLayers);
+
+    // Pre-allocate DataArrayTexture with `safeCap` layers.
     // Data starts as zeroed (black/transparent), filled per-tile via
     // copyTextureToTexture.  The CPU backing buffer is freed after the
     // initial GPU upload to avoid holding hundreds of MB resident.
-    this._capacity = capacity;
-    const data = new Uint8Array(TILE_PX * TILE_PX * 4 * capacity);
-    this.texture = new THREE.DataArrayTexture(data, TILE_PX, TILE_PX, capacity);
+    this._capacity = safeCap;
+    const data = new Uint8Array(TILE_PX * TILE_PX * 4 * safeCap);
+    this.texture = new THREE.DataArrayTexture(data, TILE_PX, TILE_PX, safeCap);
     this.texture.minFilter = THREE.LinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
     this.texture.colorSpace = THREE.SRGBColorSpace;
@@ -43,13 +50,13 @@ export class TileLayer {
     // Clone geometry so the per-instance layerIndex attribute is independent
     // of other TileLayer instances that share the same source geometry.
     const geo = geometry.clone();
-    this.mesh = new THREE.InstancedMesh(geo, this.material, capacity);
+    this.mesh = new THREE.InstancedMesh(geo, this.material, safeCap);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
     // Per-instance layer index attribute
-    const layerData = new Float32Array(capacity);
+    const layerData = new Float32Array(safeCap);
     this._layerAttr = new THREE.InstancedBufferAttribute(layerData, 1);
     this._layerAttr.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('layerIndex', this._layerAttr);
@@ -139,5 +146,6 @@ export class TileLayer {
     this.texture.dispose();
     this.material.dispose();
     this.mesh.geometry.dispose();
+    this.mesh.dispose();
   }
 }
