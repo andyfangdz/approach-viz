@@ -35,6 +35,7 @@ MRMS 3D volumetric weather is a surface-independent overlay (not a surface mode)
 - Tile sources (public FAA ArcGIS, no API key): VFR Sectional (zoom 8–12), IFR Low Enroute (zoom 7–12), IFR High Enroute (zoom 5–9).
 - Zoom level is selected automatically based on terrain radius setting and chart type zoom range.
 - Chart tiles are fetched in parallel, composited onto a canvas, and rendered as a textured plane at airport elevation.
+- Chart tile uploads to `DataArrayTexture` use sRGB source/destination textures so `copyTextureToTexture` preserves chart color without gamma washout.
 - URL state: `?chart=vfr|low|high` (omitted when VFR or not in map mode).
 
 ## FAA Plate Overlay Specifics

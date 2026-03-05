@@ -65,6 +65,7 @@ export class TileLayer {
     // Reusable source texture for copyTextureToTexture — avoids allocating
     // and disposing a fresh THREE.Texture wrapper for every tile upload.
     this._srcTexture = new THREE.Texture();
+    this._srcTexture.colorSpace = THREE.SRGBColorSpace;
     this._srcTexture.flipY = false;
     this._srcTexture.minFilter = THREE.LinearFilter;
     this._srcTexture.magFilter = THREE.LinearFilter;
