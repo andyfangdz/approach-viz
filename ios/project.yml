@@ -15,6 +15,7 @@ targets:
           - RustBridge/Generated/**
       - path: ApproachViz/RustBridge/Generated/Swift/approach_viz_core.swift
     dependencies:
+      - sdk: AppIntents.framework
       - framework: ApproachViz/RustBridge/Generated/ApproachVizCoreFFI.xcframework
     settings:
       base:
@@ -33,6 +34,11 @@ targets:
         EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
     preBuildScripts:
       - name: Verify Rust Bridge
+        inputFiles:
+          - $(PROJECT_DIR)/ApproachViz/RustBridge/Generated/ApproachVizCoreFFI.xcframework/Info.plist
+          - $(PROJECT_DIR)/ApproachViz/RustBridge/Generated/Swift/approach_viz_core.swift
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/verify-rust-bridge.stamp
         script: |
           set -euo pipefail
           BRIDGE_DIR="$PROJECT_DIR/ApproachViz/RustBridge/Generated"
@@ -40,7 +46,13 @@ targets:
             echo "error: missing Rust bridge artifacts; run npm run build:ios"
             exit 1
           fi
+          mkdir -p "$DERIVED_FILE_DIR"
+          touch "$DERIVED_FILE_DIR/verify-rust-bridge.stamp"
       - name: Copy SQLite Database
+        inputFiles:
+          - $(PROJECT_DIR)/../data/approach-viz.sqlite
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/approach-viz.sqlite
         script: |
           set -euo pipefail
           SRC="$PROJECT_DIR/../data/approach-viz.sqlite"
@@ -53,6 +65,10 @@ targets:
             echo "warning: missing $SRC; run npm run prepare-data"
           fi
       - name: Copy Approach Reference Data
+        inputFiles:
+          - $(PROJECT_DIR)/../public/data/approach-db/approaches.json
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/approaches.json
         script: |
           set -euo pipefail
           SRC="$PROJECT_DIR/../public/data/approach-db/approaches.json"

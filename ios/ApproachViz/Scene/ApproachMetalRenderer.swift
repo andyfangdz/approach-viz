@@ -65,6 +65,7 @@ private struct MetalSceneBounds {
     }
 }
 
+@MainActor
 final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
     private weak var view: MTKView?
     private let device: MTLDevice
