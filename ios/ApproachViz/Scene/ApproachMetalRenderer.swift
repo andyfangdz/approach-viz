@@ -326,7 +326,7 @@ private func buildRenderScene(
     var scene = RenderScene()
     let pathPolylines = ApproachPathGeometry.buildPolylines(sceneData: sceneData, verticalScale: verticalScale)
     let waypointPoints = buildWaypointRenderPoints(sceneData: sceneData, verticalScale: verticalScale)
-    let runwaySegments = buildMetalRunwaySegments(sceneData: sceneData)
+    let runwaySegments = buildMetalRunwaySegments(sceneData: sceneData, verticalScale: verticalScale)
 
     if let terrainData {
         let vertices = terrainData.vertices.map {
@@ -556,6 +556,7 @@ private func appendWaypoints(_ points: [MetalWaypointRenderPoint], into scene: i
 private struct MetalRunwaySegment {
     let label: String
     let x: Double
+    let y: Double
     let z: Double
     let length: Double
     let rotationY: Double
@@ -565,7 +566,7 @@ private func appendRunways(_ segments: [MetalRunwaySegment], into scene: inout R
     let baseColor = SIMD4<Float>(1, 0, 1, 0.85)
     let centerColor = SIMD4<Float>(1, 1, 1, 1)
     for segment in segments {
-        let center = SIMD3<Float>(Float(segment.x), 0.02, Float(segment.z))
+        let center = SIMD3<Float>(Float(segment.x), Float(segment.y) + 0.03, Float(segment.z))
         appendBox(center: center, size: SIMD3<Float>(0.12, 0.04, Float(segment.length)), rotationY: Float(segment.rotationY), color: baseColor, into: &scene.triangleVertices)
         appendBox(center: SIMD3<Float>(center.x, center.y + 0.022, center.z), size: SIMD3<Float>(0.02, 0.01, Float(segment.length * 0.95)), rotationY: Float(segment.rotationY), color: centerColor, into: &scene.triangleVertices)
         scene.labels.append(LabelAnchor(
@@ -729,16 +730,21 @@ private func rotateY(_ point: SIMD3<Float>, angle: Float) -> SIMD3<Float> {
     )
 }
 
-private func buildMetalRunwaySegments(sceneData: NativeSceneData) -> [MetalRunwaySegment] {
-    let thresholds = sceneData.runways.map { runway -> (id: String, x: Double, z: Double) in
+private func buildMetalRunwaySegments(sceneData: NativeSceneData, verticalScale: Double) -> [MetalRunwaySegment] {
+    let thresholds = sceneData.runways.map { runway -> (id: String, x: Double, y: Double, z: Double) in
         let point = metalScenePoint(
             lat: runway.lat,
             lon: runway.lon,
             altitudeFeet: sceneData.airport.elevation,
             airport: sceneData.airport,
-            verticalScale: 1
+            verticalScale: verticalScale
         )
-        return (runway.id.hasPrefix("RW") ? runway.id : "RW\(runway.id)", Double(point.x), Double(point.z))
+        return (
+            runway.id.hasPrefix("RW") ? runway.id : "RW\(runway.id)",
+            Double(point.x),
+            Double(point.y),
+            Double(point.z)
+        )
     }
     let byID = Dictionary(uniqueKeysWithValues: thresholds.map { ($0.id, $0) })
     var visited = Set<String>()
@@ -756,6 +762,7 @@ private func buildMetalRunwaySegments(sceneData: NativeSceneData) -> [MetalRunwa
             segments.append(MetalRunwaySegment(
                 label: "\(runway.id)/\(opposite.id.replacingOccurrences(of: "RW", with: ""))",
                 x: (runway.x + opposite.x) / 2,
+                y: max(runway.y, opposite.y),
                 z: (runway.z + opposite.z) / 2,
                 length: max(0.2, hypot(dx, dz)),
                 rotationY: atan2(dx, dz)
@@ -774,6 +781,7 @@ private func buildMetalRunwaySegments(sceneData: NativeSceneData) -> [MetalRunwa
         segments.append(MetalRunwaySegment(
             label: runway.id,
             x: runway.x + dx / 2,
+            y: runway.y,
             z: runway.z + dz / 2,
             length: 1.0,
             rotationY: atan2(dx, dz)

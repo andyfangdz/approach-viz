@@ -35,6 +35,7 @@ Current native scene behavior:
   - `buildApproachPathGeometry`
   - `buildApproachHoldGeometry`
 - Native Metal terrain, waypoint/runway anchors, hold overlays, and path geometry now all share the web renderer's absolute-MSL vertical frame instead of mixing airport-relative terrain/markers with absolute path geometry
+- Runway prisms now render at airport elevation in that same absolute-MSL frame, with a slight surface lift so mountain airports like `KSBS` do not draw the runway underground against the terrain mesh
 
 ## Data Inputs
 
