@@ -5,8 +5,10 @@
 ## Stack
 
 - Next.js 16 (App Router) + React + TypeScript
+- SwiftUI + MetalKit native iOS app scaffold under `ios/`
 - react-three-fiber (3D scene)
 - SQLite (build-time approach/airspace/minimums data)
+- UniFFI bridge from `crates/approach-viz-core` into Swift
 - Rust / Axum / Tokio (shared runtime service for MRMS weather + ADS-B traffic APIs, `grib` crate for GRIB2 decoding)
 - AWS SNS/SQS (event-driven MRMS scan ingestion)
 - Datadog `dd-trace` (Next.js server tracing) + browser RUM + Rust runtime OTLP tracing
@@ -20,6 +22,18 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+## Native iOS App
+
+The repository now includes a native iOS rewrite foundation in [`ios/`](ios/) built with SwiftUI + MetalKit.
+
+- Airport sidebar and approach list load from the same bundled `approach-viz.sqlite`
+- MetalKit detail view renders a dark-mode Terrarium-backed terrain wireframe/fill, runway geometry, waypoint point sprites with label overlays, sampled transition/final/missed path segments, and separate hold overlays/annotations
+- Native path/vertical-profile data is enriched from bundled external approach reference JSON (`public/data/approach-db/approaches.json`) so matched minimums, VDA, and parsed missed-climb requirements can influence the rendered procedure
+- Web and iOS now share one Rust approach-path implementation from `crates/approach-viz-core/src/approach_path.rs` for altitude resolution, path geometry, and hold geometry; the web app calls it through WASM and the iOS app calls it through UniFFI
+- `npm run build:ios` regenerates the bridge xcframework and Xcode project via XcodeGen; simulator builds are `arm64`-only
+
+Current limitation: the native app foundation does not yet include weather, live traffic, chart/plate overlays, or full web feature parity. The current MetalKit pass is materially closer on terrain and path composition, now including dashed hold overlays and scene-fit orbit framing, but camera/framing, labels, runway prominence, and some procedure-shape edge cases still differ from production. The old RealityKit renderer has been removed.
 
 ## Features
 
@@ -118,6 +132,9 @@ npm run prepare-data       # download + build (combined)
 npm run dev                # dev server (with Datadog tracing)
 npm run build              # production build (also refreshes data)
 npm run start              # run production server
+npm run build:ios          # generate UniFFI bridge + Xcode project
+npm run test:ios           # simulator build verification for native iOS app
+npm run open:ios           # generate and open the Xcode project
 
 # Quality
 npm run lint               # lint with ESLint

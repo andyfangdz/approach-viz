@@ -2,12 +2,11 @@ import * as Comlink from 'comlink';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
 import type { TurnConstraintLabel, VerticalLineData } from './types';
+import { ensureWasm } from '../shared/wasm-loader';
 import {
-  applyGlidepathInsideFaf,
-  resolveMissedApproachAltitudes,
-  resolveSegmentAltitudes
-} from './altitudes';
-import { buildPathGeometry } from './path-builder';
+  approach_path_build_geometry,
+  approach_path_resolve_altitudes
+} from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
 export interface ResolveAltitudesParams {
   finalLegs: ApproachLeg[];
@@ -46,99 +45,55 @@ export interface GeometryResult {
   turnConstraintLabels: TurnConstraintLabel[];
 }
 
-function resolveAltitudesForApproach(
-  finalLegs: ApproachLeg[],
-  transitionEntries: [string, ApproachLeg[]][],
-  missedLegs: ApproachLeg[],
-  waypoints: Map<string, Waypoint>,
-  refLat: number,
-  refLon: number,
-  airportElevation: number,
-  missedApproachStartAltitudeFeet?: number,
-  missedApproachClimbRequirement?: Parameters<typeof resolveMissedApproachAltitudes>[6]
-) {
-  const altitudes = new Map<ApproachLeg, number>();
-  const finalAltitudes = resolveSegmentAltitudes(finalLegs, waypoints, refLat, refLon);
-  for (const [leg, altitude] of finalAltitudes.entries()) {
-    altitudes.set(leg, altitude);
-  }
-  for (const [, legs] of transitionEntries) {
-    const transitionAltitudes = resolveSegmentAltitudes(legs, waypoints, refLat, refLon);
-    for (const [leg, altitude] of transitionAltitudes.entries()) {
-      altitudes.set(leg, altitude);
-    }
-  }
-  const missedAltitudes = resolveSegmentAltitudes(missedLegs, waypoints, refLat, refLon);
-  for (const [leg, altitude] of missedAltitudes.entries()) {
-    altitudes.set(leg, altitude);
-  }
-
-  const glideAdjusted = applyGlidepathInsideFaf(
-    finalLegs,
-    missedLegs,
-    altitudes,
-    waypoints,
-    refLat,
-    refLon,
-    airportElevation
-  );
-  const missedPathAltitudes = resolveMissedApproachAltitudes(
-    missedLegs,
-    glideAdjusted,
-    waypoints,
-    refLat,
-    refLon,
-    missedApproachStartAltitudeFeet,
-    missedApproachClimbRequirement ?? null
-  );
-
-  return {
-    finalAltitudes: finalLegs.map((leg) => glideAdjusted.get(leg) ?? leg.altitude ?? 0),
-    transitionAltitudes: transitionEntries.map(([name, legs]) => [
-      name,
-      legs.map((leg) => glideAdjusted.get(leg) ?? leg.altitude ?? 0)
-    ]) as [string, number[]][],
-    missedAltitudes: missedLegs.map((leg) => glideAdjusted.get(leg) ?? leg.altitude ?? 0),
-    missedPathAltitudes: missedLegs.map((leg) => missedPathAltitudes.get(leg) ?? leg.altitude ?? 0)
-  };
-}
-
 export class ApproachWorkerApi {
-  resolveAltitudes(params: ResolveAltitudesParams): AltitudeResult {
-    const waypoints = new Map(params.waypoints);
-    const resolved = resolveAltitudesForApproach(
-      params.finalLegs,
-      params.transitionEntries,
-      params.missedLegs,
-      waypoints,
-      params.refLat,
-      params.refLon,
-      params.airportElevation,
-      params.missedApproachStartAltitudeFeet,
-      params.missedApproachClimbRequirement
-    );
-    return resolved;
+  private readonly ready = ensureWasm();
+
+  async resolveAltitudes(params: ResolveAltitudesParams): Promise<AltitudeResult> {
+    await this.ready;
+    const result = approach_path_resolve_altitudes({
+      finalLegs: params.finalLegs,
+      transitionEntries: params.transitionEntries.map(([name, legs]) => ({ name, legs })),
+      missedLegs: params.missedLegs,
+      waypoints: params.waypoints.map(([, waypoint]) => waypoint),
+      refLat: params.refLat,
+      refLon: params.refLon,
+      airportElevation: params.airportElevation,
+      missedApproachStartAltitudeFeet: params.missedApproachStartAltitudeFeet,
+      missedApproachClimbRequirement: params.missedApproachClimbRequirement ?? null
+    }) as {
+      finalAltitudes: number[];
+      transitionAltitudes: { name: string; altitudes: number[] }[];
+      missedAltitudes: number[];
+      missedPathAltitudes: number[];
+    };
+    return {
+      finalAltitudes: result.finalAltitudes,
+      transitionAltitudes: result.transitionAltitudes.map(({ name, altitudes }) => [
+        name,
+        altitudes
+      ]),
+      missedAltitudes: result.missedAltitudes,
+      missedPathAltitudes: result.missedPathAltitudes
+    };
   }
 
-  buildPathGeometry(params: BuildPathGeometryParams): GeometryResult {
-    const resolvedAltitudes = new Map<ApproachLeg, number>();
-    for (let i = 0; i < params.legs.length; i += 1) {
-      resolvedAltitudes.set(
-        params.legs[i],
-        params.resolvedAltitudes[i] ?? params.legs[i].altitude ?? 0
-      );
-    }
-    const result = buildPathGeometry({
+  async buildPathGeometry(params: BuildPathGeometryParams): Promise<GeometryResult> {
+    await this.ready;
+    const result = approach_path_build_geometry({
       legs: params.legs,
-      waypoints: new Map(params.waypoints),
-      resolvedAltitudes,
+      waypoints: params.waypoints.map(([, waypoint]) => waypoint),
+      resolvedAltitudes: params.resolvedAltitudes,
       initialAltitudeFeet: params.initialAltitudeFeet,
       verticalScale: params.verticalScale,
       refLat: params.refLat,
       refLon: params.refLon,
       magVar: params.magVar,
       showTurnConstraintLabels: params.showTurnConstraintLabels
-    });
+    }) as {
+      points: { x: number; y: number; z: number }[];
+      verticalLines: VerticalLineData[];
+      turnConstraintLabels: { position: { x: number; y: number; z: number }; text: string }[];
+    };
     const pointsFlat = new Float32Array(result.points.length * 3);
     let pointOffset = 0;
     for (const point of result.points) {
@@ -150,7 +105,10 @@ export class ApproachWorkerApi {
       {
         pointsFlat,
         verticalLines: result.verticalLines,
-        turnConstraintLabels: result.turnConstraintLabels
+        turnConstraintLabels: result.turnConstraintLabels.map((label) => ({
+          position: [label.position.x, label.position.y, label.position.z],
+          text: label.text
+        })) as TurnConstraintLabel[]
       },
       [pointsFlat.buffer]
     );

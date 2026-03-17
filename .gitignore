@@ -42,6 +42,15 @@ tools/
 # Service worker (bundled from sw/ via esbuild)
 public/service-worker.js
 
+# Generated iOS artifacts
+ios/ApproachViz.xcodeproj/
+ios/ApproachViz/RustBridge/Generated/ApproachVizCoreFFI.xcframework/
+ios/ApproachViz/RustBridge/Generated/Headers/
+ios/ApproachViz/RustBridge/Generated/Swift/approach_viz_core.swift
+ios/ApproachViz/RustBridge/Generated/Swift/approach_viz_coreFFI.h
+ios/ApproachViz/RustBridge/Generated/Swift/approach_viz_coreFFI.modulemap
+ios/ApproachViz/RustBridge/Generated/simulator/
+
 # WASM build output — all wasm-pack artifacts are checked in (102KB binary + JS glue +
 # type declarations) for CI typecheck/build and Vercel deployment without requiring
 # wasm-pack/Rust toolchain.

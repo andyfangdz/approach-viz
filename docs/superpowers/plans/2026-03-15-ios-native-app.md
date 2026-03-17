@@ -15,19 +15,23 @@
 ## File Structure
 
 ### Rust Changes (existing crate)
+
 - Modify: `crates/approach-viz-core/Cargo.toml` — add `ios` feature with `uniffi` dep
 - Create: `crates/approach-viz-core/src/ios.rs` — UniFFI exports (mirrors `wasm.rs` pattern)
 - Modify: `crates/approach-viz-core/src/lib.rs` — add `#[cfg(feature = "ios")] pub mod ios;`
 - Create: `crates/approach-viz-core/uniffi.toml` — UniFFI config
 
 ### Build Scripts
+
 - Create: `scripts/build-ios.sh` — builds Rust for iOS targets, runs uniffi-bindgen, lipo
 - Modify: `package.json` — add `build:ios` and `test:ios` npm scripts
 
 ### Xcode Project
+
 - Create: `ios/ApproachViz/` — Xcode project root with SwiftUI app
 
 ### iOS App Source
+
 ```
 ios/ApproachViz/
 ├── App/
@@ -62,6 +66,7 @@ ios/ApproachViz/
 ```
 
 ### Tests
+
 ```
 ios/ApproachVizTests/
 ├── UniFFIRoundTripTests.swift        — Verify Rust functions return correct values
@@ -78,6 +83,7 @@ ios/ApproachVizTests/
 ### Task 1: Add UniFFI feature to Rust core crate
 
 **Files:**
+
 - Modify: `crates/approach-viz-core/Cargo.toml`
 - Create: `crates/approach-viz-core/src/ios.rs`
 - Modify: `crates/approach-viz-core/src/lib.rs`
@@ -85,11 +91,13 @@ ios/ApproachVizTests/
 - [ ] **Step 1: Add `ios` feature and `uniffi` dependency to Cargo.toml**
 
 In `crates/approach-viz-core/Cargo.toml`, add to `[dependencies]`:
+
 ```toml
 uniffi = { version = "0.29", optional = true }
 ```
 
 Add to `[features]`:
+
 ```toml
 ios = ["uniffi"]
 ```
@@ -167,6 +175,7 @@ Note: The `ios` and `wasm` features are **mutually exclusive** — never enable 
 - [ ] **Step 3: Add module to lib.rs**
 
 In `crates/approach-viz-core/src/lib.rs`, add after the `wasm` module:
+
 ```rust
 #[cfg(feature = "ios")]
 pub mod ios;
@@ -175,17 +184,21 @@ pub mod ios;
 - [ ] **Step 4: Verify it compiles**
 
 Run:
+
 ```bash
 cargo check -p approach-viz-core --features ios
 ```
+
 Expected: compiles without errors.
 
 - [ ] **Step 5: Run existing tests to verify no regression**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-core
 ```
+
 Expected: all existing tests pass (ios feature doesn't affect default build).
 
 - [ ] **Step 6: Add cross-platform parity test**
@@ -232,9 +245,11 @@ mod tests {
 - [ ] **Step 7: Run tests with ios feature**
 
 Run:
+
 ```bash
 cargo test -p approach-viz-core --features ios
 ```
+
 Expected: all tests pass including new parity tests.
 
 - [ ] **Step 8: Commit**
@@ -249,12 +264,14 @@ git commit -m "feat(ios): add UniFFI exports for coordinate functions"
 ### Task 2: iOS build script
 
 **Files:**
+
 - Create: `scripts/build-ios.sh`
 - Modify: `package.json`
 
 - [ ] **Step 1: Install Rust iOS targets (if needed)**
 
 Run:
+
 ```bash
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 ```
@@ -262,6 +279,7 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 - [ ] **Step 2: Install uniffi-bindgen CLI (if needed)**
 
 Run:
+
 ```bash
 cargo install uniffi-bindgen-cli --version 0.29
 ```
@@ -330,6 +348,7 @@ echo "    Swift bindings at $OUT_DIR/"
 - [ ] **Step 4: Make it executable**
 
 Run:
+
 ```bash
 chmod +x scripts/build-ios.sh
 ```
@@ -337,6 +356,7 @@ chmod +x scripts/build-ios.sh
 - [ ] **Step 5: Add npm scripts to package.json**
 
 Add to `"scripts"` in `package.json`:
+
 ```json
 "build:ios": "bash scripts/build-ios.sh",
 "build:ios:debug": "bash scripts/build-ios.sh debug",
@@ -346,17 +366,21 @@ Add to `"scripts"` in `package.json`:
 - [ ] **Step 6: Test the build script**
 
 Run:
+
 ```bash
 npm run build:ios:debug
 ```
+
 Expected: builds all three targets, creates universal sim binary, generates Swift bindings in `ios/ApproachViz/RustBridge/`, creates XCFramework.
 
 - [ ] **Step 7: Verify generated Swift bindings exist**
 
 Run:
+
 ```bash
 ls ios/ApproachViz/RustBridge/
 ```
+
 Expected: contains `approach_viz_core.swift` (or similar) with Swift functions like `iosLatLonToLocal`, `iosAltToY`, etc.
 
 - [ ] **Step 8: Commit**
@@ -371,6 +395,7 @@ git commit -m "feat(ios): add iOS build script for Rust UniFFI"
 ### Task 3: Xcode project scaffolding
 
 **Files:**
+
 - Create: `ios/ApproachViz.xcodeproj` (via xcodebuild/swift package)
 - Create: `ios/ApproachViz/App/ApproachVizApp.swift`
 - Create: `ios/ApproachViz/App/ContentView.swift`
@@ -378,6 +403,7 @@ git commit -m "feat(ios): add iOS build script for Rust UniFFI"
 - [ ] **Step 1: Create Xcode project directory structure**
 
 Run:
+
 ```bash
 mkdir -p ios/ApproachViz/{App,Models,Services,Scene/Shaders,Views,ViewModels,RustBridge}
 mkdir -p ios/ApproachVizTests
@@ -463,6 +489,7 @@ struct ContentView: View {
 - [ ] **Step 5: Generate Xcode project**
 
 Open Xcode and create a new iOS App project:
+
 - Product Name: ApproachViz
 - Team: (your team)
 - Organization Identifier: app.andyfang
@@ -472,6 +499,7 @@ Open Xcode and create a new iOS App project:
 - Save to: `ios/` directory
 
 Then configure:
+
 1. Add `ApproachVizCore.xcframework` to "Frameworks, Libraries, and Embedded Content"
 2. Add GRDB.swift via SPM (File → Add Package Dependencies)
 3. Add `data/approach-viz.sqlite` as a bundle resource (reference, not copy)
@@ -480,9 +508,11 @@ Then configure:
 - [ ] **Step 6: Verify the project builds**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' | tail -5
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 7: Commit**
@@ -499,6 +529,7 @@ git commit -m "feat(ios): scaffold Xcode project with SwiftUI entry point"
 ### Task 4: Swift data models
 
 **Files:**
+
 - Create: `ios/ApproachViz/Models/Airport.swift`
 - Create: `ios/ApproachViz/Models/Approach.swift`
 - Create: `ios/ApproachViz/Models/AppState.swift`
@@ -676,9 +707,11 @@ struct TerrainData: Sendable {
 - [ ] **Step 4: Verify models compile**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' 2>&1 | tail -3
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 5: Commit**
@@ -693,6 +726,7 @@ git commit -m "feat(ios): add Swift data models for airports, approaches, and ap
 ### Task 5: SQLite database service
 
 **Files:**
+
 - Create: `ios/ApproachViz/Services/DatabaseService.swift`
 - Create: `ios/ApproachVizTests/DatabaseServiceTests.swift`
 
@@ -760,9 +794,11 @@ struct DatabaseServiceTests {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run:
+
 ```bash
 npm run test:ios
 ```
+
 Expected: FAIL — `DatabaseService` not defined.
 
 - [ ] **Step 3: Implement DatabaseService**
@@ -952,9 +988,11 @@ Note: The `ApproachJsonData` decoding will need adjustment based on the exact JS
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run:
+
 ```bash
 npm run test:ios
 ```
+
 Expected: all DatabaseServiceTests pass.
 
 - [ ] **Step 5: Commit**
@@ -969,6 +1007,7 @@ git commit -m "feat(ios): add DatabaseService with GRDB.swift SQLite queries"
 ### Task 6: Scene data loader (ViewModel)
 
 **Files:**
+
 - Create: `ios/ApproachViz/ViewModels/SceneDataLoader.swift`
 
 - [ ] **Step 1: Write the SceneDataLoader**
@@ -1083,9 +1122,11 @@ enum AltitudeResolver {
 - [ ] **Step 3: Verify it compiles**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' 2>&1 | tail -3
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 4: Commit**
@@ -1102,6 +1143,7 @@ git commit -m "feat(ios): add SceneDataLoader with async data pipeline"
 ### Task 7: Camera controller
 
 **Files:**
+
 - Create: `ios/ApproachViz/Scene/CameraController.swift`
 - Create: `ios/ApproachVizTests/CameraControllerTests.swift`
 
@@ -1150,9 +1192,11 @@ struct CameraControllerTests {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run:
+
 ```bash
 npm run test:ios
 ```
+
 Expected: FAIL — `CameraState` not defined.
 
 - [ ] **Step 3: Implement CameraController**
@@ -1230,9 +1274,11 @@ struct CameraState {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run:
+
 ```bash
 npm run test:ios
 ```
+
 Expected: CameraControllerTests pass.
 
 - [ ] **Step 5: Commit**
@@ -1247,6 +1293,7 @@ git commit -m "feat(ios): add orbital camera controller with gesture-driven orbi
 ### Task 8: Terrain entity
 
 **Files:**
+
 - Create: `ios/ApproachViz/Services/TileService.swift`
 - Create: `ios/ApproachViz/Scene/TerrainEntity.swift`
 - Create: `ios/ApproachViz/Scene/Shaders/TerrainWireframe.metal`
@@ -1613,9 +1660,11 @@ enum MetalLibLoader {
 - [ ] **Step 7: Verify it compiles**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' 2>&1 | tail -3
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 8: Commit**
@@ -1630,6 +1679,7 @@ git commit -m "feat(ios): add terrain grid with Terrarium tiles and wireframe sh
 ### Task 9: Approach path builder (leg → 3D points)
 
 **Files:**
+
 - Create: `ios/ApproachViz/Scene/ApproachPathBuilder.swift`
 - Create: `ios/ApproachVizTests/ApproachPathBuilderTests.swift`
 
@@ -1826,6 +1876,7 @@ git commit -m "feat(ios): add approach path builder (leg → 3D points)"
 ### Task 10: Approach path tube entity (LowLevelMesh)
 
 **Files:**
+
 - Create: `ios/ApproachViz/Scene/ApproachPathEntity.swift`
 - Create: `ios/ApproachViz/Scene/Shaders/VertexColor.metal`
 
@@ -1985,9 +2036,11 @@ enum ApproachPathEntity {
 - [ ] **Step 3: Verify it compiles**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' 2>&1 | tail -3
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 4: Commit**
@@ -2002,6 +2055,7 @@ git commit -m "feat(ios): add approach path tube entity with LowLevelMesh + vert
 ### Task 11: Waypoint and runway entities
 
 **Files:**
+
 - Create: `ios/ApproachViz/Scene/WaypointEntity.swift`
 - Create: `ios/ApproachViz/Scene/RunwayEntity.swift`
 
@@ -2138,9 +2192,11 @@ enum RunwayEntity {
 - [ ] **Step 3: Verify it compiles**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' 2>&1 | tail -3
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 4: Commit**
@@ -2157,6 +2213,7 @@ git commit -m "feat(ios): add waypoint markers and runway geometry entities"
 ### Task 12: RealityView scene assembly
 
 **Files:**
+
 - Create: `ios/ApproachViz/Scene/SceneView.swift`
 
 - [ ] **Step 1: Implement SceneView with RealityView**
@@ -2334,9 +2391,11 @@ struct SceneView: View {
 - [ ] **Step 2: Verify it compiles**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' 2>&1 | tail -3
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 3: Commit**
@@ -2351,6 +2410,7 @@ git commit -m "feat(ios): add RealityView scene assembly with all MVP entities"
 ### Task 13: SwiftUI views (airport picker, approach selector, options)
 
 **Files:**
+
 - Create: `ios/ApproachViz/Views/AirportPicker.swift`
 - Create: `ios/ApproachViz/Views/ApproachSelector.swift`
 - Create: `ios/ApproachViz/Views/OptionsPanel.swift`
@@ -2500,9 +2560,11 @@ struct OptionsPanel: View {
 - [ ] **Step 4: Verify all views compile**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' 2>&1 | tail -3
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 5: Commit**
@@ -2517,6 +2579,7 @@ git commit -m "feat(ios): add airport picker, approach selector, and options pan
 ### Task 14: Wire up ContentView (full integration)
 
 **Files:**
+
 - Modify: `ios/ApproachViz/App/ContentView.swift`
 
 - [ ] **Step 1: Update ContentView to integrate all components**
@@ -2634,14 +2697,17 @@ struct ContentView: View {
 - [ ] **Step 2: Verify full app builds**
 
 Run:
+
 ```bash
 xcodebuild build -project ios/ApproachViz.xcodeproj -scheme ApproachViz -destination 'platform=iOS Simulator,name=iPhone 16' 2>&1 | tail -3
 ```
+
 Expected: BUILD SUCCEEDED
 
 - [ ] **Step 3: Run on iOS Simulator and verify basic flow**
 
 Open in Xcode, run on iPhone 16 simulator:
+
 1. App launches, shows airport search
 2. Search for "KJFK", tap to select
 3. Approach list appears, select an ILS approach
@@ -2664,6 +2730,7 @@ git commit -m "feat(ios): integrate all components in ContentView — MVP comple
 ### Task 15: UniFFI integration tests
 
 **Files:**
+
 - Create: `ios/ApproachVizTests/UniFFIRoundTripTests.swift`
 
 - [ ] **Step 1: Write UniFFI round-trip tests**
@@ -2724,9 +2791,11 @@ Note: These tests require the XCFramework to be linked. They verify that the Swi
 - [ ] **Step 2: Run tests**
 
 Run:
+
 ```bash
 npm run test:ios
 ```
+
 Expected: all UniFFI tests pass.
 
 - [ ] **Step 3: Commit**
@@ -2746,6 +2815,7 @@ git commit -m "test(ios): add UniFFI round-trip tests for coordinate functions"
 cargo test -p approach-viz-core
 cargo test -p approach-viz-core --features ios
 ```
+
 Expected: all pass.
 
 - [ ] **Step 2: Run all iOS tests**
@@ -2753,6 +2823,7 @@ Expected: all pass.
 ```bash
 npm run test:ios
 ```
+
 Expected: all pass (DatabaseService, CameraController, TerrainDecode, ApproachPathBuilder, UniFFI round-trip).
 
 - [ ] **Step 3: Verify web app is unaffected**
@@ -2762,6 +2833,7 @@ npm run typecheck
 npm run test
 npm run build:wasm
 ```
+
 Expected: all pass — no regressions in the web app.
 
 - [ ] **Step 4: Manual smoke test on simulator**

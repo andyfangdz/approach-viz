@@ -89,8 +89,10 @@ Singleton management: module-level `sharedClient` with `activePollPromise` guard
 
 ### Operations
 
-- `resolveAltitudes(params)` — synchronous altitude resolution
-- `buildPathGeometry(params)` — builds path geometry, transfers `pointsFlat.buffer`
+- `resolveAltitudes(params)` — invokes the shared Rust WASM engine for altitude resolution
+- `buildPathGeometry(params)` — invokes the shared Rust WASM engine for path geometry and transfers `pointsFlat.buffer`
+
+The worker also uses the same Rust engine for hold geometry via direct WASM calls from `HoldPattern.tsx`, so there is no separate TypeScript geometry implementation left in the web app.
 
 Failure policy: client disposes the current worker and recreates on next attempt.
 

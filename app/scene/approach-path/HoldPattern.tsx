@@ -1,8 +1,10 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Html, Line } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
-import { buildHoldPoints, formatHoldDistance } from './curves';
+import { ensureWasm } from '../shared/wasm-loader';
+import { approach_path_build_hold_points } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+import { formatHoldDistance } from './curves';
 import {
   altToY,
   latLonToLocal,
@@ -52,9 +54,37 @@ export function HoldPattern({
     return latLonToLocal(wp.lat, wp.lon, refLat, refLon);
   }, [wp, refLat, refLon]);
 
-  const points = useMemo(() => {
-    if (!center || altitude <= 0) return [];
-    return buildHoldPoints(center, heading, holdDistance, altitude, turnDirection, verticalScale);
+  const [points, setPoints] = useState<[number, number, number][]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!center || altitude <= 0) {
+      setPoints([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void ensureWasm()
+      .then(() => {
+        const result = approach_path_build_hold_points(
+          center.x,
+          center.z,
+          heading,
+          holdDistance,
+          altitude,
+          turnDirection,
+          verticalScale
+        ) as { x: number; y: number; z: number }[];
+        if (cancelled) return;
+        setPoints(result.map((point) => [point.x, point.y, point.z]));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Failed to build hold geometry in Rust WASM.', error);
+        setPoints([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [center, altitude, heading, holdDistance, turnDirection, verticalScale]);
   const labelPosition = useMemo<[number, number, number]>(() => {
     if (!center) return [0, 0, 0];

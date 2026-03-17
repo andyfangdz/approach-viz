@@ -145,13 +145,13 @@ approach-viz/
 
 ### Concurrency
 
-| Web App | iOS App |
-|---------|---------|
-| Web Worker + Comlink proxy | `Task { }` on background priority |
-| postMessage + Transferable | Value types (structs) — no transfer needed |
-| WASM init + function call | Direct UniFFI function call (native speed) |
-| 8–12s timeout per call | Task cancellation via structured concurrency |
-| SharedArrayBuffer + Atomics | Not needed — Swift actors for shared state |
+| Web App                     | iOS App                                      |
+| --------------------------- | -------------------------------------------- |
+| Web Worker + Comlink proxy  | `Task { }` on background priority            |
+| postMessage + Transferable  | Value types (structs) — no transfer needed   |
+| WASM init + function call   | Direct UniFFI function call (native speed)   |
+| 8–12s timeout per call      | Task cancellation via structured concurrency |
+| SharedArrayBuffer + Atomics | Not needed — Swift actors for shared state   |
 
 ## UniFFI Integration
 
@@ -159,11 +159,11 @@ approach-viz/
 
 The Rust core crate uses feature gates for platform-specific binding layers:
 
-| Feature | Target | Binding Layer | Output |
-|---------|--------|--------------|--------|
-| `--features wasm` | wasm32-unknown-unknown | `wasm.rs` (wasm-bindgen) | .wasm + .js |
-| `--features ios` | aarch64-apple-ios[-sim] | `ios.rs` (UniFFI) | .a + .swift |
-| (none) | native host | Rust library only | .rlib (runtime-rs) |
+| Feature           | Target                  | Binding Layer            | Output             |
+| ----------------- | ----------------------- | ------------------------ | ------------------ |
+| `--features wasm` | wasm32-unknown-unknown  | `wasm.rs` (wasm-bindgen) | .wasm + .js        |
+| `--features ios`  | aarch64-apple-ios[-sim] | `ios.rs` (UniFFI)        | .a + .swift        |
+| (none)            | native host             | Rust library only        | .rlib (runtime-rs) |
 
 ### MVP UniFFI Exports (`ios.rs`)
 
@@ -206,14 +206,14 @@ npm run build-db      # SQLite DB (bundled into iOS app)
 
 ## Testing
 
-| Layer | What | How |
-|-------|------|-----|
-| Rust unit tests | Coordinate math, data transforms | `cargo test --features ios` |
-| UniFFI round-trip | Swift↔Rust type marshalling | XCTest calling UniFFI functions, verify against known web app outputs |
-| Swift unit tests | ViewModels, services, data loading | XCTest with mock DB / mock API responses |
-| SQLite integration | Query correctness | XCTest loading real approach-viz.sqlite |
-| Scene snapshot | Visual regression | RealityKit snapshot → image comparison (manual initially) |
-| Cross-platform parity | iOS vs web output matches | Golden test: same airport+approach → compare coordinate outputs (wasm vs ios feature) |
+| Layer                 | What                               | How                                                                                   |
+| --------------------- | ---------------------------------- | ------------------------------------------------------------------------------------- |
+| Rust unit tests       | Coordinate math, data transforms   | `cargo test --features ios`                                                           |
+| UniFFI round-trip     | Swift↔Rust type marshalling        | XCTest calling UniFFI functions, verify against known web app outputs                 |
+| Swift unit tests      | ViewModels, services, data loading | XCTest with mock DB / mock API responses                                              |
+| SQLite integration    | Query correctness                  | XCTest loading real approach-viz.sqlite                                               |
+| Scene snapshot        | Visual regression                  | RealityKit snapshot → image comparison (manual initially)                             |
+| Cross-platform parity | iOS vs web output matches          | Golden test: same airport+approach → compare coordinate outputs (wasm vs ios feature) |
 
 ### Verification
 

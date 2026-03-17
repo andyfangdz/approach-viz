@@ -56,6 +56,12 @@ export class WasmTrafficState {
     readonly track_count: number;
 }
 
+export function approach_path_build_geometry(params: any): any;
+
+export function approach_path_build_hold_points(center_x: number, center_z: number, heading_deg: number, hold_distance_nm: number, altitude_feet: number, turn_direction: string, vertical_scale: number): any;
+
+export function approach_path_resolve_altitudes(params: any): any;
+
 /**
  * Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
  *
@@ -112,6 +118,9 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmtrafficstate_free: (a: number, b: number) => void;
+    readonly approach_path_build_geometry: (a: any) => [number, number, number];
+    readonly approach_path_build_hold_points: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly approach_path_resolve_altitudes: (a: any) => [number, number, number];
     readonly decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly wasm_alt_to_y: (a: number, b: number) => number;
@@ -125,10 +134,11 @@ export interface InitOutput {
     readonly wasmtrafficstate_prune_for_error: (a: number, b: number, c: number) => void;
     readonly wasmtrafficstate_recompute: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly wasmtrafficstate_track_count: (a: number) => number;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;

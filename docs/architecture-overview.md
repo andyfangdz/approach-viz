@@ -15,7 +15,7 @@ flowchart TD
   A --> C["Client Runtime<br/>app/AppClient.tsx"]
   C --> S["Scene Components<br/>app/app-client/* + app/scene/*"]
   C --> PP["FAA Plate Proxy<br/>app/api/faa-plate/route.ts"]
-  S --> G["Path Geometry Modules<br/>app/scene/approach-path/*"]
+  S --> G["Path Rendering Modules<br/>app/scene/approach-path/*<br/>Rust path engine via WASM"]
   S --> TP["Traffic Proxy<br/>app/api/traffic/adsbx/route.ts"]
   S --> WP["Weather Proxy<br/>app/api/weather/nexrad/route.ts"]
   S --> EP["Echo-Top Proxy<br/>app/api/weather/nexrad/echo-tops/route.ts"]

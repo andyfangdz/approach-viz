@@ -2,6 +2,7 @@
 members = [
     "crates/approach-viz-core",
     "services/runtime-rs",
+    "tools/uniffi-bindgen-swift",
 ]
 resolver = "2"
 

@@ -9,6 +9,10 @@
 
 use wasm_bindgen::prelude::*;
 
+fn js_err<E: std::fmt::Display>(context: &str, error: E) -> JsValue {
+    JsValue::from_str(&format!("{context}: {error}"))
+}
+
 // ---------------------------------------------------------------------------
 // MRMS Decode + Prepare + Cross-Section (single boundary crossing)
 // ---------------------------------------------------------------------------
@@ -524,6 +528,49 @@ pub fn wasm_geocentric_radius_nm(latitude_deg: f64) -> f64 {
 pub fn wasm_projection_scales(lat_deg: f64) -> Box<[f64]> {
     let (east, north) = crate::coords::projection_scales_nm_per_degree(lat_deg);
     Box::new([east, north])
+}
+
+#[wasm_bindgen]
+pub fn approach_path_resolve_altitudes(params: JsValue) -> Result<JsValue, JsValue> {
+    let params: crate::approach_path::ResolveApproachAltitudesParams =
+        serde_wasm_bindgen::from_value(params)
+            .map_err(|error| js_err("failed to decode approach altitude params", error))?;
+    let result = crate::approach_path::resolve_approach_altitudes(params);
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|error| js_err("failed to encode approach altitude result", error))
+}
+
+#[wasm_bindgen]
+pub fn approach_path_build_geometry(params: JsValue) -> Result<JsValue, JsValue> {
+    let params: crate::approach_path::BuildPathGeometryParams =
+        serde_wasm_bindgen::from_value(params)
+            .map_err(|error| js_err("failed to decode approach geometry params", error))?;
+    let result = crate::approach_path::build_path_geometry(params);
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|error| js_err("failed to encode approach geometry result", error))
+}
+
+#[wasm_bindgen]
+pub fn approach_path_build_hold_points(
+    center_x: f64,
+    center_z: f64,
+    heading_deg: f64,
+    hold_distance_nm: f64,
+    altitude_feet: f64,
+    turn_direction: String,
+    vertical_scale: f64,
+) -> Result<JsValue, JsValue> {
+    let result = crate::approach_path::build_hold_geometry(
+        center_x,
+        center_z,
+        heading_deg,
+        hold_distance_nm,
+        altitude_feet,
+        &turn_direction,
+        vertical_scale,
+    );
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|error| js_err("failed to encode hold geometry result", error))
 }
 
 // ---------------------------------------------------------------------------

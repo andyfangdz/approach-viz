@@ -4,7 +4,7 @@
 
 - Name: `approach-viz`
 - Purpose: 3D visualization of FAA instrument approaches with airspace, terrain/surface context, live ADS-B traffic, and MRMS weather.
-- Stack: Next.js 16 (App Router, React Compiler), React, TypeScript, react-three-fiber, SQLite, Rust (Cargo workspace with `approach-viz-core` + `approach-viz-runtime`), AWS SNS/SQS, Datadog.
+- Stack: Next.js 16 (App Router, React Compiler), React, TypeScript, react-three-fiber, SwiftUI, MetalKit, SQLite, Rust (Cargo workspace with `approach-viz-core` + `approach-viz-runtime` + `uniffi-bindgen-swift`), AWS SNS/SQS, Datadog.
 
 ## Maintenance Rule
 
@@ -28,6 +28,9 @@
 - Dev server: `npm run dev`
 - Production build: `npm run build`
 - Production server: `npm run start`
+- Native iOS bridge + project generation: `npm run build:ios`
+- Native iOS simulator build check: `npm run test:ios`
+- Open native iOS project in Xcode: `npm run open:ios`
 
 ### Quality
 
@@ -60,9 +63,11 @@
 ## Repository Layout
 
 - `app/` — Next.js routes, API proxies, client UI, and scene components
+- `ios/` — native SwiftUI + MetalKit iOS app scaffold plus XcodeGen spec
 - `lib/` — SQLite access, spatial queries, CIFP parsing, shared TS types
 - `services/runtime-rs/` — Rust runtime service (MRMS ingest/query + ADS-B decode/query)
 - `crates/approach-viz-core/` — shared Rust core crate (native + wasm)
+- `tools/uniffi-bindgen-swift/` — UniFFI helper CLI for generating Swift bindings from the Rust core
 - `scripts/` — data pipeline, runtime deploy, infra helpers
 - `packages/approach-viz-core-wasm/` — wasm-pack output consumed by workers
 - `docs/` — architecture/rendering/data/UI/validation documentation
@@ -75,7 +80,11 @@
   - `GET /v1/weather/volume` -> `application/vnd.approach-viz.mrms.v5` content-type (wire format AVMR v5, FlatBuffers) (legacy alias `/v1/volume`)
   - `GET /v1/weather/echo-tops` -> JSON by default; AVET binary with `Accept: application/vnd.approach-viz.echo-tops.v3` content-type (wire format AVET v3, FlatBuffers) (legacy alias `/v1/echo-tops`)
   - `GET /v1/traffic/adsbx` -> JSON or binary (`format=binary`, `application/vnd.approach-viz.traffic.v4` content-type, wire format AVTR v4, FlatBuffers)
-- Worker-first execution: approach geometry, MRMS decode/prepare, traffic ingest/merge/recompute, selector filtering, and chart tile streaming run in workers via Comlink typed proxies; no synchronous compute fallback. WASM output arrays transfer to main thread via `Comlink.transfer()` (zero-copy).
+- Native iOS rewrite foundation lives under `ios/`: SwiftUI `NavigationSplitView` + MetalKit scene, backed by the same `approach-viz.sqlite` bundle copied into the app during Xcode builds. The earlier RealityKit renderer has been removed.
+- Approach-path domain logic now has a single implementation in `crates/approach-viz-core/src/approach_path.rs`. Web uses that engine through WASM in `app/scene/approach-path/approach.worker.ts`, and iOS uses the same engine through UniFFI in `ios/ApproachViz/Scene/ApproachPathGeometry.swift`. There is no remaining TypeScript or Swift fallback implementation for altitude resolution, path geometry assembly, or hold geometry generation.
+- Native iOS rendering currently covers airport selection, approach selection, a dark-mode Terrarium-backed terrain wireframe/fill, runway geometry, waypoint point sprites with label overlays positioned from Rust-resolved leg altitudes, sampled transition/final/missed path segments from the shared Rust engine, and separate Rust-generated hold-pattern overlays plus hold annotations. The displayed final path extends through the first missed-approach fix when that fix resolves, while hold legs are kept out of the main path segments. Native scene loading now also reads bundled external approach reference JSON (`public/data/approach-db/approaches.json`) so matched minimums/VDA rows and parsed missed-climb requirements can influence native vertical-profile rendering. The Metal renderer now has a custom orbit-style gesture camera with initial target/distance derived from scene focus bounds, a tighter camera-reset fit for phone-sized startup views, focus-bounds priority on final/missed procedure geometry plus missed holds over transition-only overlays, a default azimuth aligned with the web scene's southeast-looking startup camera, web-style 3.0x startup vertical scale, thicker solid path prisms, dashed-prism rendering for below-minimums and hold overlays, brighter runway glyphs/labels, corrected SwiftUI label projection in view-point space so waypoint/hold labels track their anchors correctly on Retina simulators, direct consumption of the Rust path builder's `verticalLines` plus `turnConstraintLabels` outputs instead of synthesizing extra guide lines in Swift, the same absolute-altitude contract into the shared Rust hold builder that the web renderer uses, a shared Rust local-axis sign convention for path geometry plus waypoint/runway/hold overlay anchors, and an absolute-MSL vertical frame for native terrain plus waypoint/runway/hold/path geometry so those elements match the web renderer's altitude convention. Camera/framing parity with the web renderer is still incomplete. Terrain tile fetches tolerate per-tile failures instead of dropping the entire surface. The native app currently defaults to `KSBS` / `R32-Z` for a terrain-heavy startup view. It does not yet include weather, live traffic, charts, or full web feature parity.
+- `crates/approach-viz-core` has an `ios` feature with UniFFI exports for coordinate/projection math; `scripts/build-ios-bridge.sh` builds Apple targets, generates Swift bindings, and emits `ios/ApproachViz/RustBridge/Generated/ApproachVizCoreFFI.xcframework`. Simulator artifacts are `arm64`-only; the iOS project excludes `x86_64` simulator builds.
+- Worker-first execution: approach altitude resolution and path/hold geometry, MRMS decode/prepare, traffic ingest/merge/recompute, selector filtering, and chart tile streaming run in workers via Comlink typed proxies; no synchronous compute fallback. The approach worker is a thin WASM adapter over the shared Rust engine, and its output arrays transfer to the main thread via `Comlink.transfer()` (zero-copy).
 - ADS-B overlay polling: initial full-history query on context reset (`historyMinutes`), then live-only primary polls plus targeted `historyHexes` follow-up backfill when departed trails are enabled.
 - ADS-B runtime payloads with `error` metadata are treated as poll failures in the traffic worker (no silent empty merge), and traffic worker request timeout budget is `12s`.
 - Runtime traffic "current aircraft" staleness window is `60s` (`CACHE_CURRENT_STALE_MS`); responses expose stale/freshness markers via `x-approach-viz-traffic-stale-current` and `x-approach-viz-traffic-snapshot-age-ms` headers (proxy passthrough enabled), and JSON payloads include `staleCurrent` + `snapshotAgeMs`.
@@ -101,6 +110,7 @@
   - `docs/mrms-phase-methodology.md`
 - Rendering:
   - `docs/rendering-coordinate-system.md`
+  - `docs/rendering-ios-native-mvp.md`
   - `docs/rendering-surface-modes.md`
   - `docs/rendering-weather-volume.md`
   - `docs/rendering-storm-cells.md`
