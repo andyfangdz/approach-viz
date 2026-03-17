@@ -58,7 +58,7 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
         view.sampleCount = 1
-        view.preferredFramesPerSecond = 30
+        view.preferredFramesPerSecond = UIScreen.main.maximumFramesPerSecond
         view.enableSetNeedsDisplay = false
         view.isPaused = false
         context.coordinator.attach(to: view)
@@ -71,7 +71,7 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         private var renderer: ApproachMetalRenderer?
         private var labels: Binding<[ApproachMetalProjectedLabel]>
 
@@ -93,17 +93,35 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
         }
 
         private func installGestures(on view: MTKView) {
-            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-            pan.maximumNumberOfTouches = 1
-            view.addGestureRecognizer(pan)
+            let orbitPan = UIPanGestureRecognizer(target: self, action: #selector(handleOrbitPan(_:)))
+            orbitPan.minimumNumberOfTouches = 1
+            orbitPan.maximumNumberOfTouches = 1
+            orbitPan.delegate = self
+            view.addGestureRecognizer(orbitPan)
+
+            let scenePan = UIPanGestureRecognizer(target: self, action: #selector(handleScenePan(_:)))
+            scenePan.minimumNumberOfTouches = 2
+            scenePan.maximumNumberOfTouches = 2
+            scenePan.delegate = self
+            view.addGestureRecognizer(scenePan)
 
             let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+            pinch.delegate = self
             view.addGestureRecognizer(pinch)
         }
 
-        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        @objc private func handleOrbitPan(_ gesture: UIPanGestureRecognizer) {
             let translation = gesture.translation(in: gesture.view)
             renderer?.orbit(deltaX: Float(translation.x), deltaY: Float(translation.y), state: gesture.state)
+            if gesture.state == .changed || gesture.state == .ended {
+                gesture.setTranslation(.zero, in: gesture.view)
+            }
+        }
+
+        @objc private func handleScenePan(_ gesture: UIPanGestureRecognizer) {
+            let translation = gesture.translation(in: gesture.view)
+            let viewSize = gesture.view?.bounds.size ?? .zero
+            renderer?.pan(deltaX: Float(translation.x), deltaY: Float(translation.y), viewSize: viewSize, state: gesture.state)
             if gesture.state == .changed || gesture.state == .ended {
                 gesture.setTranslation(.zero, in: gesture.view)
             }
@@ -114,6 +132,14 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
             if gesture.state == .changed || gesture.state == .ended {
                 gesture.scale = 1
             }
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            let recognizers = [gestureRecognizer, otherGestureRecognizer]
+            return recognizers.contains { $0 is UIPinchGestureRecognizer }
         }
     }
 }

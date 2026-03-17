@@ -33,7 +33,7 @@ The repository now includes a native iOS rewrite foundation in [`ios/`](ios/) bu
 - Web and iOS now share one Rust approach-path implementation from `crates/approach-viz-core/src/approach_path.rs` for altitude resolution, path geometry, and hold geometry; the web app calls it through WASM and the iOS app calls it through UniFFI
 - `npm run build:ios` regenerates the bridge xcframework and Xcode project via XcodeGen; simulator builds are `arm64`-only
 
-Current limitation: the native app foundation does not yet include weather, live traffic, chart/plate overlays, or full web feature parity. The current MetalKit pass is materially closer on terrain and path composition, now including dashed hold overlays and scene-fit orbit framing, but camera/framing, labels, runway prominence, and some procedure-shape edge cases still differ from production. The old RealityKit renderer has been removed.
+Current limitation: the native app foundation does not yet include weather, live traffic, chart/plate overlays, or full web feature parity. The current MetalKit pass is materially closer on terrain and path composition, now including dashed hold overlays, scene-fit orbit framing, corrected left/right orbit drag, two-finger pan, and display-max frame-rate requests, but camera/framing, labels, runway prominence, and some procedure-shape edge cases still differ from production. The old RealityKit renderer has been removed.
 
 ## Features
 

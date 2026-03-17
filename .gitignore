@@ -37,7 +37,9 @@ output/playwright
 .worktrees/
 
 # Local tools (flatc, etc.)
-tools/
+tools/*
+!tools/uniffi-bindgen-swift/
+!tools/uniffi-bindgen-swift/**
 
 # Service worker (bundled from sw/ via esbuild)
 public/service-worker.js

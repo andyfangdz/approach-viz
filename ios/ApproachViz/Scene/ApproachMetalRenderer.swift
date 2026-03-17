@@ -141,8 +141,30 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
     func orbit(deltaX: Float, deltaY: Float, state: UIGestureRecognizer.State) {
         let sensitivity: Float = 0.005
         hasUserInteracted = true
-        camera.yaw -= deltaX * sensitivity
+        camera.yaw += deltaX * sensitivity
         camera.pitch = min(max(0.08, camera.pitch - deltaY * sensitivity), .pi - 0.08)
+    }
+
+    func pan(deltaX: Float, deltaY: Float, viewSize: CGSize, state: UIGestureRecognizer.State) {
+        let height = max(1, Float(viewSize.height))
+        let aspect = max(0.1, Float(viewSize.width) / height)
+        let verticalFov = Float.pi / 3
+        let horizontalFov = 2 * atan(tan(verticalFov / 2) * aspect)
+
+        hasUserInteracted = true
+
+        let eye = SIMD3<Float>(
+            camera.target.x + cos(camera.yaw) * sin(camera.pitch) * camera.distance,
+            camera.target.y + cos(camera.pitch) * camera.distance,
+            camera.target.z + sin(camera.yaw) * sin(camera.pitch) * camera.distance
+        )
+        let forward = simd_normalize(camera.target - eye)
+        let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
+        let up = simd_normalize(simd_cross(right, forward))
+        let worldUnitsPerPointY = (2 * camera.distance * tan(verticalFov / 2)) / height
+        let worldUnitsPerPointX = (2 * camera.distance * tan(horizontalFov / 2)) / max(1, Float(viewSize.width))
+
+        camera.target += (-right * deltaX * worldUnitsPerPointX) + (up * deltaY * worldUnitsPerPointY)
     }
 
     func zoom(scale: Float, state: UIGestureRecognizer.State) {

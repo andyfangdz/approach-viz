@@ -14,7 +14,7 @@ Current native scene behavior:
   - waypoint point sprites plus SwiftUI overlay labels positioned from resolved leg altitudes
   - sampled path line geometry for the selected approach's transitions, final legs, and missed legs
   - separate hold-pattern overlays and hold annotations for hold-course, true-course, distance, and turn direction
-  - custom orbit-style gesture camera
+  - custom gesture camera with one-finger orbit, two-finger pan, and pinch zoom
 - The earlier RealityKit renderer has been removed; the native renderer is now MetalKit-only
 - Native scene now uses a dark presentation and a high-density triangle-style terrain wireframe topology closer to the web renderer than the earlier RealityKit MVP
 - Native startup defaults to `KSBS` / `R32-Z` so the MVP opens on a terrain-heavy procedure instead of the first alphabetical airport
@@ -22,6 +22,7 @@ Current native scene behavior:
 - The Metal renderer now seeds its initial orbit target/distance from the rendered procedure focus bounds so phone-sized viewports center the active procedure more reliably before user interaction, and uses a portrait-tuned default azimuth closer to the production web composition
 - The native initial orbit azimuth now matches the web scene's default southeast-looking camera more closely, reducing cases where correct path geometry reads incorrectly because of a mismatched startup view direction
 - The Metal camera reset fit now uses a tighter minimum/scale than the earlier overview framing, so phone-sized startup views sit closer to the active procedure instead of defaulting to a distant map-like overview
+- Native orbit drag now follows finger direction horizontally instead of inverting left/right yaw, and the Metal view now requests the display's maximum frame rate instead of capping itself at 30 FPS
 - Native auto-fit now prioritizes final/missed path geometry and missed-hold geometry over transition-only holds, runway labels, and waypoint clouds, reducing the disconnected-looking wide startup framing seen on procedures like `KSBS R32-Z`
 - SwiftUI overlay labels now project using the Metal view's point-space bounds instead of drawable pixel dimensions, so waypoint and hold labels stay anchored near their rendered features on Retina simulators
 - Metal path overlays now consume the shared Rust path builder's `verticalLines` and `turnConstraintLabels` outputs directly instead of synthesizing guide lines from every sampled path point, which keeps the iOS path presentation aligned with the web worker's path-decoration logic
