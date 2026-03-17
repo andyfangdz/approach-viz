@@ -36,6 +36,7 @@ Current native scene behavior:
   - `buildApproachHoldGeometry`
 - Native Metal terrain, waypoint/runway anchors, hold overlays, and path geometry now all share the web renderer's absolute-MSL vertical frame instead of mixing airport-relative terrain/markers with absolute path geometry
 - Runway prisms now render at airport elevation in that same absolute-MSL frame, with a slight surface lift so mountain airports like `KSBS` do not draw the runway underground against the terrain mesh
+- Native renderer `y` placement is now intentionally funneled through explicit absolute-MSL helpers in Swift (`metalSceneY` / `metalScenePoint`) instead of mixing direct `altToY(...)` calls with ad hoc feature-specific offsets, reducing the chance of reintroducing airport-relative vertical bugs
 
 ## Data Inputs
 

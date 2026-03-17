@@ -332,7 +332,7 @@ private func buildRenderScene(
         let vertices = terrainData.vertices.map {
             SIMD3<Float>(
                 Float($0.eastNm),
-                Float(altToY(altFeet: $0.elevationFeet, verticalScale: verticalScale)),
+                Float(metalSceneY(mslAltitudeFeet: $0.elevationFeet, verticalScale: verticalScale)),
                 Float(-$0.northNm)
             )
         }
@@ -383,7 +383,9 @@ private func appendPaths(
     into scene: inout RenderScene
 ) {
     for polyline in polylines {
-        let thresholdY = polyline.dashedBelowAltitudeFeet.map { Float(altToY(altFeet: $0, verticalScale: verticalScale)) }
+        let thresholdY = polyline.dashedBelowAltitudeFeet.map {
+            Float(metalSceneY(mslAltitudeFeet: $0, verticalScale: verticalScale))
+        }
         let splitPath = thresholdY.map { splitPointsAtAltitude(polyline.points, thresholdY: $0) }
         let solidPoints = splitPath?.solidPoints ?? polyline.points
         let dashedPoints = splitPath?.dashedLinePoints
@@ -874,6 +876,10 @@ private func resolveMetalWaypoint(id: String, waypointsByID: [String: WaypointRe
         return WaypointRecord(id: runway.id, name: runway.id, lat: runway.lat, lon: runway.lon, type: "runway")
     }
     return nil
+}
+
+private func metalSceneY(mslAltitudeFeet: Double, verticalScale: Double) -> Double {
+    altToY(altFeet: mslAltitudeFeet, verticalScale: verticalScale)
 }
 
 private func metalScenePoint(lat: Double, lon: Double, altitudeFeet: Double, airport: AirportRecord, verticalScale: Double) -> SIMD3<Float> {
