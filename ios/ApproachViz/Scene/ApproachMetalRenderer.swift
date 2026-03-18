@@ -1,332 +1,115 @@
 import MetalKit
 import simd
-import SwiftUI
 import UIKit
-
-struct ApproachMetalProjectedLabel: Identifiable, Equatable {
-    let id: String
-    let text: String
-    let color: Color
-    let x: CGFloat
-    let y: CGFloat
-    let fontSize: CGFloat
-    let visible: Bool
-}
-
-private struct MetalVertex {
-    var position: SIMD3<Float>
-    var color: SIMD4<Float>
-}
-
-private struct MetalPointVertex {
-    var position: SIMD3<Float>
-    var color: SIMD4<Float>
-    var size: Float
-}
-
-private struct MetalUniforms {
-    var viewProjectionMatrix: simd_float4x4
-}
-
-private struct CameraState {
-    var target = SIMD3<Float>(0, 2, 0)
-    var distance: Float = 22.045408
-    var yaw: Float = .pi / 4
-    var pitch: Float = 1.2951535
-}
-
-private struct LabelAnchor {
-    let id: String
-    let text: String
-    let position: SIMD3<Float>
-    let color: UIColor
-    let fontSize: CGFloat
-}
-
-private struct RenderScene {
-    var triangleVertices: [MetalVertex] = []
-    var lineVertices: [MetalVertex] = []
-    var pointVertices: [MetalPointVertex] = []
-    var labels: [LabelAnchor] = []
-    var bounds = MetalSceneBounds()
-    var focusBounds = MetalSceneBounds()
-}
-
-private struct MetalSceneBounds {
-    var min = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-    var max = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
-
-    var center: SIMD3<Float> { (min + max) / 2 }
-    var span: SIMD3<Float> { max - min }
-
-    mutating func include(_ point: SIMD3<Float>) {
-        min = simd_min(min, point)
-        max = simd_max(max, point)
-    }
-}
 
 @MainActor
 final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
-    private weak var view: MTKView?
-    private let device: MTLDevice
-    private let commandQueue: MTLCommandQueue
-    private let trianglePipeline: MTLRenderPipelineState
-    private let linePipeline: MTLRenderPipelineState
-    private let pointPipeline: MTLRenderPipelineState
-    private let depthState: MTLDepthStencilState
-    private let onLabelsChanged: ([ApproachMetalProjectedLabel]) -> Void
+    private let engine: ApproachMetalRenderEngine
+    private struct StaticSceneKey: Equatable {
+        let sceneData: NativeSceneData
+        let terrainData: TerrainWireframeData?
+        let verticalScale: Double
+        let layerState: NativeLayerState
+    }
 
-    private var scene = RenderScene()
-    private var camera = CameraState()
-    private var triangleBuffer: MTLBuffer?
-    private var lineBuffer: MTLBuffer?
-    private var pointBuffer: MTLBuffer?
-    private var lastDrawableSize = CGSize.zero
-    private var hasUserInteracted = false
+    private var lastStaticSceneKey: StaticSceneKey?
+    private var lastTrafficRenderHash: UInt64?
+    private var lastTrafficDisplayOptions: NativeTrafficDisplayOptions?
 
-    init?(view: MTKView, onLabelsChanged: @escaping ([ApproachMetalProjectedLabel]) -> Void) {
-        guard let device = view.device,
-              let commandQueue = device.makeCommandQueue(),
-              let library = device.makeDefaultLibrary() else {
+    init?(
+        view: MTKView,
+        onLabelsChanged: @escaping ([ApproachMetalProjectedLabel]) -> Void,
+        onStatsChanged: @escaping (ApproachMetalRenderStats) -> Void
+    ) {
+        guard let engine = ApproachMetalRenderEngine(
+            view: view,
+            onLabelsChanged: onLabelsChanged,
+            onStatsChanged: onStatsChanged
+        ) else {
             return nil
         }
-        self.view = view
-        self.device = device
-        self.commandQueue = commandQueue
-        self.onLabelsChanged = onLabelsChanged
-
-        let depthDescriptor = MTLDepthStencilDescriptor()
-        depthDescriptor.depthCompareFunction = .less
-        depthDescriptor.isDepthWriteEnabled = true
-        guard let depthState = device.makeDepthStencilState(descriptor: depthDescriptor) else {
-            return nil
-        }
-        self.depthState = depthState
-
-        func makePipeline(vertex: String, fragment: String) -> MTLRenderPipelineState? {
-            let descriptor = MTLRenderPipelineDescriptor()
-            descriptor.vertexFunction = library.makeFunction(name: vertex)
-            descriptor.fragmentFunction = library.makeFunction(name: fragment)
-            descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
-            descriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat
-            descriptor.colorAttachments[0].isBlendingEnabled = true
-            descriptor.colorAttachments[0].rgbBlendOperation = .add
-            descriptor.colorAttachments[0].alphaBlendOperation = .add
-            descriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-            descriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
-            descriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-            descriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-            return try? device.makeRenderPipelineState(descriptor: descriptor)
-        }
-
-        guard let trianglePipeline = makePipeline(vertex: "basicVertex", fragment: "basicFragment"),
-              let linePipeline = makePipeline(vertex: "basicVertex", fragment: "basicFragment"),
-              let pointPipeline = makePipeline(vertex: "pointVertex", fragment: "pointFragment") else {
-            return nil
-        }
-        self.trianglePipeline = trianglePipeline
-        self.linePipeline = linePipeline
-        self.pointPipeline = pointPipeline
+        self.engine = engine
         super.init()
         view.delegate = self
     }
 
-    func update(sceneData: NativeSceneData, terrainData: TerrainWireframeData?, verticalScale: Double) {
-        scene = buildRenderScene(sceneData: sceneData, terrainData: terrainData, verticalScale: verticalScale)
-        if !hasUserInteracted {
-            resetCameraToScene()
+    func update(
+        sceneData: NativeSceneData,
+        trafficScene: NativeTrafficScene,
+        layerState: NativeLayerState,
+        trafficDisplayOptions: NativeTrafficDisplayOptions,
+        terrainData: TerrainWireframeData?,
+        verticalScale: Double
+    ) {
+        let staticSceneKey = StaticSceneKey(
+            sceneData: sceneData,
+            terrainData: terrainData,
+            verticalScale: verticalScale,
+            layerState: layerState
+        )
+        let staticSceneChanged = lastStaticSceneKey != staticSceneKey
+        if staticSceneChanged {
+            engine.updateScene(
+                buildRenderStaticScene(
+                    sceneData: sceneData,
+                    terrainData: terrainData,
+                    verticalScale: verticalScale,
+                    layerState: layerState
+                )
+            )
+            lastStaticSceneKey = staticSceneKey
         }
-        uploadBuffers()
+        if staticSceneChanged
+            || lastTrafficRenderHash != trafficScene.renderHash
+            || lastTrafficDisplayOptions != trafficDisplayOptions
+        {
+            engine.updateTrafficScene(buildTrafficRenderScene(
+                trafficScene,
+                layerState: layerState,
+                trafficDisplayOptions: trafficDisplayOptions
+            ))
+            lastTrafficRenderHash = trafficScene.renderHash
+            lastTrafficDisplayOptions = trafficDisplayOptions
+        }
     }
 
     func orbit(deltaX: Float, deltaY: Float, state: UIGestureRecognizer.State) {
-        let sensitivity: Float = 0.005
-        hasUserInteracted = true
-        camera.yaw += deltaX * sensitivity
-        camera.pitch = min(max(0.08, camera.pitch - deltaY * sensitivity), .pi - 0.08)
+        engine.orbit(deltaX: deltaX, deltaY: deltaY)
     }
 
     func pan(deltaX: Float, deltaY: Float, viewSize: CGSize, state: UIGestureRecognizer.State) {
-        let height = max(1, Float(viewSize.height))
-        let aspect = max(0.1, Float(viewSize.width) / height)
-        let verticalFov = Float.pi / 3
-        let horizontalFov = 2 * atan(tan(verticalFov / 2) * aspect)
-
-        hasUserInteracted = true
-
-        let eye = SIMD3<Float>(
-            camera.target.x + cos(camera.yaw) * sin(camera.pitch) * camera.distance,
-            camera.target.y + cos(camera.pitch) * camera.distance,
-            camera.target.z + sin(camera.yaw) * sin(camera.pitch) * camera.distance
-        )
-        let forward = simd_normalize(camera.target - eye)
-        let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
-        let up = simd_normalize(simd_cross(right, forward))
-        let worldUnitsPerPointY = (2 * camera.distance * tan(verticalFov / 2)) / height
-        let worldUnitsPerPointX = (2 * camera.distance * tan(horizontalFov / 2)) / max(1, Float(viewSize.width))
-
-        camera.target += (-right * deltaX * worldUnitsPerPointX) + (up * deltaY * worldUnitsPerPointY)
+        engine.pan(deltaX: deltaX, deltaY: deltaY, viewSize: viewSize)
     }
 
     func zoom(scale: Float, state: UIGestureRecognizer.State) {
-        hasUserInteracted = true
-        camera.distance = min(max(4, camera.distance / max(0.2, scale)), 220)
+        engine.zoom(scale: scale)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        lastDrawableSize = size
+        engine.drawableSizeWillChange(size)
     }
 
     func draw(in view: MTKView) {
-        guard let descriptor = view.currentRenderPassDescriptor,
-              let drawable = view.currentDrawable,
-              let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
-            return
-        }
-
-        let uniforms = MetalUniforms(viewProjectionMatrix: makeViewProjectionMatrix(for: view))
-        encoder.setDepthStencilState(depthState)
-
-        if let triangleBuffer, !scene.triangleVertices.isEmpty {
-            encoder.setRenderPipelineState(trianglePipeline)
-            encoder.setVertexBuffer(triangleBuffer, offset: 0, index: 0)
-            encoder.setVertexBytes([uniforms], length: MemoryLayout<MetalUniforms>.stride, index: 1)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: scene.triangleVertices.count)
-        }
-
-        if let lineBuffer, !scene.lineVertices.isEmpty {
-            encoder.setRenderPipelineState(linePipeline)
-            encoder.setVertexBuffer(lineBuffer, offset: 0, index: 0)
-            encoder.setVertexBytes([uniforms], length: MemoryLayout<MetalUniforms>.stride, index: 1)
-            encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: scene.lineVertices.count)
-        }
-
-        if let pointBuffer, !scene.pointVertices.isEmpty {
-            encoder.setRenderPipelineState(pointPipeline)
-            encoder.setVertexBuffer(pointBuffer, offset: 0, index: 0)
-            encoder.setVertexBytes([uniforms], length: MemoryLayout<MetalUniforms>.stride, index: 1)
-            encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: scene.pointVertices.count)
-        }
-
-        encoder.endEncoding()
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
-        onLabelsChanged(projectLabels(in: view, matrix: uniforms.viewProjectionMatrix))
-    }
-
-    private func uploadBuffers() {
-        if !scene.triangleVertices.isEmpty {
-            triangleBuffer = device.makeBuffer(bytes: scene.triangleVertices, length: MemoryLayout<MetalVertex>.stride * scene.triangleVertices.count)
-        } else {
-            triangleBuffer = nil
-        }
-        if !scene.lineVertices.isEmpty {
-            lineBuffer = device.makeBuffer(bytes: scene.lineVertices, length: MemoryLayout<MetalVertex>.stride * scene.lineVertices.count)
-        } else {
-            lineBuffer = nil
-        }
-        if !scene.pointVertices.isEmpty {
-            pointBuffer = device.makeBuffer(bytes: scene.pointVertices, length: MemoryLayout<MetalPointVertex>.stride * scene.pointVertices.count)
-        } else {
-            pointBuffer = nil
-        }
-    }
-
-    private func resetCameraToScene() {
-        let center = scene.focusBounds.center
-        let span = scene.focusBounds.span
-        guard center.x.isFinite, center.y.isFinite, center.z.isFinite,
-              span.x.isFinite, span.y.isFinite, span.z.isFinite else {
-            return
-        }
-        camera.target = SIMD3<Float>(center.x, max(1, min(6, center.y)), center.z)
-
-        let drawableSize = lastDrawableSize == .zero ? (view?.drawableSize ?? .zero) : lastDrawableSize
-        let aspect = max(0.1, Float(drawableSize.width / max(1, drawableSize.height)))
-        let verticalFov = Float.pi / 3
-        let horizontalFov = 2 * atan(tan(verticalFov / 2) * aspect)
-
-        let directionToEye = simd_normalize(SIMD3<Float>(
-            cos(camera.yaw) * sin(camera.pitch),
-            cos(camera.pitch),
-            sin(camera.yaw) * sin(camera.pitch)
-        ))
-        let forward = -directionToEye
-        let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
-        let up = simd_normalize(simd_cross(right, forward))
-
-        var requiredDistance: Float = 0
-        for corner in focusBoundsCorners(scene.focusBounds) {
-            let relative = corner - camera.target
-            let forwardOffset = simd_dot(relative, forward)
-            let horizontalDistance = abs(simd_dot(relative, right)) / tan(horizontalFov / 2)
-            let verticalDistance = abs(simd_dot(relative, up)) / tan(verticalFov / 2)
-            requiredDistance = max(requiredDistance, horizontalDistance - forwardOffset)
-            requiredDistance = max(requiredDistance, verticalDistance - forwardOffset)
-        }
-
-        camera.distance = min(96, max(16, requiredDistance * 0.92))
-    }
-
-    private func makeViewProjectionMatrix(for view: MTKView) -> simd_float4x4 {
-        let aspect = max(0.1, Float(view.drawableSize.width / max(1, view.drawableSize.height)))
-        let projection = simd_float4x4.perspective(fovY: .pi / 3, aspect: aspect, nearZ: 0.1, farZ: 500)
-        let eye = SIMD3<Float>(
-            camera.target.x + cos(camera.yaw) * sin(camera.pitch) * camera.distance,
-            camera.target.y + cos(camera.pitch) * camera.distance,
-            camera.target.z + sin(camera.yaw) * sin(camera.pitch) * camera.distance
-        )
-        let viewMatrix = simd_float4x4.lookAt(eye: eye, center: camera.target, up: SIMD3<Float>(0, 1, 0))
-        return projection * viewMatrix
-    }
-
-    private func projectLabels(in view: MTKView, matrix: simd_float4x4) -> [ApproachMetalProjectedLabel] {
-        let width = max(1, Float(view.bounds.width))
-        let height = max(1, Float(view.bounds.height))
-        return scene.labels.map { label in
-            let clip = matrix * SIMD4<Float>(label.position.x, label.position.y, label.position.z, 1)
-            guard clip.w > 0 else {
-                return ApproachMetalProjectedLabel(id: label.id, text: label.text, color: Color(label.color), x: 0, y: 0, fontSize: label.fontSize, visible: false)
-            }
-            let ndc = clip / clip.w
-            let x = CGFloat((ndc.x * 0.5 + 0.5) * width)
-            let y = CGFloat((1 - (ndc.y * 0.5 + 0.5)) * height)
-            return ApproachMetalProjectedLabel(
-                id: label.id,
-                text: label.text,
-                color: Color(label.color),
-                x: x,
-                y: y,
-                fontSize: label.fontSize,
-                visible: abs(ndc.x) <= 1.0 && abs(ndc.y) <= 1.0 && ndc.z >= -1 && ndc.z <= 1
-            )
-        }
+        engine.draw(in: view)
     }
 }
 
-private func focusBoundsCorners(_ bounds: MetalSceneBounds) -> [SIMD3<Float>] {
-    [
-        SIMD3<Float>(bounds.min.x, bounds.min.y, bounds.min.z),
-        SIMD3<Float>(bounds.min.x, bounds.min.y, bounds.max.z),
-        SIMD3<Float>(bounds.min.x, bounds.max.y, bounds.min.z),
-        SIMD3<Float>(bounds.min.x, bounds.max.y, bounds.max.z),
-        SIMD3<Float>(bounds.max.x, bounds.min.y, bounds.min.z),
-        SIMD3<Float>(bounds.max.x, bounds.min.y, bounds.max.z),
-        SIMD3<Float>(bounds.max.x, bounds.max.y, bounds.min.z),
-        SIMD3<Float>(bounds.max.x, bounds.max.y, bounds.max.z),
-    ]
-}
-
-private func buildRenderScene(
+private func buildRenderStaticScene(
     sceneData: NativeSceneData,
     terrainData: TerrainWireframeData?,
-    verticalScale: Double
+    verticalScale: Double,
+    layerState: NativeLayerState
 ) -> RenderScene {
     var scene = RenderScene()
-    let pathPolylines = ApproachPathGeometry.buildPolylines(sceneData: sceneData, verticalScale: verticalScale)
-    let waypointPoints = buildWaypointRenderPoints(sceneData: sceneData, verticalScale: verticalScale)
-    let runwaySegments = buildMetalRunwaySegments(sceneData: sceneData, verticalScale: verticalScale)
+    let pathPolylines = layerState.approach
+        ? ApproachPathGeometry.buildPolylines(sceneData: sceneData, verticalScale: verticalScale)
+        : []
+    let waypointPoints = layerState.approach
+        ? buildWaypointRenderPoints(sceneData: sceneData, verticalScale: verticalScale)
+        : []
+    let runwaySegments = layerState.approach
+        ? buildMetalRunwaySegments(sceneData: sceneData, verticalScale: verticalScale)
+        : []
 
     if let terrainData {
         let vertices = terrainData.vertices.map {
@@ -339,14 +122,32 @@ private func buildRenderScene(
         appendTerrain(vertices: vertices, rows: terrainData.rows, columns: terrainData.columns, into: &scene)
     }
 
-    appendRunways(runwaySegments, into: &scene)
-    appendPaths(
-        pathPolylines,
-        verticalScale: verticalScale,
-        into: &scene
-    )
-    appendHoldPatterns(sceneData: sceneData, verticalScale: verticalScale, into: &scene)
-    appendWaypoints(waypointPoints, into: &scene)
+    if layerState.airspace {
+        appendAirspace(sceneData.airspace, airport: sceneData.airport, verticalScale: verticalScale, into: &scene)
+    }
+    if layerState.approach {
+        appendRunways(runwaySegments, into: &scene)
+        appendPaths(
+            pathPolylines,
+            verticalScale: verticalScale,
+            into: &scene
+        )
+        appendHoldPatterns(sceneData: sceneData, verticalScale: verticalScale, into: &scene)
+        appendWaypoints(waypointPoints, into: &scene)
+    }
+    return scene
+}
+
+private func buildTrafficRenderScene(
+    _ trafficScene: NativeTrafficScene,
+    layerState: NativeLayerState,
+    trafficDisplayOptions: NativeTrafficDisplayOptions
+) -> TrafficRenderScene {
+    var scene = TrafficRenderScene()
+    guard layerState.adsb else {
+        return scene
+    }
+    appendTraffic(trafficScene, trafficDisplayOptions: trafficDisplayOptions, into: &scene)
     return scene
 }
 
@@ -375,6 +176,221 @@ private func appendTerrain(vertices: [SIMD3<Float>], rows: Int, columns: Int, in
             appendLine(wireB, wireC, color: wireColor, into: &scene.lineVertices)
         }
     }
+}
+
+private func appendAirspace(
+    _ features: [AirspaceFeatureRecord],
+    airport: AirportRecord,
+    verticalScale: Double,
+    into scene: inout RenderScene
+) {
+    for feature in features {
+        guard let color = airspaceColor(for: feature.airspaceClass) else { continue }
+        let lowerAlt = resolveAirspaceLowerAltitudeFeet(feature.lowerAlt, airportElevationFeet: airport.elevation)
+        let upperAlt = feature.upperAlt
+        guard upperAlt > lowerAlt else { continue }
+
+        let wallColor = SIMD4<Float>(color.x, color.y, color.z, 0.06)
+        let edgeColor = SIMD4<Float>(color.x, color.y, color.z, 0.56)
+        let showBottomOutline = !shouldHideAirspaceBottomOutline(lowerAltFeet: feature.lowerAlt)
+
+        for ring in feature.coordinates where ring.count >= 3 {
+            let lowerPoints = sanitizedAirspaceRing(ring.map {
+                metalScenePoint(
+                    lat: $0.lat,
+                    lon: $0.lon,
+                    altitudeFeet: lowerAlt,
+                    airport: airport,
+                    verticalScale: verticalScale
+                )
+            })
+            guard lowerPoints.count >= 3 else { continue }
+            let upperY = Float(metalSceneY(mslAltitudeFeet: upperAlt, verticalScale: verticalScale))
+            let upperPoints = lowerPoints.map { SIMD3<Float>($0.x, upperY, $0.z) }
+            let triangleLowerBaseIndex = UInt32(scene.airspaceTriangleVertices.count)
+            scene.airspaceTriangleVertices.append(contentsOf: lowerPoints.map { MetalVertex(position: $0, color: wallColor) })
+            let triangleUpperBaseIndex = UInt32(scene.airspaceTriangleVertices.count)
+            scene.airspaceTriangleVertices.append(contentsOf: upperPoints.map { MetalVertex(position: $0, color: wallColor) })
+            let lineLowerBaseIndex = UInt32(scene.airspaceLineVertices.count)
+            scene.airspaceLineVertices.append(contentsOf: lowerPoints.map { MetalVertex(position: $0, color: edgeColor) })
+            let lineUpperBaseIndex = UInt32(scene.airspaceLineVertices.count)
+            scene.airspaceLineVertices.append(contentsOf: upperPoints.map { MetalVertex(position: $0, color: edgeColor) })
+
+            appendAirspaceCap(
+                points: upperPoints,
+                flipWinding: false,
+                baseIndex: triangleUpperBaseIndex,
+                into: &scene.airspaceTriangleIndices
+            )
+            if showBottomOutline {
+                appendAirspaceCap(
+                    points: lowerPoints,
+                    flipWinding: true,
+                    baseIndex: triangleLowerBaseIndex,
+                    into: &scene.airspaceTriangleIndices
+                )
+            }
+
+            for index in lowerPoints.indices {
+                let nextIndex = (index + 1) % lowerPoints.count
+                let triangleBottomA = triangleLowerBaseIndex + UInt32(index)
+                let triangleBottomB = triangleLowerBaseIndex + UInt32(nextIndex)
+                let triangleTopA = triangleUpperBaseIndex + UInt32(index)
+                let triangleTopB = triangleUpperBaseIndex + UInt32(nextIndex)
+
+                scene.airspaceTriangleIndices.append(contentsOf: [triangleBottomA, triangleTopA, triangleBottomB])
+                scene.airspaceTriangleIndices.append(contentsOf: [triangleBottomB, triangleTopA, triangleTopB])
+
+                let lineBottomA = lineLowerBaseIndex + UInt32(index)
+                let lineBottomB = lineLowerBaseIndex + UInt32(nextIndex)
+                let lineTopA = lineUpperBaseIndex + UInt32(index)
+                let lineTopB = lineUpperBaseIndex + UInt32(nextIndex)
+                scene.airspaceLineIndices.append(contentsOf: [lineTopA, lineTopB, lineBottomA, lineTopA])
+                if showBottomOutline {
+                    scene.airspaceLineIndices.append(contentsOf: [lineBottomA, lineBottomB])
+                }
+            }
+
+            for point in lowerPoints + upperPoints {
+                scene.bounds.include(point)
+            }
+        }
+    }
+}
+
+private func appendAirspaceCap(
+    points: [SIMD3<Float>],
+    flipWinding: Bool,
+    baseIndex: UInt32,
+    into indices: inout [UInt32]
+) {
+    let sanitizedPoints = sanitizedAirspaceRing(points)
+    guard sanitizedPoints.count >= 3 else { return }
+
+    let triangles = triangulateAirspaceRing(sanitizedPoints)
+    guard !triangles.isEmpty else { return }
+
+    for triangle in triangles {
+        let a = baseIndex + UInt32(triangle.0)
+        let b = baseIndex + UInt32(triangle.1)
+        let c = baseIndex + UInt32(triangle.2)
+        if flipWinding {
+            indices.append(contentsOf: [a, c, b])
+        } else {
+            indices.append(contentsOf: [a, b, c])
+        }
+    }
+}
+
+private func sanitizedAirspaceRing(_ points: [SIMD3<Float>]) -> [SIMD3<Float>] {
+    guard !points.isEmpty else { return [] }
+    var sanitized: [SIMD3<Float>] = []
+    for point in points {
+        if let last = sanitized.last,
+           simd_length_squared(point - last) <= 1e-8 {
+            continue
+        }
+        sanitized.append(point)
+    }
+    if sanitized.count >= 2,
+       simd_length_squared(sanitized[0] - sanitized[sanitized.count - 1]) <= 1e-8 {
+        sanitized.removeLast()
+    }
+    return sanitized
+}
+
+private func triangulateAirspaceRing(_ points: [SIMD3<Float>]) -> [(Int, Int, Int)] {
+    guard points.count >= 3 else { return [] }
+
+    var vertexIndices = Array(points.indices)
+    var triangles: [(Int, Int, Int)] = []
+    let isCounterClockwise = signedAirspaceArea(points) > 0
+
+    while vertexIndices.count > 3 {
+        var earFound = false
+        for offset in vertexIndices.indices {
+            let previousIndex = vertexIndices[(offset - 1 + vertexIndices.count) % vertexIndices.count]
+            let currentIndex = vertexIndices[offset]
+            let nextIndex = vertexIndices[(offset + 1) % vertexIndices.count]
+
+            let previous = points[previousIndex]
+            let current = points[currentIndex]
+            let next = points[nextIndex]
+
+            if !isAirspaceEarConvex(previous: previous, current: current, next: next, isCounterClockwise: isCounterClockwise) {
+                continue
+            }
+
+            var containsOtherPoint = false
+            for candidateIndex in vertexIndices where candidateIndex != previousIndex && candidateIndex != currentIndex && candidateIndex != nextIndex {
+                if airspaceTriangleContainsPoint(
+                    point: points[candidateIndex],
+                    a: previous,
+                    b: current,
+                    c: next
+                ) {
+                    containsOtherPoint = true
+                    break
+                }
+            }
+            if containsOtherPoint {
+                continue
+            }
+
+            triangles.append((previousIndex, currentIndex, nextIndex))
+            vertexIndices.remove(at: offset)
+            earFound = true
+            break
+        }
+
+        if !earFound {
+            return []
+        }
+    }
+
+    if vertexIndices.count == 3 {
+        triangles.append((vertexIndices[0], vertexIndices[1], vertexIndices[2]))
+    }
+    return triangles
+}
+
+private func signedAirspaceArea(_ points: [SIMD3<Float>]) -> Float {
+    guard points.count >= 3 else { return 0 }
+    var area: Float = 0
+    for index in points.indices {
+        let nextIndex = (index + 1) % points.count
+        area += points[index].x * points[nextIndex].z - points[nextIndex].x * points[index].z
+    }
+    return area * 0.5
+}
+
+private func isAirspaceEarConvex(
+    previous: SIMD3<Float>,
+    current: SIMD3<Float>,
+    next: SIMD3<Float>,
+    isCounterClockwise: Bool
+) -> Bool {
+    let cross = (current.x - previous.x) * (next.z - current.z)
+        - (current.z - previous.z) * (next.x - current.x)
+    return isCounterClockwise ? cross > 1e-6 : cross < -1e-6
+}
+
+private func airspaceTriangleContainsPoint(
+    point: SIMD3<Float>,
+    a: SIMD3<Float>,
+    b: SIMD3<Float>,
+    c: SIMD3<Float>
+) -> Bool {
+    let area = abs(airspaceTriangleArea(a, b, c))
+    guard area > 1e-6 else { return false }
+    let a1 = abs(airspaceTriangleArea(point, b, c))
+    let a2 = abs(airspaceTriangleArea(a, point, c))
+    let a3 = abs(airspaceTriangleArea(a, b, point))
+    return abs(area - (a1 + a2 + a3)) <= 1e-4
+}
+
+private func airspaceTriangleArea(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float {
+    ((b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x)) * 0.5
 }
 
 private func appendPaths(
@@ -552,6 +568,71 @@ private func appendWaypoints(_ points: [MetalWaypointRenderPoint], into scene: i
         scene.pointVertices.append(MetalPointVertex(position: point.position, color: point.color, size: point.size))
         scene.labels.append(LabelAnchor(id: point.labelText, text: point.labelText, position: point.position + SIMD3<Float>(0, 0.18, 0), color: .white, fontSize: 11))
         scene.bounds.include(point.position)
+    }
+}
+
+private func appendTraffic(
+    _ trafficScene: NativeTrafficScene,
+    trafficDisplayOptions: NativeTrafficDisplayOptions,
+    into scene: inout TrafficRenderScene
+) {
+    let activeMarkerColor = SIMD4<Float>(103.0 / 255.0, 242.0 / 255.0, 1.0, 1.0)
+    let departedMarkerColor = SIMD4<Float>(77.0 / 255.0, 162.0 / 255.0, 1.0, 0.76)
+    let groundMarkerColor = SIMD4<Float>(1.0, 196.0 / 255.0, 118.0 / 255.0, 0.92)
+    let activeTrailColor = SIMD4<Float>(21.0 / 255.0, 208.0 / 255.0, 1.0, 0.52)
+    let departedTrailColor = SIMD4<Float>(21.0 / 255.0, 208.0 / 255.0, 1.0, 0.22)
+    let headingColor = SIMD4<Float>(155.0 / 255.0, 247.0 / 255.0, 1.0, 0.9)
+
+    for track in trafficScene.tracks {
+        let marker = SIMD3<Float>(
+            Float(track.markerPosition.x),
+            Float(track.markerPosition.y),
+            Float(track.markerPosition.z)
+        )
+        let markerColor = if track.isOnGround {
+            groundMarkerColor
+        } else if track.isCurrentlyPresent {
+            activeMarkerColor
+        } else {
+            departedMarkerColor
+        }
+        scene.pointVertices.append(MetalPointVertex(
+            position: marker,
+            color: markerColor,
+            size: track.isCurrentlyPresent ? 11 : 8
+        ))
+
+        if track.isCurrentlyPresent {
+            let headingRadians = Float(track.headingDegrees * .pi / 180.0)
+            let headingVector = SIMD3<Float>(sin(headingRadians), 0, -cos(headingRadians)) * 0.22
+            appendLine(marker, marker + headingVector, color: headingColor, into: &scene.lineVertices)
+        }
+
+        let trailColor = track.isCurrentlyPresent ? activeTrailColor : departedTrailColor
+        let trailPoints = track.trailPoints.map {
+            SIMD3<Float>(Float($0.x), Float($0.y), Float($0.z))
+        }
+        for (start, end) in zip(trailPoints, trailPoints.dropFirst()) {
+            appendLine(start, end, color: trailColor, into: &scene.lineVertices)
+        }
+
+        if trafficDisplayOptions.showCallsignLabels,
+           track.isCurrentlyPresent,
+           let callsignLabel = track.callsignLabel,
+           !(trafficDisplayOptions.hideGroundCallsignLabels && track.isOnGround) {
+            scene.labels.append(LabelAnchor(
+                id: "traffic-\(track.hex)",
+                text: callsignLabel,
+                position: marker + SIMD3<Float>(0, 0.28, 0),
+                color: UIColor(
+                    red: CGFloat(activeMarkerColor.x),
+                    green: CGFloat(activeMarkerColor.y),
+                    blue: CGFloat(activeMarkerColor.z),
+                    alpha: 1
+                ),
+                fontSize: 10
+            ))
+        }
     }
 }
 
@@ -878,6 +959,30 @@ private func resolveMetalWaypoint(id: String, waypointsByID: [String: WaypointRe
     return nil
 }
 
+private func airspaceColor(for airspaceClass: String) -> SIMD3<Float>? {
+    switch airspaceClass {
+    case "B":
+        return SIMD3<Float>(0.0, 102.0 / 255.0, 1.0)
+    case "C":
+        return SIMD3<Float>(1.0, 0.0, 1.0)
+    case "D":
+        return SIMD3<Float>(0.0, 153.0 / 255.0, 1.0)
+    default:
+        return nil
+    }
+}
+
+private func resolveAirspaceLowerAltitudeFeet(_ lowerAltFeet: Double, airportElevationFeet: Double) -> Double {
+    guard lowerAltFeet <= 0, airportElevationFeet.isFinite else {
+        return lowerAltFeet
+    }
+    return max(lowerAltFeet, airportElevationFeet)
+}
+
+private func shouldHideAirspaceBottomOutline(lowerAltFeet: Double) -> Bool {
+    lowerAltFeet <= 100
+}
+
 private func metalSceneY(mslAltitudeFeet: Double, verticalScale: Double) -> Double {
     altToY(altFeet: mslAltitudeFeet, verticalScale: verticalScale)
 }
@@ -923,30 +1028,4 @@ private func formatHoldDistance(_ distanceNm: Double) -> String {
         return "\(Int(rounded.rounded()))NM"
     }
     return "\(rounded.formatted(.number.precision(.fractionLength(1))))NM"
-}
-
-private extension simd_float4x4 {
-    static func perspective(fovY: Float, aspect: Float, nearZ: Float, farZ: Float) -> simd_float4x4 {
-        let y = 1 / tan(fovY * 0.5)
-        let x = y / aspect
-        let z = farZ / (nearZ - farZ)
-        return simd_float4x4(
-            SIMD4<Float>(x, 0, 0, 0),
-            SIMD4<Float>(0, y, 0, 0),
-            SIMD4<Float>(0, 0, z, -1),
-            SIMD4<Float>(0, 0, z * nearZ, 0)
-        )
-    }
-
-    static func lookAt(eye: SIMD3<Float>, center: SIMD3<Float>, up: SIMD3<Float>) -> simd_float4x4 {
-        let z = simd_normalize(eye - center)
-        let x = simd_normalize(simd_cross(up, z))
-        let y = simd_cross(z, x)
-        return simd_float4x4(
-            SIMD4<Float>(x.x, y.x, z.x, 0),
-            SIMD4<Float>(x.y, y.y, z.y, 0),
-            SIMD4<Float>(x.z, y.z, z.z, 0),
-            SIMD4<Float>(-simd_dot(x, eye), -simd_dot(y, eye), -simd_dot(z, eye), 1)
-        )
-    }
 }

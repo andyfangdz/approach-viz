@@ -37,9 +37,46 @@ struct WaypointRecord: Hashable {
     let type: String
 }
 
+struct AirspaceFeatureRecord: Hashable {
+    let type: String
+    let airspaceClass: String
+    let name: String
+    let lowerAlt: Double
+    let upperAlt: Double
+    let coordinates: [[AirspaceCoordinate]]
+}
+
+struct AirspaceCoordinate: Hashable, Codable {
+    let lon: Double
+    let lat: Double
+
+    init(lon: Double, lat: Double) {
+        self.lon = lon
+        self.lat = lat
+    }
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        self.lon = try container.decode(Double.self)
+        self.lat = try container.decode(Double.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.unkeyedContainer()
+        try container.encode(lon)
+        try container.encode(lat)
+    }
+}
+
 struct CycleInfo: Hashable {
     let cifpCycle: String
     let dtppCycle: String
+}
+
+struct ElevationAirportRecord: Hashable {
+    let lat: Double
+    let lon: Double
+    let elevation: Double
 }
 
 struct MinimumsValueSummary: Hashable {
@@ -67,9 +104,59 @@ struct NativeSceneData: Hashable {
     let currentApproach: SerializedApproach?
     let runways: [RunwayRecord]
     let waypoints: [WaypointRecord]
+    let elevationAirports: [ElevationAirportRecord]
+    let airspace: [AirspaceFeatureRecord]
     let minimumsSummary: MinimumsSummary?
     let missedApproachClimbRequirement: MissedApproachClimbRequirement?
     let cycleInfo: CycleInfo?
+}
+
+struct TrafficScenePoint: Hashable {
+    let x: Double
+    let y: Double
+    let z: Double
+}
+
+struct TrafficTrackRecord: Identifiable, Hashable {
+    let hex: String
+    let isCurrentlyPresent: Bool
+    let callsignLabel: String?
+    let isOnGround: Bool
+    let headingDegrees: Double
+    let markerPosition: TrafficScenePoint
+    let trailPoints: [TrafficScenePoint]
+
+    var id: String { hex }
+}
+
+struct NativeTrafficScene: Hashable {
+    let trackCount: Int
+    let renderedTrackCount: Int
+    let historyPointCount: Int
+    let renderHash: UInt64
+    let tracks: [TrafficTrackRecord]
+
+    static let empty = NativeTrafficScene(
+        trackCount: 0,
+        renderedTrackCount: 0,
+        historyPointCount: 0,
+        renderHash: 0,
+        tracks: []
+    )
+}
+
+struct NativeLayerState: Hashable {
+    var approach = true
+    var airspace = true
+    var adsb = true
+}
+
+struct NativeTrafficDisplayOptions: Hashable {
+    var hideGroundTargets = false
+    var showCallsignLabels = false
+    var hideGroundCallsignLabels = true
+    var showDepartedTrafficTrails = true
+    var historyMinutes = 3.0
 }
 
 struct SerializedApproach: Codable, Hashable {

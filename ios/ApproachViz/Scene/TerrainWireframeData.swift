@@ -2,8 +2,8 @@ import Foundation
 import CoreGraphics
 import UIKit
 
-struct TerrainWireframeData: Sendable {
-    struct Vertex: Sendable {
+struct TerrainWireframeData: Sendable, Hashable {
+    struct Vertex: Sendable, Hashable {
         let eastNm: Double
         let northNm: Double
         let elevationFeet: Double

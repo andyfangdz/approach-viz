@@ -3,6 +3,8 @@ import Foundation
 struct SceneRepository {
     private let database: SQLiteDatabase
     private let decoder = JSONDecoder()
+    private let airspaceRadiusNm = 30.0
+    private let trafficAirportRadiusNm = 80.0
 
     init(database: SQLiteDatabase = try! SQLiteDatabase()) {
         self.database = database
@@ -50,6 +52,8 @@ struct SceneRepository {
         )
         let runways = try loadRunways(airportID: airportID)
         let waypoints = try loadWaypoints(for: currentApproach)
+        let elevationAirports = try loadElevationAirports(airport: airport)
+        let airspace = try loadAirspace(airport: airport)
         let minimumsSummary = ApproachReferenceData.deriveMinimumsSummary(
             minimaApproaches: minimaApproaches,
             selectedExternalApproach: selectedExternalApproach,
@@ -67,6 +71,8 @@ struct SceneRepository {
             currentApproach: currentApproach,
             runways: runways,
             waypoints: waypoints,
+            elevationAirports: elevationAirports,
+            airspace: airspace,
             minimumsSummary: minimumsSummary,
             missedApproachClimbRequirement: missedApproachClimbRequirement,
             cycleInfo: cycleInfo
@@ -186,6 +192,94 @@ struct SceneRepository {
         }
     }
 
+    private func loadAirspace(airport: AirportRecord) throws -> [AirspaceFeatureRecord] {
+        let latRadius = airspaceRadiusNm / 60.0
+        let lonRadius = airspaceRadiusNm / (60.0 * max(0.2, cos(airport.lat * .pi / 180.0)))
+        let minLat = airport.lat - latRadius
+        let maxLat = airport.lat + latRadius
+        let minLon = airport.lon - lonRadius
+        let maxLon = airport.lon + lonRadius
+
+        let sql = """
+            SELECT class, name, lower_alt, upper_alt, coordinates_json
+            FROM airspace_rtree r
+            JOIN airspace a ON a.id = r.id
+            WHERE r.max_lat >= ? AND r.min_lat <= ?
+              AND r.max_lon >= ? AND r.min_lon <= ?
+            """
+
+        return try database.query(
+            sql: sql,
+            bindings: [String(minLat), String(maxLat), String(minLon), String(maxLon)]
+        ) { statement in
+            let coordinatesJSON = statement.string(at: 4)
+            guard let data = coordinatesJSON.data(using: .utf8) else {
+                throw SQLiteDatabaseError.invalidData("Airspace coordinates JSON is not valid UTF-8.")
+            }
+            let coordinates = try decoder.decode([[AirspaceCoordinate]].self, from: data)
+            return AirspaceFeatureRecord(
+                type: "CLASS",
+                airspaceClass: statement.string(at: 0),
+                name: statement.string(at: 1),
+                lowerAlt: statement.double(at: 2),
+                upperAlt: statement.double(at: 3),
+                coordinates: coordinates
+            )
+        }.filter { feature in
+            feature.coordinates.contains { ring in
+                ring.contains { coordinate in
+                    latLonDistanceNm(
+                        lat1: airport.lat,
+                        lon1: airport.lon,
+                        lat2: coordinate.lat,
+                        lon2: coordinate.lon
+                    ) <= airspaceRadiusNm
+                }
+            }
+        }
+    }
+
+    private func loadElevationAirports(airport: AirportRecord) throws -> [ElevationAirportRecord] {
+        let latRadius = trafficAirportRadiusNm / 60.0
+        let lonRadius = trafficAirportRadiusNm / (60.0 * max(0.2, cos(airport.lat * .pi / 180.0)))
+        let minLat = airport.lat - latRadius
+        let maxLat = airport.lat + latRadius
+        let minLon = airport.lon - lonRadius
+        let maxLon = airport.lon + lonRadius
+
+        let sql = """
+            SELECT id, lat, lon, elevation
+            FROM airports
+            WHERE id != ?
+              AND lat BETWEEN ? AND ?
+              AND lon BETWEEN ? AND ?
+            """
+
+        return try database.query(
+            sql: sql,
+            bindings: [
+                airport.id,
+                String(minLat),
+                String(maxLat),
+                String(minLon),
+                String(maxLon),
+            ]
+        ) { statement in
+            ElevationAirportRecord(
+                lat: statement.double(at: 1),
+                lon: statement.double(at: 2),
+                elevation: statement.double(at: 3)
+            )
+        }.filter { candidate in
+            latLonDistanceNm(
+                lat1: airport.lat,
+                lon1: airport.lon,
+                lat2: candidate.lat,
+                lon2: candidate.lon
+            ) <= trafficAirportRadiusNm
+        }
+    }
+
     private func loadCycleInfo() throws -> CycleInfo? {
         let cifpCycle = try database.scalar(sql: "SELECT value FROM metadata WHERE key = 'cifp_cycle'")
         let dtppCycle = try database.scalar(sql: "SELECT value FROM metadata WHERE key = 'dtpp_cycle_number'")
@@ -219,5 +313,20 @@ struct SceneRepository {
             collect(from: transition.legs)
         }
         return Array(ids)
+    }
+
+    private func latLonDistanceNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
+        let degreesToRadians = Double.pi / 180.0
+        let phi1 = lat1 * degreesToRadians
+        let phi2 = lat2 * degreesToRadians
+        let deltaPhi = (lat2 - lat1) * degreesToRadians
+        let deltaLambda = (lon2 - lon1) * degreesToRadians
+
+        let sinDeltaPhi = sin(deltaPhi / 2.0)
+        let sinDeltaLambda = sin(deltaLambda / 2.0)
+        let a = sinDeltaPhi * sinDeltaPhi
+            + cos(phi1) * cos(phi2) * sinDeltaLambda * sinDeltaLambda
+        let c = 2.0 * atan2(sqrt(a), sqrt(max(0.0, 1.0 - a)))
+        return 3440.065 * c
     }
 }

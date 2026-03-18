@@ -10,21 +10,29 @@ Current native scene behavior:
 - MetalKit scene renders:
   - Terrarium-backed terrain wireframe sampled around the airport
   - translucent terrain fill under the wireframe
+  - Class B/C/D airspace volumes with triangulated top caps, optional bottom caps, and top/side edge outlines using the same SQLite airspace source and surface-floor clamp rule as the web renderer, drawn in a separate non-depth-writing translucent pass so overlapping sectors stay airy instead of reading opaque
   - runway geometry
   - waypoint point sprites plus SwiftUI overlay labels positioned from resolved leg altitudes
   - sampled path line geometry for the selected approach's transitions, final legs, and missed legs
   - separate hold-pattern overlays and hold annotations for hold-course, true-course, distance, and turn direction
+  - live ADS-B traffic markers, optional current-track callsign labels, and departed-history trails generated from the shared Rust traffic merge/render state
   - custom gesture camera with one-finger orbit, two-finger pan, and pinch zoom
 - The earlier RealityKit renderer has been removed; the native renderer is now MetalKit-only
 - Native scene now uses a dark presentation and a high-density triangle-style terrain wireframe topology closer to the web renderer than the earlier RealityKit MVP
-- Native startup defaults to `KSBS` / `R32-Z` so the MVP opens on a terrain-heavy procedure instead of the first alphabetical airport
+- Native startup defaults to `KTEB` / `H06-Z` so the MVP opens on an airspace-heavy procedure instead of the first alphabetical airport
 - The native vertical-scale slider now starts at `3.0x`, matching the web renderer's default exaggeration more closely
 - The Metal renderer now seeds its initial orbit target/distance from the rendered procedure focus bounds so phone-sized viewports center the active procedure more reliably before user interaction, and uses a portrait-tuned default azimuth closer to the production web composition
 - The native initial orbit azimuth now matches the web scene's default southeast-looking camera more closely, reducing cases where correct path geometry reads incorrectly because of a mismatched startup view direction
 - The Metal camera reset fit now uses a tighter minimum/scale than the earlier overview framing, so phone-sized startup views sit closer to the active procedure instead of defaulting to a distant map-like overview
 - Native orbit drag now follows finger direction horizontally instead of inverting left/right yaw, and the Metal view now requests the display's maximum frame rate instead of capping itself at 30 FPS
+- The Metal view now renders on demand rather than continuously; scene redraws are triggered by scene updates, terrain loads, view-size changes, and camera gestures through scheduled `setNeedsDisplay()` invalidation instead of synchronous gesture-time `draw()` calls, which reduces touch-loop blocking without changing geometry fidelity
+- Native airspace now renders as indexed Metal triangle/line meshes rather than fully expanded raw primitive arrays, reducing duplicate vertex work while keeping the same airspace geometry visible during interaction
+- The native Metal renderer is now split into a small internal rendering framework: scene assembly stays in `ApproachMetalRenderer.swift`, while explicit dirty-flag invalidation, camera math, cached uniforms/label projection, and reusable primitive/indexed draw layers live in dedicated engine/controller files, so camera-only changes do not rebuild geometry buffers
+- The debug simulator build now exposes a small on-screen Metal stats HUD driven by the render engine, showing the last invalidation reason, draw-call/primitive counts, visible label count, and CPU time spent in the overall draw path, frame-state sync, buffer upload, and label projection
 - Native auto-fit now prioritizes final/missed path geometry and missed-hold geometry over transition-only holds, runway labels, and waypoint clouds, reducing the disconnected-looking wide startup framing seen on procedures like `KSBS R32-Z`
 - SwiftUI overlay labels now project using the Metal view's point-space bounds instead of drawable pixel dimensions, so waypoint and hold labels stay anchored near their rendered features on Retina simulators
+- Native waypoint and hold labels now render through a single UIKit overlay view with reused `UILabel` instances instead of feeding per-frame label state back through SwiftUI, reducing interaction-time UI churn while keeping labels visible
+- Native detail controls now behave more like the web client: Layers, Options, and Debug are shown/hidden through floating FAB-triggered panels instead of a permanent bottom inset, and the native Options panel now exposes the same current ADS-B toggles as the web client (`Hide Ground Traffic`, `Show Traffic Callsigns`, `Hide Ground Callsign Labels`, `Traffic History`, `Show Departed Traffic Trails`)
 - Metal path overlays now consume the shared Rust path builder's `verticalLines` and `turnConstraintLabels` outputs directly instead of synthesizing guide lines from every sampled path point, which keeps the iOS path presentation aligned with the web worker's path-decoration logic
 - Native waypoint, runway, and hold overlay anchors now use the same Rust local-scene axis sign convention as the shared path builder instead of applying an extra `z` inversion in Swift, so overlays and sampled path geometry occupy the same coordinate frame
 - Scene coordinates and approach-path domain logic come from the shared Rust core through UniFFI-generated Swift bindings:
@@ -34,9 +42,18 @@ Current native scene behavior:
   - `resolveApproachAltitudes`
   - `buildApproachPathGeometry`
   - `buildApproachHoldGeometry`
+- Native traffic state now also comes from the shared Rust core through UniFFI:
+  - `TrafficStateHandle.merge(...)`
+  - `TrafficStateHandle.recompute(...)`
+  - `TrafficStateHandle.pruneForError(...)`
+  - `TrafficStateHandle.buildRenderTracks(...)`
 - Native Metal terrain, waypoint/runway anchors, hold overlays, and path geometry now all share the web renderer's absolute-MSL vertical frame instead of mixing airport-relative terrain/markers with absolute path geometry
 - Runway prisms now render at airport elevation in that same absolute-MSL frame, with a slight surface lift so mountain airports like `KSBS` do not draw the runway underground against the terrain mesh
 - Native renderer `y` placement is now intentionally funneled through explicit absolute-MSL helpers in Swift (`metalSceneY` / `metalScenePoint`) instead of mixing direct `altToY(...)` calls with ad hoc feature-specific offsets, reducing the chance of reintroducing airport-relative vertical bugs
+- The native traffic poller follows the same live-plus-history pattern as the web overlay: startup full-history backfill, light live-only primary polls every 5 seconds, periodic full-history refreshes, and targeted `historyHexes` follow-up fetches for tracked aircraft that still need trail backfill
+- Native traffic geometry is now split from the static scene: terrain, airspace, runway, waypoint, hold, and approach-path buffers stay cached until the selected scene or vertical scale changes, while traffic polls only invalidate/upload dedicated dynamic Metal line/point layers so live aircraft updates can continue during orbit/pan/pinch gestures without a full render-scene rebuild
+- Traffic callsign labels are generated in the same dynamic Metal/overlay pass as traffic markers, so changing callsign-related options does not require rebuilding cached terrain, airspace, or approach geometry
+- On iOS, traffic polling hits the deployed runtime directly at `https://approach-runtime.andyfang.app/v1/traffic/adsbx` in `format=binary` mode rather than going through the Next.js proxy routes used by the web client
 
 ## Data Inputs
 
@@ -48,6 +65,8 @@ Current native scene behavior:
   - approaches
   - runways
   - waypoints
+  - elevation-only nearby airports for traffic ground-altitude lookup
+  - airspace
   - metadata cycle rows
 - Approach geometry currently uses the serialized `approaches.data_json` payload already produced by the web data pipeline, but the native path/altitude/hold computation itself is now the same Rust implementation used by the web worker
 - Native path composition now matches the web renderer more closely:
@@ -65,9 +84,7 @@ Current native scene behavior:
 
 The native MVP intentionally does not yet implement:
 
-- airspace rendering
 - MRMS weather
-- ADS-B traffic
 - chart/satellite surfaces
 - approach plates
 - full web feature parity for labels, materials, camera choreography, and every procedure edge case

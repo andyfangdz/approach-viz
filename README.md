@@ -28,12 +28,12 @@ Open `http://localhost:3000`.
 The repository now includes a native iOS rewrite foundation in [`ios/`](ios/) built with SwiftUI + MetalKit.
 
 - Airport sidebar and approach list load from the same bundled `approach-viz.sqlite`
-- MetalKit detail view renders a dark-mode Terrarium-backed terrain wireframe/fill, runway geometry, waypoint point sprites with label overlays, sampled transition/final/missed path segments, and separate hold overlays/annotations
+- MetalKit detail view renders a dark-mode Terrarium-backed terrain wireframe/fill, Class B/C/D airspace volumes, runway geometry, waypoint point sprites with label overlays, sampled transition/final/missed path segments, separate hold overlays/annotations, and a live ADS-B traffic layer with current markers plus departed-history trails
 - Native path/vertical-profile data is enriched from bundled external approach reference JSON (`public/data/approach-db/approaches.json`) so matched minimums, VDA, and parsed missed-climb requirements can influence the rendered procedure
-- Web and iOS now share one Rust approach-path implementation from `crates/approach-viz-core/src/approach_path.rs` for altitude resolution, path geometry, and hold geometry; the web app calls it through WASM and the iOS app calls it through UniFFI
+- Web and iOS now share one Rust approach-path implementation from `crates/approach-viz-core/src/approach_path.rs` for altitude resolution, path geometry, and hold geometry, and they also share the Rust traffic merge/render engine from `crates/approach-viz-core/src/traffic_merge.rs`; the web app calls both through WASM and the iOS app calls both through UniFFI
 - `npm run build:ios` regenerates the bridge xcframework and Xcode project via XcodeGen; simulator builds are `arm64`-only
 
-Current limitation: the native app foundation does not yet include weather, live traffic, chart/plate overlays, or full web feature parity. The current MetalKit pass is materially closer on terrain and path composition, now including dashed hold overlays, scene-fit orbit framing, corrected left/right orbit drag, two-finger pan, and display-max frame-rate requests, but camera/framing, labels, runway prominence, and some procedure-shape edge cases still differ from production. The old RealityKit renderer has been removed.
+Current limitation: the native app foundation still does not include weather, chart/plate overlays, or full web feature parity. The current MetalKit pass now includes dashed hold overlays, scene-fit orbit framing, corrected left/right orbit drag, two-finger pan, display-max frame-rate requests, and shared-Rust live-plus-history traffic, but camera/framing, labels, runway prominence, and some procedure-shape edge cases still differ from production. The old RealityKit renderer has been removed.
 
 ## Features
 

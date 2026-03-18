@@ -4,31 +4,26 @@ import UIKit
 
 struct ApproachMetalSceneView: View {
     let sceneData: NativeSceneData
+    let trafficScene: NativeTrafficScene
+    let layerState: NativeLayerState
+    let trafficDisplayOptions: NativeTrafficDisplayOptions
     let verticalScale: Double
+    let capturesRenderStats: Bool
+    @Binding var renderStats: ApproachMetalRenderStats
 
     @State private var terrainData: TerrainWireframeData?
-    @State private var labels: [ApproachMetalProjectedLabel] = []
 
     var body: some View {
-        ZStack {
-            ApproachMetalViewRepresentable(
-                sceneData: sceneData,
-                terrainData: terrainData,
-                verticalScale: verticalScale,
-                labels: $labels
-            )
-
-            ForEach(labels) { label in
-                if label.visible {
-                    Text(label.text)
-                        .font(.system(size: label.fontSize, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(label.color)
-                        .shadow(color: Color.black.opacity(0.9), radius: 4)
-                        .shadow(color: Color.black.opacity(0.7), radius: 8)
-                        .position(x: label.x, y: label.y)
-                }
-            }
-        }
+        ApproachMetalViewRepresentable(
+            sceneData: sceneData,
+            trafficScene: trafficScene,
+            layerState: layerState,
+            trafficDisplayOptions: trafficDisplayOptions,
+            terrainData: terrainData,
+            verticalScale: verticalScale,
+            capturesRenderStats: capturesRenderStats,
+            renderStats: $renderStats
+        )
         .task(id: "\(sceneData.airport.id)-\(sceneData.selectedApproachID)") {
             do {
                 terrainData = try await TerrainWireframeLoader.shared.load(
@@ -44,52 +39,105 @@ struct ApproachMetalSceneView: View {
 
 private struct ApproachMetalViewRepresentable: UIViewRepresentable {
     let sceneData: NativeSceneData
+    let trafficScene: NativeTrafficScene
+    let layerState: NativeLayerState
+    let trafficDisplayOptions: NativeTrafficDisplayOptions
     let terrainData: TerrainWireframeData?
     let verticalScale: Double
-    @Binding var labels: [ApproachMetalProjectedLabel]
+    let capturesRenderStats: Bool
+    @Binding var renderStats: ApproachMetalRenderStats
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(labels: $labels)
+        Coordinator(renderStats: $renderStats, capturesRenderStats: capturesRenderStats)
     }
 
-    func makeUIView(context: Context) -> MTKView {
-        let view = MTKView(frame: .zero, device: MTLCreateSystemDefaultDevice())
+    func makeUIView(context: Context) -> ApproachMetalContainerView {
+        let container = ApproachMetalContainerView(frame: .zero)
+        let view = container.metalView
+        view.device = MTLCreateSystemDefaultDevice()
         view.clearColor = MTLClearColor(red: 10.0 / 255.0, green: 10.0 / 255.0, blue: 20.0 / 255.0, alpha: 1.0)
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
         view.sampleCount = 1
         view.preferredFramesPerSecond = UIScreen.main.maximumFramesPerSecond
-        view.enableSetNeedsDisplay = false
-        view.isPaused = false
-        context.coordinator.attach(to: view)
-        context.coordinator.update(sceneData: sceneData, terrainData: terrainData, verticalScale: verticalScale)
-        return view
+        view.enableSetNeedsDisplay = true
+        view.isPaused = true
+        context.coordinator.attach(to: container)
+        context.coordinator.update(
+            sceneData: sceneData,
+            trafficScene: trafficScene,
+            layerState: layerState,
+            trafficDisplayOptions: trafficDisplayOptions,
+            terrainData: terrainData,
+            verticalScale: verticalScale
+        )
+        return container
     }
 
-    func updateUIView(_ uiView: MTKView, context: Context) {
-        context.coordinator.update(sceneData: sceneData, terrainData: terrainData, verticalScale: verticalScale)
+    func updateUIView(_ uiView: ApproachMetalContainerView, context: Context) {
+        context.coordinator.setRenderStatsCaptureEnabled(capturesRenderStats)
+        context.coordinator.update(
+            sceneData: sceneData,
+            trafficScene: trafficScene,
+            layerState: layerState,
+            trafficDisplayOptions: trafficDisplayOptions,
+            terrainData: terrainData,
+            verticalScale: verticalScale
+        )
     }
 
     @MainActor
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         private var renderer: ApproachMetalRenderer?
-        private var labels: Binding<[ApproachMetalProjectedLabel]>
+        private weak var labelOverlay: ApproachMetalLabelOverlayView?
+        private var renderStats: Binding<ApproachMetalRenderStats>
+        private var capturesRenderStats: Bool
 
-        init(labels: Binding<[ApproachMetalProjectedLabel]>) {
-            self.labels = labels
+        init(renderStats: Binding<ApproachMetalRenderStats>, capturesRenderStats: Bool) {
+            self.renderStats = renderStats
+            self.capturesRenderStats = capturesRenderStats
         }
 
-        func attach(to view: MTKView) {
-            renderer = ApproachMetalRenderer(view: view) { [weak self] nextLabels in
-                DispatchQueue.main.async {
-                    self?.labels.wrappedValue = nextLabels
-                }
+        func setRenderStatsCaptureEnabled(_ enabled: Bool) {
+            capturesRenderStats = enabled
+            if !enabled, renderStats.wrappedValue != .empty {
+                renderStats.wrappedValue = .empty
             }
-            installGestures(on: view)
         }
 
-        func update(sceneData: NativeSceneData, terrainData: TerrainWireframeData?, verticalScale: Double) {
-            renderer?.update(sceneData: sceneData, terrainData: terrainData, verticalScale: verticalScale)
+        func attach(to container: ApproachMetalContainerView) {
+            labelOverlay = container.labelOverlay
+            renderer = ApproachMetalRenderer(
+                view: container.metalView,
+                onLabelsChanged: { [weak self] nextLabels in
+                    self?.labelOverlay?.update(labels: nextLabels)
+                },
+                onStatsChanged: { [weak self] stats in
+                    guard let self, self.capturesRenderStats else { return }
+                    if self.renderStats.wrappedValue != stats {
+                        self.renderStats.wrappedValue = stats
+                    }
+                }
+            )
+            installGestures(on: container.metalView)
+        }
+
+        func update(
+            sceneData: NativeSceneData,
+            trafficScene: NativeTrafficScene,
+            layerState: NativeLayerState,
+            trafficDisplayOptions: NativeTrafficDisplayOptions,
+            terrainData: TerrainWireframeData?,
+            verticalScale: Double
+        ) {
+            renderer?.update(
+                sceneData: sceneData,
+                trafficScene: trafficScene,
+                layerState: layerState,
+                trafficDisplayOptions: trafficDisplayOptions,
+                terrainData: terrainData,
+                verticalScale: verticalScale
+            )
         }
 
         private func installGestures(on view: MTKView) {
@@ -141,5 +189,91 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
             let recognizers = [gestureRecognizer, otherGestureRecognizer]
             return recognizers.contains { $0 is UIPinchGestureRecognizer }
         }
+    }
+}
+
+private final class ApproachMetalContainerView: UIView {
+    let metalView = MTKView(frame: .zero)
+    let labelOverlay = ApproachMetalLabelOverlayView(frame: .zero)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        metalView.translatesAutoresizingMaskIntoConstraints = false
+        labelOverlay.translatesAutoresizingMaskIntoConstraints = false
+        labelOverlay.isUserInteractionEnabled = false
+        addSubview(metalView)
+        addSubview(labelOverlay)
+        NSLayoutConstraint.activate([
+            metalView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            metalView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            metalView.topAnchor.constraint(equalTo: topAnchor),
+            metalView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            labelOverlay.leadingAnchor.constraint(equalTo: leadingAnchor),
+            labelOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
+            labelOverlay.topAnchor.constraint(equalTo: topAnchor),
+            labelOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+private final class ApproachMetalLabelOverlayView: UIView {
+    private var labelsByID: [String: UILabel] = [:]
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        backgroundColor = .clear
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(labels: [ApproachMetalProjectedLabel]) {
+        let visibleIDs = Set(labels.lazy.filter(\.visible).map(\.id))
+
+        for (id, labelView) in labelsByID where !visibleIDs.contains(id) {
+            labelView.isHidden = true
+        }
+
+        for label in labels where label.visible {
+            let labelView = labelsByID[label.id] ?? makeLabel(id: label.id)
+            let font = UIFont.monospacedSystemFont(ofSize: label.fontSize, weight: .semibold)
+            if labelView.text != label.text {
+                labelView.text = label.text
+            }
+            if labelView.font != font {
+                labelView.font = font
+            }
+            let uiColor = UIColor(label.color)
+            if labelView.textColor != uiColor {
+                labelView.textColor = uiColor
+            }
+            labelView.sizeToFit()
+            let size = labelView.bounds.size
+            labelView.bounds = CGRect(origin: .zero, size: size)
+            labelView.center = CGPoint(x: label.x, y: label.y)
+            labelView.isHidden = false
+        }
+    }
+
+    private func makeLabel(id: String) -> UILabel {
+        let label = UILabel(frame: .zero)
+        label.backgroundColor = .clear
+        label.textAlignment = .center
+        label.numberOfLines = 1
+        label.layer.shadowColor = UIColor.black.cgColor
+        label.layer.shadowOpacity = 0.85
+        label.layer.shadowRadius = 4
+        label.layer.shadowOffset = .zero
+        addSubview(label)
+        labelsByID[id] = label
+        return label
     }
 }
