@@ -1,6 +1,16 @@
 name: ApproachViz
 options:
   createIntermediateGroups: true
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: 7.6.0
+  Nuke:
+    url: https://github.com/kean/Nuke.git
+    from: 12.8.0
+  FloatingPanel:
+    url: https://github.com/scenee/FloatingPanel.git
+    from: 3.2.1
 settings:
   base:
     DEVELOPMENT_TEAM: ''
@@ -17,6 +27,12 @@ targets:
     dependencies:
       - sdk: AppIntents.framework
       - framework: ApproachViz/RustBridge/Generated/ApproachVizCoreFFI.xcframework
+      - package: GRDB
+        product: GRDB
+      - package: Nuke
+        product: Nuke
+      - package: FloatingPanel
+        product: FloatingPanel
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.andyfang.approachviz
@@ -33,6 +49,18 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: '18.0'
         LD_RUNPATH_SEARCH_PATHS: '$(inherited) @executable_path/Frameworks'
         EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+    scheme:
+      preActions:
+        - name: Bootstrap Rust Bridge
+          settingsTarget: ApproachViz
+          script: |
+            set -euo pipefail
+            BRIDGE_DIR="$PROJECT_DIR/ApproachViz/RustBridge/Generated"
+            SWIFT_FILE="$BRIDGE_DIR/Swift/approach_viz_core.swift"
+            if [[ ! -d "$BRIDGE_DIR/ApproachVizCoreFFI.xcframework" || ! -f "$SWIFT_FILE" ]]; then
+              echo "note: bootstrapping missing Rust bridge artifacts"
+              bash "$PROJECT_DIR/../scripts/build-ios-bridge.sh"
+            fi
     preBuildScripts:
       - name: Verify Rust Bridge
         inputFiles:
@@ -43,8 +71,9 @@ targets:
         script: |
           set -euo pipefail
           BRIDGE_DIR="$PROJECT_DIR/ApproachViz/RustBridge/Generated"
-          if [[ ! -d "$BRIDGE_DIR/ApproachVizCoreFFI.xcframework" ]]; then
-            echo "error: missing Rust bridge artifacts; run npm run build:ios"
+          SWIFT_FILE="$BRIDGE_DIR/Swift/approach_viz_core.swift"
+          if [[ ! -d "$BRIDGE_DIR/ApproachVizCoreFFI.xcframework" || ! -f "$SWIFT_FILE" ]]; then
+            echo "error: missing Rust bridge artifacts; scheme bootstrap should have generated them"
             exit 1
           fi
           mkdir -p "$DERIVED_FILE_DIR"

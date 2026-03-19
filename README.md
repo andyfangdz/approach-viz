@@ -6,6 +6,7 @@
 
 - Next.js 16 (App Router) + React + TypeScript
 - SwiftUI + MetalKit native iOS app scaffold under `ios/`
+- GRDB.swift + Nuke + FloatingPanel on the native iOS side
 - react-three-fiber (3D scene)
 - SQLite (build-time approach/airspace/minimums data)
 - UniFFI bridge from `crates/approach-viz-core` into Swift
@@ -32,6 +33,7 @@ The repository now includes a native iOS rewrite foundation in [`ios/`](ios/) bu
 - Native path/vertical-profile data is enriched from bundled external approach reference JSON (`public/data/approach-db/approaches.json`) so matched minimums, VDA, and parsed missed-climb requirements can influence the rendered procedure
 - Web and iOS now share one Rust approach-path implementation from `crates/approach-viz-core/src/approach_path.rs` for altitude resolution, path geometry, and hold geometry, and they also share the Rust traffic merge/render engine from `crates/approach-viz-core/src/traffic_merge.rs`; the web app calls both through WASM and the iOS app calls both through UniFFI
 - `npm run build:ios` regenerates the bridge xcframework and Xcode project via XcodeGen; simulator builds are `arm64`-only
+- The iOS app now uses `GRDB.swift` for the bundled read-only SQLite layer, `Nuke` for Terrarium terrain tile loading, and `FloatingPanel` for FAB-driven control panels
 
 Current limitation: the native app foundation still does not include weather, chart/plate overlays, or full web feature parity. The current MetalKit pass now includes dashed hold overlays, scene-fit orbit framing, corrected left/right orbit drag, two-finger pan, display-max frame-rate requests, and shared-Rust live-plus-history traffic, but camera/framing, labels, runway prominence, and some procedure-shape edge cases still differ from production. The old RealityKit renderer has been removed.
 
@@ -133,7 +135,7 @@ npm run dev                # dev server (with Datadog tracing)
 npm run build              # production build (also refreshes data)
 npm run start              # run production server
 npm run build:ios          # generate UniFFI bridge + Xcode project
-npm run test:ios           # simulator build verification for native iOS app
+npm run test:ios           # simulator build verification for native iOS app (uses -skipMacroValidation for Swift package macros)
 npm run open:ios           # generate and open the Xcode project
 
 # Quality

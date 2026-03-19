@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import Nuke
 import UIKit
 
 struct TerrainWireframeData: Sendable, Hashable {
@@ -34,6 +35,7 @@ actor TerrainWireframeLoader {
     private let gridSegments = 140
     private let radiusNm = 50.0
     private let tileBaseURL = URL(string: "https://elevation-tiles-prod.s3.amazonaws.com/terrarium")!
+    private let imagePipeline = ImagePipeline.shared
     private var cache: [TileKey: TileImage] = [:]
 
     func load(refLat: Double, refLon: Double) async throws -> TerrainWireframeData {
@@ -54,18 +56,17 @@ actor TerrainWireframeLoader {
             for tileY in minTileY...maxTileY {
                 for tileX in minTileX...maxTileX {
                     let key = TileKey(z: zoom, x: tileX, y: tileY)
-                    group.addTask { [cache, tileBaseURL] in
+                    group.addTask { [cache, imagePipeline, tileBaseURL] in
                         if let cached = cache[key] {
                             return (key, cached)
                         }
                         let url = tileBaseURL.appending(path: "\(key.z)/\(key.x)/\(key.y).png")
                         do {
-                            let (data, response) = try await URLSession.shared.data(from: url)
-                            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                                  let image = TerrainWireframeLoader.decodeTile(data: data) else {
+                            let image = try await imagePipeline.image(for: url)
+                            guard let tileImage = TerrainWireframeLoader.decodeTile(image: image) else {
                                 return (key, nil)
                             }
-                            return (key, image)
+                            return (key, tileImage)
                         } catch {
                             return (key, nil)
                         }
@@ -142,8 +143,8 @@ actor TerrainWireframeLoader {
         Swift.max(min, Swift.min(max, value))
     }
 
-    private static func decodeTile(data: Data) -> TileImage? {
-        guard let image = UIImage(data: data)?.cgImage else {
+    private static func decodeTile(image: UIImage) -> TileImage? {
+        guard let image = image.cgImage else {
             return nil
         }
         let width = image.width

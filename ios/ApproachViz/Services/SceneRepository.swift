@@ -21,9 +21,9 @@ struct SceneRepository {
             )
             ORDER BY a.id
             """
-        return try database.query(sql: sql) { statement in
-            let id = statement.string(at: 0)
-            let name = statement.string(at: 1)
+        return try database.query(sql: sql) { row in
+            let id: String = row[0]
+            let name: String = row[1]
             return AirportOption(id: id, label: "\(id) - \(name)")
         }
     }
@@ -85,14 +85,14 @@ struct SceneRepository {
             FROM airports
             WHERE id = ?
             """
-        return try database.query(sql: sql, bindings: [id.uppercased()]) { statement in
+        return try database.query(sql: sql, bindings: [id.uppercased()]) { row in
             AirportRecord(
-                id: statement.string(at: 0),
-                name: statement.string(at: 1),
-                lat: statement.double(at: 2),
-                lon: statement.double(at: 3),
-                elevation: statement.double(at: 4),
-                magneticVariation: statement.double(at: 5)
+                id: row[0],
+                name: row[1],
+                lat: row[2],
+                lon: row[3],
+                elevation: row[4],
+                magneticVariation: row[5]
             )
         }.first
     }
@@ -104,11 +104,11 @@ struct SceneRepository {
             WHERE airport_id = ?
             ORDER BY type, runway, procedure_id
             """
-        return try database.query(sql: sql, bindings: [airportID]) { statement in
+        return try database.query(sql: sql, bindings: [airportID]) { row in
             ApproachOption(
-                procedureID: statement.string(at: 0),
-                type: statement.string(at: 1),
-                runway: statement.string(at: 2)
+                procedureID: row[0],
+                type: row[1],
+                runway: row[2]
             )
         }
     }
@@ -138,12 +138,12 @@ struct SceneRepository {
             WHERE airport_id = ?
             ORDER BY id
             """
-        return try database.query(sql: sql, bindings: [airportID]) { statement in
+        return try database.query(sql: sql, bindings: [airportID]) { row in
             RunwayRecord(
-                airportID: statement.string(at: 0),
-                id: statement.string(at: 1),
-                lat: statement.double(at: 2),
-                lon: statement.double(at: 3)
+                airportID: row[0],
+                id: row[1],
+                lat: row[2],
+                lon: row[3]
             )
         }
     }
@@ -154,13 +154,13 @@ struct SceneRepository {
             FROM minima
             WHERE airport_id = ?
             """
-        return try database.query(sql: sql, bindings: [airportID]) { statement in
+        return try database.query(sql: sql, bindings: [airportID]) { row in
             MinimaReferenceRow(
-                approachName: statement.string(at: 0),
-                runway: statement.optionalString(at: 1),
-                typesJSON: statement.string(at: 2),
-                minimumsJSON: statement.string(at: 3),
-                cycle: statement.string(at: 4)
+                approachName: row[0],
+                runway: row[1],
+                typesJSON: row[2],
+                minimumsJSON: row[3],
+                cycle: row[4]
             )
         }
     }
@@ -181,13 +181,13 @@ struct SceneRepository {
             FROM waypoints
             WHERE id IN (\(placeholders))
             """
-        return try database.query(sql: sql, bindings: waypointIDs) { statement in
+        return try database.query(sql: sql, bindings: waypointIDs) { row in
             WaypointRecord(
-                id: statement.string(at: 0),
-                name: statement.string(at: 1),
-                lat: statement.double(at: 2),
-                lon: statement.double(at: 3),
-                type: statement.string(at: 4)
+                id: row[0],
+                name: row[1],
+                lat: row[2],
+                lon: row[3],
+                type: row[4]
             )
         }
     }
@@ -211,18 +211,18 @@ struct SceneRepository {
         return try database.query(
             sql: sql,
             bindings: [String(minLat), String(maxLat), String(minLon), String(maxLon)]
-        ) { statement in
-            let coordinatesJSON = statement.string(at: 4)
+        ) { row in
+            let coordinatesJSON: String = row[4]
             guard let data = coordinatesJSON.data(using: .utf8) else {
                 throw SQLiteDatabaseError.invalidData("Airspace coordinates JSON is not valid UTF-8.")
             }
             let coordinates = try decoder.decode([[AirspaceCoordinate]].self, from: data)
             return AirspaceFeatureRecord(
                 type: "CLASS",
-                airspaceClass: statement.string(at: 0),
-                name: statement.string(at: 1),
-                lowerAlt: statement.double(at: 2),
-                upperAlt: statement.double(at: 3),
+                airspaceClass: row[0],
+                name: row[1],
+                lowerAlt: row[2],
+                upperAlt: row[3],
                 coordinates: coordinates
             )
         }.filter { feature in
@@ -264,11 +264,11 @@ struct SceneRepository {
                 String(minLon),
                 String(maxLon),
             ]
-        ) { statement in
+        ) { row in
             ElevationAirportRecord(
-                lat: statement.double(at: 1),
-                lon: statement.double(at: 2),
-                elevation: statement.double(at: 3)
+                lat: row[1],
+                lon: row[2],
+                elevation: row[3]
             )
         }.filter { candidate in
             latLonDistanceNm(

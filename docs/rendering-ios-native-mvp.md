@@ -6,7 +6,8 @@ The native iOS app under `ios/` is an MVP rewrite foundation, not full feature p
 
 Current native scene behavior:
 
-- SwiftUI shell with `NavigationSplitView` for airport selection, approach selection, and scene detail
+- Scene-first SwiftUI shell with a full-screen Metal detail view, an in-scene airport/approach header chip, and FAB-driven selector/control panels instead of the earlier split-view sidebar/list layout
+- Native shell plumbing now leans on `GRDB.swift` for bundled SQLite reads, `Nuke` for terrain tile fetch/cache/decode, and `FloatingPanel` for FAB-driven control panels
 - MetalKit scene renders:
   - Terrarium-backed terrain wireframe sampled around the airport
   - translucent terrain fill under the wireframe
@@ -32,7 +33,11 @@ Current native scene behavior:
 - Native auto-fit now prioritizes final/missed path geometry and missed-hold geometry over transition-only holds, runway labels, and waypoint clouds, reducing the disconnected-looking wide startup framing seen on procedures like `KSBS R32-Z`
 - SwiftUI overlay labels now project using the Metal view's point-space bounds instead of drawable pixel dimensions, so waypoint and hold labels stay anchored near their rendered features on Retina simulators
 - Native waypoint and hold labels now render through a single UIKit overlay view with reused `UILabel` instances instead of feeding per-frame label state back through SwiftUI, reducing interaction-time UI churn while keeping labels visible
-- Native detail controls now behave more like the web client: Layers, Options, and Debug are shown/hidden through floating FAB-triggered panels instead of a permanent bottom inset, and the native Options panel now exposes the same current ADS-B toggles as the web client (`Hide Ground Traffic`, `Show Traffic Callsigns`, `Hide Ground Callsign Labels`, `Traffic History`, `Show Departed Traffic Trails`)
+- Native detail controls now behave more like the web client: Selectors, Layers, Options, and Debug are shown/hidden through FAB-triggered `FloatingPanel` sheets instead of a permanent bottom inset, split view, or modal sheet, and the native Options panel now exposes the same current ADS-B toggles as the web client (`Hide Ground Traffic`, `Show Traffic Callsigns`, `Hide Ground Callsign Labels`, `Traffic History`, `Show Departed Traffic Trails`)
+- Panel routing uses a single optional SwiftUI panel state, but the actual presentation host is a custom `UIViewControllerRepresentable` wrapper around `FloatingPanelController`
+- The native control panels render through the FloatingPanel surface and tracked scroll view instead of a custom in-scene overlay, so the library handles drag-to-expand/dismiss while the rest of the Metal scene remains interactive outside the visible panel container. The panel surface now uses a clear FloatingPanel surface plus a system `UIVisualEffectView` blur-backed content layer with rounded corners so it reads like native liquid glass instead of the library's stock white panel background.
+- The selectors panel now dismisses the keyboard as soon as an airport or approach is chosen, and its airport list only materializes the first 200 current matches at once so focusing the filter field does not try to render the entire airport result set on screen
+- The native scene now renders under a transparent inline navigation bar so the Metal view uses the full screen visually, and the title area shows a compact stacked airport + selected-approach header with the procedure text in a smaller font.
 - Metal path overlays now consume the shared Rust path builder's `verticalLines` and `turnConstraintLabels` outputs directly instead of synthesizing guide lines from every sampled path point, which keeps the iOS path presentation aligned with the web worker's path-decoration logic
 - Native waypoint, runway, and hold overlay anchors now use the same Rust local-scene axis sign convention as the shared path builder instead of applying an extra `z` inversion in Swift, so overlays and sampled path geometry occupy the same coordinate frame
 - Scene coordinates and approach-path domain logic come from the shared Rust core through UniFFI-generated Swift bindings:
@@ -54,12 +59,13 @@ Current native scene behavior:
 - Native traffic geometry is now split from the static scene: terrain, airspace, runway, waypoint, hold, and approach-path buffers stay cached until the selected scene or vertical scale changes, while traffic polls only invalidate/upload dedicated dynamic Metal line/point layers so live aircraft updates can continue during orbit/pan/pinch gestures without a full render-scene rebuild
 - Traffic callsign labels are generated in the same dynamic Metal/overlay pass as traffic markers, so changing callsign-related options does not require rebuilding cached terrain, airspace, or approach geometry
 - On iOS, traffic polling hits the deployed runtime directly at `https://approach-runtime.andyfang.app/v1/traffic/adsbx` in `format=binary` mode rather than going through the Next.js proxy routes used by the web client
+- Xcode builds now self-bootstrap the Rust bridge in a scheme pre-action if `ios/ApproachViz/RustBridge/Generated/ApproachVizCoreFFI.xcframework` or the generated `approach_viz_core.swift` binding file are missing, instead of requiring a separate manual `npm run build:ios` step just to make the project buildable again
 
 ## Data Inputs
 
-- SQLite source: bundled `approach-viz.sqlite` copied into the app bundle during the Xcode build
+- SQLite source: bundled `approach-viz.sqlite` copied into the app bundle during the Xcode build and read through `GRDB.swift`
 - Bundled external reference source: `public/data/approach-db/approaches.json`, copied into the app bundle during Xcode builds and used to match official minimums/VDA rows against CIFP procedures
-- Terrain tiles are fetched from the Terrarium public tile service at runtime; individual tile fetch failures no longer abort the entire wireframe build
+- Terrain tiles are fetched from the Terrarium public tile service at runtime through `Nuke`; individual tile fetch failures no longer abort the entire wireframe build
 - Queries are read-only and currently cover:
   - airports
   - approaches
