@@ -1,142 +1,104 @@
+import ComposableArchitecture
 import FloatingPanel
 import SwiftUI
+import SwiftUIIntrospect
 import UIKit
 
 struct RootView: View {
-    @State private var appModel = AppModel()
+    let store: StoreOf<AppFeature>
+
+    init(store: StoreOf<AppFeature> = Store(initialState: AppFeature.State()) {
+        AppFeature()
+    }) {
+        self.store = store
+    }
 
     var body: some View {
-        ApproachDetailView(appModel: appModel)
-        .task {
-            await appModel.loadInitialData()
-        }
+        ApproachDetailView(store: store)
+            .task {
+                _ = store.send(.task)
+            }
     }
 }
+
 private struct ApproachDetailView: View {
-    let appModel: AppModel
-    @State private var activePanel: DetailControlPanel?
+    let store: StoreOf<AppFeature>
     @State private var renderStats = ApproachMetalRenderStats.empty
 
     var body: some View {
         ZStack {
-            if let sceneData = appModel.sceneData {
+            if let sceneData = store.sceneData {
                 ApproachMetalSceneView(
                     sceneData: sceneData,
-                    trafficScene: appModel.trafficScene,
-                    layerState: appModel.layerState,
-                    trafficDisplayOptions: appModel.trafficDisplayOptions,
-                    verticalScale: appModel.verticalScale,
-                    capturesRenderStats: activePanel == .debug,
+                    trafficScene: store.trafficScene,
+                    layerState: store.layerState,
+                    trafficDisplayOptions: store.trafficDisplayOptions,
+                    verticalScale: store.verticalScale,
+                    capturesRenderStats: store.activePanel == .debug,
                     renderStats: $renderStats
                 )
                 .ignoresSafeArea()
-            } else if let errorMessage = appModel.errorMessage {
-                ContentUnavailableView("Unable to load data", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
+            } else if let errorMessage = store.errorMessage {
+                ContentUnavailableView(
+                    "Unable to load data",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
             } else {
                 ContentUnavailableView("Choose an approach", systemImage: "airplane.departure")
             }
         }
         .background(Color(red: 10.0 / 255.0, green: 10.0 / 255.0, blue: 20.0 / 255.0))
         .overlay(alignment: .topLeading) {
-            if appModel.sceneData != nil {
+            if store.sceneData != nil {
                 HStack(alignment: .top, spacing: 12) {
-                    if let titleContext {
+                    if let titleContext = store.sceneTitleContext {
                         SceneSelectionBar(
                             titleContext: titleContext,
-                            isShowingSelectors: activePanel == .selectors
+                            isShowingSelectors: store.activePanel == .selectors
                         ) {
-                            togglePanel(.selectors)
+                            store.send(.togglePanel(.selectors))
                         }
                     }
                     Spacer(minLength: 0)
                     FloatingFabButton(
                         systemImage: "ladybug.fill",
-                        title: activePanel == .debug ? "Hide debug panel" : "Show debug panel"
+                        title: store.activePanel == .debug ? "Hide debug panel" : "Show debug panel"
                     ) {
-                        togglePanel(.debug)
+                        store.send(.togglePanel(.debug))
                     }
                 }
                 .padding()
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if appModel.sceneData != nil {
+            if store.sceneData != nil {
                 HStack(spacing: 12) {
                     FloatingFabButton(
                         systemImage: "gearshape.fill",
-                        title: activePanel == .options ? "Hide options panel" : "Show options panel"
+                        title: store.activePanel == .options ? "Hide options panel" : "Show options panel"
                     ) {
-                        togglePanel(.options)
+                        store.send(.togglePanel(.options))
                     }
                     FloatingFabButton(
                         systemImage: "square.stack.3d.up.fill",
-                        title: activePanel == .layers ? "Hide layers panel" : "Show layers panel"
+                        title: store.activePanel == .layers ? "Hide layers panel" : "Show layers panel"
                     ) {
-                        togglePanel(.layers)
+                        store.send(.togglePanel(.layers))
                     }
                 }
                 .padding()
             }
         }
         .overlay {
-            if appModel.sceneData != nil {
-                DetailControlPanelOverlay(
-                    activePanel: $activePanel,
-                    appModel: appModel,
-                    renderStats: $renderStats
-                )
+            if store.sceneData != nil {
+                DetailControlPanelOverlay(store: store, renderStats: $renderStats)
             }
         }
     }
-
-    private func togglePanel(_ panel: DetailControlPanel) {
-        activePanel = activePanel == panel ? nil : panel
-    }
-
-    @ViewBuilder
-    private func panelContent(for panel: DetailControlPanel) -> some View {
-        switch panel {
-        case .selectors:
-            NativeSelectorPanel(appModel: appModel) {
-                activePanel = nil
-            }
-        case .layers:
-            NativeLayersPanel(appModel: appModel) {
-                activePanel = nil
-            }
-        case .options:
-            NativeOptionsPanel(appModel: appModel) {
-                activePanel = nil
-            }
-        case .debug:
-            NativeDebugPanel(renderStats: renderStats) {
-                activePanel = nil
-            }
-        }
-    }
-
-    private var titleContext: SceneTitleContext? {
-        guard let sceneData = appModel.sceneData else { return nil }
-        let selectedApproach = sceneData.approaches.first { $0.procedureID == sceneData.selectedApproachID }
-        return SceneTitleContext(
-            airportID: sceneData.airport.id,
-            approachID: sceneData.selectedApproachID,
-            subtitle: selectedApproach.map { "\($0.type) • RWY \($0.runway)" } ?? nil,
-            airportLabel: sceneData.airport.name
-        )
-    }
 }
 
-private enum DetailControlPanel: String, CaseIterable, Equatable, Identifiable {
-    case selectors
-    case layers
-    case options
-    case debug
-
-    var id: String { rawValue }
-}
-
-private struct SceneTitleContext: Equatable {
+struct SceneTitleContext: Equatable {
     let airportID: String
     let approachID: String
     let subtitle: String?
@@ -187,12 +149,16 @@ private struct SceneSelectionBar: View {
 }
 
 private struct DetailControlPanelOverlay: View {
-    let activePanel: Binding<DetailControlPanel?>
-    let appModel: AppModel
+    let store: StoreOf<AppFeature>
     @Binding var renderStats: ApproachMetalRenderStats
 
     var body: some View {
-        NativeFloatingPanelHost(activePanel: activePanel) { panel in
+        NativeFloatingPanelHost(
+            activePanel: Binding(
+                get: { store.activePanel },
+                set: { store.send(.setActivePanel($0)) }
+            )
+        ) { panel in
             panelContent(for: panel)
         }
     }
@@ -200,20 +166,20 @@ private struct DetailControlPanelOverlay: View {
     private func panelContent(for panel: DetailControlPanel) -> AnyView {
         switch panel {
         case .selectors:
-            return AnyView(NativeSelectorPanel(appModel: appModel) {
-                activePanel.wrappedValue = nil
+            return AnyView(NativeSelectorPanel(store: store) {
+                store.send(.setActivePanel(nil))
             })
         case .layers:
-            return AnyView(NativeLayersPanel(appModel: appModel) {
-                activePanel.wrappedValue = nil
+            return AnyView(NativeLayersPanel(store: store) {
+                store.send(.setActivePanel(nil))
             })
         case .options:
-            return AnyView(NativeOptionsPanel(appModel: appModel) {
-                activePanel.wrappedValue = nil
+            return AnyView(NativeOptionsPanel(store: store) {
+                store.send(.setActivePanel(nil))
             })
         case .debug:
             return AnyView(NativeDebugPanel(renderStats: renderStats) {
-                activePanel.wrappedValue = nil
+                store.send(.setActivePanel(nil))
             })
         }
     }
@@ -330,6 +296,9 @@ private struct NativeFloatingPanelHost: UIViewControllerRepresentable {
 
         func floatingPanelDidMove(_ fpc: FloatingPanelController) {
             containerViewController?.view.setNeedsLayout()
+            if fpc.state == .hidden {
+                activePanel.wrappedValue = nil
+            }
         }
 
         private func panelContains(point: CGPoint, event: UIEvent?, in rootView: UIView) -> Bool {
@@ -448,7 +417,7 @@ private struct FloatingFabButton: View {
     }
 }
 
-private struct NativePanelContainer<Content: View>: View {
+struct NativePanelContainer<Content: View>: View {
     let title: String
     let onClose: () -> Void
     @ViewBuilder let content: Content
@@ -477,89 +446,161 @@ private struct NativePanelContainer<Content: View>: View {
     }
 }
 
-private struct NativeSelectorPanel: View {
-    let appModel: AppModel
+struct NativeSelectorPanel: View {
+    private enum SelectorSection: String, CaseIterable, Identifiable {
+        case airports
+        case approaches
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .airports:
+                return "Airports"
+            case .approaches:
+                return "Approaches"
+            }
+        }
+    }
+
+    let store: StoreOf<AppFeature>
     let onClose: () -> Void
     @FocusState private var isAirportFilterFocused: Bool
-
-    private let airportPreviewLimit = 200
-
-    private var displayedAirports: [AirportOption] {
-        let airports = appModel.filteredAirports
-        guard airports.count > airportPreviewLimit else {
-            return airports
-        }
-        if let selectedAirportID = appModel.selectedAirportID,
-           let selectedAirport = airports.first(where: { $0.id == selectedAirportID }) {
-            let remaining = airports.lazy.filter { $0.id != selectedAirportID }.prefix(airportPreviewLimit - 1)
-            return [selectedAirport] + Array(remaining)
-        }
-        return Array(airports.prefix(airportPreviewLimit))
-    }
+    @State private var activeSection: SelectorSection = .approaches
 
     var body: some View {
         NativePanelContainer(title: "Select Scene", onClose: onClose) {
             VStack(alignment: .leading, spacing: 14) {
-                TextField("Filter airports", text: Binding(
-                    get: { appModel.airportFilter },
-                    set: { appModel.airportFilter = $0 }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled(true)
-                .focused($isAirportFilterFocused)
+                Picker("Selector section", selection: $activeSection) {
+                    ForEach(SelectorSection.allCases) { section in
+                        Text(section.title).tag(section)
+                    }
+                }
+                .pickerStyle(.segmented)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel("Airports")
-                    if appModel.filteredAirports.isEmpty {
-                        Text("No airports match the current filter.")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.58))
-                    } else {
-                        LazyVStack(alignment: .leading, spacing: 8) {
-                            ForEach(displayedAirports) { airport in
-                                SelectorRow(
-                                    title: airport.id,
-                                    subtitle: airport.label,
-                                    isSelected: airport.id == appModel.selectedAirportID
-                                ) {
-                                    dismissKeyboard()
-                                    Task {
-                                        await appModel.selectAirport(id: airport.id)
-                                    }
-                                }
-                            }
-                        }
-                        if appModel.filteredAirports.count > displayedAirports.count {
-                            Text("Showing first \(displayedAirports.count) matches. Keep typing to narrow the list.")
-                                .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.52))
+                switch activeSection {
+                case .airports:
+                    airportSection
+                case .approaches:
+                    approachSection
+                }
+            }
+        }
+        .onAppear {
+            syncActiveSectionWithCurrentSelection()
+        }
+        .onChange(of: store.selectedAirportID) { _, _ in
+            syncActiveSectionWithCurrentSelection()
+        }
+    }
+
+    private var airportSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(
+                "Filter airports",
+                text: Binding(
+                    get: { store.airportFilter },
+                    set: { store.send(.setAirportFilter($0)) }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled(true)
+            .focused($isAirportFilterFocused)
+            .introspect(.textField, on: .iOS(.v18, .v26)) { textField in
+                textField.autocapitalizationType = .none
+                textField.autocorrectionType = .no
+                textField.smartDashesType = .no
+                textField.smartQuotesType = .no
+                textField.spellCheckingType = .no
+            }
+
+            SectionLabel("Airports")
+            if store.filteredAirports.isEmpty {
+                Text("No airports match the current filter.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.58))
+            } else {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(store.displayedAirports) { airport in
+                        SelectorRow(
+                            title: airport.id,
+                            subtitle: airport.label,
+                            isSelected: airport.id == store.selectedAirportID
+                        ) {
+                            dismissKeyboard()
+                            store.send(.airportSelected(airport.id))
+                            activeSection = .approaches
                         }
                     }
                 }
+                if store.filteredAirports.count > store.displayedAirports.count {
+                    Text("Showing first \(store.displayedAirports.count) matches. Keep typing to narrow the list.")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.52))
+                }
+            }
+        }
+    }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel("Approaches")
-                    if appModel.approaches.isEmpty {
-                        Text("Select an airport to load procedures.")
+    private var approachSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let selectedAirportID = store.selectedAirportID {
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(selectedAirportID)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text(store.sceneTitleContext?.airportLabel ?? "Selected airport")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.58))
-                    } else {
-                        LazyVStack(alignment: .leading, spacing: 8) {
-                            ForEach(appModel.approaches) { approach in
-                                SelectorRow(
-                                    title: approach.procedureID,
-                                    subtitle: "\(approach.type) • Runway \(approach.runway)",
-                                    isSelected: approach.procedureID == appModel.selectedApproachID,
-                                    compactTitle: true
-                                ) {
-                                    dismissKeyboard()
-                                    Task {
-                                        await appModel.selectApproach(id: approach.procedureID)
-                                        onClose()
-                                    }
-                                }
-                            }
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Button("Change Airport") {
+                        activeSection = .airports
+                        isAirportFilterFocused = true
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.82))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.05))
+                )
+            }
+
+            SectionLabel("Approaches")
+            if store.approaches.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Select an airport to load procedures.")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.58))
+                    Button("Browse Airports") {
+                        activeSection = .airports
+                        isAirportFilterFocused = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.white.opacity(0.14))
+                }
+            } else {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(store.approaches) { approach in
+                        SelectorRow(
+                            title: approach.procedureID,
+                            subtitle: "\(approach.type) • Runway \(approach.runway)",
+                            isSelected: approach.procedureID == store.selectedApproachID,
+                            compactTitle: true
+                        ) {
+                            dismissKeyboard()
+                            store.send(.approachSelected(approach.procedureID))
                         }
                     }
                 }
@@ -570,6 +611,10 @@ private struct NativeSelectorPanel: View {
     private func dismissKeyboard() {
         isAirportFilterFocused = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func syncActiveSectionWithCurrentSelection() {
+        activeSection = store.selectedAirportID == nil ? .airports : .approaches
     }
 }
 
@@ -617,7 +662,7 @@ private struct SelectorRow: View {
 }
 
 private struct NativeLayersPanel: View {
-    let appModel: AppModel
+    let store: StoreOf<AppFeature>
     let onClose: () -> Void
 
     var body: some View {
@@ -626,22 +671,22 @@ private struct NativeLayersPanel: View {
                 LayerToggleRow(
                     title: "Approach",
                     isOn: Binding(
-                        get: { appModel.layerState.approach },
-                        set: { appModel.setLayerEnabled(\.approach, $0) }
+                        get: { store.layerState.approach },
+                        set: { store.send(.setLayerEnabled(.approach, $0)) }
                     )
                 )
                 LayerToggleRow(
                     title: "Airspace",
                     isOn: Binding(
-                        get: { appModel.layerState.airspace },
-                        set: { appModel.setLayerEnabled(\.airspace, $0) }
+                        get: { store.layerState.airspace },
+                        set: { store.send(.setLayerEnabled(.airspace, $0)) }
                     )
                 )
                 LayerToggleRow(
                     title: "ADS-B Traffic",
                     isOn: Binding(
-                        get: { appModel.layerState.adsb },
-                        set: { appModel.setLayerEnabled(\.adsb, $0) }
+                        get: { store.layerState.adsb },
+                        set: { store.send(.setLayerEnabled(.adsb, $0)) }
                     )
                 )
             }
@@ -650,7 +695,7 @@ private struct NativeLayersPanel: View {
 }
 
 private struct NativeOptionsPanel: View {
-    let appModel: AppModel
+    let store: StoreOf<AppFeature>
     let onClose: () -> Void
 
     var body: some View {
@@ -659,13 +704,13 @@ private struct NativeOptionsPanel: View {
                 Group {
                     SectionLabel("Scene")
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Vertical Scale \(appModel.verticalScale.formatted(.number.precision(.fractionLength(1))))x")
+                        Text("Vertical Scale \(store.verticalScale.formatted(.number.precision(.fractionLength(1))))x")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.86))
                         Slider(
                             value: Binding(
-                                get: { appModel.verticalScale },
-                                set: { appModel.setVerticalScale($0) }
+                                get: { store.verticalScale },
+                                set: { store.send(.setVerticalScale($0)) }
                             ),
                             in: 1...8,
                             step: 0.5
@@ -675,59 +720,59 @@ private struct NativeOptionsPanel: View {
 
                 Group {
                     SectionLabel("ADS-B Traffic")
-                    if let trafficErrorMessage = appModel.trafficErrorMessage, appModel.layerState.adsb {
+                    if let trafficErrorMessage = store.trafficErrorMessage, store.layerState.adsb {
                         Text("Traffic unavailable: \(trafficErrorMessage)")
                             .font(.caption)
                             .foregroundStyle(.orange.opacity(0.9))
                     }
-                    Text("Traffic \(appModel.trafficScene.renderedTrackCount) targets")
+                    Text("Traffic \(store.trafficScene.renderedTrackCount) targets")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.72))
                     LayerToggleRow(
                         title: "Hide Ground Traffic",
                         isOn: Binding(
-                            get: { appModel.trafficDisplayOptions.hideGroundTargets },
-                            set: { appModel.setHideGroundTraffic($0) }
+                            get: { store.trafficDisplayOptions.hideGroundTargets },
+                            set: { store.send(.setHideGroundTraffic($0)) }
                         ),
-                        disabled: !appModel.layerState.adsb
+                        disabled: !store.layerState.adsb
                     )
                     LayerToggleRow(
                         title: "Show Traffic Callsigns",
                         isOn: Binding(
-                            get: { appModel.trafficDisplayOptions.showCallsignLabels },
-                            set: { appModel.setShowTrafficCallsigns($0) }
+                            get: { store.trafficDisplayOptions.showCallsignLabels },
+                            set: { store.send(.setShowTrafficCallsigns($0)) }
                         ),
-                        disabled: !appModel.layerState.adsb
+                        disabled: !store.layerState.adsb
                     )
                     LayerToggleRow(
                         title: "Hide Ground Callsign Labels",
                         isOn: Binding(
-                            get: { appModel.trafficDisplayOptions.hideGroundCallsignLabels },
-                            set: { appModel.setHideGroundTrafficCallsigns($0) }
+                            get: { store.trafficDisplayOptions.hideGroundCallsignLabels },
+                            set: { store.send(.setHideGroundTrafficCallsigns($0)) }
                         ),
-                        disabled: !appModel.layerState.adsb || !appModel.trafficDisplayOptions.showCallsignLabels
+                        disabled: !store.layerState.adsb || !store.trafficDisplayOptions.showCallsignLabels
                     )
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Traffic History (\(Int(appModel.trafficDisplayOptions.historyMinutes.rounded())) min)")
+                        Text("Traffic History (\(Int(store.trafficDisplayOptions.historyMinutes.rounded())) min)")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(appModel.layerState.adsb ? .white.opacity(0.86) : .white.opacity(0.35))
+                            .foregroundStyle(store.layerState.adsb ? .white.opacity(0.86) : .white.opacity(0.35))
                         Slider(
                             value: Binding(
-                                get: { appModel.trafficDisplayOptions.historyMinutes },
-                                set: { appModel.setTrafficHistoryMinutes($0) }
+                                get: { store.trafficDisplayOptions.historyMinutes },
+                                set: { store.send(.setTrafficHistoryMinutes($0)) }
                             ),
                             in: 1...30,
                             step: 1
                         )
-                        .disabled(!appModel.layerState.adsb)
+                        .disabled(!store.layerState.adsb)
                     }
                     LayerToggleRow(
                         title: "Show Departed Traffic Trails",
                         isOn: Binding(
-                            get: { appModel.trafficDisplayOptions.showDepartedTrafficTrails },
-                            set: { appModel.setShowDepartedTrafficTrails($0) }
+                            get: { store.trafficDisplayOptions.showDepartedTrafficTrails },
+                            set: { store.send(.setShowDepartedTrafficTrails($0)) }
                         ),
-                        disabled: !appModel.layerState.adsb
+                        disabled: !store.layerState.adsb
                     )
                 }
             }

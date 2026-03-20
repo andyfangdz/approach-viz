@@ -7,7 +7,8 @@ The native iOS app under `ios/` is an MVP rewrite foundation, not full feature p
 Current native scene behavior:
 
 - Scene-first SwiftUI shell with a full-screen Metal detail view, an in-scene airport/approach header chip, and FAB-driven selector/control panels instead of the earlier split-view sidebar/list layout
-- Native shell plumbing now leans on `GRDB.swift` for bundled SQLite reads, `Nuke` for terrain tile fetch/cache/decode, and `FloatingPanel` for FAB-driven control panels
+- Native shell state is now owned by a Composable Architecture root reducer (`AppFeature`) instead of the earlier `ObservableObject` view model
+- Native shell plumbing now leans on `GRDB.swift` for bundled SQLite reads, `Nuke` for terrain tile fetch/cache/decode, `AsyncAlgorithms` for the traffic polling loop, `OrderedCollections` for bounded selector previews, `SwiftUIIntrospect` for UIKit text-input tweaks, and `FloatingPanel` for FAB-driven control panels
 - MetalKit scene renders:
   - Terrarium-backed terrain wireframe sampled around the airport
   - translucent terrain fill under the wireframe
@@ -38,6 +39,7 @@ Current native scene behavior:
 - The native control panels render through the FloatingPanel surface and tracked scroll view instead of a custom in-scene overlay, so the library handles drag-to-expand/dismiss while the rest of the Metal scene remains interactive outside the visible panel container. The panel surface now uses a clear FloatingPanel surface plus a system `UIVisualEffectView` blur-backed content layer with rounded corners so it reads like native liquid glass instead of the library's stock white panel background.
 - The selectors panel now dismisses the keyboard as soon as an airport or approach is chosen, and its airport list only materializes the first 200 current matches at once so focusing the filter field does not try to render the entire airport result set on screen
 - The native scene now renders under a transparent inline navigation bar so the Metal view uses the full screen visually, and the title area shows a compact stacked airport + selected-approach header with the procedure text in a smaller font.
+- iOS UI validation now includes a small `SnapshotTesting` target: reducer coverage for `AppFeature` and a recorded selector-panel image snapshot under `ios/ApproachVizSnapshotTests`
 - Metal path overlays now consume the shared Rust path builder's `verticalLines` and `turnConstraintLabels` outputs directly instead of synthesizing guide lines from every sampled path point, which keeps the iOS path presentation aligned with the web worker's path-decoration logic
 - Native waypoint, runway, and hold overlay anchors now use the same Rust local-scene axis sign convention as the shared path builder instead of applying an extra `z` inversion in Swift, so overlays and sampled path geometry occupy the same coordinate frame
 - Scene coordinates and approach-path domain logic come from the shared Rust core through UniFFI-generated Swift bindings:
