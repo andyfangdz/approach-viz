@@ -18,12 +18,10 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
 
     init?(
         view: MTKView,
-        onLabelsChanged: @escaping ([ApproachMetalProjectedLabel]) -> Void,
         onStatsChanged: @escaping (ApproachMetalRenderStats) -> Void
     ) {
         guard let engine = ApproachMetalRenderEngine(
             view: view,
-            onLabelsChanged: onLabelsChanged,
             onStatsChanged: onStatsChanged
         ) else {
             return nil
@@ -428,7 +426,8 @@ private func appendPaths(
                 text: "\(dashedBelowLabel) \(Int(thresholdAltitudeFeet.rounded()))'",
                 position: crossing + SIMD3<Float>(0, 0.30, 0),
                 color: .white,
-                fontSize: 11
+                fontSize: 11,
+                declutterable: false
             ))
         }
         let guideColor = SIMD4<Float>(polyline.color.x, polyline.color.y, polyline.color.z, 0.26)
@@ -449,7 +448,8 @@ private func appendPaths(
                         blue: CGFloat(polyline.color.z),
                         alpha: 1
                     ),
-                    fontSize: 10
+                    fontSize: 10,
+                    declutterable: false
                 )
             )
         }
@@ -566,7 +566,7 @@ private func appendHoldPatterns(
 private func appendWaypoints(_ points: [MetalWaypointRenderPoint], into scene: inout RenderScene) {
     for point in points {
         scene.pointVertices.append(MetalPointVertex(position: point.position, color: point.color, size: point.size))
-        scene.labels.append(LabelAnchor(id: point.labelText, text: point.labelText, position: point.position + SIMD3<Float>(0, 0.18, 0), color: .white, fontSize: 11))
+        scene.labels.append(LabelAnchor(id: point.labelText, text: point.labelText, position: point.position + SIMD3<Float>(0, 0.18, 0), color: .white, fontSize: 11, declutterable: false))
         scene.bounds.include(point.position)
     }
 }
@@ -630,7 +630,8 @@ private func appendTraffic(
                     blue: CGFloat(activeMarkerColor.z),
                     alpha: 1
                 ),
-                fontSize: 10
+                fontSize: 10,
+                declutterable: true
             ))
         }
     }
@@ -657,7 +658,8 @@ private func appendRunways(_ segments: [MetalRunwaySegment], into scene: inout R
             text: segment.label,
             position: center + SIMD3<Float>(0, 0.20, 0),
             color: UIColor(red: 1, green: 0, blue: 1, alpha: 1),
-            fontSize: 11
+            fontSize: 11,
+            declutterable: false
         ))
         scene.bounds.include(center)
     }
@@ -1014,7 +1016,7 @@ private func labelAnchor(for text: String, center: SIMD3<Float>, course: Double,
     let right = SIMD3<Float>(cos(headingRadians), 0, sin(headingRadians))
     let lateralSign: Float = turnDirection == "R" ? 1 : -1
     let position = center + right * max(1.4, Float(distance) * 0.45) * lateralSign - forward * max(0.8, Float(distance) * 0.2) + SIMD3<Float>(0, 0.9, 0)
-    return LabelAnchor(id: text, text: text, position: position, color: UIColor(red: 111.0 / 255.0, green: 123.0 / 255.0, blue: 1.0, alpha: 1.0), fontSize: 11)
+    return LabelAnchor(id: text, text: text, position: position, color: UIColor(red: 111.0 / 255.0, green: 123.0 / 255.0, blue: 1.0, alpha: 1.0), fontSize: 11, declutterable: false)
 }
 
 private func normalizeHeadingDegrees(_ degrees: Double) -> Double {

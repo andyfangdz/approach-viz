@@ -1,15 +1,15 @@
 import Foundation
-import SwiftUI
 import UIKit
 import simd
 
 struct ApproachMetalProjectedLabel: Identifiable, Equatable {
     let id: String
     let text: String
-    let color: Color
+    let color: SIMD4<Float>
     let x: CGFloat
     let y: CGFloat
     let fontSize: CGFloat
+    let declutterable: Bool
     let visible: Bool
 }
 
@@ -54,6 +54,12 @@ struct MetalUniforms {
     var viewProjectionMatrix: simd_float4x4
 }
 
+struct MetalTextVertex {
+    var position: SIMD2<Float>
+    var texCoord: SIMD2<Float>
+    var color: SIMD4<Float>
+}
+
 struct CameraState {
     var target = SIMD3<Float>(0, 2, 0)
     var distance: Float = 22.045408
@@ -67,6 +73,7 @@ struct LabelAnchor {
     let position: SIMD3<Float>
     let color: UIColor
     let fontSize: CGFloat
+    let declutterable: Bool
 }
 
 struct RenderScene {

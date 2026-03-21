@@ -86,10 +86,9 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
         )
     }
 
-    @MainActor
+        @MainActor
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         private var renderer: ApproachMetalRenderer?
-        private weak var labelOverlay: ApproachMetalLabelOverlayView?
         private var renderStats: Binding<ApproachMetalRenderStats>
         private var capturesRenderStats: Bool
 
@@ -106,12 +105,8 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
         }
 
         func attach(to container: ApproachMetalContainerView) {
-            labelOverlay = container.labelOverlay
             renderer = ApproachMetalRenderer(
                 view: container.metalView,
-                onLabelsChanged: { [weak self] nextLabels in
-                    self?.labelOverlay?.update(labels: nextLabels)
-                },
                 onStatsChanged: { [weak self] stats in
                     guard let self, self.capturesRenderStats else { return }
                     if self.renderStats.wrappedValue != stats {
@@ -194,86 +189,21 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
 
 private final class ApproachMetalContainerView: UIView {
     let metalView = MTKView(frame: .zero)
-    let labelOverlay = ApproachMetalLabelOverlayView(frame: .zero)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         metalView.translatesAutoresizingMaskIntoConstraints = false
-        labelOverlay.translatesAutoresizingMaskIntoConstraints = false
-        labelOverlay.isUserInteractionEnabled = false
         addSubview(metalView)
-        addSubview(labelOverlay)
         NSLayoutConstraint.activate([
             metalView.leadingAnchor.constraint(equalTo: leadingAnchor),
             metalView.trailingAnchor.constraint(equalTo: trailingAnchor),
             metalView.topAnchor.constraint(equalTo: topAnchor),
             metalView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            labelOverlay.leadingAnchor.constraint(equalTo: leadingAnchor),
-            labelOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
-            labelOverlay.topAnchor.constraint(equalTo: topAnchor),
-            labelOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-}
-
-private final class ApproachMetalLabelOverlayView: UIView {
-    private var labelsByID: [String: UILabel] = [:]
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isOpaque = false
-        backgroundColor = .clear
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func update(labels: [ApproachMetalProjectedLabel]) {
-        let visibleIDs = Set(labels.lazy.filter(\.visible).map(\.id))
-
-        for (id, labelView) in labelsByID where !visibleIDs.contains(id) {
-            labelView.isHidden = true
-        }
-
-        for label in labels where label.visible {
-            let labelView = labelsByID[label.id] ?? makeLabel(id: label.id)
-            let font = UIFont.monospacedSystemFont(ofSize: label.fontSize, weight: .semibold)
-            if labelView.text != label.text {
-                labelView.text = label.text
-            }
-            if labelView.font != font {
-                labelView.font = font
-            }
-            let uiColor = UIColor(label.color)
-            if labelView.textColor != uiColor {
-                labelView.textColor = uiColor
-            }
-            labelView.sizeToFit()
-            let size = labelView.bounds.size
-            labelView.bounds = CGRect(origin: .zero, size: size)
-            labelView.center = CGPoint(x: label.x, y: label.y)
-            labelView.isHidden = false
-        }
-    }
-
-    private func makeLabel(id: String) -> UILabel {
-        let label = UILabel(frame: .zero)
-        label.backgroundColor = .clear
-        label.textAlignment = .center
-        label.numberOfLines = 1
-        label.layer.shadowColor = UIColor.black.cgColor
-        label.layer.shadowOpacity = 0.85
-        label.layer.shadowRadius = 4
-        label.layer.shadowOffset = .zero
-        addSubview(label)
-        labelsByID[id] = label
-        return label
     }
 }

@@ -1,5 +1,4 @@
 import MetalKit
-import SwiftUI
 import UIKit
 import simd
 
@@ -90,6 +89,36 @@ private final class ApproachMetalIndexedLayer {
     }
 }
 
+private final class ApproachMetalTextLayer {
+    private var buffer: MTLBuffer?
+    private(set) var count = 0
+
+    func upload(device: MTLDevice, vertices: [MetalTextVertex]) {
+        count = vertices.count
+        guard !vertices.isEmpty else {
+            buffer = nil
+            return
+        }
+        buffer = device.makeBuffer(bytes: vertices, length: MemoryLayout<MetalTextVertex>.stride * vertices.count)
+    }
+
+    func encode(
+        _ encoder: MTLRenderCommandEncoder,
+        pipeline: MTLRenderPipelineState,
+        depthState: MTLDepthStencilState,
+        texture: MTLTexture?,
+        sampler: MTLSamplerState?
+    ) {
+        guard let buffer, count > 0, let texture, let sampler else { return }
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        encoder.setDepthStencilState(depthState)
+        encoder.setFragmentTexture(texture, index: 0)
+        encoder.setFragmentSamplerState(sampler, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
+    }
+}
+
 @MainActor
 final class ApproachMetalRenderEngine {
     private weak var view: MTKView?
@@ -98,9 +127,11 @@ final class ApproachMetalRenderEngine {
     private let trianglePipeline: MTLRenderPipelineState
     private let linePipeline: MTLRenderPipelineState
     private let pointPipeline: MTLRenderPipelineState
+    private let textPipeline: MTLRenderPipelineState
     private let depthState: MTLDepthStencilState
     private let translucentDepthState: MTLDepthStencilState
-    private let onLabelsChanged: ([ApproachMetalProjectedLabel]) -> Void
+    private let overlayDepthState: MTLDepthStencilState
+    private let textSamplerState: MTLSamplerState
     private let onStatsChanged: (ApproachMetalRenderStats) -> Void
 
     private var invalidation: ApproachMetalInvalidation = .all
@@ -110,6 +141,7 @@ final class ApproachMetalRenderEngine {
     private var lastDrawableSize = CGSize.zero
     private var cachedUniforms = MetalUniforms(viewProjectionMatrix: matrix_identity_float4x4)
     private var cachedLabels: [ApproachMetalProjectedLabel] = []
+    private var preferredVisibleLabelIDs: Set<String> = []
     private var cachedStats = ApproachMetalRenderStats.empty
     private var hasUserInteracted = false
 
@@ -120,10 +152,11 @@ final class ApproachMetalRenderEngine {
     private let trafficPointLayer = ApproachMetalPrimitiveLayer<MetalPointVertex>()
     private let airspaceTriangleLayer = ApproachMetalIndexedLayer()
     private let airspaceLineLayer = ApproachMetalIndexedLayer()
+    private let textLayer = ApproachMetalTextLayer()
+    private let textAtlas: ApproachMetalTextAtlas
 
     init?(
         view: MTKView,
-        onLabelsChanged: @escaping ([ApproachMetalProjectedLabel]) -> Void,
         onStatsChanged: @escaping (ApproachMetalRenderStats) -> Void
     ) {
         guard let device = view.device,
@@ -134,8 +167,8 @@ final class ApproachMetalRenderEngine {
         self.view = view
         self.device = device
         self.commandQueue = commandQueue
-        self.onLabelsChanged = onLabelsChanged
         self.onStatsChanged = onStatsChanged
+        self.textAtlas = ApproachMetalTextAtlas(device: device)
 
         let depthDescriptor = MTLDepthStencilDescriptor()
         depthDescriptor.depthCompareFunction = .less
@@ -152,6 +185,24 @@ final class ApproachMetalRenderEngine {
             return nil
         }
         self.translucentDepthState = translucentDepthState
+
+        let overlayDepthDescriptor = MTLDepthStencilDescriptor()
+        overlayDepthDescriptor.depthCompareFunction = .always
+        overlayDepthDescriptor.isDepthWriteEnabled = false
+        guard let overlayDepthState = device.makeDepthStencilState(descriptor: overlayDepthDescriptor) else {
+            return nil
+        }
+        self.overlayDepthState = overlayDepthState
+
+        let samplerDescriptor = MTLSamplerDescriptor()
+        samplerDescriptor.minFilter = .linear
+        samplerDescriptor.magFilter = .linear
+        samplerDescriptor.sAddressMode = .clampToEdge
+        samplerDescriptor.tAddressMode = .clampToEdge
+        guard let textSamplerState = device.makeSamplerState(descriptor: samplerDescriptor) else {
+            return nil
+        }
+        self.textSamplerState = textSamplerState
 
         func makePipeline(vertex: String, fragment: String) -> MTLRenderPipelineState? {
             let descriptor = MTLRenderPipelineDescriptor()
@@ -171,12 +222,14 @@ final class ApproachMetalRenderEngine {
 
         guard let trianglePipeline = makePipeline(vertex: "basicVertex", fragment: "basicFragment"),
               let linePipeline = makePipeline(vertex: "basicVertex", fragment: "basicFragment"),
-              let pointPipeline = makePipeline(vertex: "pointVertex", fragment: "pointFragment") else {
+              let pointPipeline = makePipeline(vertex: "pointVertex", fragment: "pointFragment"),
+              let textPipeline = makePipeline(vertex: "textVertex", fragment: "textFragment") else {
             return nil
         }
         self.trianglePipeline = trianglePipeline
         self.linePipeline = linePipeline
         self.pointPipeline = pointPipeline
+        self.textPipeline = textPipeline
     }
 
     func updateScene(_ scene: RenderScene) {
@@ -292,11 +345,18 @@ final class ApproachMetalRenderEngine {
             primitiveType: .point
         )
         if trafficPointLayer.count > 0 { drawCallCount += 1 }
+        textLayer.encode(
+            encoder,
+            pipeline: textPipeline,
+            depthState: overlayDepthState,
+            texture: textAtlas.texture,
+            sampler: textSamplerState
+        )
+        if textLayer.count > 0 { drawCallCount += 1 }
 
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
-        onLabelsChanged(cachedLabels)
         cachedStats = ApproachMetalRenderStats(
             invalidationSummary: drawInvalidation.summary,
             drawCPUms: elapsedMillis(since: drawStart),
@@ -332,6 +392,10 @@ final class ApproachMetalRenderEngine {
                 vertices: scene.airspaceLineVertices,
                 indices: scene.airspaceLineIndices
             )
+            let labelKeys = scene.labels.lazy.map {
+                ApproachMetalTextAtlas.Key(text: $0.text, fontSize: $0.fontSize)
+            }
+            textAtlas.ensureEntries(for: labelKeys)
             uploadCPUms = elapsedMillis(since: uploadStart)
         }
 
@@ -339,6 +403,10 @@ final class ApproachMetalRenderEngine {
             let uploadStart = DispatchTime.now().uptimeNanoseconds
             trafficLineLayer.upload(device: device, vertices: trafficScene.lineVertices)
             trafficPointLayer.upload(device: device, vertices: trafficScene.pointVertices)
+            let labelKeys = trafficScene.labels.lazy.map {
+                ApproachMetalTextAtlas.Key(text: $0.text, fontSize: $0.fontSize)
+            }
+            textAtlas.ensureEntries(for: labelKeys)
             uploadCPUms += elapsedMillis(since: uploadStart)
         }
 
@@ -351,6 +419,10 @@ final class ApproachMetalRenderEngine {
         if invalidation.intersection([.geometry, .camera, .viewport, .overlays]).isEmpty == false {
             let labelStart = DispatchTime.now().uptimeNanoseconds
             cachedLabels = projectLabels(in: view, matrix: cachedUniforms.viewProjectionMatrix)
+            let textVertices = buildTextVertices(for: cachedLabels, in: view)
+            let uploadStart = DispatchTime.now().uptimeNanoseconds
+            textLayer.upload(device: device, vertices: textVertices)
+            uploadCPUms += elapsedMillis(since: uploadStart)
             labelCPUms = elapsedMillis(since: labelStart)
         }
 
@@ -362,16 +434,17 @@ final class ApproachMetalRenderEngine {
         let width = max(1, Float(view.bounds.width))
         let height = max(1, Float(view.bounds.height))
         let labels = scene.labels + trafficScene.labels
-        return labels.map { label in
+        var projected = labels.map { label in
             let clip = matrix * SIMD4<Float>(label.position.x, label.position.y, label.position.z, 1)
             guard clip.w > 0 else {
                 return ApproachMetalProjectedLabel(
                     id: label.id,
                     text: label.text,
-                    color: Color(label.color),
+                    color: simdColor(label.color),
                     x: 0,
                     y: 0,
                     fontSize: label.fontSize,
+                    declutterable: label.declutterable,
                     visible: false
                 )
             }
@@ -379,13 +452,20 @@ final class ApproachMetalRenderEngine {
             return ApproachMetalProjectedLabel(
                 id: label.id,
                 text: label.text,
-                color: Color(label.color),
+                color: simdColor(label.color),
                 x: CGFloat((ndc.x * 0.5 + 0.5) * width),
                 y: CGFloat((1 - (ndc.y * 0.5 + 0.5)) * height),
                 fontSize: label.fontSize,
+                declutterable: label.declutterable,
                 visible: abs(ndc.x) <= 1.0 && abs(ndc.y) <= 1.0 && ndc.z >= -1 && ndc.z <= 1
             )
         }
+        declutterLabels(
+            &projected,
+            viewport: CGSize(width: CGFloat(width), height: CGFloat(height)),
+            preferredVisibleIDs: &preferredVisibleLabelIDs
+        )
+        return projected
     }
 
     private var currentDrawableSize: CGSize {
@@ -398,6 +478,157 @@ final class ApproachMetalRenderEngine {
     private func requestRedraw() {
         view?.setNeedsDisplay()
     }
+
+    private func buildTextVertices(for labels: [ApproachMetalProjectedLabel], in view: MTKView) -> [MetalTextVertex] {
+        let viewport = view.bounds.size
+        guard viewport.width > 0, viewport.height > 0 else { return [] }
+        var vertices: [MetalTextVertex] = []
+        vertices.reserveCapacity(labels.count * 6)
+
+        for label in labels where label.visible {
+            let key = ApproachMetalTextAtlas.Key(text: label.text, fontSize: label.fontSize)
+            guard let entry = textAtlas.entry(for: key) else { continue }
+            let width = Float(entry.renderSize.width / viewport.width * 2)
+            let height = Float(entry.renderSize.height / viewport.height * 2)
+            let centerX = Float(label.x / viewport.width * 2 - 1)
+            let centerY = Float(1 - label.y / viewport.height * 2)
+            let minX = centerX - width * 0.5
+            let maxX = centerX + width * 0.5
+            let minY = centerY - height * 0.5
+            let maxY = centerY + height * 0.5
+
+            let bottomLeft = SIMD2<Float>(minX, minY)
+            let bottomRight = SIMD2<Float>(maxX, minY)
+            let topLeft = SIMD2<Float>(minX, maxY)
+            let topRight = SIMD2<Float>(maxX, maxY)
+            let uvMin = entry.uvMin
+            let uvMax = entry.uvMax
+            let uvBottomLeft = SIMD2<Float>(uvMin.x, uvMax.y)
+            let uvBottomRight = SIMD2<Float>(uvMax.x, uvMax.y)
+            let uvTopLeft = SIMD2<Float>(uvMin.x, uvMin.y)
+            let uvTopRight = SIMD2<Float>(uvMax.x, uvMin.y)
+
+            vertices.append(contentsOf: [
+                MetalTextVertex(position: topLeft, texCoord: uvTopLeft, color: label.color),
+                MetalTextVertex(position: bottomLeft, texCoord: uvBottomLeft, color: label.color),
+                MetalTextVertex(position: topRight, texCoord: uvTopRight, color: label.color),
+                MetalTextVertex(position: topRight, texCoord: uvTopRight, color: label.color),
+                MetalTextVertex(position: bottomLeft, texCoord: uvBottomLeft, color: label.color),
+                MetalTextVertex(position: bottomRight, texCoord: uvBottomRight, color: label.color),
+            ])
+        }
+
+        return vertices
+    }
+}
+
+private func declutterLabels(
+    _ labels: inout [ApproachMetalProjectedLabel],
+    viewport: CGSize,
+    preferredVisibleIDs: inout Set<String>
+) {
+    let candidateIndices = labels.indices.filter { labels[$0].visible && labels[$0].declutterable }
+    guard !candidateIndices.isEmpty else {
+        preferredVisibleIDs.formIntersection(Set(labels.lazy.filter(\.visible).map(\.id)))
+        return
+    }
+
+    let cellWidth: CGFloat = 96
+    let cellHeight: CGFloat = 28
+    let viewportRect = CGRect(origin: .zero, size: viewport)
+    let sortedIndices = candidateIndices.sorted {
+        let lhs = labels[$0]
+        let rhs = labels[$1]
+        let lhsPreferred = preferredVisibleIDs.contains(lhs.id)
+        let rhsPreferred = preferredVisibleIDs.contains(rhs.id)
+        if lhsPreferred != rhsPreferred {
+            return lhsPreferred && !rhsPreferred
+        }
+        if lhs.fontSize != rhs.fontSize {
+            return lhs.fontSize > rhs.fontSize
+        }
+        return lhs.id < rhs.id
+    }
+
+    struct GridKey: Hashable {
+        let x: Int
+        let y: Int
+    }
+
+    var occupiedRectsByCell: [GridKey: [CGRect]] = [:]
+    var nextPreferredVisibleIDs: Set<String> = []
+
+    for index in sortedIndices {
+        let rect = estimatedLabelRect(for: labels[index]).intersection(viewportRect)
+        guard rect.isNull == false, rect.isEmpty == false else {
+            labels[index] = ApproachMetalProjectedLabel(
+                id: labels[index].id,
+                text: labels[index].text,
+                color: labels[index].color,
+                x: labels[index].x,
+                y: labels[index].y,
+                fontSize: labels[index].fontSize,
+                declutterable: labels[index].declutterable,
+                visible: false
+            )
+            continue
+        }
+
+        let minCellX = Int(floor(rect.minX / cellWidth))
+        let maxCellX = Int(floor(rect.maxX / cellWidth))
+        let minCellY = Int(floor(rect.minY / cellHeight))
+        let maxCellY = Int(floor(rect.maxY / cellHeight))
+
+        var overlaps = false
+        for cellX in minCellX...maxCellX where !overlaps {
+            for cellY in minCellY...maxCellY {
+                let key = GridKey(x: cellX, y: cellY)
+                guard let occupiedRects = occupiedRectsByCell[key] else { continue }
+                if occupiedRects.contains(where: { $0.intersects(rect) }) {
+                    overlaps = true
+                    break
+                }
+            }
+        }
+
+        if overlaps {
+            labels[index] = ApproachMetalProjectedLabel(
+                id: labels[index].id,
+                text: labels[index].text,
+                color: labels[index].color,
+                x: labels[index].x,
+                y: labels[index].y,
+                fontSize: labels[index].fontSize,
+                declutterable: labels[index].declutterable,
+                visible: false
+            )
+            continue
+        }
+
+        for cellX in minCellX...maxCellX {
+            for cellY in minCellY...maxCellY {
+                let key = GridKey(x: cellX, y: cellY)
+                occupiedRectsByCell[key, default: []].append(rect)
+            }
+        }
+
+        nextPreferredVisibleIDs.insert(labels[index].id)
+    }
+
+    preferredVisibleIDs = nextPreferredVisibleIDs
+}
+
+private func estimatedLabelRect(for label: ApproachMetalProjectedLabel) -> CGRect {
+    let estimatedWidth = ceil(max(label.fontSize * 2, CGFloat(label.text.count) * label.fontSize * 0.62 + 10))
+    let estimatedHeight = ceil(label.fontSize * 1.35 + 4)
+    let paddingX: CGFloat = 6
+    let paddingY: CGFloat = 3
+    return CGRect(
+        x: label.x - estimatedWidth * 0.5 - paddingX,
+        y: label.y - estimatedHeight * 0.5 - paddingY,
+        width: estimatedWidth + paddingX * 2,
+        height: estimatedHeight + paddingY * 2
+    )
 }
 
 private extension ApproachMetalInvalidation {
@@ -417,4 +648,13 @@ private extension ApproachMetalInvalidation {
 
 private func elapsedMillis(since start: UInt64) -> Double {
     Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+}
+
+private func simdColor(_ color: UIColor) -> SIMD4<Float> {
+    var red: CGFloat = 0
+    var green: CGFloat = 0
+    var blue: CGFloat = 0
+    var alpha: CGFloat = 0
+    color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+    return SIMD4<Float>(Float(red), Float(green), Float(blue), Float(alpha))
 }

@@ -3,6 +3,7 @@ import tseslint from 'typescript-eslint';
 export default [
   {
     ignores: [
+      '.tmp/**',
       '.next/**',
       'node_modules/**',
       'dist/**',
