@@ -15,11 +15,73 @@
 - AWS SNS/SQS (event-driven MRMS scan ingestion)
 - Datadog `dd-trace` (Next.js server tracing) + browser RUM + Rust runtime OTLP tracing
 
+## Prerequisites
+
+- **Node.js** (LTS recommended)
+- **Rust** (stable, edition 2024 — requires **1.85+**)
+- **wasm-pack** (for building the WASM module)
+
+### Rust Environment Setup
+
+Install Rust via [rustup](https://rustup.rs/):
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+Add the WASM compilation target:
+
+```sh
+rustup target add wasm32-unknown-unknown
+```
+
+Install [wasm-pack](https://rustwasm.github.io/wasm-pack/):
+
+```sh
+cargo install wasm-pack
+```
+
+Verify:
+
+```sh
+rustc --version    # 1.85+
+wasm-pack --version
+```
+
+### Rust Workspace Structure
+
+```
+Cargo.toml                          # workspace root (resolver v2)
+crates/approach-viz-core/           # shared core — native + wasm
+services/runtime-rs/                # Axum runtime service — native only
+packages/approach-viz-core-wasm/    # wasm-pack output (generated)
+```
+
+- **approach-viz-core** — Wire format codecs (AVMR, AVET, AVTR), coordinate transforms, MRMS preprocessing, traffic merge. Dual crate-type: `rlib` (for runtime) + `cdylib` (for WASM via wasm-bindgen).
+- **approach-viz-runtime** — Axum/Tokio HTTP server for MRMS ingest/query and ADS-B traffic decode. Deployed as a single native binary.
+
+### Building Rust / WASM
+
+```sh
+# WASM — builds core crate, copies .wasm + .js to public/
+npm run build:wasm
+
+# Native workspace check
+cargo check                            # full workspace
+cargo check -p approach-viz-core       # core only
+cargo check -p approach-viz-runtime    # runtime only
+
+# Runtime release binary (thin LTO, opt-level 3)
+cargo build --release -p approach-viz-runtime
+```
+
 ## Quick Start
 
 ```bash
 npm install
-npm run prepare-data   # download FAA data + build SQLite DB
+npm run build:wasm         # compile Rust core → WASM
+npm run prepare-data       # download FAA data + build SQLite DB
 npm run dev
 ```
 

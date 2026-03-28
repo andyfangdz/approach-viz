@@ -26,7 +26,7 @@ const WAL_TRUNCATE_COOLDOWN_MS: i64 = 10 * 60_000;
 const META_KEY_SOURCE: &str = "source";
 const META_KEY_UPDATED_AT_MS: &str = "updated_at_ms";
 
-pub(crate) struct TrafficStore {
+pub struct TrafficStore {
     writer_tx: mpsc::Sender<WriteCommand>,
     memory: Arc<TrafficMemoryStore>,
 }

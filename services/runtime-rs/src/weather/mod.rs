@@ -40,7 +40,7 @@ use crate::types::AppState;
 use crate::utils::{clamp, iso_from_ms};
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct VolumeQuery {
+pub struct VolumeQuery {
     lat: f64,
     lon: f64,
     #[serde(default, rename = "minDbz")]
@@ -50,7 +50,7 @@ pub(crate) struct VolumeQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct EchoTopsQuery {
+pub struct EchoTopsQuery {
     lat: f64,
     lon: f64,
     #[serde(default, rename = "maxRangeNm")]
@@ -58,7 +58,7 @@ pub(crate) struct EchoTopsQuery {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct MetaResponse {
+pub struct MetaResponse {
     ready: bool,
     #[serde(rename = "generatedAt")]
     generated_at: Option<String>,

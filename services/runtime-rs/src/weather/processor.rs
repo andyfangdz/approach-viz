@@ -811,7 +811,7 @@ struct EchoTopBundle {
 }
 
 #[derive(Clone, Debug)]
-struct AuxFieldSampler<'a> {
+pub(crate) struct AuxFieldSampler<'a> {
     direct_values: Option<&'a [f32]>,
     sampled_lookup: Option<AuxFieldLookup<'a>>,
 }
