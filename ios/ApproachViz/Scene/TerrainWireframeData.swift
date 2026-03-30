@@ -1,7 +1,6 @@
 import Foundation
 import CoreGraphics
 import Nuke
-import UIKit
 
 struct TerrainWireframeData: Sendable, Hashable {
     struct Vertex: Sendable, Hashable {
@@ -143,8 +142,8 @@ actor TerrainWireframeLoader {
         Swift.max(min, Swift.min(max, value))
     }
 
-    private static func decodeTile(image: UIImage) -> TileImage? {
-        guard let image = image.cgImage else {
+    private static func decodeTile(image: PlatformImage) -> TileImage? {
+        guard let image = platformCGImage(from: image) else {
             return nil
         }
         let width = image.width

@@ -1,5 +1,4 @@
 import MetalKit
-import UIKit
 
 @MainActor
 final class ApproachMetalTextAtlas {
@@ -65,10 +64,10 @@ final class ApproachMetalTextAtlas {
     }
 
     private func rasterize(key: Key) -> RasterizedLabel? {
-        let font = UIFont.monospacedSystemFont(ofSize: key.fontSize, weight: .semibold)
+        let font = platformMonospacedFont(ofSize: key.fontSize, weight: .semibold)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: UIColor.white,
+            .foregroundColor: platformWhiteColor(),
         ]
         let attributed = NSAttributedString(string: key.text, attributes: attributes)
         let measuredBounds = attributed.boundingRect(
@@ -101,16 +100,16 @@ final class ApproachMetalTextAtlas {
         context.translateBy(x: 0, y: CGFloat(pixelHeight))
         context.scaleBy(x: sdfScale, y: -sdfScale)
 
-        UIGraphicsPushContext(context)
-        attributed.draw(
-            in: CGRect(
-                x: CGFloat(sdfSpread) / sdfScale,
-                y: CGFloat(sdfSpread) / sdfScale,
-                width: CGFloat(displayWidth),
-                height: CGFloat(displayHeight)
+        withPlatformGraphicsContext(context) {
+            attributed.draw(
+                in: CGRect(
+                    x: CGFloat(sdfSpread) / sdfScale,
+                    y: CGFloat(sdfSpread) / sdfScale,
+                    width: CGFloat(displayWidth),
+                    height: CGFloat(displayHeight)
+                )
             )
-        )
-        UIGraphicsPopContext()
+        }
 
         guard let data = context.data else { return nil }
         let alphaBytes = Array(

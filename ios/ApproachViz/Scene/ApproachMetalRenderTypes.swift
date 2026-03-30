@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 import simd
 
 struct ApproachMetalProjectedLabel: Identifiable, Equatable {
@@ -71,7 +70,7 @@ struct LabelAnchor {
     let id: String
     let text: String
     let position: SIMD3<Float>
-    let color: UIColor
+    let color: PlatformColor
     let fontSize: CGFloat
     let declutterable: Bool
 }

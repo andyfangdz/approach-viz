@@ -1,8 +1,10 @@
 import ComposableArchitecture
-import FloatingPanel
 import SwiftUI
 import SwiftUIIntrospect
-import UIKit
+
+#if os(macOS)
+import AppKit
+#endif
 
 struct RootView: View {
     let store: StoreOf<AppFeature>
@@ -139,11 +141,13 @@ private struct SceneSelectionBar: View {
             .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
+        .platformPointerButton()
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(
             Capsule()
                 .strokeBorder(Color.white.opacity(0.08))
         )
+        .help("Show airport and approach selectors")
         .accessibilityLabel("Show airport and approach selectors")
     }
 }
@@ -153,249 +157,77 @@ private struct DetailControlPanelOverlay: View {
     @Binding var renderStats: ApproachMetalRenderStats
 
     var body: some View {
-        NativeFloatingPanelHost(
-            activePanel: Binding(
-                get: { store.activePanel },
-                set: { store.send(.setActivePanel($0)) }
-            )
-        ) { panel in
-            panelContent(for: panel)
+        GeometryReader { proxy in
+            VStack {
+                Spacer(minLength: 0)
+                if let panel = store.activePanel {
+                    DetailControlPanelSheet(
+                        maxHeight: min(560, proxy.size.height * 0.58),
+                    ) {
+                        panelContent(for: panel)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .animation(.spring(response: 0.28, dampingFraction: 0.9), value: store.activePanel)
         }
     }
 
-    private func panelContent(for panel: DetailControlPanel) -> AnyView {
+    @ViewBuilder
+    private func panelContent(for panel: DetailControlPanel) -> some View {
         switch panel {
         case .selectors:
-            return AnyView(NativeSelectorPanel(store: store) {
+            NativeSelectorPanel(store: store) {
                 store.send(.setActivePanel(nil))
-            })
+            }
         case .layers:
-            return AnyView(NativeLayersPanel(store: store) {
+            NativeLayersPanel(store: store) {
                 store.send(.setActivePanel(nil))
-            })
+            }
         case .options:
-            return AnyView(NativeOptionsPanel(store: store) {
+            NativeOptionsPanel(store: store) {
                 store.send(.setActivePanel(nil))
-            })
+            }
         case .debug:
-            return AnyView(NativeDebugPanel(renderStats: renderStats) {
+            NativeDebugPanel(renderStats: renderStats) {
                 store.send(.setActivePanel(nil))
-            })
+            }
         }
     }
 }
 
-private struct NativeFloatingPanelHost: UIViewControllerRepresentable {
-    let activePanel: Binding<DetailControlPanel?>
-    let content: (DetailControlPanel) -> AnyView
+private struct DetailControlPanelSheet<Content: View>: View {
+    let maxHeight: CGFloat
+    let content: Content
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(activePanel: activePanel)
+    init(maxHeight: CGFloat, @ViewBuilder content: () -> Content) {
+        self.maxHeight = maxHeight
+        self.content = content()
     }
 
-    func makeUIViewController(context: Context) -> FloatingPanelOverlayViewController {
-        context.coordinator.makeContainerViewController()
-    }
-
-    func updateUIViewController(_ uiViewController: FloatingPanelOverlayViewController, context: Context) {
-        context.coordinator.update(
-            in: uiViewController,
-            activePanel: activePanel.wrappedValue,
-            content: content
+    var body: some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(Color.white.opacity(0.22))
+                .frame(width: 44, height: 5)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+            ScrollView {
+                content
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(maxHeight: maxHeight, alignment: .top)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06))
         )
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, @preconcurrency FloatingPanelControllerDelegate {
-        private let activePanel: Binding<DetailControlPanel?>
-        private let floatingPanelController = FloatingPanelController()
-        private var contentController: UIHostingController<AnyView>?
-        private weak var containerViewController: FloatingPanelOverlayViewController?
-        private var displayedPanel: DetailControlPanel?
-
-        init(activePanel: Binding<DetailControlPanel?>) {
-            self.activePanel = activePanel
-            super.init()
-            floatingPanelController.delegate = self
-            floatingPanelController.layout = DetailControlPanelLayout()
-            floatingPanelController.isRemovalInteractionEnabled = true
-            floatingPanelController.backdropView.dismissalTapGestureRecognizer.isEnabled = false
-            floatingPanelController.backdropView.isUserInteractionEnabled = false
-            floatingPanelController.surfaceView.grabberHandle.isHidden = false
-            floatingPanelController.surfaceView.grabberAreaOffset = 0
-            floatingPanelController.surfaceView.backgroundColor = .clear
-            floatingPanelController.surfaceView.containerView.backgroundColor = .clear
-            floatingPanelController.surfaceView.appearance = makeGlassSurfaceAppearance()
-        }
-
-        func makeContainerViewController() -> FloatingPanelOverlayViewController {
-            let viewController = FloatingPanelOverlayViewController()
-            viewController.view.backgroundColor = .clear
-            viewController.hitTestProvider = { [weak self] point, event in
-                guard let self else { return false }
-                return self.panelContains(point: point, event: event, in: viewController.view)
-            }
-            containerViewController = viewController
-            return viewController
-        }
-
-        func update(
-            in viewController: FloatingPanelOverlayViewController,
-            activePanel: DetailControlPanel?,
-            content: (DetailControlPanel) -> AnyView
-        ) {
-            containerViewController = viewController
-
-            guard let activePanel else {
-                displayedPanel = nil
-                if floatingPanelController.parent != nil {
-                    floatingPanelController.removePanelFromParent(animated: true)
-                }
-                return
-            }
-
-            let contentView = AnyView(
-                ZStack {
-                    NativeBlurView(style: .systemUltraThinMaterialDark)
-                    ScrollView {
-                        content(activePanel)
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .scrollIndicators(.hidden)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.06))
-                )
-            )
-
-            if let contentController {
-                contentController.rootView = contentView
-            } else {
-                let contentController = UIHostingController(rootView: contentView)
-                contentController.view.backgroundColor = .clear
-                self.contentController = contentController
-                floatingPanelController.set(contentViewController: contentController)
-            }
-
-            if floatingPanelController.parent == nil {
-                floatingPanelController.addPanel(toParent: viewController, animated: false)
-            }
-
-            if displayedPanel != activePanel {
-                displayedPanel = activePanel
-                floatingPanelController.move(to: .half, animated: false)
-            }
-
-            DispatchQueue.main.async { [weak self] in
-                self?.trackHostedScrollViewIfAvailable()
-            }
-        }
-
-        func floatingPanelDidMove(_ fpc: FloatingPanelController) {
-            containerViewController?.view.setNeedsLayout()
-            if fpc.state == .hidden {
-                activePanel.wrappedValue = nil
-            }
-        }
-
-        private func panelContains(point: CGPoint, event: UIEvent?, in rootView: UIView) -> Bool {
-            guard floatingPanelController.parent != nil else { return false }
-            let containerView = floatingPanelController.surfaceView.containerView
-            let pointInContainer = rootView.convert(point, to: containerView)
-            return containerView.point(inside: pointInContainer, with: event)
-        }
-
-        private func trackHostedScrollViewIfAvailable() {
-            guard
-                let contentController,
-                let scrollView = findScrollView(in: contentController.view)
-            else {
-                return
-            }
-            if floatingPanelController.trackingScrollView !== scrollView {
-                floatingPanelController.track(scrollView: scrollView)
-            }
-        }
-
-        private func findScrollView(in view: UIView) -> UIScrollView? {
-            if let scrollView = view as? UIScrollView {
-                return scrollView
-            }
-            for subview in view.subviews {
-                if let scrollView = findScrollView(in: subview) {
-                    return scrollView
-                }
-            }
-            return nil
-        }
-
-        private func makeGlassSurfaceAppearance() -> FloatingPanel.SurfaceAppearance {
-            let appearance = FloatingPanel.SurfaceAppearance()
-            appearance.backgroundColor = .clear
-            appearance.borderColor = nil
-            appearance.borderWidth = 0
-            appearance.cornerCurve = .continuous
-            appearance.cornerRadius = 24
-            return appearance
-        }
-    }
-}
-
-@MainActor
-private final class FloatingPanelOverlayViewController: UIViewController {
-    var hitTestProvider: ((CGPoint, UIEvent?) -> Bool)?
-
-    override func loadView() {
-        view = FloatingPanelPassthroughView()
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        if let passthroughView = view as? FloatingPanelPassthroughView {
-            passthroughView.hitTestProvider = { [weak self] point, event in
-                self?.hitTestProvider?(point, event) ?? false
-            }
-        }
-    }
-}
-
-@MainActor
-private final class FloatingPanelPassthroughView: UIView {
-    var hitTestProvider: ((CGPoint, UIEvent?) -> Bool)?
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        hitTestProvider?(point, event) ?? false
-    }
-}
-
-private struct NativeBlurView: UIViewRepresentable {
-    let style: UIBlurEffect.Style
-
-    func makeUIView(context: Context) -> UIVisualEffectView {
-        UIVisualEffectView(effect: UIBlurEffect(style: style))
-    }
-
-    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
-        uiView.effect = UIBlurEffect(style: style)
-    }
-}
-
-private final class DetailControlPanelLayout: FloatingPanelBottomLayout {
-    override var initialState: FloatingPanelState { .half }
-
-    override var anchors: [FloatingPanelState: FloatingPanelLayoutAnchoring] {
-        [
-            .full: FloatingPanelLayoutAnchor(absoluteInset: 16, edge: .top, referenceGuide: .safeArea),
-            .half: FloatingPanelLayoutAnchor(fractionalInset: 0.48, edge: .bottom, referenceGuide: .safeArea),
-            .tip: FloatingPanelLayoutAnchor(absoluteInset: 88, edge: .bottom, referenceGuide: .safeArea),
-        ]
-    }
-
-    override func backdropAlpha(for state: FloatingPanelState) -> CGFloat {
-        0
+        .shadow(color: .black.opacity(0.24), radius: 22, y: 10)
     }
 }
 
@@ -412,7 +244,9 @@ private struct FloatingFabButton: View {
                 .background(.ultraThinMaterial, in: Circle())
         }
         .buttonStyle(.plain)
+        .platformPointerButton()
         .foregroundStyle(.white)
+        .help(title)
         .accessibilityLabel(title)
     }
 }
@@ -420,7 +254,13 @@ private struct FloatingFabButton: View {
 struct NativePanelContainer<Content: View>: View {
     let title: String
     let onClose: () -> Void
-    @ViewBuilder let content: Content
+    let content: Content
+
+    init(title: String, onClose: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.onClose = onClose
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -436,6 +276,7 @@ struct NativePanelContainer<Content: View>: View {
                         .background(Color.white.opacity(0.08), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .platformPointerButton()
             }
             content
         }
@@ -504,16 +345,8 @@ struct NativeSelectorPanel: View {
                 )
             )
             .textFieldStyle(.roundedBorder)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled(true)
             .focused($isAirportFilterFocused)
-            .introspect(.textField, on: .iOS(.v18, .v26)) { textField in
-                textField.autocapitalizationType = .none
-                textField.autocorrectionType = .no
-                textField.smartDashesType = .no
-                textField.smartQuotesType = .no
-                textField.spellCheckingType = .no
-            }
+            .modifier(AirportFilterFieldModifier())
 
             SectionLabel("Airports")
             if store.filteredAirports.isEmpty {
@@ -562,6 +395,7 @@ struct NativeSelectorPanel: View {
                         isAirportFilterFocused = true
                     }
                     .buttonStyle(.borderless)
+                    .platformPointerButton()
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.82))
                 }
@@ -588,6 +422,7 @@ struct NativeSelectorPanel: View {
                         isAirportFilterFocused = true
                     }
                     .buttonStyle(.borderedProminent)
+                    .platformPointerButton()
                     .tint(Color.white.opacity(0.14))
                 }
             } else {
@@ -610,7 +445,6 @@ struct NativeSelectorPanel: View {
 
     private func dismissKeyboard() {
         isAirportFilterFocused = false
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private func syncActiveSectionWithCurrentSelection() {
@@ -658,6 +492,7 @@ private struct SelectorRow: View {
             )
         }
         .buttonStyle(.plain)
+        .platformPointerButton()
     }
 }
 
@@ -846,5 +681,46 @@ private struct DebugStatRow: View {
             Text(value)
                 .foregroundStyle(.white.opacity(0.92))
         }
+    }
+}
+
+private struct AirportFilterFieldModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled(true)
+            .introspect(.textField, on: .iOS(.v18, .v26)) { textField in
+                textField.autocapitalizationType = .none
+                textField.autocorrectionType = .no
+                textField.smartDashesType = .no
+                textField.smartQuotesType = .no
+                textField.spellCheckingType = .no
+            }
+        #else
+        content
+        #endif
+    }
+}
+
+private struct PlatformPointerButtonModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
+        #else
+        content
+        #endif
+    }
+}
+
+private extension View {
+    func platformPointerButton() -> some View {
+        modifier(PlatformPointerButtonModifier())
     }
 }

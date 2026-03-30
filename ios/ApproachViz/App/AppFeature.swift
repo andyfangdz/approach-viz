@@ -77,6 +77,21 @@ struct AppFeature {
             )
         }
 
+        var currentApproachIndex: Int? {
+            guard let selectedApproachID else { return nil }
+            return approaches.firstIndex { $0.procedureID == selectedApproachID }
+        }
+
+        var canSelectPreviousApproach: Bool {
+            guard let currentApproachIndex else { return false }
+            return currentApproachIndex > 0
+        }
+
+        var canSelectNextApproach: Bool {
+            guard let currentApproachIndex else { return false }
+            return currentApproachIndex < approaches.index(before: approaches.endIndex)
+        }
+
         func makeTrafficContext() -> TrafficPollingContext? {
             guard layerState.adsb, let sceneData else { return nil }
             return TrafficPollingContext(
@@ -115,6 +130,7 @@ struct AppFeature {
         )
         case airportSelected(String)
         case approachSelected(String)
+        case selectRelativeApproach(Int)
         case togglePanel(DetailControlPanel)
         case setLayerEnabled(LayerKind, Bool)
         case setVerticalScale(Double)
@@ -209,6 +225,25 @@ struct AppFeature {
                 }
                 state.activePanel = nil
                 return loadSceneEffect(airportID: selectedAirportID, requestedApproachID: approachID)
+
+            case let .selectRelativeApproach(offset):
+                guard let selectedAirportID = state.selectedAirportID,
+                      let currentIndex = state.currentApproachIndex
+                else {
+                    return .none
+                }
+                let nextIndex = min(
+                    max(0, currentIndex + offset),
+                    state.approaches.index(before: state.approaches.endIndex)
+                )
+                guard nextIndex != currentIndex else {
+                    return .none
+                }
+                state.activePanel = nil
+                return loadSceneEffect(
+                    airportID: selectedAirportID,
+                    requestedApproachID: state.approaches[nextIndex].procedureID
+                )
 
             case let .togglePanel(panel):
                 state.activePanel = state.activePanel == panel ? nil : panel

@@ -1,5 +1,4 @@
 import MetalKit
-import UIKit
 import simd
 
 struct ApproachMetalInvalidation: OptionSet {
@@ -476,7 +475,8 @@ final class ApproachMetalRenderEngine {
     }
 
     private func requestRedraw() {
-        view?.setNeedsDisplay()
+        guard let view else { return }
+        platformRequestDisplay(for: view)
     }
 
     private func buildTextVertices(for labels: [ApproachMetalProjectedLabel], in view: MTKView) -> [MetalTextVertex] {
@@ -650,11 +650,12 @@ private func elapsedMillis(since start: UInt64) -> Double {
     Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
 }
 
-private func simdColor(_ color: UIColor) -> SIMD4<Float> {
-    var red: CGFloat = 0
-    var green: CGFloat = 0
-    var blue: CGFloat = 0
-    var alpha: CGFloat = 0
-    color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-    return SIMD4<Float>(Float(red), Float(green), Float(blue), Float(alpha))
+private func simdColor(_ color: PlatformColor) -> SIMD4<Float> {
+    let components = platformColorComponents(color)
+    return SIMD4<Float>(
+        Float(components.red),
+        Float(components.green),
+        Float(components.blue),
+        Float(components.alpha)
+    )
 }

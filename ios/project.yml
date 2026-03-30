@@ -41,9 +41,6 @@ packages:
   Nuke:
     url: https://github.com/kean/Nuke.git
     from: 12.8.0
-  FloatingPanel:
-    url: https://github.com/scenee/FloatingPanel.git
-    from: 3.2.1
 settings:
   base:
     DEVELOPMENT_TEAM: ''
@@ -78,8 +75,6 @@ targets:
         product: SwiftNavigation
       - package: SwiftNavigation
         product: SwiftUINavigation
-      - package: SwiftNavigation
-        product: UIKitNavigation
       - package: XCTestDynamicOverlay
         product: IssueReporting
       - package: XCTestDynamicOverlay
@@ -94,8 +89,6 @@ targets:
         product: GRDB
       - package: Nuke
         product: Nuke
-      - package: FloatingPanel
-        product: FloatingPanel
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.andyfang.approachviz
@@ -178,6 +171,163 @@ targets:
           else
             echo "warning: missing $SRC; run npm run prepare-data"
           fi
+  ApproachVizMac:
+    type: application
+    platform: macOS
+    deploymentTarget: '15.0'
+    transitivelyLinkDependencies: true
+    sources:
+      - path: ApproachViz
+        excludes:
+          - RustBridge/Generated/**
+      - path: ApproachViz/RustBridge/Generated/Swift/approach_viz_core.swift
+    dependencies:
+      - sdk: AppIntents.framework
+      - framework: ApproachViz/RustBridge/Generated/ApproachVizCoreFFI.xcframework
+      - package: ComposableArchitecture
+        product: ComposableArchitecture
+      - package: Dependencies
+        product: Dependencies
+      - package: CasePaths
+        product: CasePaths
+      - package: Perception
+        product: Perception
+      - package: IdentifiedCollections
+        product: IdentifiedCollections
+      - package: SwiftNavigation
+        product: SwiftNavigation
+      - package: SwiftNavigation
+        product: SwiftUINavigation
+      - package: XCTestDynamicOverlay
+        product: IssueReporting
+      - package: XCTestDynamicOverlay
+        product: XCTestDynamicOverlay
+      - package: AsyncAlgorithms
+        product: AsyncAlgorithms
+      - package: SwiftCollections
+        product: OrderedCollections
+      - package: SwiftUIIntrospect
+        product: SwiftUIIntrospect
+      - package: GRDB
+        product: GRDB
+      - package: Nuke
+        product: Nuke
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.andyfang.approachviz.macos
+        PRODUCT_NAME: ApproachViz
+        SWIFT_VERSION: '6.0'
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: ApproachViz
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.weather
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CLANG_ENABLE_MODULES: YES
+        CLANG_ENABLE_EXPLICIT_MODULES: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        MACOSX_DEPLOYMENT_TARGET: '15.0'
+        LD_RUNPATH_SEARCH_PATHS: '$(inherited) @executable_path/../Frameworks'
+        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
+        SWIFT_ENABLE_EXPLICIT_MODULES: NO
+    scheme:
+      testTargets:
+        - ApproachVizMacTests
+      preActions:
+        - name: Bootstrap Rust Bridge
+          settingsTarget: ApproachVizMac
+          script: |
+            set -euo pipefail
+            BRIDGE_DIR="$PROJECT_DIR/ApproachViz/RustBridge/Generated"
+            SWIFT_FILE="$BRIDGE_DIR/Swift/approach_viz_core.swift"
+            if [[ ! -d "$BRIDGE_DIR/ApproachVizCoreFFI.xcframework" || ! -f "$SWIFT_FILE" ]]; then
+              echo "note: bootstrapping missing Rust bridge artifacts"
+              bash "$PROJECT_DIR/../scripts/build-ios-bridge.sh"
+            fi
+    preBuildScripts:
+      - name: Verify Rust Bridge
+        inputFiles:
+          - $(PROJECT_DIR)/ApproachViz/RustBridge/Generated/ApproachVizCoreFFI.xcframework/Info.plist
+          - $(PROJECT_DIR)/ApproachViz/RustBridge/Generated/Swift/approach_viz_core.swift
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/verify-rust-bridge.stamp
+        script: |
+          set -euo pipefail
+          BRIDGE_DIR="$PROJECT_DIR/ApproachViz/RustBridge/Generated"
+          SWIFT_FILE="$BRIDGE_DIR/Swift/approach_viz_core.swift"
+          if [[ ! -d "$BRIDGE_DIR/ApproachVizCoreFFI.xcframework" || ! -f "$SWIFT_FILE" ]]; then
+            echo "error: missing Rust bridge artifacts; scheme bootstrap should have generated them"
+            exit 1
+          fi
+          mkdir -p "$DERIVED_FILE_DIR"
+          touch "$DERIVED_FILE_DIR/verify-rust-bridge.stamp"
+      - name: Copy SQLite Database
+        inputFiles:
+          - $(PROJECT_DIR)/../data/approach-viz.sqlite
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/approach-viz.sqlite
+        script: |
+          set -euo pipefail
+          SRC="$PROJECT_DIR/../data/approach-viz.sqlite"
+          DST_DIR="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          DST="$DST_DIR/approach-viz.sqlite"
+          mkdir -p "$DST_DIR"
+          if [[ -f "$SRC" ]]; then
+            cp "$SRC" "$DST"
+          else
+            echo "warning: missing $SRC; run npm run prepare-data"
+          fi
+      - name: Copy Approach Reference Data
+        inputFiles:
+          - $(PROJECT_DIR)/../public/data/approach-db/approaches.json
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/approaches.json
+        script: |
+          set -euo pipefail
+          SRC="$PROJECT_DIR/../public/data/approach-db/approaches.json"
+          DST_DIR="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          DST="$DST_DIR/approaches.json"
+          mkdir -p "$DST_DIR"
+          if [[ -f "$SRC" ]]; then
+            cp "$SRC" "$DST"
+          else
+            echo "warning: missing $SRC; run npm run prepare-data"
+          fi
+  ApproachVizMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '15.0'
+    transitivelyLinkDependencies: true
+    sources:
+      - path: ApproachVizMacTests
+    dependencies:
+      - sdk: AppIntents.framework
+      - target: ApproachVizMac
+      - package: ComposableArchitecture
+        product: ComposableArchitecture
+      - package: Dependencies
+        product: Dependencies
+      - package: CasePaths
+        product: CasePaths
+      - package: Perception
+        product: Perception
+      - package: IdentifiedCollections
+        product: IdentifiedCollections
+      - package: SwiftNavigation
+        product: SwiftNavigation
+      - package: SwiftNavigation
+        product: SwiftUINavigation
+      - package: XCTestDynamicOverlay
+        product: IssueReporting
+      - package: XCTestDynamicOverlay
+        product: XCTestDynamicOverlay
+    settings:
+      base:
+        SWIFT_VERSION: '6.0'
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/ApproachViz.app/Contents/MacOS/ApproachViz
+        BUNDLE_LOADER: $(TEST_HOST)
+        CLANG_ENABLE_EXPLICIT_MODULES: NO
+        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
+        SWIFT_ENABLE_EXPLICIT_MODULES: NO
   ApproachVizSnapshotTests:
     type: bundle.unit-test
     platform: iOS
@@ -204,8 +354,6 @@ targets:
         product: SwiftNavigation
       - package: SwiftNavigation
         product: SwiftUINavigation
-      - package: SwiftNavigation
-        product: UIKitNavigation
       - package: XCTestDynamicOverlay
         product: IssueReporting
       - package: XCTestDynamicOverlay

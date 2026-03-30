@@ -18,12 +18,21 @@ struct ApproachMetalCameraController {
 
         let eye = eyePosition
         let forward = simd_normalize(state.target - eye)
-        let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
-        let up = simd_normalize(simd_cross(right, forward))
+        let worldUp = SIMD3<Float>(0, 1, 0)
+        let right = simd_normalize(simd_cross(forward, worldUp))
+        let groundForwardRaw = SIMD3<Float>(forward.x, 0, forward.z)
+        let groundForwardLength = simd_length(groundForwardRaw)
+        guard groundForwardLength > 0.0001 else { return }
+        let groundForward = groundForwardRaw / groundForwardLength
         let worldUnitsPerPointY = (2 * state.distance * tan(verticalFov / 2)) / height
         let worldUnitsPerPointX = (2 * state.distance * tan(horizontalFov / 2)) / max(1, Float(viewSize.width))
+        let verticalViewComponent = max(0.35, abs(forward.y))
+        let groundUnitsPerPointY = worldUnitsPerPointY / verticalViewComponent
 
-        state.target += (-right * deltaX * worldUnitsPerPointX) + (up * deltaY * worldUnitsPerPointY)
+        let groundTranslation =
+            (-right * deltaX * worldUnitsPerPointX) +
+            (groundForward * deltaY * groundUnitsPerPointY)
+        state.target += SIMD3<Float>(groundTranslation.x, 0, groundTranslation.z)
     }
 
     mutating func zoom(scale: Float) {

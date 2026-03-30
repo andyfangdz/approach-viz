@@ -1,6 +1,5 @@
 import MetalKit
 import simd
-import UIKit
 
 @MainActor
 final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
@@ -71,15 +70,15 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
-    func orbit(deltaX: Float, deltaY: Float, state: UIGestureRecognizer.State) {
+    func orbit(deltaX: Float, deltaY: Float) {
         engine.orbit(deltaX: deltaX, deltaY: deltaY)
     }
 
-    func pan(deltaX: Float, deltaY: Float, viewSize: CGSize, state: UIGestureRecognizer.State) {
+    func pan(deltaX: Float, deltaY: Float, viewSize: CGSize) {
         engine.pan(deltaX: deltaX, deltaY: deltaY, viewSize: viewSize)
     }
 
-    func zoom(scale: Float, state: UIGestureRecognizer.State) {
+    func zoom(scale: Float) {
         engine.zoom(scale: scale)
     }
 
@@ -442,7 +441,7 @@ private func appendPaths(
                     id: "turn-\(label.text)-\(label.position.x)-\(label.position.y)-\(label.position.z)",
                     text: label.text,
                     position: label.position,
-                    color: UIColor(
+                    color: platformColor(
                         red: CGFloat(polyline.color.x),
                         green: CGFloat(polyline.color.y),
                         blue: CGFloat(polyline.color.z),
@@ -624,7 +623,7 @@ private func appendTraffic(
                 id: "traffic-\(track.hex)",
                 text: callsignLabel,
                 position: marker + SIMD3<Float>(0, 0.28, 0),
-                color: UIColor(
+                color: platformColor(
                     red: CGFloat(activeMarkerColor.x),
                     green: CGFloat(activeMarkerColor.y),
                     blue: CGFloat(activeMarkerColor.z),
@@ -657,7 +656,7 @@ private func appendRunways(_ segments: [MetalRunwaySegment], into scene: inout R
             id: segment.label,
             text: segment.label,
             position: center + SIMD3<Float>(0, 0.20, 0),
-            color: UIColor(red: 1, green: 0, blue: 1, alpha: 1),
+            color: platformColor(red: 1, green: 0, blue: 1, alpha: 1),
             fontSize: 11,
             declutterable: false
         ))
@@ -1016,7 +1015,14 @@ private func labelAnchor(for text: String, center: SIMD3<Float>, course: Double,
     let right = SIMD3<Float>(cos(headingRadians), 0, sin(headingRadians))
     let lateralSign: Float = turnDirection == "R" ? 1 : -1
     let position = center + right * max(1.4, Float(distance) * 0.45) * lateralSign - forward * max(0.8, Float(distance) * 0.2) + SIMD3<Float>(0, 0.9, 0)
-    return LabelAnchor(id: text, text: text, position: position, color: UIColor(red: 111.0 / 255.0, green: 123.0 / 255.0, blue: 1.0, alpha: 1.0), fontSize: 11, declutterable: false)
+    return LabelAnchor(
+        id: text,
+        text: text,
+        position: position,
+        color: platformColor(red: 111.0 / 255.0, green: 123.0 / 255.0, blue: 1.0, alpha: 1.0),
+        fontSize: 11,
+        declutterable: false
+    )
 }
 
 private func normalizeHeadingDegrees(_ degrees: Double) -> Double {
