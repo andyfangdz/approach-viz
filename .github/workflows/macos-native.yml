@@ -5,6 +5,11 @@ name: macOS Native Tests (manual)
 
 on:
   workflow_dispatch:
+  # Temporary: auto-run on the architecture-audit branch to verify the native
+  # macOS build; remove before merge.
+  push:
+    branches:
+      - claude/architecture-audit-iuosl9
 
 jobs:
   macos-native:
