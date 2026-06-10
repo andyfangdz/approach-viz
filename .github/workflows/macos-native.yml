@@ -19,6 +19,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # The image default (Xcode 16.4) cannot compile the Nuke package for
+      # macOS (NSImage Sendable errors); the project toolchain is Xcode 26.
+      - name: Select Xcode 26
+        run: |
+          XCODE_APP="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$XCODE_APP" ]; then
+            echo "No Xcode 26 install found on this runner. Available Xcode installs:" >&2
+            ls -d /Applications/Xcode*.app >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
