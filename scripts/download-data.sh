@@ -14,7 +14,20 @@ mkdir -p "$CIFP_DIR" "$AIRSPACE_DIR" "$APPROACH_DB_DIR"
 # ── Step 1: Download approach-db (source of truth for cycle) ─────────────────
 echo "Fetching FAA instrument approach database release..."
 APPROACH_DB_RELEASE_API="https://api.github.com/repos/andyfangdz/faa-instrument-approach-db/releases/latest"
-RELEASE_JSON="$(curl -fsSL "$APPROACH_DB_RELEASE_API")"
+
+# Anonymous api.github.com requests are rate-limited per IP, which 403s on
+# shared CI runners; authenticate when a token is available. The release-asset
+# download below stays unauthenticated: it redirects to a signed CDN URL that
+# rejects requests carrying an Authorization header.
+github_api_curl() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$@"
+  else
+    curl -fsSL "$@"
+  fi
+}
+
+RELEASE_JSON="$(github_api_curl "$APPROACH_DB_RELEASE_API")"
 
 # Release tag = CIFP cycle (from CIFP zip filename the scraper used)
 CIFP_CYCLE="$(echo "$RELEASE_JSON" | node -e '

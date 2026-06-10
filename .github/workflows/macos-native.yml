@@ -47,6 +47,10 @@ jobs:
 
       - name: Prepare data
         run: npm run prepare-data
+        env:
+          # download-data.sh authenticates api.github.com calls when a token is
+          # present, avoiding anonymous rate-limit 403s on shared runners.
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Run native macOS tests
         run: npm run test:macos
