@@ -85,6 +85,7 @@ export interface TrafficDebugState {
   error: string | null;
   lastPollAt: string | null;
   historyBackfillPending: boolean;
+  historyBackfillError: string | null;
   trackCount: number;
   renderedTrackCount: number;
   historyPointCount: number;

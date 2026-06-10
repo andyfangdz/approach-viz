@@ -15,7 +15,6 @@ import * as THREE from 'three';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import type { ApproachPlate } from '@/lib/types';
 import type { ChartType } from '@/app/app-client/types';
-import type { ChartTextureData } from '@/app/scene/ChartMapSurface';
 import { buildChartTexture } from '@/app/scene/ChartMapSurface';
 
 const METERS_TO_NM = 1 / 1852;
@@ -568,8 +567,10 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         setChartTexture(data.texture);
         setChartHomography(homography);
       })
-      .catch(() => {
-        // Cancelled or failed — no action needed
+      .catch((error: unknown) => {
+        if (active) {
+          console.warn('Chart overlay texture load failed.', error);
+        }
       });
 
     return () => {
@@ -650,7 +651,10 @@ export const SatelliteSurface = memo(function SatelliteSurface({
     (material: THREE.Material) => {
       if (patchedMaterialsRef.current.has(material)) return;
       const patchable = material as THREE.Material & {
-        onBeforeCompile: (shader: any, renderer: THREE.WebGLRenderer) => void;
+        onBeforeCompile: (
+          shader: THREE.WebGLProgramParametersWithUniforms,
+          renderer: THREE.WebGLRenderer
+        ) => void;
         customProgramCacheKey?: () => string;
       };
       const originalOnBeforeCompile = patchable.onBeforeCompile?.bind(patchable);

@@ -31,7 +31,7 @@ tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "signal", "
 tracing = "0.1"
 tracing-opentelemetry = "0.29"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-tower-http = { version = "0.6", features = ["compression-gzip", "cors", "trace"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "cors", "timeout", "trace"] }
 urlencoding = "2.1"
 wide = "1.1.1"
 zstd = "0.13"

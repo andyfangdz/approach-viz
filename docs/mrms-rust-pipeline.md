@@ -35,54 +35,38 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - ADS-B spatial indexing path: ring-slot and live-track `R*Tree` tables are trigger-maintained (`INSERT`/`UPDATE`/`DELETE`), startup reconciliation backfills any missing index rows, and `/v1/traffic/adsbx` uses `R*Tree` joins for live candidate and history-target discovery.
 - ADS-B WAL maintenance: low-priority writer maintenance runs periodic `wal_checkpoint(PASSIVE)` and only attempts `wal_checkpoint(TRUNCATE)` when WAL size is above threshold and truncate cooldown has elapsed.
 
-## Wire Format (`application/vnd.approach-viz.mrms.v4`, AVMR v4)
+## Wire Format (`application/vnd.approach-viz.mrms.v5`, AVMR v5)
 
-- Header magic: `AVMR`
-- Version: `4`
-- Header includes:
-  - source voxel count (pre-merge)
-  - encoded brick count
-  - layer count + per-layer voxel counts
-  - record_bytes = `0` (SoA marker; field not meaningful for column layout)
-  - scan timestamp + generated timestamp
-  - global X/Y voxel footprint
-  - query context (`min_dbz`, `max_range`, tile size, origin lat/lon in microdegrees)
-- v4 SoA layout: `18` bytes per merged brick across 10 contiguous column arrays:
-  - `xCentiNm:i16[n]`
-  - `zCentiNm:i16[n]`
-  - `bottomFeet:u16[n]`
-  - `topFeet:u16[n]`
-  - `dbzTenths:i16[n]` (5 dBZ quantized for merge grouping)
+- Encoding: FlatBuffers (`schemas/mrms_volume.fbs`, root table `MrmsVolume`, file identifier `AVMR`).
+- Header scalars:
+  - `source_voxel_count` (pre-merge) and `brick_count` (encoded)
+  - `layer_count` + per-layer `layer_voxel_counts`
+  - `generated_at_ms` / `scan_time_ms` timestamps
+  - global X/Y voxel footprint (`footprint_x_milli` / `footprint_y_milli`, NM × 1000)
+  - query context (`min_dbz_tenths`, `max_range_tenths_nm`, `tile_size`, `encoding_hint`, origin lat/lon in microdegrees)
+- SoA columns (n = `brick_count`), 10 contiguous vectors:
+  - `x_hundredths:i16[n]`
+  - `z_hundredths:i16[n]`
+  - `bottom_feet:u16[n]`
+  - `top_feet:u16[n]`
+  - `dbz_tenths:i16[n]` (5 dBZ quantized for merge grouping)
   - `phase:u8[n]`
-  - `surfacePhase:u8[n]`
-  - `spanX:u16[n]` (grid-cell width multiplier)
-  - `spanY:u16[n]` (grid-cell depth multiplier)
-  - `spanZ:u16[n]` (merged vertical levels)
-- Dropped from v3: `levelStart:u8` and `reserved:u8` (20→18 bytes/brick)
+  - `surface_phase:u8[n]`
+  - `span_x:u16[n]` (grid-cell width multiplier)
+  - `span_y:u16[n]` (grid-cell depth multiplier)
+  - `span_z:u16[n]` (merged vertical levels)
+- v5 replaced the hand-rolled v4 binary header/columns with the FlatBuffers table above; column semantics are unchanged from v4.
 - Merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
+- Decoder in `crates/approach-viz-core/src/mrms_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`.
 
-## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v2`, AVET v2)
+## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v3`, AVET v3)
 
-- Header magic: `AVET`
-- Version: `2`
-- Header size: `64` bytes (all little-endian)
-  - `[0..4]` magic `"AVET"`
-  - `[4..6]` version (u16) = 2
-  - `[6..8]` header_bytes (u16) = 64
-  - `[8..12]` cell_count (u32)
-  - `[12..16]` source_cell_count (u32)
-  - `[16..18]` footprint_x_milli (u16) — NM × 1000
-  - `[18..20]` footprint_y_milli (u16)
-  - `[20..28]` generated_at_ms (i64)
-  - `[28..36]` scan_time_ms (i64)
-  - `[36..38]` max_top18_feet (u16)
-  - `[38..40]` max_top30_feet (u16)
-  - `[40..42]` max_top50_feet (u16)
-  - `[42..44]` max_top60_feet (u16)
-  - `[44..64]` reserved (zero)
-- v2 SoA layout: `16` bytes per cell across 6 contiguous column arrays:
+- Encoding: FlatBuffers (`schemas/echo_tops.fbs`, root table `EchoTops`, file identifier `AVET`).
+- Header scalars: `cell_count`, `source_cell_count`, `footprint_x_milli` / `footprint_y_milli` (NM × 1000), `generated_at_ms`, `scan_time_ms`, `max_top18_feet`, `max_top30_feet`, `max_top50_feet`, `max_top60_feet`.
+- SoA columns (n = `cell_count`), 6 contiguous vectors:
   - `x_nm:f32[n]`, `z_nm:f32[n]`, `top18_feet:u16[n]`, `top30_feet:u16[n]`, `top50_feet:u16[n]`, `top60_feet:u16[n]`
-- Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v2` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
+- v3 replaced the hand-rolled v2 64-byte binary header with the FlatBuffers table above; column semantics are unchanged from v2.
+- Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v3` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
 - Decoder in `crates/approach-viz-core/src/echo_top_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`.
 
 ## Deployment
@@ -101,7 +85,7 @@ Copy the printed `RUNTIME_MRMS_SQS_QUEUE_URL` value.
 
 ```bash
 export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
-scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
+scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
 ```
 
 Optional override for ingest parse workers (persisted in deployed systemd unit):
@@ -109,7 +93,7 @@ Optional override for ingest parse workers (persisted in deployed systemd unit):
 ```bash
 export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
 export RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY=5
-scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
+scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
 ```
 
 Default behavior prefers local cross-compile (skip OCI compile by cross-compiling locally for Linux ARM64), then falls back to remote build if no local cross tool is detected and `RUNTIME_DEPLOY_BUILD_MODE` is unset.
@@ -121,7 +105,7 @@ export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>
 export RUNTIME_DEPLOY_BUILD_MODE=local-cross
 # Optional: RUNTIME_LOCAL_CROSS_TOOL=zigbuild|cross (default: auto-detect)
 # Optional: RUNTIME_LOCAL_CROSS_TARGET=aarch64-unknown-linux-gnu
-scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
+scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
 ```
 
 Optional explicit remote mode:
@@ -129,7 +113,7 @@ Optional explicit remote mode:
 ```bash
 export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
 export RUNTIME_DEPLOY_BUILD_MODE=remote
-scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122
+scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
 ```
 
 Prerequisite for local cross mode: install either `cargo-zigbuild` (`cargo install cargo-zigbuild`) or `cross` (`cargo install cross`).
@@ -138,7 +122,7 @@ This script:
 
 - syncs `services/runtime-rs/` through a staged remote directory replacement (prevents stale file collisions from prior layouts) and excludes local `target/` build artifacts from upload
 - uploads a local cross-compiled `aarch64-unknown-linux-gnu` binary (`RUNTIME_DEPLOY_BUILD_MODE=local-cross`, default preference with auto-fallback) or builds `cargo build --release` on host (`RUNTIME_DEPLOY_BUILD_MODE=remote`)
-- installs `/usr/local/bin/approach-viz-runtime`
+- backs up any existing `/usr/local/bin/approach-viz-runtime` to `approach-viz-runtime.previous` and installs the new binary; on a failed post-restart health check it automatically rolls back to the previous binary
 - installs/enables `approach-viz-runtime.service`
 - configures Tailscale Funnel path `/runtime-v1`
 
@@ -165,11 +149,11 @@ ps -ef | grep '[d]dprof'
 
 - `GET /healthz` -> `ok`
 - `GET /v1/meta` -> readiness + scan stats
-- `GET /v1/weather/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v4`)
+- `GET /v1/weather/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v5`)
 - `GET /v1/volume?...` -> legacy weather alias
-- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> echo-top cells (`EchoTop_18/30/50/60`), JSON by default or AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v2` is provided
+- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> echo-top cells (`EchoTop_18/30/50/60`), JSON by default or AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v3` is provided
 - `GET /v1/echo-tops?...` -> legacy echo-top alias
-- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>&format=<json|binary>` -> default JSON aircraft + optional trail history, or compact binary payload (`format=binary`, `application/vnd.approach-viz.traffic.v3`) served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
+- `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>&format=<json|binary>` -> default JSON aircraft + optional trail history, or compact binary payload (`format=binary`, `application/vnd.approach-viz.traffic.v4`) served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
 
 ## Next.js Configuration
 

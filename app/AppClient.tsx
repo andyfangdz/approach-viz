@@ -169,6 +169,7 @@ const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
   error: null,
   lastPollAt: null,
   historyBackfillPending: false,
+  historyBackfillError: null,
   trackCount: 0,
   renderedTrackCount: 0,
   historyPointCount: 0,
@@ -352,13 +353,8 @@ export function AppClient({
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
-  const liveTrafficEnabled = layers.adsb;
   const nexradVolumeEnabled = layers.mrms;
   const nexradShowEchoTops = layers.echotops;
-  const nexradShowAltitudeGuides = layers.guides;
-  const nexradCrossSectionEnabled = layers.slice;
-  const approachVisible = layers.approach;
-  const airspaceVisible = layers.airspace;
 
   const setLayerEnabled = (id: keyof LayerState, enabled: boolean) => {
     setLayers((prev) => ({ ...prev, [id]: enabled }));
@@ -369,8 +365,9 @@ export function AppClient({
       .then((snapshot) => {
         setServiceWorkerDebug(snapshot);
       })
-      .catch(() => {
-        // Keep runtime non-fatal when service worker introspection fails.
+      .catch((error: unknown) => {
+        // Non-fatal, but report it so debug-panel gaps are explainable.
+        console.warn('Service worker cache introspection failed.', error);
       });
   }, []);
 

@@ -874,16 +874,16 @@ private func buildMetalRunwaySegments(sceneData: NativeSceneData, verticalScale:
     return segments
 }
 
+// Compile-time validated regex literal, so runway-ID parsing has no runtime
+// pattern-compilation failure mode.
+private let metalReciprocalRunwayRegex = /^(\d{1,2})([LRC]?)$/
+
 private func metalReciprocalRunwayID(_ id: String) -> String? {
     let identifier = id.replacingOccurrences(of: "RW", with: "")
-    let pattern = try! NSRegularExpression(pattern: #"^(\d{1,2})([LRC]?)$"#)
-    let range = NSRange(location: 0, length: identifier.utf16.count)
-    guard let match = pattern.firstMatch(in: identifier, range: range),
-          let numberRange = Range(match.range(at: 1), in: identifier) else { return nil }
-    let number = Int(identifier[numberRange]) ?? 0
+    guard let match = identifier.wholeMatch(of: metalReciprocalRunwayRegex),
+          let number = Int(match.1) else { return nil }
     let reciprocalNumber = ((number + 17) % 36) + 1
-    let suffixRange = Range(match.range(at: 2), in: identifier)
-    let suffix = suffixRange.map { String(identifier[$0]) } ?? ""
+    let suffix = String(match.2)
     let reciprocalSuffix: String
     switch suffix {
     case "L": reciprocalSuffix = "R"

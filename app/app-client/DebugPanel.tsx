@@ -665,6 +665,12 @@ export function DebugPanel({
               <span>Backfill</span>
               <span>{boolLabel(trafficDebug.historyBackfillPending)}</span>
             </div>
+            {trafficDebug.historyBackfillError ? (
+              <div className="debug-row">
+                <span>Backfill Error</span>
+                <span>{trafficDebug.historyBackfillError}</span>
+              </div>
+            ) : null}
             <div className="debug-row">
               <span>Tracks</span>
               <span>{trafficDebug.trackCount}</span>

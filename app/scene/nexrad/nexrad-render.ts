@@ -4,7 +4,6 @@ import type { DbzColorBand, EchoTopSoA } from './nexrad-types';
 import {
   NEXRAD_COLOR_GAIN,
   MIN_VISIBLE_LUMINANCE,
-  PHASE_RAIN,
   PHASE_MIXED,
   PHASE_SNOW,
   DECLUTTER_LOW_MAX_FEET,

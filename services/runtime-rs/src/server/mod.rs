@@ -1,9 +1,16 @@
+use std::time::Duration;
+
 use axum::extract::MatchedPath;
 use axum::routing::get;
 use axum::Router;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
+
+/// Server-side backstop so a slow encode or stalled client cannot pin a
+/// request task indefinitely; well above normal volume-encode latency.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 use crate::traffic::traffic_adsbx;
 use crate::types::AppState;
@@ -19,6 +26,10 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/v1/echo-tops", get(echo_tops))
         .route("/v1/traffic/adsbx", get(traffic_adsbx))
         .layer(CompressionLayer::new())
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::GATEWAY_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(make_request_span)

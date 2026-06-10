@@ -435,7 +435,8 @@ private enum SceneClientKey: DependencyKey {
             try SceneRepository().listAirports()
         },
         loadSceneData: { airportID, requestedApproachID in
-            try SceneRepository().loadSceneData(airportID: airportID, requestedApproachID: requestedApproachID)
+            try SceneRepository()
+                .loadSceneData(airportID: airportID, requestedApproachID: requestedApproachID)
         }
     )
 

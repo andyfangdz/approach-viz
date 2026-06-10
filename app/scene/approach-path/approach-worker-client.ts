@@ -1,6 +1,5 @@
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
-import type { TurnConstraintLabel, VerticalLineData } from './types';
 import { ComlinkedWorkerClient } from '@/app/scene/shared/comlinked-worker-client';
 import type {
   ApproachWorkerApi,

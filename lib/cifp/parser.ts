@@ -154,9 +154,14 @@ function parseDecimalTenthsField(line: string, range: SliceRange): number | unde
 
 // Parse DMS coordinates from CIFP format
 // Format: N40523081 = N40°52'30.81"
+// Throws on malformed input rather than fabricating a coordinate.
 function parseDMS(dms: string): number {
   const hemisphere = dms[0];
   const rest = dms.slice(1);
+
+  if (hemisphere !== 'N' && hemisphere !== 'S' && hemisphere !== 'E' && hemisphere !== 'W') {
+    throw new Error(`Invalid CIFP DMS hemisphere in ${JSON.stringify(dms)}`);
+  }
 
   let degrees: number;
   let minutes: number;
@@ -173,7 +178,11 @@ function parseDMS(dms: string): number {
     minutes = parseInt(rest.slice(3, 5));
     seconds = parseInt(rest.slice(5, 7)) + parseInt(rest.slice(7, 9)) / 100;
   } else {
-    return 0;
+    throw new Error(`Invalid CIFP DMS coordinate length in ${JSON.stringify(dms)}`);
+  }
+
+  if (!Number.isFinite(degrees) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+    throw new Error(`Non-numeric CIFP DMS coordinate in ${JSON.stringify(dms)}`);
   }
 
   let decimal = degrees + minutes / 60 + seconds / 3600;

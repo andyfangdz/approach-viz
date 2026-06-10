@@ -36,6 +36,7 @@ export interface TrafficWorkerResult {
   returnedHistoryHexes: string[];
   workerProcessingMs: number;
   fetchMs?: number;
+  historyBackfillError?: string | null;
 }
 
 function roundMs(value: number): number {
@@ -67,10 +68,16 @@ async function fetchTrafficRuntimeRaw(
 async function fetchRuntimeBinaryData(
   primaryUrl: string,
   followupUrl?: string
-): Promise<{ primaryBuffer: ArrayBuffer; backfillBuffer: ArrayBuffer | null; fetchMs: number }> {
+): Promise<{
+  primaryBuffer: ArrayBuffer;
+  backfillBuffer: ArrayBuffer | null;
+  backfillError: string | null;
+  fetchMs: number;
+}> {
   const primary = await fetchTrafficRuntimeRaw(primaryUrl);
 
   let backfillBuffer: ArrayBuffer | null = null;
+  let backfillError: string | null = null;
   let backfillFetchMs = 0;
   if (followupUrl) {
     try {
@@ -78,12 +85,16 @@ async function fetchRuntimeBinaryData(
       backfillBuffer = followup.buffer;
       backfillFetchMs = followup.fetchMs;
     } catch (error) {
+      // The primary poll still succeeded; surface the backfill failure to the
+      // caller instead of swallowing it so the UI/debug panel can report it.
+      backfillError = error instanceof Error ? error.message : String(error);
       console.warn('Traffic history backfill follow-up failed.', error);
     }
   }
   return {
     primaryBuffer: primary.buffer,
     backfillBuffer,
+    backfillError,
     fetchMs: roundMs(primary.fetchMs + backfillFetchMs)
   };
 }
@@ -112,19 +123,19 @@ interface WasmSoA {
   hash: number;
 }
 
-/** Unpack WASM SoA build_render_tracks result. */
-function unpackWasmSoA(wasmResult: any): WasmSoA {
+/** Unpack WASM SoA build_render_tracks result into a plain object. */
+function unpackWasmSoA(wasmResult: WasmSoA): WasmSoA {
   return {
-    trackCount: wasmResult.trackCount as number,
-    markerPositions: wasmResult.markerPositions as Float32Array,
-    headingDeg: wasmResult.headingDeg as Float32Array,
-    flags: wasmResult.flags as Uint8Array,
-    trailPointsFlat: wasmResult.trailPointsFlat as Float32Array,
-    trailOffsets: wasmResult.trailOffsets as Uint32Array,
-    trailCounts: wasmResult.trailCounts as Uint32Array,
-    hexes: wasmResult.hexes as string[],
-    callsignLabels: wasmResult.callsignLabels as (string | null)[],
-    hash: wasmResult.hash as number
+    trackCount: wasmResult.trackCount,
+    markerPositions: wasmResult.markerPositions,
+    headingDeg: wasmResult.headingDeg,
+    flags: wasmResult.flags,
+    trailPointsFlat: wasmResult.trailPointsFlat,
+    trailOffsets: wasmResult.trailOffsets,
+    trailCounts: wasmResult.trailCounts,
+    hexes: wasmResult.hexes,
+    callsignLabels: wasmResult.callsignLabels,
+    hash: wasmResult.hash
   };
 }
 
@@ -191,7 +202,8 @@ export class TrafficWorkerApi {
       mergeResult.trackedHexes,
       mergeResult.returnedHistoryHexes,
       runtimeData.fetchMs,
-      processingStartedAt
+      processingStartedAt,
+      runtimeData.backfillError
     );
   }
 
@@ -221,7 +233,8 @@ export class TrafficWorkerApi {
     trackedHexes: string[],
     returnedHistoryHexes: string[],
     fetchMs?: number,
-    processingStartedAt?: number
+    processingStartedAt?: number,
+    historyBackfillError?: string | null
   ): TrafficWorkerResult {
     const startedAt = processingStartedAt ?? performance.now();
     const state = this.getState();
@@ -233,7 +246,7 @@ export class TrafficWorkerApi {
       options.verticalScale,
       options.applyEarthCurvatureCompensation,
       options.showDepartedTrafficTrails
-    ) as any;
+    ) as WasmSoA;
 
     const soa = unpackWasmSoA(wasmRenderResult);
     const historyPointCount = Math.floor(soa.trailPointsFlat.length / 3);
@@ -254,7 +267,8 @@ export class TrafficWorkerApi {
       trackedHexes,
       returnedHistoryHexes,
       workerProcessingMs,
-      fetchMs
+      fetchMs,
+      historyBackfillError: historyBackfillError ?? null
     };
 
     const transferList: ArrayBuffer[] = [

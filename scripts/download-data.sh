@@ -73,16 +73,35 @@ echo "$CIFP_CYCLE" > "$CIFP_DIR/cycle.txt"
 echo "✅ CIFP data downloaded ($(wc -c < "$CIFP_DIR/FAACIFP18" | tr -d ' ') bytes, cycle $CIFP_CYCLE)"
 
 # ── Step 3: Download airspace overlays ───────────────────────────────────────
-echo "Fetching Class B airspace..."
-curl -fsSL "https://raw.githubusercontent.com/drnic/faa-airspace-data/master/class_b.geo.json" -o "$AIRSPACE_DIR/class_b.geojson"
-echo "✅ Class B airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_b.geojson" | tr -d ' ') bytes)"
+# Pinned to a specific commit so upstream force-pushes/deletions cannot
+# silently change or break the airspace data.
+AIRSPACE_DATA_COMMIT="064ed5102e29c008235361436dd42a2ff8a73000"
+AIRSPACE_BASE_URL="https://raw.githubusercontent.com/drnic/faa-airspace-data/$AIRSPACE_DATA_COMMIT"
 
-echo "Fetching Class C airspace..."
-curl -fsSL "https://raw.githubusercontent.com/drnic/faa-airspace-data/master/class_c.geo.json" -o "$AIRSPACE_DIR/class_c.geojson"
-echo "✅ Class C airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_c.geojson" | tr -d ' ') bytes)"
+download_airspace() {
+  local class_name="$1"
+  local source_file="$2"
+  local target_file="$3"
+  echo "Fetching Class $class_name airspace..."
+  curl -fsSL "$AIRSPACE_BASE_URL/$source_file" -o "$target_file.tmp"
+  # Validate the payload is parseable GeoJSON before moving it into place.
+  node -e '
+    const fs = require("fs");
+    const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (!Array.isArray(parsed.features)) {
+      throw new Error("GeoJSON payload has no features array");
+    }
+  ' "$target_file.tmp" || {
+    echo "❌ Class $class_name airspace payload failed GeoJSON validation"
+    rm -f "$target_file.tmp"
+    exit 1
+  }
+  mv "$target_file.tmp" "$target_file"
+  echo "✅ Class $class_name airspace downloaded ($(wc -c < "$target_file" | tr -d ' ') bytes)"
+}
 
-echo "Fetching Class D airspace..."
-curl -fsSL "https://raw.githubusercontent.com/drnic/faa-airspace-data/master/class_d.geo.json" -o "$AIRSPACE_DIR/class_d.geojson"
-echo "✅ Class D airspace downloaded ($(wc -c < "$AIRSPACE_DIR/class_d.geojson" | tr -d ' ') bytes)"
+download_airspace "B" "class_b.geo.json" "$AIRSPACE_DIR/class_b.geojson"
+download_airspace "C" "class_c.geo.json" "$AIRSPACE_DIR/class_c.geojson"
+download_airspace "D" "class_d.geo.json" "$AIRSPACE_DIR/class_d.geojson"
 
 echo "🎉 All data downloaded successfully (CIFP: $CIFP_CYCLE, d-TPP: $DTPP_CYCLE)"

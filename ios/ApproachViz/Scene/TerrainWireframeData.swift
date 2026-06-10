@@ -35,7 +35,23 @@ actor TerrainWireframeLoader {
     private let radiusNm = 50.0
     private let tileBaseURL = URL(string: "https://elevation-tiles-prod.s3.amazonaws.com/terrarium")!
     private let imagePipeline = ImagePipeline.shared
+    // Decoded tiles are ~256 KB each; the LRU cap bounds the cache at ~32 MB
+    // instead of growing without limit as airports are switched.
+    private let maxCachedTiles = 128
     private var cache: [TileKey: TileImage] = [:]
+    private var cacheAccessOrder: [TileKey] = []
+
+    private func storeCachedTile(_ tile: TileImage, for key: TileKey) {
+        cache[key] = tile
+        if let index = cacheAccessOrder.firstIndex(of: key) {
+            cacheAccessOrder.remove(at: index)
+        }
+        cacheAccessOrder.append(key)
+        while cache.count > maxCachedTiles, let oldest = cacheAccessOrder.first {
+            cacheAccessOrder.removeFirst()
+            cache.removeValue(forKey: oldest)
+        }
+    }
 
     func load(refLat: Double, refLon: Double) async throws -> TerrainWireframeData {
         let latRadius = radiusNm / 60.0
@@ -75,7 +91,7 @@ actor TerrainWireframeLoader {
 
             for await (key, tileImage) in group {
                 if let tileImage {
-                    cache[key] = tileImage
+                    storeCachedTile(tileImage, for: key)
                     tiles[key] = tileImage
                 }
             }

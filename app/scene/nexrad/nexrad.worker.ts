@@ -152,15 +152,75 @@ async function fetchArrayBuffer(
   };
 }
 
+/** Structural contract of the wasm-bindgen `decode_and_prepare_mrms` result. */
+interface WasmPreparedVolume {
+  validCount: number;
+  validIndices: Int32Array;
+  yBase: Float32Array;
+  heightBase: Float32Array;
+  correctedBottomFeet: Float32Array;
+  correctedTopFeet: Float32Array;
+  effectivePhaseCode: Uint8Array;
+  declutterIndices: Int32Array;
+  declutterCount: number;
+}
+
+interface WasmVolumePayload {
+  generatedAtMs: number;
+  scanTimeMs: number;
+  layerCount: number;
+  layerVoxelCounts: Uint32Array;
+  voxelCount: number;
+  xNm: Float32Array;
+  zNm: Float32Array;
+  dbz: Float32Array;
+  footprintBaseXNm: number;
+  footprintBaseYNm: number;
+  spanX: Uint16Array;
+  spanY: Uint16Array;
+  phaseCode: Uint8Array;
+}
+
+interface WasmDecodeAndPrepareMrmsResult {
+  prepared: WasmPreparedVolume;
+  crossSection: CrossSectionData | null;
+  volumePayload: WasmVolumePayload;
+}
+
+/** Structural contract of the wasm-bindgen `decode_and_prepare_echo_top` result. */
+interface WasmEchoTopSoA {
+  count?: number;
+  x: Float32Array;
+  z: Float32Array;
+  yBase: Float32Array;
+  footprintXNm?: number;
+  footprintYNm?: number;
+}
+
+interface WasmEchoTopSummary {
+  sourceCellCount?: number;
+  maxTop18Feet?: number | null;
+  maxTop30Feet?: number | null;
+  maxTop50Feet?: number | null;
+  maxTop60Feet?: number | null;
+}
+
+interface WasmDecodeAndPrepareEchoTopResult {
+  top18: WasmEchoTopSoA;
+  top30: WasmEchoTopSoA;
+  top50: WasmEchoTopSoA;
+  summary: WasmEchoTopSummary;
+}
+
 /** Extract SoA typed arrays from WASM echo-top output (zero-copy pass-through). */
-function extractEchoTopSoA(soa: any): EchoTopSoA {
+function extractEchoTopSoA(soa: WasmEchoTopSoA): EchoTopSoA {
   return {
     count: soa.count ?? 0,
-    x: soa.x as Float32Array,
-    z: soa.z as Float32Array,
-    yBase: soa.yBase as Float32Array,
-    footprintXNm: (soa.footprintXNm as number) ?? 0,
-    footprintYNm: (soa.footprintYNm as number) ?? 0
+    x: soa.x,
+    z: soa.z,
+    yBase: soa.yBase,
+    footprintXNm: soa.footprintXNm ?? 0,
+    footprintYNm: soa.footprintYNm ?? 0
   };
 }
 
@@ -271,20 +331,20 @@ export class NexradWorkerApi {
         options.slicePerpAxis.z,
         options.normalizedCrossSectionRange,
         options.crossSectionHalfWidthNm
-      ) as any;
+      ) as WasmDecodeAndPrepareMrmsResult;
 
       // Unpack prepared volume
       const wasmPrepared = result.prepared;
       preparedVolume = {
-        validCount: wasmPrepared.validCount as number,
-        validIndices: wasmPrepared.validIndices as Int32Array,
-        yBase: wasmPrepared.yBase as Float32Array,
-        heightBase: wasmPrepared.heightBase as Float32Array,
-        correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
-        correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
-        effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
-        declutterIndices: wasmPrepared.declutterIndices as Int32Array,
-        declutterCount: wasmPrepared.declutterCount as number
+        validCount: wasmPrepared.validCount,
+        validIndices: wasmPrepared.validIndices,
+        yBase: wasmPrepared.yBase,
+        heightBase: wasmPrepared.heightBase,
+        correctedBottomFeet: wasmPrepared.correctedBottomFeet,
+        correctedTopFeet: wasmPrepared.correctedTopFeet,
+        effectivePhaseCode: wasmPrepared.effectivePhaseCode,
+        declutterIndices: wasmPrepared.declutterIndices,
+        declutterCount: wasmPrepared.declutterCount
       };
 
       // Cross-section (null if not requested or empty volume)
@@ -324,15 +384,15 @@ export class NexradWorkerApi {
           generatedAt,
           radar: null,
           layerSummaries,
-          voxelCount: vp.voxelCount as number,
-          xNm: vp.xNm as Float32Array,
-          zNm: vp.zNm as Float32Array,
-          dbz: vp.dbz as Float32Array,
-          footprintBaseXNm: vp.footprintBaseXNm as number,
-          footprintBaseYNm: vp.footprintBaseYNm as number,
-          spanX: vp.spanX as Uint16Array,
-          spanY: vp.spanY as Uint16Array,
-          phaseCode: vp.phaseCode as Uint8Array
+          voxelCount: vp.voxelCount,
+          xNm: vp.xNm,
+          zNm: vp.zNm,
+          dbz: vp.dbz,
+          footprintBaseXNm: vp.footprintBaseXNm,
+          footprintBaseYNm: vp.footprintBaseYNm,
+          spanX: vp.spanX,
+          spanY: vp.spanY,
+          phaseCode: vp.phaseCode
         },
         extractPhaseDebugHeaderValues(volumeFetch.headers)
       );
@@ -362,7 +422,7 @@ export class NexradWorkerApi {
           new Uint8Array(echoTopFetch.buffer),
           options.applyEarthCurvatureCompensation,
           options.refLat
-        ) as any;
+        ) as WasmDecodeAndPrepareEchoTopResult;
         echoTop18 = extractEchoTopSoA(result.top18);
         echoTop30 = extractEchoTopSoA(result.top30);
         echoTop50 = extractEchoTopSoA(result.top50);
@@ -444,19 +504,19 @@ export class NexradWorkerApi {
       options.slicePerpAxis.z,
       options.normalizedCrossSectionRange,
       options.crossSectionHalfWidthNm
-    ) as any;
+    ) as WasmDecodeAndPrepareMrmsResult;
 
     const wasmPrepared = result.prepared;
     const preparedVolume: NexradPreparedVolumeData = {
-      validCount: wasmPrepared.validCount as number,
-      validIndices: wasmPrepared.validIndices as Int32Array,
-      yBase: wasmPrepared.yBase as Float32Array,
-      heightBase: wasmPrepared.heightBase as Float32Array,
-      correctedBottomFeet: wasmPrepared.correctedBottomFeet as Float32Array,
-      correctedTopFeet: wasmPrepared.correctedTopFeet as Float32Array,
-      effectivePhaseCode: wasmPrepared.effectivePhaseCode as Uint8Array,
-      declutterIndices: wasmPrepared.declutterIndices as Int32Array,
-      declutterCount: wasmPrepared.declutterCount as number
+      validCount: wasmPrepared.validCount,
+      validIndices: wasmPrepared.validIndices,
+      yBase: wasmPrepared.yBase,
+      heightBase: wasmPrepared.heightBase,
+      correctedBottomFeet: wasmPrepared.correctedBottomFeet,
+      correctedTopFeet: wasmPrepared.correctedTopFeet,
+      effectivePhaseCode: wasmPrepared.effectivePhaseCode,
+      declutterIndices: wasmPrepared.declutterIndices,
+      declutterCount: wasmPrepared.declutterCount
     };
     const crossSectionData: CrossSectionData | null = result.crossSection;
 

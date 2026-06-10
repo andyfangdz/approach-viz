@@ -6,7 +6,6 @@ export function InfoPanel({
   onToggleLegend,
   surfaceLegendClass,
   surfaceLegendLabel,
-  surfaceMode,
   layers,
   hasApproachPlate,
   plateOverlayEnabled,
