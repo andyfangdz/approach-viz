@@ -1109,3 +1109,172 @@ fn migrate_legacy_partitions_to_ring(connection: &Connection) -> Result<(), Stri
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traffic::types::{QueryRequest, TrafficAircraft};
+
+    const NOW_MS: i64 = 1_700_000_000_000;
+
+    fn test_aircraft(hex: &str, lat: f64, lon: f64, on_ground: bool) -> TrafficAircraft {
+        TrafficAircraft {
+            hex: hex.to_string(),
+            flight: Some(format!("TST{hex}")),
+            lat,
+            lon,
+            is_on_ground: on_ground,
+            altitude_feet: if on_ground { Some(0.0) } else { Some(10_000.0) },
+            ground_speed_kt: Some(250.0),
+            track_deg: Some(90.0),
+            last_seen_seconds: Some(0.0),
+        }
+    }
+
+    fn test_query(now_ms: i64) -> QueryRequest {
+        QueryRequest {
+            lat: 40.0,
+            lon: -74.0,
+            radius_nm: 80.0,
+            discovery_radius_nm: 80.0,
+            limit: 250,
+            history_minutes: 0.0,
+            history_hexes: Vec::new(),
+            hide_ground_traffic: false,
+            now_ms,
+        }
+    }
+
+    fn make_store(dir: &tempfile::TempDir) -> TrafficStore {
+        TrafficStore::new(dir.path().join("traffic-store.db")).expect("store should open")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fresh_store_reports_warming() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(&dir);
+        let result = query_store(&store, test_query(NOW_MS)).await.unwrap();
+        assert!(result.warming);
+        assert!(result.aircraft.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ingest_then_query_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(&dir);
+        let aircraft = vec![
+            test_aircraft("a1b2c3", 40.1, -74.1, false),
+            // Far outside the 80 NM query radius.
+            test_aircraft("d4e5f6", 30.0, -90.0, false),
+        ];
+        ingest_to_store(&store, "test-feed".to_string(), aircraft, NOW_MS, false)
+            .await
+            .unwrap();
+
+        let result = query_store(&store, test_query(NOW_MS)).await.unwrap();
+        assert!(!result.warming);
+        assert!(!result.stale_current);
+        assert_eq!(result.source.as_deref(), Some("test-feed"));
+        let hexes: Vec<&str> = result.aircraft.iter().map(|a| a.hex.as_str()).collect();
+        assert_eq!(hexes, vec!["a1b2c3"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_hides_ground_traffic_when_requested() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(&dir);
+        let aircraft = vec![
+            test_aircraft("a1b2c3", 40.1, -74.1, false),
+            test_aircraft("0f0f0f", 40.1, -74.1, true),
+        ];
+        ingest_to_store(&store, "test-feed".to_string(), aircraft, NOW_MS, false)
+            .await
+            .unwrap();
+
+        let mut request = test_query(NOW_MS);
+        request.hide_ground_traffic = true;
+        let result = query_store(&store, request).await.unwrap();
+        let hexes: Vec<&str> = result.aircraft.iter().map(|a| a.hex.as_str()).collect();
+        assert_eq!(hexes, vec!["a1b2c3"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn old_snapshot_is_marked_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(&dir);
+        ingest_to_store(
+            &store,
+            "test-feed".to_string(),
+            vec![test_aircraft("a1b2c3", 40.1, -74.1, false)],
+            NOW_MS,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let result = query_store(&store, test_query(NOW_MS + 2 * 60_000))
+            .await
+            .unwrap();
+        assert!(result.stale_current);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn history_round_trip_with_targeted_hexes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(&dir);
+        // Two ingest cycles with movement so history points accumulate.
+        ingest_to_store(
+            &store,
+            "test-feed".to_string(),
+            vec![test_aircraft("a1b2c3", 40.10, -74.10, false)],
+            NOW_MS,
+            false,
+        )
+        .await
+        .unwrap();
+        ingest_to_store(
+            &store,
+            "test-feed".to_string(),
+            vec![test_aircraft("a1b2c3", 40.20, -74.05, false)],
+            NOW_MS + 5_000,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let mut request = test_query(NOW_MS + 6_000);
+        request.history_minutes = 10.0;
+        request.history_hexes = vec!["a1b2c3".to_string()];
+        let result = query_store(&store, request).await.unwrap();
+        let points = result
+            .history_by_hex
+            .get("a1b2c3")
+            .expect("history should include the requested hex");
+        assert!(!points.is_empty());
+        assert!(points.windows(2).all(|w| w[0].timestamp_ms <= w[1].timestamp_ms));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn store_reload_restores_persisted_state() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let store = make_store(&dir);
+            ingest_to_store(
+                &store,
+                "test-feed".to_string(),
+                vec![test_aircraft("a1b2c3", 40.1, -74.1, false)],
+                NOW_MS,
+                false,
+            )
+            .await
+            .unwrap();
+        }
+
+        // Reopen against the same SQLite file; memory state must reload.
+        let reopened = make_store(&dir);
+        let result = query_store(&reopened, test_query(NOW_MS)).await.unwrap();
+        assert!(!result.warming);
+        let hexes: Vec<&str> = result.aircraft.iter().map(|a| a.hex.as_str()).collect();
+        assert_eq!(hexes, vec!["a1b2c3"]);
+    }
+}

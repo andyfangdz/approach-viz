@@ -1,0 +1,47 @@
+# Manual-dispatch native build verification. Not part of required CI because it
+# needs full Xcode, the Rust Apple toolchains, and an FAA data download, all of
+# which are slow/flaky on hosted runners. Run on demand before native releases.
+name: macOS Native Tests (manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos-native:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-native-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare data
+        run: npm run prepare-data
+
+      - name: Run native macOS tests
+        run: npm run test:macos

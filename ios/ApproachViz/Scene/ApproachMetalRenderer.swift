@@ -279,7 +279,7 @@ private func appendAirspaceCap(
     }
 }
 
-private func sanitizedAirspaceRing(_ points: [SIMD3<Float>]) -> [SIMD3<Float>] {
+func sanitizedAirspaceRing(_ points: [SIMD3<Float>]) -> [SIMD3<Float>] {
     guard !points.isEmpty else { return [] }
     var sanitized: [SIMD3<Float>] = []
     for point in points {
@@ -296,7 +296,7 @@ private func sanitizedAirspaceRing(_ points: [SIMD3<Float>]) -> [SIMD3<Float>] {
     return sanitized
 }
 
-private func triangulateAirspaceRing(_ points: [SIMD3<Float>]) -> [(Int, Int, Int)] {
+func triangulateAirspaceRing(_ points: [SIMD3<Float>]) -> [(Int, Int, Int)] {
     guard points.count >= 3 else { return [] }
 
     var vertexIndices = Array(points.indices)
@@ -878,7 +878,7 @@ private func buildMetalRunwaySegments(sceneData: NativeSceneData, verticalScale:
 // pattern-compilation failure mode.
 private let metalReciprocalRunwayRegex = /^(\d{1,2})([LRC]?)$/
 
-private func metalReciprocalRunwayID(_ id: String) -> String? {
+func metalReciprocalRunwayID(_ id: String) -> String? {
     let identifier = id.replacingOccurrences(of: "RW", with: "")
     guard let match = identifier.wholeMatch(of: metalReciprocalRunwayRegex),
           let number = Int(match.1) else { return nil }
