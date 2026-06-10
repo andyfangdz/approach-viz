@@ -65,7 +65,7 @@ function buildForwardParams(request: NextRequest): { params: URLSearchParams } |
     if (!VALID_FORMATS.has(format.trim().toLowerCase())) {
       return { error: `Invalid 'format' query param.` };
     }
-    params.set('format', format);
+    params.set('format', format.trim().toLowerCase());
   }
 
   const hideGround = source.get('hideGround');

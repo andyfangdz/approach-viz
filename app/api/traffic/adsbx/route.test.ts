@@ -126,7 +126,7 @@ describe('traffic adsbx proxy forwarding', () => {
         ...VALID_LAT_LON,
         radiusNm: '80',
         limit: '250',
-        format: 'binary',
+        format: 'Binary',
         hideGround: '1',
         historyHexes: 'a1b2c3,~d4e5f6'
       })
