@@ -128,7 +128,8 @@ describe('traffic adsbx proxy forwarding', () => {
 
     const response = await GET(
       makeRequest({
-        ...VALID_LAT_LON,
+        lat: '40.7 ',
+        lon: '-74.1',
         radiusNm: '80',
         limit: '250',
         format: 'Binary',
@@ -141,6 +142,8 @@ describe('traffic adsbx proxy forwarding', () => {
     assert.equal(response.headers.get('x-approach-viz-traffic-snapshot-age-ms'), '1234');
     const upstream = new URL(capturedUrl!);
     assert.equal(upstream.pathname, '/v1/traffic/adsbx');
+    // Padded-but-parseable lat is forwarded as the canonical numeric string.
+    assert.equal(upstream.searchParams.get('lat'), '40.7');
     assert.equal(upstream.searchParams.get('format'), 'binary');
     assert.equal(upstream.searchParams.get('historyHexes'), 'a1b2c3,~d4e5f6');
   });

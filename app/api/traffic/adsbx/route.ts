@@ -42,9 +42,12 @@ function buildForwardParams(request: NextRequest): { params: URLSearchParams } |
   const source = request.nextUrl.searchParams;
   const params = new URLSearchParams();
 
+  // Forward the canonical parsed value: padded-but-parseable input like
+  // "40.7 " passes the outer guard but the runtime's strict f64 parser
+  // would reject the raw string.
   for (const key of ['lat', 'lon'] as const) {
-    const value = source.get(key);
-    if (value !== null && value.trim() !== '') params.set(key, value);
+    const parsed = toFiniteNumber(source.get(key));
+    if (parsed !== null) params.set(key, String(parsed));
   }
 
   const numericBounds = [
