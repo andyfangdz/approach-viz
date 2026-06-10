@@ -152,6 +152,20 @@ function parseDecimalTenthsField(line: string, range: SliceRange): number | unde
   return parsed / 10;
 }
 
+// DMS field shape checks. Section D/E (enroute navaid) records include
+// sub-record variants whose columns at the waypoint offsets are not
+// coordinates at all; those records are skipped rather than parsed.
+const DMS_LAT_PATTERN = /^[NS]\d{8}$/;
+const DMS_LON_PATTERN = /^[EW]\d{9}$/;
+
+function isDmsLat(value: string): boolean {
+  return DMS_LAT_PATTERN.test(value);
+}
+
+function isDmsLon(value: string): boolean {
+  return DMS_LON_PATTERN.test(value);
+}
+
 // Parse DMS coordinates from CIFP format
 // Format: N40523081 = N40°52'30.81"
 // Throws on malformed input rather than fabricating a coordinate.
@@ -455,7 +469,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
     if (subsectionCode === 'A' && sliceField(line, FIELD.continuationNumber) === '0') {
       const latStr = sliceField(line, FIELD.airportLat);
       const lonStr = sliceField(line, FIELD.airportLon);
-      if (latStr && lonStr) {
+      if (latStr.trim() && lonStr.trim()) {
         data.airports.set(airportId, {
           id: airportId,
           name: trimmedField(line, FIELD.airportName),
@@ -473,7 +487,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const waypointId = trimmedField(line, FIELD.terminalWaypointId);
       const latStr = sliceField(line, FIELD.airportLat);
       const lonStr = sliceField(line, FIELD.airportLon);
-      if (waypointId && latStr && lonStr) {
+      if (waypointId && latStr.trim() && lonStr.trim()) {
         const fullId = `${airportId}_${waypointId}`;
         data.waypoints.set(fullId, {
           id: fullId,
@@ -491,7 +505,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const runwayId = trimmedField(line, FIELD.runwayId);
       const latStr = sliceField(line, FIELD.runwayLat);
       const lonStr = sliceField(line, FIELD.runwayLon);
-      if (runwayId && latStr && lonStr) {
+      if (runwayId && latStr.trim() && lonStr.trim()) {
         const lat = parseDMS(latStr);
         const lon = parseDMS(lonStr);
         const fullId = `${airportId}_${runwayId}`;
@@ -520,7 +534,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       const waypointId = trimmedField(line, FIELD.enrouteWaypointId);
       const latStr = sliceField(line, FIELD.enrouteLat);
       const lonStr = sliceField(line, FIELD.enrouteLon);
-      if (waypointId && latStr && lonStr && !data.waypoints.has(waypointId)) {
+      if (waypointId && isDmsLat(latStr) && isDmsLon(lonStr) && !data.waypoints.has(waypointId)) {
         const nameRange = sectionCode === 'D' ? FIELD.enrouteNameD : FIELD.enrouteNameE;
         data.waypoints.set(waypointId, {
           id: waypointId,
