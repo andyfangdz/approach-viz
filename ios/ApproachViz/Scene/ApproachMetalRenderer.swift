@@ -874,11 +874,11 @@ private func buildMetalRunwaySegments(sceneData: NativeSceneData, verticalScale:
     return segments
 }
 
-// Compile-time validated regex literal, so runway-ID parsing has no runtime
-// pattern-compilation failure mode.
-private let metalReciprocalRunwayRegex = /^(\d{1,2})([LRC]?)$/
-
 func metalReciprocalRunwayID(_ id: String) -> String? {
+    // Compile-time validated regex literal, so runway-ID parsing has no runtime
+    // pattern-compilation failure mode. Kept function-local because Regex is
+    // not Sendable, so a global `let` is rejected under strict concurrency.
+    let metalReciprocalRunwayRegex = /^(\d{1,2})([LRC]?)$/
     let identifier = id.replacingOccurrences(of: "RW", with: "")
     guard let match = identifier.wholeMatch(of: metalReciprocalRunwayRegex),
           let number = Int(match.1) else { return nil }
