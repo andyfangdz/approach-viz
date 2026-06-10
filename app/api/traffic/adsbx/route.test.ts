@@ -69,9 +69,7 @@ describe('traffic adsbx proxy validation', () => {
   });
 
   test('rejects oversized historyHexes lists', async () => {
-    const hexes = Array.from({ length: 401 }, (_, i) =>
-      i.toString(16).padStart(6, '0')
-    ).join(',');
+    const hexes = Array.from({ length: 401 }, (_, i) => i.toString(16).padStart(6, '0')).join(',');
     const response = await GET(makeRequest({ ...VALID_LAT_LON, historyHexes: hexes }));
     assert.equal(response.status, 400);
     const body = await response.json();

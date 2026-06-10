@@ -43,7 +43,7 @@
 - Format check: `npm run format:check`
 - Lint: `npm run lint`
 - Typecheck: `npm run typecheck`
-- Tests (parser + geometry + layers + MRMS + worker lifecycle): `npm run test`
+- Tests (parser + geometry + layers + MRMS + worker lifecycle + API routes): `npm run test`
 - Runtime live integration tests: `npm run test:integration:runtime`
 
 ### Service Worker
@@ -61,7 +61,7 @@
 ### Runtime Ops
 
 - Provision SNS/SQS: `python3 scripts/mrms/setup_sns_sqs.py`
-- Deploy runtime to OCI: `RUNTIME_MRMS_SQS_QUEUE_URL=... scripts/runtime/deploy_oci.sh ubuntu@100.86.128.122`
+- Deploy runtime to OCI: `RUNTIME_MRMS_SQS_QUEUE_URL=... scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>` (host argument is required; the script backs up the previous binary and auto-rolls back on a failed post-deploy health check)
 - One-shot ingest profile helper: `bash .agents/skills/runtime-profile-ingestion/scripts/profile_ingest_one_shot.sh --timestamp <ts> --repeats <n>`
 - Live route latency profile helper: `bash .agents/skills/runtime-profile-live/scripts/profile_runtime_routes.sh --iterations 20`
 - Live traffic stress helper: `bash .agents/skills/runtime-stress-traffic-live/scripts/stress_runtime_traffic.sh --requests 1200 --concurrency 40`
@@ -112,6 +112,9 @@
 - Worker-first execution: approach altitude resolution and path/hold geometry, MRMS decode/prepare, traffic ingest/merge/recompute, selector filtering, and chart tile streaming run in workers via Comlink typed proxies; no synchronous compute fallback. The approach worker is a thin WASM adapter over the shared Rust engine, and its output arrays transfer to the main thread via `Comlink.transfer()` (zero-copy).
 - ADS-B overlay polling: initial full-history query on context reset (`historyMinutes`), then live-only primary polls plus targeted `historyHexes` follow-up backfill when departed trails are enabled.
 - ADS-B runtime payloads with `error` metadata are treated as poll failures in the traffic worker (no silent empty merge), and traffic worker request timeout budget is `12s`.
+- ADS-B history-backfill follow-up failures no longer disappear silently: the web traffic worker surfaces `historyBackfillError` through the worker result into the traffic debug panel, and the native iOS `TrafficService` logs the failure and keeps the affected hexes pending so the next poll retries them.
+- The `/api/traffic/adsbx` proxy validates query params before forwarding: present-but-malformed `radiusNm`/`limit`/`historyMinutes` return 400, finite out-of-range values are clamped to the runtime bounds, `format` must be a known value, and `historyHexes` entries must be hex identifiers (max 400). The Rust runtime applies the same reject-malformed/clamp-out-of-range policy and also rejects non-finite lat/lon (`NaN` included) on weather and traffic endpoints.
+- The runtime HTTP router applies a 30s per-request `TimeoutLayer` (504 on expiry), and the weather volume/echo-tops handlers clone the latest scan `Arc` and release the snapshot read lock before FlatBuffers encoding so ingest writers are never blocked by slow queries.
 - Runtime traffic "current aircraft" staleness window is `60s` (`CACHE_CURRENT_STALE_MS`); responses expose stale/freshness markers via `x-approach-viz-traffic-stale-current` and `x-approach-viz-traffic-snapshot-age-ms` headers (proxy passthrough enabled), and JSON payloads include `staleCurrent` + `snapshotAgeMs`.
 - Layer defaults (`DEFAULT_LAYER_STATE`): `approach`, `airspace`, `adsb`, `probsevere`, `guides` = on; `mrms`, `echotops`, `slice` = off.
 - MRMS phase-mode default is `surface` (`Surface Precip Type`); `thermo` is optional.
@@ -122,7 +125,13 @@
 - Service worker (`sw/service-worker.ts`, bundled via esbuild) uses Workbox `CacheFirst` + `ExpirationPlugin` for Terrarium elevation tiles (800 max) and FAA chart tiles (1200 max), with a custom handler for FAA plates (dynamic cycle-aware cache name). Google 3D Tiles use browser-native HTTP caching. `npm run build:sw` rebuilds `public/service-worker.js`; `dev` and `build` scripts run it automatically.
 - Cross-origin isolation headers are enabled by default (`COOP: same-origin`, `COEP: require-corp`), configurable via `DISABLE_CROSS_ORIGIN_ISOLATION` and `CROSS_ORIGIN_EMBEDDER_POLICY`.
 - Runtime Datadog OTLP tracing no longer emits a bare span `version` field from HTTP protocol; `service.version` is always a build-time stamped `<yyyymmdd.hhmmss>-<git_branch>-<git_sha>` with optional `-dirty` suffix.
-- CI uses `npm run build:sw` + `npx next build` (not `npm run build`) to avoid triggering data download during CI.
+- CI uses `npm run build:sw` + `npx next build` (not `npm run build`) to avoid triggering data download during CI. A separate manual-dispatch `macOS Native Tests` workflow (`.github/workflows/macos-native.yml`) runs `npm run test:macos` on demand; native builds remain excluded from required CI.
+- ESLint enforces `typescript-eslint` recommended rules (plus `no-unused-vars` with `_`-prefix escapes); `npm run lint` is a real gate, not parse-only.
+- `scripts/download-data.sh` pins the Class B/C/D airspace GeoJSON source to a specific commit of `drnic/faa-airspace-data` and validates each payload parses as GeoJSON before installing it; the CIFP parser fails loudly (throws) on malformed DMS coordinates instead of fabricating 0,0.
+- Approach-path engine sources live in `crates/approach-viz-core/src/approach_path/` (split into `types`/`altitudes`/`geometry`/`holds`/`support` modules with the public API re-exported from the module root).
+- Web client top-level state is decomposed into hooks under `app/app-client/hooks/` (`usePersistedOptions`, `useSceneSelection`, `useSurfaceState`, `useServiceWorkerDebug`, `useUrlSync`) with shared option normalizers in `app/app-client/option-normalizers.ts`; `AppClient.tsx` is composition + derived view state only.
+- Native SwiftUI panel components live under `ios/ApproachViz/App/Panels/` (selector/layers/options/debug panels, panel chrome, shared controls); `RootView.swift` keeps only the root scene view, title chip, and FAB layout.
+- Native iOS terrain tile cache is LRU-bounded (128 decoded tiles, ~32 MB) and the Metal SDF text atlas resets and re-packs all currently needed labels when its texture fills instead of silently dropping new labels; `SceneRepository`'s initializer is throwing (no `try!` crash path on a missing/corrupt bundled database).
 - Formatting/linting ignore repo-local `.tmp/**` generated artifacts so local Xcode derived data, scratch logs, and other transient workspace outputs do not contaminate `npm run format:check`, `npm run lint`, or CI parity checks.
 
 ## Documentation Index
