@@ -22,7 +22,9 @@ const MAX_HISTORY_HEXES = 400;
 const VALID_FORMATS = new Set(['json', 'binary', 'bin', 'avtr']);
 
 function toFiniteNumber(value: string | null): number | null {
-  if (!value) return null;
+  // Number('') and Number('  ') are 0; treat blank input as absent rather
+  // than silently fabricating a zero coordinate.
+  if (!value || value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }

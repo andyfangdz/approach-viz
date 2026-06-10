@@ -31,6 +31,11 @@ describe('traffic adsbx proxy validation', () => {
     assert.equal(response.status, 400);
   });
 
+  test('rejects whitespace-only lat instead of treating it as 0', async () => {
+    const response = await GET(makeRequest({ lat: ' ', lon: '-74.1' }));
+    assert.equal(response.status, 400);
+  });
+
   test('rejects malformed radiusNm instead of silently defaulting', async () => {
     const response = await GET(makeRequest({ ...VALID_LAT_LON, radiusNm: 'bogus' }));
     assert.equal(response.status, 400);
