@@ -14,8 +14,6 @@ import {
   POLL_INTERVAL_MS,
   RETRY_INTERVAL_MS,
   DEFAULT_MAX_RANGE_NM,
-  PHASE_MIXED,
-  PHASE_SNOW,
   ALTITUDE_GUIDE_STEP_FEET,
   MIN_CROSS_SECTION_HALF_WIDTH_NM,
   MAX_CROSS_SECTION_HALF_WIDTH_NM,
@@ -41,6 +39,7 @@ import {
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
 
 const MIN_INSTANCE_CAPACITY = 1;
+const EMPTY_PHASE_COUNTS = { rain: 0, mixed: 0, snow: 0 };
 const EMPTY_TIMINGS_MS: NexradTimingDebugState = {
   pollCycleMs: null,
   volumeFetchMs: null,
@@ -179,8 +178,6 @@ export function NexradVolumeOverlay({
   applyEarthCurvatureCompensationRef.current = applyEarthCurvatureCompensation;
   const pollNowRef = useRef<(() => void) | null>(null);
   const skipNextRePrepareRef = useRef(false);
-  const meshDummy = useMemo(() => new THREE.Object3D(), []);
-  const colorScratch = useMemo(() => new THREE.Color(), []);
   const payloadIndexScratchRef = useRef<Int32Array>(new Int32Array(0));
   const normalizedCrossSectionHeading = ((Math.round(crossSectionHeadingDeg) % 360) + 360) % 360;
   const normalizedCrossSectionRange = Math.max(30, Math.min(140, Math.round(crossSectionRangeNm)));
@@ -210,6 +207,7 @@ export function NexradVolumeOverlay({
   const [echoTop18, setEchoTop18] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop30, setEchoTop30] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop50, setEchoTop50] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
+  const [phaseCounts, setPhaseCounts] = useState(EMPTY_PHASE_COUNTS);
   const [timingsMs, setTimingsMs] = useState<NexradTimingDebugState>(EMPTY_TIMINGS_MS);
   const patchTimings = useCallback((patch: Partial<NexradTimingDebugState>) => {
     setTimingsMs((previous) => {
@@ -390,6 +388,7 @@ export function NexradVolumeOverlay({
       setEchoTop18(EMPTY_ECHO_TOP_SOA);
       setEchoTop30(EMPTY_ECHO_TOP_SOA);
       setEchoTop50(EMPTY_ECHO_TOP_SOA);
+      setPhaseCounts(EMPTY_PHASE_COUNTS);
       setIsLoading(false);
       setLastError(null);
       setLastPollAt(null);
@@ -404,6 +403,7 @@ export function NexradVolumeOverlay({
     setEchoTop18(EMPTY_ECHO_TOP_SOA);
     setEchoTop30(EMPTY_ECHO_TOP_SOA);
     setEchoTop50(EMPTY_ECHO_TOP_SOA);
+    setPhaseCounts(EMPTY_PHASE_COUNTS);
     setIsLoading(true);
     setLastError(null);
     setLastPollAt(null);
@@ -507,12 +507,14 @@ export function NexradVolumeOverlay({
               });
               setVolumeData(result.preparedVolume);
               setCrossSectionData(result.crossSectionData);
+              setPhaseCounts(result.phaseCounts ?? EMPTY_PHASE_COUNTS);
               skipNextRePrepareRef.current = true;
             }
           } else if (!showVolumeRef.current && !showCrossSectionRef.current) {
             setPayload(null);
             setVolumeData(emptyPreparedVolume());
             setCrossSectionData(null);
+            setPhaseCounts(EMPTY_PHASE_COUNTS);
           }
 
           if (shouldFetchEchoTops) {
@@ -666,23 +668,6 @@ export function NexradVolumeOverlay({
     pollNowRef.current?.();
   }, [enabled, showEchoTops, showVolume, showCrossSection]);
 
-  const phaseCounts = useMemo(() => {
-    const counts = { rain: 0, mixed: 0, snow: 0 };
-    if (!payload) return counts;
-    const { phaseCode, voxelCount } = payload;
-    for (let i = 0; i < voxelCount; i += 1) {
-      const p = phaseCode[i];
-      if (p === PHASE_SNOW) {
-        counts.snow += 1;
-      } else if (p === PHASE_MIXED) {
-        counts.mixed += 1;
-      } else {
-        counts.rain += 1;
-      }
-    }
-    return counts;
-  }, [payload]);
-
   const debugState: NexradDebugState = {
     offloadMode: getNexradWorkerRuntimeMode(),
     decodeTransport: getNexradWorkerTransportDiagnostics().decodeTransport,
@@ -828,8 +813,7 @@ export function NexradVolumeOverlay({
         payload.spanY,
         volumeData.effectivePhaseCode,
         payloadIndices,
-        declutterCount,
-        colorScratch
+        declutterCount
       );
     }
     const glowMesh = glowMeshRef.current;
@@ -848,9 +832,9 @@ export function NexradVolumeOverlay({
         glowMesh.instanceColor.needsUpdate = true;
       }
     }
-    applyConstantColorInstances(echo18MeshRef.current, echoTop18, meshDummy);
-    applyConstantColorInstances(echo30MeshRef.current, echoTop30, meshDummy);
-    applyConstantColorInstances(echo50MeshRef.current, echoTop50, meshDummy);
+    applyConstantColorInstances(echo18MeshRef.current, echoTop18);
+    applyConstantColorInstances(echo30MeshRef.current, echoTop30);
+    applyConstantColorInstances(echo50MeshRef.current, echoTop50);
     patchTimings({ instanceUploadMs: roundMs(performance.now() - uploadStartedAt) });
     // showVolume/showEchoTops: re-run when sub-layer toggles so freshly
     // mounted meshes get count set to 0 (or the real count if data exists)
@@ -863,8 +847,6 @@ export function NexradVolumeOverlay({
     echoTop18,
     echoTop30,
     echoTop50,
-    meshDummy,
-    colorScratch,
     instanceAlphaArray,
     voxelGeometry,
     showVolume,

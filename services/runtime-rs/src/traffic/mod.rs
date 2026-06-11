@@ -10,8 +10,10 @@ pub use cache_worker::decode_bincraft_aircraft;
 #[allow(unused_imports)]
 pub use encoding::encode_traffic_fb;
 #[allow(unused_imports)]
+pub use memory_store::TrafficMemoryStore;
+#[allow(unused_imports)]
 pub use types::{
-    distance_nm, TrafficAircraft, TrafficBinaryPayload, TrafficHistoryPoint,
+    distance_nm, QueryRequest, TrafficAircraft, TrafficBinaryPayload, TrafficHistoryPoint,
 };
 
 use std::collections::HashMap;
@@ -31,7 +33,7 @@ use self::store::query_store;
 use self::types::{
     add_traffic_snapshot_headers, clamp, clamp_usize, history_discovery_radius_nm, no_store_headers,
     normalize_lat, normalize_lon, parse_boolean_query_param, parse_history_hexes,
-    parse_traffic_response_format, to_finite_number, now_ms, QueryRequest, TrafficErrorPayload, TrafficQuery,
+    parse_traffic_response_format, to_finite_number, now_ms, TrafficErrorPayload, TrafficQuery,
     TrafficResponseFormat, TrafficSuccessPayload, DEFAULT_HIDE_GROUND_TRAFFIC, DEFAULT_LIMIT,
     DEFAULT_RADIUS_NM, MAX_HISTORY_MINUTES, MAX_LIMIT, MAX_RADIUS_NM, MIN_RADIUS_NM,
 };

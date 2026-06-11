@@ -1,6 +1,7 @@
 mod fixtures;
 use approach_viz_runtime::weather::{
     compute_phase_scores_branchless, filter_voxels_by_threshold, resolve_thermo_phase,
+    FilterResult,
 };
 use criterion::{criterion_group, criterion_main, Criterion};
 
@@ -21,9 +22,11 @@ fn bench_filter_pass(c: &mut Criterion) {
     });
 
     c.bench_function("filter_pass_simd", |b| {
+        let mut result = FilterResult::new();
         b.iter(|| {
-            let valid = filter_voxels_by_threshold(&data.dbz_tenths, threshold);
-            std::hint::black_box(valid.len())
+            result.clear();
+            filter_voxels_by_threshold(&data.dbz_tenths, threshold, data.nx, &mut result);
+            std::hint::black_box(result.indices.len())
         })
     });
 }

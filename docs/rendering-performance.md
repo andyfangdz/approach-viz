@@ -40,7 +40,9 @@
 - MRMS prepared-volume worker responses use a SharedArrayBuffer + Atomics channel (shared typed-array views with counts in an atomic control block) and automatically grow SAB voxel capacity with overflow retry.
 - Runtime debug telemetry exposes per-stage MRMS timings (`poll cycle`, volume/echo-top `fetch`, volume/echo-top `decode`, volume/echo-top `prepare`, and voxel/echo-top instance upload) for regression checks.
 - Volume/echo-top metadata signatures are still used to suppress equivalent state replacements, reducing downstream upload churn when upstream poll responses are unchanged.
-- Volumetric instanced meshes calculate transforms and scale by writing directly into the `Float32Array` of `InstancedMesh.instanceMatrix.array` (via 16-element offsets), avoiding the heavy `THREE.Object3D` quaternion scaling overhead completely.
+- Volumetric instanced meshes calculate transforms and scale by writing directly into the `Float32Array` of `InstancedMesh.instanceMatrix.array` (via 16-element offsets), avoiding the heavy `THREE.Object3D` quaternion scaling overhead completely. Echo-top surface instances use the same direct matrix-array writes.
+- Per-voxel instance colors come from precomputed per-phase dBZ band LUTs (final working-color-space RGB triples, indexed by `floor(dbz / 5)`) written directly into `instanceColor.array`, instead of per-voxel `THREE.Color.setHex` (sRGB→linear conversion) + `setColorAt` calls on every upload.
+- The per-payload phase tally shown in the debug panel (`rain/mixed/snow` counts) is computed in the MRMS worker during poll-and-prepare rather than as an O(voxelCount) main-thread pass.
 - MRMS base/glow dual-pass volume rendering shares populated instance buffers between passes, avoiding a second per-voxel transform/color upload each refresh.
 - MRMS instanced capacities grow in buckets instead of resizing every poll, reducing remount/reallocation churn for fluctuating voxel counts.
 - Declutter-to-payload index mapping reuses grow-only `Int32Array` scratch buffers instead of allocating per-refresh `Array.map(...)` copies.
