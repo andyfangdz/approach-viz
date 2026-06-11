@@ -418,6 +418,13 @@ final class ApproachMetalRenderEngine {
         if invalidation.intersection([.geometry, .camera, .viewport, .overlays]).isEmpty == false {
             let labelStart = DispatchTime.now().uptimeNanoseconds
             cachedLabels = projectLabels(in: view, matrix: cachedUniforms.viewProjectionMatrix)
+            // Re-ensure the full current label set: an atlas reset triggered by
+            // one label source (scene vs traffic) evicts the other source's
+            // entries, and quads are built from fresh atlas lookups below.
+            let allLabelKeys = (scene.labels + trafficScene.labels).lazy.map {
+                ApproachMetalTextAtlas.Key(text: $0.text, fontSize: $0.fontSize)
+            }
+            textAtlas.ensureEntries(for: allLabelKeys)
             let textVertices = buildTextVertices(for: cachedLabels, in: view)
             let uploadStart = DispatchTime.now().uptimeNanoseconds
             textLayer.upload(device: device, vertices: textVertices)

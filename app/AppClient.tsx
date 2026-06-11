@@ -1,23 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Approach } from '@/lib/cifp/parser';
-import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
 import { pickDefaultApproachForAirport } from '@/app/default-selections';
 import {
   formatApproachLabel,
   isMobileViewport,
-  parseLayersParam,
-  readChartTypeFromSearch,
-  readDeclutterModeFromSearch,
-  readPhaseModeFromSearch,
-  readShowCallsignsFromSearch,
-  readSurfaceModeFromSearch,
-  readTrafficHistoryMinutesFromSearch,
   sceneApproachToRuntimeApproach,
   sceneWaypointsToMap,
-  serializeLayersParam,
-  DEFAULT_LAYER_STATE,
   type SelectOption
 } from '@/app/app-client-utils';
 import { HeaderControls } from '@/app/app-client/HeaderControls';
@@ -27,47 +17,32 @@ import { LayersPanel } from '@/app/app-client/LayersPanel';
 import { OptionsPanel } from '@/app/app-client/OptionsPanel';
 import { DebugPanel } from '@/app/app-client/DebugPanel';
 import {
-  SATELLITE_MAX_RETRIES,
-  DEFAULT_TERRAIN_RADIUS_NM,
   DEFAULT_VERTICAL_SCALE,
   DEFAULT_TRAFFIC_HISTORY_MINUTES,
-  DEFAULT_SHOW_DEPARTED_TRAFFIC_TRAILS,
-  DEFAULT_NEXRAD_MIN_DBZ,
-  DEFAULT_NEXRAD_OPACITY,
-  DEFAULT_NEXRAD_DECLUTTER_MODE,
-  DEFAULT_NEXRAD_PHASE_MODE,
-  DEFAULT_CAMERA_CONTROL_MODE,
-  DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
-  DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
-  MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
-  MAX_NEXRAD_CROSS_SECTION_RANGE_NM,
-  MIN_TERRAIN_RADIUS_NM,
-  MAX_TERRAIN_RADIUS_NM,
-  TERRAIN_RADIUS_STEP_NM,
   MIN_TRAFFIC_HISTORY_MINUTES,
-  MAX_TRAFFIC_HISTORY_MINUTES,
-  MIN_NEXRAD_MIN_DBZ,
-  MAX_NEXRAD_MIN_DBZ,
-  MIN_NEXRAD_OPACITY,
-  MAX_NEXRAD_OPACITY
+  MAX_TRAFFIC_HISTORY_MINUTES
 } from '@/app/app-client/constants';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
+import { usePersistedOptions } from '@/app/app-client/hooks/use-persisted-options';
+import { useSceneSelection } from '@/app/app-client/hooks/use-scene-selection';
+import { useServiceWorkerDebug } from '@/app/app-client/hooks/use-service-worker-debug';
+import { useSurfaceState } from '@/app/app-client/hooks/use-surface-state';
+import { useUrlSync } from '@/app/app-client/hooks/use-url-sync';
 import {
-  ensureServiceWorkerCacheRegistration,
-  getServiceWorkerCacheDebugSnapshot,
-  syncServiceWorkerDtppCycle
-} from '@/app/app-client/service-worker-cache';
+  clampValue,
+  normalizeNexradCrossSectionHeadingDeg,
+  normalizeNexradCrossSectionRangeNm,
+  normalizeNexradMinDbz,
+  normalizeNexradOpacity,
+  normalizeTerrainRadiusNm,
+  NEXRAD_DECLUTTER_MODES
+} from '@/app/app-client/option-normalizers';
 import type {
   ChartType,
-  LayerState,
   NexradDebugState,
-  NexradPhaseMode,
-  CameraControlMode,
-  ServiceWorkerCacheDebugState,
-  SurfaceMode,
   RuntimeCapabilities,
-  TrafficDebugState,
-  NexradDeclutterMode
+  SurfaceMode,
+  TrafficDebugState
 } from '@/app/app-client/types';
 import { CHART_DEBUG_INITIAL, type ChartDebugState } from '@/app/scene/ChartMapSurface';
 import type { AirportOption, SceneData } from '@/lib/types';
@@ -80,35 +55,6 @@ interface AppClientProps {
   isDefaultRoute?: boolean;
 }
 
-interface PersistedOptionsState {
-  verticalScale?: number;
-  terrainRadiusNm?: number;
-  flattenBathymetry?: boolean;
-  useParsedMissedClimbGradient?: boolean;
-  hideGroundTraffic?: boolean;
-  showTrafficCallsigns?: boolean;
-  hideGroundTrafficCallsigns?: boolean;
-  showDepartedTrafficTrails?: boolean;
-  trafficHistoryMinutes?: number;
-  nexradMinDbz?: number;
-  nexradOpacity?: number;
-  nexradDeclutterMode?: NexradDeclutterMode;
-  nexradPhaseMode?: NexradPhaseMode;
-  cameraControlMode?: CameraControlMode;
-  nexradCrossSectionHeadingDeg?: number;
-  nexradCrossSectionRangeNm?: number;
-  retinaRendering?: boolean;
-  layers?: LayerState;
-  // Legacy fields kept for migration reading only
-  liveTrafficEnabled?: boolean;
-  nexradVolumeEnabled?: boolean;
-  nexradShowEchoTops?: boolean;
-  nexradShowAltitudeGuides?: boolean;
-  nexradCrossSectionEnabled?: boolean;
-}
-
-const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
-const SELECTION_STORAGE_KEY = 'approach-viz:last-selection';
 const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
   offloadMode: null,
   decodeTransport: null,
@@ -169,6 +115,7 @@ const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
   error: null,
   lastPollAt: null,
   historyBackfillPending: false,
+  historyBackfillError: null,
   trackCount: 0,
   renderedTrackCount: 0,
   historyPointCount: 0,
@@ -193,85 +140,13 @@ const EMPTY_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
   atomicsAvailable: false,
   crossOriginIsolated: false
 };
-const EMPTY_SERVICE_WORKER_DEBUG: ServiceWorkerCacheDebugState = {
-  supported: false,
-  registered: false,
-  controlling: false,
-  activeState: null,
-  scope: null,
-  dtppCycle: null
+
+const SURFACE_LEGEND_LABELS: Record<SurfaceMode, string> = {
+  terrain: 'Terrain Wireframe',
+  satellite: 'Satellite Surface',
+  map: 'FAA Chart Map',
+  '3dmap': '3D Chart Map'
 };
-
-function clampValue(value: number, min: number, max: number, fallback = min): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, value));
-}
-
-function normalizeTerrainRadiusNm(radiusNm: number): number {
-  if (!Number.isFinite(radiusNm)) return DEFAULT_TERRAIN_RADIUS_NM;
-  const snapped = Math.round(radiusNm / TERRAIN_RADIUS_STEP_NM) * TERRAIN_RADIUS_STEP_NM;
-  return clampValue(snapped, MIN_TERRAIN_RADIUS_NM, MAX_TERRAIN_RADIUS_NM);
-}
-
-function normalizeNexradMinDbz(dbz: number): number {
-  if (!Number.isFinite(dbz)) return DEFAULT_NEXRAD_MIN_DBZ;
-  return Math.round(
-    clampValue(dbz, MIN_NEXRAD_MIN_DBZ, MAX_NEXRAD_MIN_DBZ, DEFAULT_NEXRAD_MIN_DBZ)
-  );
-}
-
-function normalizeNexradOpacity(opacity: number): number {
-  if (!Number.isFinite(opacity)) return DEFAULT_NEXRAD_OPACITY;
-  const clamped = clampValue(
-    opacity,
-    MIN_NEXRAD_OPACITY,
-    MAX_NEXRAD_OPACITY,
-    DEFAULT_NEXRAD_OPACITY
-  );
-  return Math.round(clamped * 100) / 100;
-}
-
-const NEXRAD_DECLUTTER_MODES: NexradDeclutterMode[] = ['all', 'low', 'mid', 'high'];
-
-function normalizeNexradDeclutterMode(mode: unknown): NexradDeclutterMode {
-  return NEXRAD_DECLUTTER_MODES.includes(mode as NexradDeclutterMode)
-    ? (mode as NexradDeclutterMode)
-    : DEFAULT_NEXRAD_DECLUTTER_MODE;
-}
-
-const NEXRAD_PHASE_MODES: NexradPhaseMode[] = ['thermo', 'surface'];
-
-function normalizeNexradPhaseMode(mode: unknown): NexradPhaseMode {
-  return NEXRAD_PHASE_MODES.includes(mode as NexradPhaseMode)
-    ? (mode as NexradPhaseMode)
-    : DEFAULT_NEXRAD_PHASE_MODE;
-}
-
-const CAMERA_CONTROL_MODES: CameraControlMode[] = ['orbit', 'arcball', 'map'];
-
-function normalizeCameraControlMode(mode: unknown): CameraControlMode {
-  return CAMERA_CONTROL_MODES.includes(mode as CameraControlMode)
-    ? (mode as CameraControlMode)
-    : DEFAULT_CAMERA_CONTROL_MODE;
-}
-
-function normalizeNexradCrossSectionHeadingDeg(headingDeg: number): number {
-  if (!Number.isFinite(headingDeg)) return DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG;
-  const normalized = ((Math.round(headingDeg) % 360) + 360) % 360;
-  return normalized;
-}
-
-function normalizeNexradCrossSectionRangeNm(rangeNm: number): number {
-  if (!Number.isFinite(rangeNm)) return DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM;
-  return Math.round(
-    clampValue(
-      rangeNm,
-      MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
-      MAX_NEXRAD_CROSS_SECTION_RANGE_NM,
-      DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM
-    )
-  );
-}
 
 export function AppClient({
   initialAirportOptions,
@@ -286,59 +161,7 @@ export function AppClient({
   const [optionsCollapsed, setOptionsCollapsed] = useState(true);
   const [layersCollapsed, setLayersCollapsed] = useState(true);
   const [debugCollapsed, setDebugCollapsed] = useState(true);
-  const [airportOptions, setAirportOptions] = useState<AirportOption[]>(initialAirportOptions);
-  const [airportOptionsLoading, setAirportOptionsLoading] = useState(
-    initialAirportOptions.length === 0
-  );
-  const [sceneData, setSceneData] = useState<SceneData>(initialSceneData);
-  const [selectedAirport, setSelectedAirport] = useState<string>(
-    initialSceneData.airport?.id ?? initialAirportId
-  );
-  const [selectedApproach, setSelectedApproach] = useState<string>(
-    initialSceneData.selectedApproachId || initialApproachId
-  );
-  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>('terrain');
-  const [plateOverlayEnabled, setPlateOverlayEnabled] = useState(false);
-  const [chartType, setChartType] = useState<ChartType>('vfr');
   const [didInitFromLocation, setDidInitFromLocation] = useState(false);
-  const [didInitFromStorage, setDidInitFromStorage] = useState(false);
-  const [verticalScale, setVerticalScale] = useState<number>(DEFAULT_VERTICAL_SCALE);
-  const [terrainRadiusNm, setTerrainRadiusNm] = useState<number>(DEFAULT_TERRAIN_RADIUS_NM);
-  const [flattenBathymetry, setFlattenBathymetry] = useState(true);
-  const [useParsedMissedClimbGradient, setUseParsedMissedClimbGradient] = useState(true);
-  const [layers, setLayers] = useState<LayerState>(DEFAULT_LAYER_STATE);
-  const [hideGroundTraffic, setHideGroundTraffic] = useState(false);
-  const [showTrafficCallsigns, setShowTrafficCallsigns] = useState(false);
-  const [hideGroundTrafficCallsigns, setHideGroundTrafficCallsigns] = useState(true);
-  const [showDepartedTrafficTrails, setShowDepartedTrafficTrails] = useState(
-    DEFAULT_SHOW_DEPARTED_TRAFFIC_TRAILS
-  );
-  const [trafficHistoryMinutes, setTrafficHistoryMinutes] = useState<number>(
-    DEFAULT_TRAFFIC_HISTORY_MINUTES
-  );
-  const [nexradMinDbz, setNexradMinDbz] = useState(DEFAULT_NEXRAD_MIN_DBZ);
-  const [nexradOpacity, setNexradOpacity] = useState(DEFAULT_NEXRAD_OPACITY);
-  const [nexradDeclutterMode, setNexradDeclutterMode] = useState<NexradDeclutterMode>(
-    DEFAULT_NEXRAD_DECLUTTER_MODE
-  );
-  const [nexradPhaseMode, setNexradPhaseMode] =
-    useState<NexradPhaseMode>(DEFAULT_NEXRAD_PHASE_MODE);
-  const [cameraControlMode, setCameraControlMode] = useState<CameraControlMode>(
-    DEFAULT_CAMERA_CONTROL_MODE
-  );
-
-  const [nexradCrossSectionHeadingDeg, setNexradCrossSectionHeadingDeg] = useState(
-    DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG
-  );
-  const [nexradCrossSectionRangeNm, setNexradCrossSectionRangeNm] = useState(
-    DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM
-  );
-  const [retinaRendering, setRetinaRendering] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string>('');
-  const [surfaceErrorMessage, setSurfaceErrorMessage] = useState<string>('');
-  const [satelliteRetryCount, setSatelliteRetryCount] = useState(0);
-  const [satelliteRetryNonce, setSatelliteRetryNonce] = useState(0);
   const [recenterNonce, setRecenterNonce] = useState(0);
   const [nexradDebug, setNexradDebug] = useState<NexradDebugState>(EMPTY_NEXRAD_DEBUG_STATE);
   const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
@@ -346,38 +169,37 @@ export function AppClient({
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<RuntimeCapabilities>(
     EMPTY_RUNTIME_CAPABILITIES
   );
-  const [serviceWorkerDebug, setServiceWorkerDebug] = useState<ServiceWorkerCacheDebugState>(
-    EMPTY_SERVICE_WORKER_DEBUG
-  );
-  const [isPending, startTransition] = useTransition();
-  const requestCounter = useRef(0);
 
-  const liveTrafficEnabled = layers.adsb;
-  const nexradVolumeEnabled = layers.mrms;
-  const nexradShowEchoTops = layers.echotops;
-  const nexradShowAltitudeGuides = layers.guides;
-  const nexradCrossSectionEnabled = layers.slice;
-  const approachVisible = layers.approach;
-  const airspaceVisible = layers.airspace;
+  const options = usePersistedOptions();
+  const surface = useSurfaceState();
+  const selection = useSceneSelection({
+    initialAirportOptions,
+    initialSceneData,
+    initialAirportId,
+    initialApproachId,
+    isDefaultRoute
+  });
+  const { sceneData, selectedAirport, selectedApproach } = selection;
+  const { serviceWorkerDebug } = useServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
 
-  const setLayerEnabled = (id: keyof LayerState, enabled: boolean) => {
-    setLayers((prev) => ({ ...prev, [id]: enabled }));
-  };
+  useUrlSync({
+    enabled: didInitFromLocation,
+    selectedAirport,
+    selectedApproach,
+    surfaceMode: surface.surfaceMode,
+    plateOverlayEnabled: surface.plateOverlayEnabled,
+    chartType: surface.chartType,
+    layers: options.layers,
+    nexradPhaseMode: options.nexradPhaseMode,
+    nexradDeclutterMode: options.nexradDeclutterMode,
+    trafficHistoryMinutes: options.trafficHistoryMinutes,
+    showTrafficCallsigns: options.showTrafficCallsigns
+  });
 
-  const refreshServiceWorkerDebug = useCallback((cycle: string | null | undefined) => {
-    getServiceWorkerCacheDebugSnapshot(cycle)
-      .then((snapshot) => {
-        setServiceWorkerDebug(snapshot);
-      })
-      .catch(() => {
-        // Keep runtime non-fatal when service worker introspection fails.
-      });
-  }, []);
-
+  // Runs after the hooks' mount effects (declaration order), so URL params
+  // have been consumed before URL writeback is enabled.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    ensureServiceWorkerCacheRegistration();
-    refreshServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
     setRuntimeCapabilities({
       workerAvailable: typeof Worker !== 'undefined',
       sharedArrayBufferAvailable: typeof SharedArrayBuffer !== 'undefined',
@@ -388,360 +210,11 @@ export function AppClient({
       setSelectorsCollapsed(true);
       setLegendCollapsed(true);
     }
-    const modeFromQuery = readSurfaceModeFromSearch(window.location.search);
-    if (modeFromQuery) {
-      setSurfaceMode(modeFromQuery.surfaceMode);
-      setPlateOverlayEnabled(modeFromQuery.plateOverlay);
-    }
-    const chartFromQuery = readChartTypeFromSearch(window.location.search);
-    if (chartFromQuery) {
-      setChartType(chartFromQuery);
-    }
-    try {
-      const raw = window.localStorage.getItem(OPTIONS_STORAGE_KEY);
-      if (raw) {
-        const persisted = JSON.parse(raw) as PersistedOptionsState;
-        if (typeof persisted.verticalScale === 'number') {
-          setVerticalScale(clampValue(persisted.verticalScale, 1, 15, DEFAULT_VERTICAL_SCALE));
-        }
-        if (typeof persisted.terrainRadiusNm === 'number') {
-          setTerrainRadiusNm(normalizeTerrainRadiusNm(persisted.terrainRadiusNm));
-        }
-        if (typeof persisted.flattenBathymetry === 'boolean') {
-          setFlattenBathymetry(persisted.flattenBathymetry);
-        }
-        if (typeof persisted.useParsedMissedClimbGradient === 'boolean') {
-          setUseParsedMissedClimbGradient(persisted.useParsedMissedClimbGradient);
-        }
-        if (typeof persisted.hideGroundTraffic === 'boolean') {
-          setHideGroundTraffic(persisted.hideGroundTraffic);
-        }
-        if (typeof persisted.showTrafficCallsigns === 'boolean') {
-          setShowTrafficCallsigns(persisted.showTrafficCallsigns);
-        }
-        if (typeof persisted.hideGroundTrafficCallsigns === 'boolean') {
-          setHideGroundTrafficCallsigns(persisted.hideGroundTrafficCallsigns);
-        }
-        if (typeof persisted.showDepartedTrafficTrails === 'boolean') {
-          setShowDepartedTrafficTrails(persisted.showDepartedTrafficTrails);
-        }
-        if (typeof persisted.trafficHistoryMinutes === 'number') {
-          setTrafficHistoryMinutes(
-            clampValue(
-              Math.round(persisted.trafficHistoryMinutes),
-              MIN_TRAFFIC_HISTORY_MINUTES,
-              MAX_TRAFFIC_HISTORY_MINUTES,
-              DEFAULT_TRAFFIC_HISTORY_MINUTES
-            )
-          );
-        }
-        if (typeof persisted.nexradMinDbz === 'number') {
-          setNexradMinDbz(normalizeNexradMinDbz(persisted.nexradMinDbz));
-        }
-        if (typeof persisted.nexradOpacity === 'number') {
-          setNexradOpacity(normalizeNexradOpacity(persisted.nexradOpacity));
-        }
-        if (persisted.nexradDeclutterMode) {
-          setNexradDeclutterMode(normalizeNexradDeclutterMode(persisted.nexradDeclutterMode));
-        }
-        if (persisted.nexradPhaseMode) {
-          setNexradPhaseMode(normalizeNexradPhaseMode(persisted.nexradPhaseMode));
-        }
-        if (persisted.cameraControlMode) {
-          setCameraControlMode(normalizeCameraControlMode(persisted.cameraControlMode));
-        }
-        if (typeof persisted.nexradCrossSectionHeadingDeg === 'number') {
-          setNexradCrossSectionHeadingDeg(
-            normalizeNexradCrossSectionHeadingDeg(persisted.nexradCrossSectionHeadingDeg)
-          );
-        }
-        if (typeof persisted.nexradCrossSectionRangeNm === 'number') {
-          setNexradCrossSectionRangeNm(
-            normalizeNexradCrossSectionRangeNm(persisted.nexradCrossSectionRangeNm)
-          );
-        }
-        if (typeof persisted.retinaRendering === 'boolean') {
-          setRetinaRendering(persisted.retinaRendering);
-        }
-        if (persisted.layers) {
-          const restored = { ...DEFAULT_LAYER_STATE };
-          for (const key of Object.keys(DEFAULT_LAYER_STATE) as (keyof LayerState)[]) {
-            if (typeof persisted.layers[key] === 'boolean') {
-              restored[key] = persisted.layers[key];
-            }
-          }
-          setLayers(restored);
-        } else {
-          // Legacy migration
-          const migrated = { ...DEFAULT_LAYER_STATE };
-          if (typeof persisted.nexradVolumeEnabled === 'boolean')
-            migrated.mrms = persisted.nexradVolumeEnabled;
-          if (typeof persisted.liveTrafficEnabled === 'boolean')
-            migrated.adsb = persisted.liveTrafficEnabled;
-          if (typeof persisted.nexradShowEchoTops === 'boolean')
-            migrated.echotops = persisted.nexradShowEchoTops;
-          if (typeof persisted.nexradShowAltitudeGuides === 'boolean')
-            migrated.guides = persisted.nexradShowAltitudeGuides;
-          if (typeof persisted.nexradCrossSectionEnabled === 'boolean')
-            migrated.slice = persisted.nexradCrossSectionEnabled;
-          setLayers(migrated);
-        }
-      }
-    } catch (error) {
-      console.warn('Unable to restore saved options', error);
-    } finally {
-      setDidInitFromStorage(true);
-    }
-    const urlParams = new URLSearchParams(window.location.search);
-    const layersParam = urlParams.get('layers');
-    if (layersParam) {
-      setLayers(parseLayersParam(layersParam));
-    }
-    const phaseModeFromUrl = readPhaseModeFromSearch(window.location.search);
-    if (phaseModeFromUrl) {
-      setNexradPhaseMode(normalizeNexradPhaseMode(phaseModeFromUrl));
-    }
-    const declutterFromUrl = readDeclutterModeFromSearch(window.location.search);
-    if (declutterFromUrl) {
-      setNexradDeclutterMode(normalizeNexradDeclutterMode(declutterFromUrl));
-    }
-    const historyMinFromUrl = readTrafficHistoryMinutesFromSearch(window.location.search);
-    if (historyMinFromUrl != null) {
-      setTrafficHistoryMinutes(historyMinFromUrl);
-    }
-    const callsignsFromUrl = readShowCallsignsFromSearch(window.location.search);
-    if (callsignsFromUrl != null) {
-      setShowTrafficCallsigns(callsignsFromUrl);
-    }
     setDidInitFromLocation(true);
-
-    // Restore last-selected airport/approach on the default route
-    if (isDefaultRoute) {
-      let target: { airportId: string; approachId: string } | null = null;
-      try {
-        const raw = window.localStorage.getItem(SELECTION_STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (
-            typeof parsed.airportId === 'string' &&
-            parsed.airportId.length > 0 &&
-            typeof parsed.approachId === 'string'
-          ) {
-            target = parsed;
-          }
-        }
-      } catch {
-        // corrupt or missing — keep server-provided default selection
-      }
-      if (!target) {
-        return;
-      }
-      // Skip fetch if server already loaded the exact airport+approach
-      if (
-        target.airportId === initialAirportId &&
-        (!target.approachId || target.approachId === initialApproachId)
-      ) {
-        return;
-      }
-      setLoading(true);
-      loadSceneDataAction(target.airportId, target.approachId)
-        .then((nextSceneData) => {
-          if (!nextSceneData.airport) {
-            setLoading(false);
-            return;
-          }
-          setSceneData(nextSceneData);
-          setSelectedAirport(nextSceneData.airport?.id ?? target.airportId);
-          setSelectedApproach(nextSceneData.selectedApproachId || target.approachId);
-          setLoading(false);
-        })
-        .catch(() => {
-          setLoading(false);
-        });
-    }
   }, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || !didInitFromStorage) return;
-    const persisted: PersistedOptionsState = {
-      verticalScale,
-      terrainRadiusNm,
-      flattenBathymetry,
-      useParsedMissedClimbGradient,
-      hideGroundTraffic,
-      showTrafficCallsigns,
-      hideGroundTrafficCallsigns,
-      showDepartedTrafficTrails,
-      trafficHistoryMinutes,
-      nexradMinDbz,
-      nexradOpacity,
-      nexradDeclutterMode,
-      nexradPhaseMode,
-      cameraControlMode,
-      nexradCrossSectionHeadingDeg,
-      nexradCrossSectionRangeNm,
-      retinaRendering,
-      layers
-    };
-    window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
-  }, [
-    didInitFromStorage,
-    verticalScale,
-    terrainRadiusNm,
-    flattenBathymetry,
-    useParsedMissedClimbGradient,
-    hideGroundTraffic,
-    showTrafficCallsigns,
-    hideGroundTrafficCallsigns,
-    showDepartedTrafficTrails,
-    trafficHistoryMinutes,
-    nexradMinDbz,
-    nexradOpacity,
-    nexradDeclutterMode,
-    nexradPhaseMode,
-    cameraControlMode,
-    nexradCrossSectionHeadingDeg,
-    nexradCrossSectionRangeNm,
-    retinaRendering,
-    layers
-  ]);
-
-  useEffect(() => {
-    setSceneData(initialSceneData);
-    setSelectedAirport(initialSceneData.airport?.id ?? initialAirportId);
-    setSelectedApproach(initialSceneData.selectedApproachId || initialApproachId);
-  }, [initialSceneData, initialAirportId, initialApproachId]);
-
-  useEffect(() => {
-    syncServiceWorkerDtppCycle(sceneData.cycleInfo?.dtppCycle);
-    refreshServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
-  }, [refreshServiceWorkerDebug, sceneData.cycleInfo?.dtppCycle]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
-
-    const handleControllerChange = () => {
-      refreshServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
-    };
-
-    navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
-    return () => {
-      navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
-    };
-  }, [refreshServiceWorkerDebug, sceneData.cycleInfo?.dtppCycle]);
-
-  useEffect(() => {
-    if (airportOptions.length > 0) return;
-    setAirportOptionsLoading(true);
-    startTransition(() => {
-      listAirportsAction()
-        .then((nextOptions) => {
-          setAirportOptions(nextOptions);
-          setAirportOptionsLoading(false);
-        })
-        .catch(() => {
-          setAirportOptionsLoading(false);
-        });
-    });
-  }, [airportOptions.length, startTransition]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !selectedAirport || !didInitFromLocation) return;
-    const encodedApproach = selectedApproach ? `/${encodeURIComponent(selectedApproach)}` : '';
-    const nextPath = `/${selectedAirport}${encodedApproach}`;
-    const params = new URLSearchParams(window.location.search);
-    params.set('surface', surfaceMode);
-    if (plateOverlayEnabled) {
-      params.set('plate', 'on');
-    } else {
-      params.delete('plate');
-    }
-    if ((surfaceMode === 'map' || surfaceMode === '3dmap') && chartType !== 'vfr') {
-      params.set('chart', chartType);
-    } else {
-      params.delete('chart');
-    }
-    const layersSerialized = serializeLayersParam(layers);
-    if (layersSerialized) {
-      params.set('layers', layersSerialized);
-    } else {
-      params.delete('layers');
-    }
-    if (nexradPhaseMode !== DEFAULT_NEXRAD_PHASE_MODE) {
-      params.set('phaseMode', nexradPhaseMode);
-    } else {
-      params.delete('phaseMode');
-    }
-    if (nexradDeclutterMode !== DEFAULT_NEXRAD_DECLUTTER_MODE) {
-      params.set('declutter', nexradDeclutterMode);
-    } else {
-      params.delete('declutter');
-    }
-    if (trafficHistoryMinutes !== DEFAULT_TRAFFIC_HISTORY_MINUTES) {
-      params.set('historyMin', String(trafficHistoryMinutes));
-    } else {
-      params.delete('historyMin');
-    }
-    if (showTrafficCallsigns) {
-      params.set('callsigns', '1');
-    } else {
-      params.delete('callsigns');
-    }
-    const nextSearch = params.toString();
-    const nextUrl = `${nextPath}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
-    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
-      window.history.replaceState(null, '', nextUrl);
-    }
-    try {
-      window.localStorage.setItem(
-        SELECTION_STORAGE_KEY,
-        JSON.stringify({ airportId: selectedAirport, approachId: selectedApproach })
-      );
-    } catch {
-      // localStorage full or unavailable
-    }
-  }, [
-    selectedAirport,
-    selectedApproach,
-    surfaceMode,
-    plateOverlayEnabled,
-    chartType,
-    layers,
-    nexradPhaseMode,
-    nexradDeclutterMode,
-    trafficHistoryMinutes,
-    showTrafficCallsigns,
-    didInitFromLocation
-  ]);
-
-  const requestSceneData = useCallback(
-    (airportId: string, procedureId: string) => {
-      const nextRequestId = requestCounter.current + 1;
-      requestCounter.current = nextRequestId;
-      setLoading(true);
-      setErrorMessage('');
-      setSurfaceErrorMessage('');
-      setSatelliteRetryCount(0);
-      setSatelliteRetryNonce(0);
-
-      startTransition(() => {
-        loadSceneDataAction(airportId, procedureId)
-          .then((nextSceneData) => {
-            if (requestCounter.current !== nextRequestId) return;
-            setSceneData(nextSceneData);
-            setSelectedAirport(nextSceneData.airport?.id ?? airportId);
-            setSelectedApproach(nextSceneData.selectedApproachId || '');
-            setLoading(false);
-          })
-          .catch(() => {
-            if (requestCounter.current !== nextRequestId) return;
-            setLoading(false);
-            setErrorMessage('Unable to load airport data.');
-          });
-      });
-    },
-    [startTransition]
-  );
+  const nexradVolumeEnabled = options.layers.mrms;
+  const nexradShowEchoTops = options.layers.echotops;
 
   const airport = sceneData.airport;
   const menuPortalTarget = typeof document === 'undefined' ? undefined : document.body;
@@ -762,8 +235,8 @@ export function AppClient({
   const waypoints = useMemo(() => sceneWaypointsToMap(sceneData), [sceneData]);
 
   const effectiveAirportOptions: SelectOption[] = useMemo(() => {
-    if (airportOptions.length > 0) {
-      return airportOptions.map((option) => ({
+    if (selection.airportOptions.length > 0) {
+      return selection.airportOptions.map((option) => ({
         value: option.id,
         label: option.label,
         searchText: `${option.id} ${option.label}`.toLowerCase(),
@@ -779,7 +252,7 @@ export function AppClient({
         source: 'cifp' as const
       }
     ];
-  }, [airportOptions, airport]);
+  }, [selection.airportOptions, airport]);
 
   const approachOptions: SelectOption[] = useMemo(
     () =>
@@ -805,7 +278,7 @@ export function AppClient({
   );
 
   const hasApproachPlate = Boolean(sceneData.approachPlate);
-  const activeErrorMessage = errorMessage || surfaceErrorMessage;
+  const activeErrorMessage = selection.errorMessage || surface.surfaceErrorMessage;
   const showMrmsLoadingIndicator =
     (nexradVolumeEnabled || nexradShowEchoTops) && nexradDebug.loading;
   const missedApproachStartAltitudeFeet =
@@ -833,60 +306,28 @@ export function AppClient({
     return `${feetPerNmText} ft/NM${targetText}`;
   }, [sceneData.missedApproachClimbRequirement]);
   const effectiveMissedApproachClimbRequirement =
-    useParsedMissedClimbGradient && hasParsedMissedClimbRequirement
+    options.useParsedMissedClimbGradient && hasParsedMissedClimbRequirement
       ? sceneData.missedApproachClimbRequirement
       : null;
   const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' | 'map' =
-    plateOverlayEnabled && hasApproachPlate
+    surface.plateOverlayEnabled && hasApproachPlate
       ? 'plate'
-      : surfaceMode === 'satellite' || surfaceMode === '3dmap'
+      : surface.surfaceMode === 'satellite' || surface.surfaceMode === '3dmap'
         ? 'satellite'
-        : surfaceMode === 'map'
+        : surface.surfaceMode === 'map'
           ? 'map'
           : 'terrain';
-
-  const SURFACE_LEGEND_LABELS: Record<SurfaceMode, string> = {
-    terrain: 'Terrain Wireframe',
-    satellite: 'Satellite Surface',
-    map: 'FAA Chart Map',
-    '3dmap': '3D Chart Map'
-  };
   const surfaceLegendLabel =
-    plateOverlayEnabled && hasApproachPlate
-      ? `FAA Plate + ${SURFACE_LEGEND_LABELS[surfaceMode]}`
-      : SURFACE_LEGEND_LABELS[surfaceMode];
-
-  const handleSurfaceModeSelected = (mode: SurfaceMode) => {
-    setSurfaceErrorMessage('');
-    setSatelliteRetryCount(0);
-    setSatelliteRetryNonce(0);
-    setSurfaceMode(mode);
-  };
+    surface.plateOverlayEnabled && hasApproachPlate
+      ? `FAA Plate + ${SURFACE_LEGEND_LABELS[surface.surfaceMode]}`
+      : SURFACE_LEGEND_LABELS[surface.surfaceMode];
 
   const handleChartTypeSelected = (chart: ChartType) => {
-    setChartType(chart);
+    surface.setChartType(chart);
   };
   const handlePlateOverlayToggle = (enabled: boolean) => {
-    setPlateOverlayEnabled(enabled);
+    surface.setPlateOverlayEnabled(enabled);
   };
-
-  const handleSatelliteRuntimeError = useCallback((message: string, error?: Error) => {
-    console.error('3D tiles surface rendering failed', error);
-    setSatelliteRetryCount((previousCount) => {
-      if (previousCount >= SATELLITE_MAX_RETRIES) {
-        return previousCount;
-      }
-      const nextCount = previousCount + 1;
-      if (nextCount >= SATELLITE_MAX_RETRIES) {
-        setSurfaceErrorMessage(
-          `3D tiles surface failed after ${SATELLITE_MAX_RETRIES} attempts. ${message}`
-        );
-      } else {
-        setSatelliteRetryNonce((nonce) => nonce + 1);
-      }
-      return nextCount;
-    });
-  }, []);
 
   const toggleOptions = () => {
     setOptionsCollapsed((prev) => {
@@ -901,6 +342,7 @@ export function AppClient({
     });
   };
 
+  const { setNexradDeclutterMode } = options;
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -926,7 +368,7 @@ export function AppClient({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [nexradVolumeEnabled]);
+  }, [nexradVolumeEnabled, setNexradDeclutterMode]);
 
   return (
     <div className="app">
@@ -935,34 +377,36 @@ export function AppClient({
         onToggleSelectors={() => setSelectorsCollapsed((current) => !current)}
         effectiveAirportOptions={effectiveAirportOptions}
         selectedAirportOption={selectedAirportOption}
-        airportOptionsLoading={airportOptionsLoading}
+        airportOptionsLoading={selection.airportOptionsLoading}
         effectiveAirportOptionsLength={effectiveAirportOptions.length}
         onAirportSelected={(airportId) => {
           const defaultApproachId = pickDefaultApproachForAirport(airportId) || '';
-          setSelectedAirport(airportId);
-          setSelectedApproach(defaultApproachId);
-          requestSceneData(airportId, defaultApproachId);
+          selection.setSelectedAirport(airportId);
+          selection.setSelectedApproach(defaultApproachId);
+          selection.requestSceneData(airportId, defaultApproachId, surface.resetSurfaceErrors);
         }}
         approachOptions={approachOptions}
         selectedApproachOption={selectedApproachOption}
         approachOptionsLength={approachOptions.length}
         onApproachSelected={(approachId) => {
-          setSelectedApproach(approachId);
-          requestSceneData(selectedAirport, approachId);
+          selection.setSelectedApproach(approachId);
+          selection.requestSceneData(selectedAirport, approachId, surface.resetSurfaceErrors);
         }}
-        surfaceMode={surfaceMode}
-        onSurfaceModeSelected={handleSurfaceModeSelected}
-        plateOverlayEnabled={plateOverlayEnabled}
+        surfaceMode={surface.surfaceMode}
+        onSurfaceModeSelected={surface.handleSurfaceModeSelected}
+        plateOverlayEnabled={surface.plateOverlayEnabled}
         onPlateOverlayToggle={handlePlateOverlayToggle}
         hasApproachPlate={hasApproachPlate}
-        chartType={chartType}
+        chartType={surface.chartType}
         onChartTypeSelected={handleChartTypeSelected}
         menuPortalTarget={menuPortalTarget}
         onControlsHeightChange={setControlsOverlayHeight}
       />
 
       <main className="main-content">
-        {(loading || isPending) && <div className="loading">Loading approach data...</div>}
+        {(selection.loading || selection.isPending) && (
+          <div className="loading">Loading approach data...</div>
+        )}
 
         {!airport ? (
           <div className="loading">No airport data available</div>
@@ -972,34 +416,34 @@ export function AppClient({
             sceneData={sceneData}
             contextApproach={contextApproach}
             waypoints={waypoints}
-            verticalScale={verticalScale}
-            terrainRadiusNm={terrainRadiusNm}
-            flattenBathymetry={flattenBathymetry}
-            layers={layers}
-            hideGroundTraffic={hideGroundTraffic}
-            showTrafficCallsigns={showTrafficCallsigns}
-            hideGroundTrafficCallsigns={hideGroundTrafficCallsigns}
-            showDepartedTrafficTrails={showDepartedTrafficTrails}
-            trafficHistoryMinutes={trafficHistoryMinutes}
-            nexradMinDbz={nexradMinDbz}
-            nexradOpacity={nexradOpacity}
-            nexradDeclutterMode={nexradDeclutterMode}
-            nexradPhaseMode={nexradPhaseMode}
-            nexradCrossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
-            nexradCrossSectionRangeNm={nexradCrossSectionRangeNm}
-            surfaceMode={surfaceMode}
-            plateOverlayEnabled={plateOverlayEnabled}
-            chartType={chartType}
-            satelliteRetryNonce={satelliteRetryNonce}
-            satelliteRetryCount={satelliteRetryCount}
-            surfaceErrorMessage={surfaceErrorMessage}
+            verticalScale={options.verticalScale}
+            terrainRadiusNm={options.terrainRadiusNm}
+            flattenBathymetry={options.flattenBathymetry}
+            layers={options.layers}
+            hideGroundTraffic={options.hideGroundTraffic}
+            showTrafficCallsigns={options.showTrafficCallsigns}
+            hideGroundTrafficCallsigns={options.hideGroundTrafficCallsigns}
+            showDepartedTrafficTrails={options.showDepartedTrafficTrails}
+            trafficHistoryMinutes={options.trafficHistoryMinutes}
+            nexradMinDbz={options.nexradMinDbz}
+            nexradOpacity={options.nexradOpacity}
+            nexradDeclutterMode={options.nexradDeclutterMode}
+            nexradPhaseMode={options.nexradPhaseMode}
+            nexradCrossSectionHeadingDeg={options.nexradCrossSectionHeadingDeg}
+            nexradCrossSectionRangeNm={options.nexradCrossSectionRangeNm}
+            surfaceMode={surface.surfaceMode}
+            plateOverlayEnabled={surface.plateOverlayEnabled}
+            chartType={surface.chartType}
+            satelliteRetryNonce={surface.satelliteRetryNonce}
+            satelliteRetryCount={surface.satelliteRetryCount}
+            surfaceErrorMessage={surface.surfaceErrorMessage}
             recenterNonce={recenterNonce}
-            cameraControlMode={cameraControlMode}
-            retinaRendering={retinaRendering}
+            cameraControlMode={options.cameraControlMode}
+            retinaRendering={options.retinaRendering}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
             missedApproachClimbRequirement={effectiveMissedApproachClimbRequirement}
-            onSatelliteRuntimeError={handleSatelliteRuntimeError}
+            onSatelliteRuntimeError={surface.handleSatelliteRuntimeError}
             onNexradDebugChange={setNexradDebug}
             onTrafficDebugChange={setTrafficDebug}
             onChartDebugChange={setChartDebug}
@@ -1044,7 +488,7 @@ export function AppClient({
           onToggleDebug={() => setDebugCollapsed((current) => !current)}
           airportId={selectedAirport}
           approachId={selectedApproach}
-          surfaceMode={surfaceMode}
+          surfaceMode={surface.surfaceMode}
           runtimeCapabilities={runtimeCapabilities}
           serviceWorkerDebug={serviceWorkerDebug}
           nexradDebug={nexradDebug}
@@ -1059,10 +503,10 @@ export function AppClient({
           onToggleLegend={() => setLegendCollapsed((current) => !current)}
           surfaceLegendClass={surfaceLegendClass}
           surfaceLegendLabel={surfaceLegendLabel}
-          surfaceMode={surfaceMode}
-          layers={layers}
+          surfaceMode={surface.surfaceMode}
+          layers={options.layers}
           hasApproachPlate={hasApproachPlate}
-          plateOverlayEnabled={plateOverlayEnabled}
+          plateOverlayEnabled={surface.plateOverlayEnabled}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
         />
@@ -1070,57 +514,61 @@ export function AppClient({
         <LayersPanel
           layersCollapsed={layersCollapsed}
           onToggleLayers={toggleLayers}
-          layers={layers}
-          onLayerChange={setLayerEnabled}
+          layers={options.layers}
+          onLayerChange={options.setLayerEnabled}
         />
 
         <OptionsPanel
           optionsCollapsed={optionsCollapsed}
           onToggleOptions={toggleOptions}
-          verticalScale={verticalScale}
+          verticalScale={options.verticalScale}
           onVerticalScaleChange={(scale) =>
-            setVerticalScale(clampValue(scale, 1, 15, DEFAULT_VERTICAL_SCALE))
+            options.setVerticalScale(clampValue(scale, 1, 15, DEFAULT_VERTICAL_SCALE))
           }
-          terrainRadiusNm={terrainRadiusNm}
+          terrainRadiusNm={options.terrainRadiusNm}
           onTerrainRadiusNmChange={(radiusNm) =>
-            setTerrainRadiusNm(normalizeTerrainRadiusNm(radiusNm))
+            options.setTerrainRadiusNm(normalizeTerrainRadiusNm(radiusNm))
           }
-          flattenBathymetry={flattenBathymetry}
-          onFlattenBathymetryChange={setFlattenBathymetry}
-          cameraControlMode={cameraControlMode}
-          onCameraControlModeChange={setCameraControlMode}
-          useParsedMissedClimbGradient={useParsedMissedClimbGradient}
+          flattenBathymetry={options.flattenBathymetry}
+          onFlattenBathymetryChange={options.setFlattenBathymetry}
+          cameraControlMode={options.cameraControlMode}
+          onCameraControlModeChange={options.setCameraControlMode}
+          useParsedMissedClimbGradient={options.useParsedMissedClimbGradient}
           hasParsedMissedClimbRequirement={hasParsedMissedClimbRequirement}
           parsedMissedClimbRequirementLabel={parsedMissedClimbRequirementLabel}
-          onUseParsedMissedClimbGradientChange={setUseParsedMissedClimbGradient}
-          layers={layers}
-          nexradMinDbz={nexradMinDbz}
-          onNexradMinDbzChange={(dbz) => setNexradMinDbz(normalizeNexradMinDbz(dbz))}
-          nexradOpacity={nexradOpacity}
-          onNexradOpacityChange={(opacity) => setNexradOpacity(normalizeNexradOpacity(opacity))}
-          nexradDeclutterMode={nexradDeclutterMode}
-          onNexradDeclutterModeChange={setNexradDeclutterMode}
-          nexradPhaseMode={nexradPhaseMode}
-          onNexradPhaseModeChange={setNexradPhaseMode}
-          nexradCrossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
+          onUseParsedMissedClimbGradientChange={options.setUseParsedMissedClimbGradient}
+          layers={options.layers}
+          nexradMinDbz={options.nexradMinDbz}
+          onNexradMinDbzChange={(dbz) => options.setNexradMinDbz(normalizeNexradMinDbz(dbz))}
+          nexradOpacity={options.nexradOpacity}
+          onNexradOpacityChange={(opacity) =>
+            options.setNexradOpacity(normalizeNexradOpacity(opacity))
+          }
+          nexradDeclutterMode={options.nexradDeclutterMode}
+          onNexradDeclutterModeChange={options.setNexradDeclutterMode}
+          nexradPhaseMode={options.nexradPhaseMode}
+          onNexradPhaseModeChange={options.setNexradPhaseMode}
+          nexradCrossSectionHeadingDeg={options.nexradCrossSectionHeadingDeg}
           onNexradCrossSectionHeadingDegChange={(headingDeg) =>
-            setNexradCrossSectionHeadingDeg(normalizeNexradCrossSectionHeadingDeg(headingDeg))
+            options.setNexradCrossSectionHeadingDeg(
+              normalizeNexradCrossSectionHeadingDeg(headingDeg)
+            )
           }
-          nexradCrossSectionRangeNm={nexradCrossSectionRangeNm}
+          nexradCrossSectionRangeNm={options.nexradCrossSectionRangeNm}
           onNexradCrossSectionRangeNmChange={(rangeNm) =>
-            setNexradCrossSectionRangeNm(normalizeNexradCrossSectionRangeNm(rangeNm))
+            options.setNexradCrossSectionRangeNm(normalizeNexradCrossSectionRangeNm(rangeNm))
           }
-          hideGroundTraffic={hideGroundTraffic}
-          onHideGroundTrafficChange={setHideGroundTraffic}
-          showTrafficCallsigns={showTrafficCallsigns}
-          onShowTrafficCallsignsChange={setShowTrafficCallsigns}
-          hideGroundTrafficCallsigns={hideGroundTrafficCallsigns}
-          onHideGroundTrafficCallsignsChange={setHideGroundTrafficCallsigns}
-          showDepartedTrafficTrails={showDepartedTrafficTrails}
-          onShowDepartedTrafficTrailsChange={setShowDepartedTrafficTrails}
-          trafficHistoryMinutes={trafficHistoryMinutes}
+          hideGroundTraffic={options.hideGroundTraffic}
+          onHideGroundTrafficChange={options.setHideGroundTraffic}
+          showTrafficCallsigns={options.showTrafficCallsigns}
+          onShowTrafficCallsignsChange={options.setShowTrafficCallsigns}
+          hideGroundTrafficCallsigns={options.hideGroundTrafficCallsigns}
+          onHideGroundTrafficCallsignsChange={options.setHideGroundTrafficCallsigns}
+          showDepartedTrafficTrails={options.showDepartedTrafficTrails}
+          onShowDepartedTrafficTrailsChange={options.setShowDepartedTrafficTrails}
+          trafficHistoryMinutes={options.trafficHistoryMinutes}
           onTrafficHistoryMinutesChange={(minutes) =>
-            setTrafficHistoryMinutes(
+            options.setTrafficHistoryMinutes(
               clampValue(
                 Math.round(minutes),
                 MIN_TRAFFIC_HISTORY_MINUTES,
@@ -1129,8 +577,8 @@ export function AppClient({
               )
             )
           }
-          retinaRendering={retinaRendering}
-          onRetinaRenderingChange={setRetinaRendering}
+          retinaRendering={options.retinaRendering}
+          onRetinaRenderingChange={options.setRetinaRendering}
         />
 
         <HelpPanel errorMessage={activeErrorMessage} />

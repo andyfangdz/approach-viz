@@ -279,7 +279,7 @@ private func appendAirspaceCap(
     }
 }
 
-private func sanitizedAirspaceRing(_ points: [SIMD3<Float>]) -> [SIMD3<Float>] {
+func sanitizedAirspaceRing(_ points: [SIMD3<Float>]) -> [SIMD3<Float>] {
     guard !points.isEmpty else { return [] }
     var sanitized: [SIMD3<Float>] = []
     for point in points {
@@ -296,7 +296,7 @@ private func sanitizedAirspaceRing(_ points: [SIMD3<Float>]) -> [SIMD3<Float>] {
     return sanitized
 }
 
-private func triangulateAirspaceRing(_ points: [SIMD3<Float>]) -> [(Int, Int, Int)] {
+func triangulateAirspaceRing(_ points: [SIMD3<Float>]) -> [(Int, Int, Int)] {
     guard points.count >= 3 else { return [] }
 
     var vertexIndices = Array(points.indices)
@@ -874,16 +874,16 @@ private func buildMetalRunwaySegments(sceneData: NativeSceneData, verticalScale:
     return segments
 }
 
-private func metalReciprocalRunwayID(_ id: String) -> String? {
+func metalReciprocalRunwayID(_ id: String) -> String? {
+    // Compile-time validated regex literal, so runway-ID parsing has no runtime
+    // pattern-compilation failure mode. Kept function-local because Regex is
+    // not Sendable, so a global `let` is rejected under strict concurrency.
+    let metalReciprocalRunwayRegex = /^(\d{1,2})([LRC]?)$/
     let identifier = id.replacingOccurrences(of: "RW", with: "")
-    let pattern = try! NSRegularExpression(pattern: #"^(\d{1,2})([LRC]?)$"#)
-    let range = NSRange(location: 0, length: identifier.utf16.count)
-    guard let match = pattern.firstMatch(in: identifier, range: range),
-          let numberRange = Range(match.range(at: 1), in: identifier) else { return nil }
-    let number = Int(identifier[numberRange]) ?? 0
+    guard let match = identifier.wholeMatch(of: metalReciprocalRunwayRegex),
+          let number = Int(match.1) else { return nil }
     let reciprocalNumber = ((number + 17) % 36) + 1
-    let suffixRange = Range(match.range(at: 2), in: identifier)
-    let suffix = suffixRange.map { String(identifier[$0]) } ?? ""
+    let suffix = String(match.2)
     let reciprocalSuffix: String
     switch suffix {
     case "L": reciprocalSuffix = "R"

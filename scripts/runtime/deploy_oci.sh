@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOST="${1:-ubuntu@100.86.128.122}"
+HOST="${1:-}"
+
+if [[ -z "$HOST" ]]; then
+  echo "Usage: $0 <user@host>" >&2
+  echo "Deploy target host is required (e.g. ubuntu@<runtime-host>)." >&2
+  exit 1
+fi
 IDENTITY_AGENT="${SSH_AUTH_SOCK:-}"
 QUEUE_URL="${RUNTIME_MRMS_SQS_QUEUE_URL:-${MRMS_SQS_QUEUE_URL:-}}"
 PARSE_CONCURRENCY="${RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY:-${MRMS_INGEST_PARSE_CONCURRENCY:-}}"
@@ -138,6 +144,9 @@ set -euo pipefail
 source \"\$HOME/.cargo/env\"
 cd \"$REMOTE_SERVICE_DIR\"
 cargo build --release
+if [[ -x /usr/local/bin/approach-viz-runtime ]]; then
+  sudo cp -f /usr/local/bin/approach-viz-runtime /usr/local/bin/approach-viz-runtime.previous
+fi
 sudo install -D -m 0755 target/release/approach-viz-runtime /usr/local/bin/approach-viz-runtime
 "
 }
@@ -149,6 +158,9 @@ install_binary_local_cross() {
   scp "$local_binary_path" "$HOST:/tmp/approach-viz-runtime.new"
   ssh "$HOST" "
 set -euo pipefail
+if [[ -x /usr/local/bin/approach-viz-runtime ]]; then
+  sudo cp -f /usr/local/bin/approach-viz-runtime /usr/local/bin/approach-viz-runtime.previous
+fi
 sudo install -D -m 0755 /tmp/approach-viz-runtime.new /usr/local/bin/approach-viz-runtime
 rm -f /tmp/approach-viz-runtime.new
 "
@@ -214,6 +226,26 @@ done
 if [[ \$ready -ne 1 ]]; then
   echo \"Runtime service did not become ready after restart.\" >&2
   sudo journalctl -u approach-viz-runtime.service -n 80 --no-pager >&2
+  if [[ -x /usr/local/bin/approach-viz-runtime.previous ]]; then
+    echo \"Rolling back to previous runtime binary.\" >&2
+    sudo cp -f /usr/local/bin/approach-viz-runtime.previous /usr/local/bin/approach-viz-runtime
+    sudo systemctl restart approach-viz-runtime.service
+    rolled_back_ready=0
+    for attempt in \$(seq 1 60); do
+      if curl -fsS http://127.0.0.1:9191/healthz >/dev/null; then
+        rolled_back_ready=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ \$rolled_back_ready -eq 1 ]]; then
+      echo \"Rollback succeeded; previous binary is serving again.\" >&2
+    else
+      echo \"Rollback restart also failed to become ready.\" >&2
+    fi
+  else
+    echo \"No previous binary available for rollback.\" >&2
+  fi
   exit 1
 fi
 

@@ -52,8 +52,9 @@ export function HeaderControls({
         if (cancelled) return;
         setFilteredAirportOptions(filtered);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) return;
+        console.warn('Airport filter worker failed; showing unfiltered options.', error);
         setFilteredAirportOptions(effectiveAirportOptions);
       });
     return () => {
@@ -68,8 +69,9 @@ export function HeaderControls({
         if (cancelled) return;
         setFilteredApproachOptions(filtered);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) return;
+        console.warn('Approach filter worker failed; showing unfiltered options.', error);
         setFilteredApproachOptions(approachOptions);
       });
     return () => {

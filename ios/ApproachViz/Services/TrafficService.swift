@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 struct TrafficPollingContext: Hashable {
     let refLat: Double
@@ -27,6 +28,7 @@ enum TrafficServiceError: LocalizedError {
 }
 
 actor TrafficService {
+    private static let logger = Logger(subsystem: "app.approach-viz", category: "TrafficService")
     private static let maxHistoryBackfillHexes = 80
     private static let minFullBackfillIntervalMs: Int64 = 60_000
     private static let maxFullBackfillIntervalMs: Int64 = 5 * 60_000
@@ -90,7 +92,13 @@ actor TrafficService {
                 )
                 followupData = try await fetchTrafficPayload(url: followupURL)
             } catch {
+                // The primary poll still succeeded; log the backfill failure
+                // and keep the hexes pending so the next poll retries them.
+                Self.logger.warning(
+                    "Traffic history backfill follow-up failed: \(error.localizedDescription, privacy: .public)"
+                )
                 followupData = nil
+                requestedHistoryHexes = []
             }
         } else {
             followupData = nil

@@ -1,6 +1,6 @@
 import tseslint from 'typescript-eslint';
 
-export default [
+export default tseslint.config(
   {
     ignores: [
       '.tmp/**',
@@ -10,22 +10,26 @@ export default [
       'output/**',
       'data/**',
       'public/data/**',
+      'public/service-worker.js',
+      'public/approach_viz_core.js',
       'services/runtime-rs/target/**',
       'packages/approach-viz-core-wasm/**'
     ]
   },
+  ...tseslint.configs.recommended,
   {
     files: ['**/*.{ts,tsx,js,mjs,cjs}'],
     languageOptions: {
-      parser: tseslint.parser,
       parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module'
       }
     },
-    plugins: {
-      '@typescript-eslint': tseslint.plugin
-    },
-    rules: {}
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' }
+      ]
+    }
   }
-];
+);

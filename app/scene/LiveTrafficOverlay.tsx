@@ -170,6 +170,7 @@ export function LiveTrafficOverlay({
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastPollAt, setLastPollAt] = useState<string | null>(null);
   const [historyBackfillPending, setHistoryBackfillPending] = useState(true);
+  const [historyBackfillError, setHistoryBackfillError] = useState<string | null>(null);
   const [timingsMs, setTimingsMs] = useState<TrafficTimingDebugState>(EMPTY_TIMINGS_MS);
 
   const patchTimings = useCallback((patch: Partial<TrafficTimingDebugState>) => {
@@ -387,6 +388,7 @@ export function LiveTrafficOverlay({
         fetchMs = result.fetchMs;
         parseMs = result.parseMs;
         setFeedTransport(result.feedTransport);
+        setHistoryBackfillError(result.historyBackfillError);
         if (!cancelled) {
           applyWorkerResult(result);
         }
@@ -714,6 +716,7 @@ export function LiveTrafficOverlay({
       error: lastError,
       lastPollAt,
       historyBackfillPending,
+      historyBackfillError,
       trackCount,
       renderedTrackCount: renderBuffers.renderedTrackCount,
       historyPointCount,
@@ -727,6 +730,7 @@ export function LiveTrafficOverlay({
       lastError,
       lastPollAt,
       historyBackfillPending,
+      historyBackfillError,
       trackCount,
       renderBuffers.renderedTrackCount,
       historyPointCount,
@@ -759,6 +763,7 @@ export function LiveTrafficOverlay({
         error: null,
         lastPollAt: null,
         historyBackfillPending: false,
+        historyBackfillError: null,
         trackCount: 0,
         renderedTrackCount: 0,
         historyPointCount: 0,

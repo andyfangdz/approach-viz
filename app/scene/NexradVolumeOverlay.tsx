@@ -807,7 +807,7 @@ export function NexradVolumeOverlay({
 
     const baseMesh = baseMeshRef.current;
     if (payload) {
-      let payloadIndices = ensureInt32Capacity(payloadIndexScratchRef.current, declutterCount);
+      const payloadIndices = ensureInt32Capacity(payloadIndexScratchRef.current, declutterCount);
       if (payloadIndices !== payloadIndexScratchRef.current) {
         payloadIndexScratchRef.current = payloadIndices;
       }

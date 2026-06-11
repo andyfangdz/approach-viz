@@ -274,7 +274,16 @@ function main() {
 
   insertCifpData();
 
-  const minimumsDb = JSON.parse(fs.readFileSync(APPROACH_DB_PATH, 'utf8')) as ApproachMinimumsDb;
+  let minimumsDb: ApproachMinimumsDb;
+  try {
+    minimumsDb = JSON.parse(fs.readFileSync(APPROACH_DB_PATH, 'utf8')) as ApproachMinimumsDb;
+  } catch (error) {
+    throw new Error(
+      `Failed to read/parse approach minimums DB at ${APPROACH_DB_PATH}: ${
+        error instanceof Error ? error.message : String(error)
+      }. Run \`npm run download-data\` to refresh source data.`
+    );
+  }
 
   const insertMinimumsData = db.transaction(() => {
     for (const [airportId, airportData] of Object.entries(minimumsDb.airports || {})) {
@@ -358,7 +367,10 @@ function main() {
   try {
     cifpCycle = fs.readFileSync(cifpCyclePath, 'utf8').trim();
   } catch {
-    // cycle.txt missing — leave blank
+    console.warn(
+      `⚠️  ${cifpCyclePath} is missing; cifp_cycle metadata will be blank. ` +
+        'Run `npm run download-data` to record the CIFP cycle.'
+    );
   }
   insertMetadata.run('cifp_cycle', cifpCycle);
   // dtpp_cycle_number from approaches.json (d-TPP cycle embedded by scraper)

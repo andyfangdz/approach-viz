@@ -22,6 +22,8 @@ pub use phase_batch::{compute_phase_scores_branchless, BatchPhaseResult};
 #[allow(unused_imports)]
 pub use processor::filter_voxels_by_threshold;
 
+use std::sync::Arc;
+
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -256,11 +258,30 @@ pub(crate) async fn volume(
     State(state): State<AppState>,
     Query(query): Query<VolumeQuery>,
 ) -> Response {
-    if query.lat < -90.0 || query.lat > 90.0 || query.lon < -180.0 || query.lon > 180.0 {
+    // NaN compares false against range bounds, so finiteness must be checked
+    // explicitly before the range checks.
+    if !query.lat.is_finite()
+        || !query.lon.is_finite()
+        || query.lat < -90.0
+        || query.lat > 90.0
+        || query.lon < -180.0
+        || query.lon > 180.0
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
                 "error": "Invalid lat/lon query parameters."
+            })),
+        )
+            .into_response();
+    }
+    if query.min_dbz.is_some_and(|value| !value.is_finite())
+        || query.max_range_nm.is_some_and(|value| !value.is_finite())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Invalid minDbz/maxRangeNm query parameters."
             })),
         )
             .into_response();
@@ -282,8 +303,10 @@ pub(crate) async fn volume(
     span.record("min_dbz", &min_dbz);
     span.record("max_range_nm", &max_range_nm);
 
-    let latest = state.latest.read().await;
-    let Some(scan) = latest.as_ref() else {
+    // Clone the snapshot Arc and release the read lock before the (potentially
+    // long) wire-payload encoding so ingest writers are never blocked on it.
+    let scan = state.latest.read().await.as_ref().map(Arc::clone);
+    let Some(scan) = scan else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
@@ -295,7 +318,7 @@ pub(crate) async fn volume(
 
     let build_span = tracing::info_span!("runtime.volume.build_wire_payload");
     match build_span
-        .in_scope(|| build_volume_wire_fb(scan, query.lat, query.lon, min_dbz, max_range_nm))
+        .in_scope(|| build_volume_wire_fb(&scan, query.lat, query.lon, min_dbz, max_range_nm))
     {
         Ok(body) => {
             let mut headers = HeaderMap::new();
@@ -402,11 +425,28 @@ pub(crate) async fn echo_tops(
     );
     let _guard = span.enter();
 
-    if query.lat < -90.0 || query.lat > 90.0 || query.lon < -180.0 || query.lon > 180.0 {
+    // NaN compares false against range bounds, so finiteness must be checked
+    // explicitly before the range checks.
+    if !query.lat.is_finite()
+        || !query.lon.is_finite()
+        || query.lat < -90.0
+        || query.lat > 90.0
+        || query.lon < -180.0
+        || query.lon > 180.0
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
                 "error": "Invalid lat/lon query parameters."
+            })),
+        )
+            .into_response();
+    }
+    if query.max_range_nm.is_some_and(|value| !value.is_finite()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Invalid maxRangeNm query parameter."
             })),
         )
             .into_response();
@@ -419,8 +459,10 @@ pub(crate) async fn echo_tops(
     );
     tracing::Span::current().record("max_range_nm", &max_range_nm);
 
-    let latest = state.latest.read().await;
-    let Some(scan) = latest.as_ref() else {
+    // Clone the snapshot Arc and release the read lock before window/cell
+    // building and encoding so ingest writers are never blocked on it.
+    let scan = state.latest.read().await.as_ref().map(Arc::clone);
+    let Some(scan) = scan else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
@@ -430,9 +472,9 @@ pub(crate) async fn echo_tops(
             .into_response();
     };
 
-    let window = build_query_window(scan, query.lat, query.lon, DEFAULT_MIN_DBZ, max_range_nm);
+    let window = build_query_window(&scan, query.lat, query.lon, DEFAULT_MIN_DBZ, max_range_nm);
     let build_cells_span = tracing::info_span!("runtime.echo_tops.build_cells");
-    let cells = build_cells_span.in_scope(|| build_echo_top_cells(scan, &window));
+    let cells = build_cells_span.in_scope(|| build_echo_top_cells(&scan, &window));
 
     // Content negotiation: FlatBuffers binary or JSON
     let accept = req_headers
@@ -455,7 +497,7 @@ pub(crate) async fn echo_tops(
     }
 
     if wants_binary {
-        let wire_body = build_echo_top_wire_fb(scan, &window, &cells);
+        let wire_body = build_echo_top_wire_fb(&scan, &window, &cells);
         headers.insert(
             "Content-Type",
             HeaderValue::from_static(ECHO_TOP_FB_CONTENT_TYPE),

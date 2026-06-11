@@ -1,7 +1,13 @@
 import MetalKit
+import os
 
 @MainActor
 final class ApproachMetalTextAtlas {
+    private static let logger = Logger(
+        subsystem: "app.approach-viz",
+        category: "ApproachMetalTextAtlas"
+    )
+
     struct Key: Hashable {
         let text: String
         let fontSize: CGFloat
@@ -44,11 +50,39 @@ final class ApproachMetalTextAtlas {
     }
 
     func ensureEntries(for keys: some Sequence<Key>) {
-        for key in keys where entries[key] == nil {
+        ensureEntries(for: Array(keys), allowReset: true)
+    }
+
+    private func ensureEntries(for keyList: [Key], allowReset: Bool) {
+        for key in keyList where entries[key] == nil {
             guard let raster = rasterize(key: key) else { continue }
-            guard let entry = place(raster: raster, for: key) else { continue }
-            entries[key] = entry
+            if let entry = place(raster: raster, for: key) {
+                entries[key] = entry
+                continue
+            }
+            guard allowReset else {
+                // Even a freshly reset atlas cannot fit the current label set.
+                // Fail loudly instead of letting labels vanish without a trace.
+                Self.logger.error(
+                    "Text atlas overflow even after reset; dropping label \(key.text, privacy: .public)"
+                )
+                assertionFailure("Text atlas cannot fit label set even after reset")
+                continue
+            }
+            // Atlas texture is full: evict all entries, reset packing, and
+            // re-place the full current key set so labels keep rendering
+            // instead of silently disappearing once the texture fills up.
+            resetPacking()
+            ensureEntries(for: keyList, allowReset: false)
+            return
         }
+    }
+
+    private func resetPacking() {
+        entries.removeAll(keepingCapacity: true)
+        cursorX = padding
+        cursorY = padding
+        rowHeight = 0
     }
 
     private func makeTexture() -> MTLTexture? {

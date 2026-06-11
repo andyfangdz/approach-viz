@@ -61,6 +61,7 @@ export interface TrafficProcessResult {
   feedTransport: 'binary' | 'json' | null;
   fetchMs: number | null;
   parseMs: number | null;
+  historyBackfillError: string | null;
 }
 
 function roundMs(value: number): number {
@@ -148,7 +149,8 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
       returnedHistoryHexes: result.returnedHistoryHexes,
       feedTransport,
       fetchMs: result.fetchMs ?? null,
-      parseMs: null
+      parseMs: null,
+      historyBackfillError: result.historyBackfillError ?? null
     };
   }
 }

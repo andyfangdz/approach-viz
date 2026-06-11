@@ -6,8 +6,8 @@ struct SceneRepository {
     private let airspaceRadiusNm = 30.0
     private let trafficAirportRadiusNm = 80.0
 
-    init(database: SQLiteDatabase = try! SQLiteDatabase()) {
-        self.database = database
+    init(database: SQLiteDatabase? = nil) throws {
+        self.database = try database ?? SQLiteDatabase()
     }
 
     func listAirports() throws -> [AirportOption] {

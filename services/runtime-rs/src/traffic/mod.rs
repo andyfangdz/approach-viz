@@ -76,23 +76,50 @@ pub(crate) async fn traffic_adsbx(
     let lat = lat.unwrap_or_default();
     let lon = lon.unwrap_or_default();
 
+    // Reject present-but-malformed numeric params instead of silently
+    // falling back to defaults (out-of-range finite values are still clamped).
+    fn parse_optional_numeric(raw: Option<&str>, name: &str) -> Result<Option<f64>, String> {
+        match raw.map(str::trim) {
+            None => Ok(None),
+            Some("") => Ok(None),
+            Some(value) => to_finite_number(Some(value))
+                .map(Some)
+                .ok_or_else(|| format!("Invalid numeric query param '{name}'.")),
+        }
+    }
+    let parsed_params = parse_optional_numeric(query.radius_nm.as_deref(), "radiusNm").and_then(
+        |radius_nm| {
+            let limit = parse_optional_numeric(query.limit.as_deref(), "limit")?;
+            let history_minutes =
+                parse_optional_numeric(query.history_minutes.as_deref(), "historyMinutes")?;
+            Ok((radius_nm, limit, history_minutes))
+        },
+    );
+    let (raw_radius_nm, raw_limit, raw_history_minutes) = match parsed_params {
+        Ok(values) => values,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                no_store_headers(),
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+
     let radius_nm = clamp(
-        to_finite_number(query.radius_nm.as_deref()).unwrap_or(DEFAULT_RADIUS_NM),
+        raw_radius_nm.unwrap_or(DEFAULT_RADIUS_NM),
         MIN_RADIUS_NM,
         MAX_RADIUS_NM,
     );
     let limit = clamp_usize(
-        to_finite_number(query.limit.as_deref())
+        raw_limit
             .map(|value| value.floor() as i64)
             .unwrap_or(DEFAULT_LIMIT as i64),
         1,
         MAX_LIMIT,
     );
-    let history_minutes = clamp(
-        to_finite_number(query.history_minutes.as_deref()).unwrap_or(0.0),
-        0.0,
-        MAX_HISTORY_MINUTES,
-    );
+    let history_minutes = clamp(raw_history_minutes.unwrap_or(0.0), 0.0, MAX_HISTORY_MINUTES);
     let hide_ground_traffic =
         parse_boolean_query_param(query.hide_ground.as_deref(), DEFAULT_HIDE_GROUND_TRAFFIC);
     let history_hexes = parse_history_hexes(query.history_hexes.as_deref());

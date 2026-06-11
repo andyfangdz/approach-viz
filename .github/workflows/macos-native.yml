@@ -1,0 +1,64 @@
+# Manual-dispatch native build verification. Not part of required CI because it
+# needs full Xcode, the Rust Apple toolchains, and an FAA data download, all of
+# which are slow/flaky on hosted runners. Run on demand before native releases.
+name: macOS Native Tests (manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos-native:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # The image default (Xcode 16.4) cannot compile the Nuke package for
+      # macOS (NSImage Sendable errors); the project toolchain is Xcode 26.
+      - name: Select Xcode 26
+        run: |
+          XCODE_APP="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$XCODE_APP" ]; then
+            echo "No Xcode 26 install found on this runner. Available Xcode installs:" >&2
+            ls -d /Applications/Xcode*.app >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-native-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare data
+        run: npm run prepare-data
+        env:
+          # download-data.sh authenticates api.github.com calls when a token is
+          # present, avoiding anonymous rate-limit 403s on shared runners.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Run native macOS tests
+        run: npm run test:macos
