@@ -43,6 +43,7 @@
 - Volumetric instanced meshes calculate transforms and scale by writing directly into the `Float32Array` of `InstancedMesh.instanceMatrix.array` (via 16-element offsets), avoiding the heavy `THREE.Object3D` quaternion scaling overhead completely. Echo-top surface instances use the same direct matrix-array writes.
 - Per-voxel instance colors come from precomputed per-phase dBZ band LUTs (final working-color-space RGB triples, indexed by `floor(dbz / 5)`) written directly into `instanceColor.array`, instead of per-voxel `THREE.Color.setHex` (sRGB→linear conversion) + `setColorAt` calls on every upload.
 - The per-payload phase tally shown in the debug panel (`rain/mixed/snow` counts) is computed in the MRMS worker during poll-and-prepare rather than as an O(voxelCount) main-thread pass.
+- The WASM decoder's FlatBuffers column views (`FbVolumeView`/`FbEchoTopView`) validate column presence and length once at construction, so the per-voxel prepare, cross-section, and payload-conversion loops are free of per-element Option checks; malformed payloads fail the poll with an explicit error instead of silently zero-filling.
 - MRMS base/glow dual-pass volume rendering shares populated instance buffers between passes, avoiding a second per-voxel transform/color upload each refresh.
 - MRMS instanced capacities grow in buckets instead of resizing every poll, reducing remount/reallocation churn for fluctuating voxel counts.
 - Declutter-to-payload index mapping reuses grow-only `Int32Array` scratch buffers instead of allocating per-refresh `Array.map(...)` copies.

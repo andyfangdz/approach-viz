@@ -49,8 +49,11 @@ pub fn decode_and_prepare_mrms(
     let fb = flatbuffers::root::<crate::generated::MrmsVolume>(data)
         .map_err(|e| JsValue::from_str(&format!("AVMR payload invalid: {e}")))?;
 
-    // Zero-copy volume view — reads directly from the FB buffer
-    let vol_view = crate::mrms_preprocess::FbVolumeView::new(&fb);
+    // Zero-copy volume view — reads directly from the FB buffer. Column
+    // presence/length is validated once here so every per-voxel loop below
+    // (prepare, cross-section, payload conversion) is free of Option checks.
+    let vol_view =
+        crate::mrms_preprocess::FbVolumeView::new(&fb).map_err(|e| JsValue::from_str(&e))?;
 
     // 2. Prepare (generic — uses FbVolumeView for zero-copy reads)
     let pm = match phase_mode {
@@ -130,23 +133,24 @@ pub fn decode_and_prepare_mrms(
         .unwrap_or_default();
     set_prop(&vp_obj, "layerVoxelCounts", &js_sys::Uint32Array::from(&lvc[..]).into())?;
 
-    // xNm, zNm — convert from i16 hundredths to f32 NM in a single pass
-    let x_hundredths = fb.x_hundredths();
-    let z_hundredths = fb.z_hundredths();
+    // xNm, zNm — convert from i16 hundredths to f32 NM. The view validated
+    // each column's presence and length up front, so these loops iterate the
+    // FB vectors directly with no per-element Option handling.
     let mut x_nm = Vec::with_capacity(brick_count);
+    for value in vol_view.x_hundredths.iter() {
+        x_nm.push(value as f32 / 100.0);
+    }
     let mut z_nm = Vec::with_capacity(brick_count);
-    for i in 0..brick_count {
-        x_nm.push(x_hundredths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 100.0);
-        z_nm.push(z_hundredths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 100.0);
+    for value in vol_view.z_hundredths.iter() {
+        z_nm.push(value as f32 / 100.0);
     }
     set_prop(&vp_obj, "xNm", &js_sys::Float32Array::from(&x_nm[..]).into())?;
     set_prop(&vp_obj, "zNm", &js_sys::Float32Array::from(&z_nm[..]).into())?;
 
     // dbz — convert from i16 tenths to f32 whole dBZ
-    let dbz_tenths = fb.dbz_tenths();
     let mut dbz_f32 = Vec::with_capacity(brick_count);
-    for i in 0..brick_count {
-        dbz_f32.push(dbz_tenths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 10.0);
+    for value in vol_view.dbz_tenths.iter() {
+        dbz_f32.push(value as f32 / 10.0);
     }
     set_prop(&vp_obj, "dbz", &js_sys::Float32Array::from(&dbz_f32[..]).into())?;
 
@@ -154,14 +158,17 @@ pub fn decode_and_prepare_mrms(
     // The renderer computes footprintNm = base * max(1, span[i]) inline.
     set_prop(&vp_obj, "footprintBaseXNm", &JsValue::from(fb.footprint_x_milli() as f32 / 1000.0))?;
     set_prop(&vp_obj, "footprintBaseYNm", &JsValue::from(fb.footprint_y_milli() as f32 / 1000.0))?;
-    let span_x: Vec<u16> = fb.span_x().map(|v| v.iter().collect()).unwrap_or_default();
-    let span_y: Vec<u16> = fb.span_y().map(|v| v.iter().collect()).unwrap_or_default();
+    let span_x: Vec<u16> = vol_view.span_x.iter().collect();
+    let span_y: Vec<u16> = vol_view.span_y.iter().collect();
     set_prop(&vp_obj, "spanX", &js_sys::Uint16Array::from(&span_x[..]).into())?;
     set_prop(&vp_obj, "spanY", &js_sys::Uint16Array::from(&span_y[..]).into())?;
 
-    // Phase code — direct copy from FB vector
-    let phase: Vec<u8> = fb.phase().map(|v| v.iter().collect()).unwrap_or_default();
-    set_prop(&vp_obj, "phaseCode", &js_sys::Uint8Array::from(&phase[..]).into())?;
+    // Phase code — u8 column maps straight onto the FB buffer bytes
+    set_prop(
+        &vp_obj,
+        "phaseCode",
+        &js_sys::Uint8Array::from(vol_view.phase.bytes()).into(),
+    )?;
 
     set_prop(&root, "volumePayload", &vp_obj.into())?;
 
@@ -218,8 +225,10 @@ pub fn decode_and_prepare_echo_top(
     let fb = flatbuffers::root::<crate::generated::EchoTops>(data)
         .map_err(|e| JsValue::from_str(&format!("AVET payload invalid: {e}")))?;
 
-    // Zero-copy echo-top view for prepare
-    let et_view = crate::mrms_preprocess::FbEchoTopView::new(&fb);
+    // Zero-copy echo-top view for prepare. Column presence/length is
+    // validated once here so the prepare loop is free of Option checks.
+    let et_view =
+        crate::mrms_preprocess::FbEchoTopView::new(&fb).map_err(|e| JsValue::from_str(&e))?;
 
     let s =
         crate::mrms_preprocess::prepare_echo_top_surfaces(&et_view, apply_earth_curvature, ref_lat);
