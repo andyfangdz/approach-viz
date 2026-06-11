@@ -67,6 +67,71 @@ export function dbzToHex(dbz: number, phaseCode: number): number {
   return applyVisibilityGain(dbzToBandHex(dbz, bands));
 }
 
+// Per-voxel instance colors used to go through `THREE.Color.setHex` +
+// `InstancedMesh.setColorAt`, which re-runs the visibility-gain math and an
+// sRGB→linear conversion for every voxel on every upload. The band tables are
+// static, so the final working-color-space RGB triples are precomputed once
+// per phase into flat LUTs indexed by `floor(dbz / 5)`.
+const DBZ_BAND_STEP = 5;
+const DBZ_LUT_MAX_INDEX = 19; // covers 0..95+ dBZ in 5-dBZ bands
+
+interface PhaseColorLut {
+  r: Float32Array;
+  g: Float32Array;
+  b: Float32Array;
+}
+
+function buildPhaseColorLut(bands: DbzColorBand[]): PhaseColorLut {
+  for (const band of bands) {
+    if (
+      band.minDbz % DBZ_BAND_STEP !== 0 ||
+      band.minDbz < 0 ||
+      band.minDbz / DBZ_BAND_STEP > DBZ_LUT_MAX_INDEX
+    ) {
+      throw new Error(
+        `dBZ color band threshold ${band.minDbz} is not representable in the 5-dBZ color LUT.`
+      );
+    }
+  }
+  const r = new Float32Array(DBZ_LUT_MAX_INDEX + 1);
+  const g = new Float32Array(DBZ_LUT_MAX_INDEX + 1);
+  const b = new Float32Array(DBZ_LUT_MAX_INDEX + 1);
+  const color = new THREE.Color();
+  for (let i = 0; i <= DBZ_LUT_MAX_INDEX; i += 1) {
+    color.setHex(applyVisibilityGain(dbzToBandHex(i * DBZ_BAND_STEP, bands)));
+    r[i] = color.r;
+    g[i] = color.g;
+    b[i] = color.b;
+  }
+  return { r, g, b };
+}
+
+interface PhaseColorLuts {
+  rain: PhaseColorLut;
+  mixed: PhaseColorLut;
+  snow: PhaseColorLut;
+}
+
+let phaseColorLuts: PhaseColorLuts | null = null;
+
+function getPhaseColorLuts(): PhaseColorLuts {
+  if (!phaseColorLuts) {
+    phaseColorLuts = {
+      rain: buildPhaseColorLut(RAIN_DBZ_COLOR_BANDS),
+      mixed: buildPhaseColorLut(MIXED_DBZ_COLOR_BANDS),
+      snow: buildPhaseColorLut(SNOW_DBZ_COLOR_BANDS)
+    };
+  }
+  return phaseColorLuts;
+}
+
+function dbzToLutIndex(dbz: number): number {
+  // Matches dbzToBandHex semantics: NaN and below-lowest-band values resolve
+  // to the lowest band color (LUT index 0); >= 95 clamps to the top band.
+  if (!Number.isFinite(dbz)) return 0;
+  return Math.min(DBZ_LUT_MAX_INDEX, Math.max(0, Math.floor(dbz / DBZ_BAND_STEP)));
+}
+
 /** Map dBZ intensity to per-instance alpha so low-intensity echoes are
  *  nearly transparent while high-intensity cores remain prominent. */
 export function dbzToAlpha(dbz: number): number {
@@ -115,11 +180,21 @@ export function applyVoxelInstances(
   spanY: Uint16Array,
   phaseCode: Uint8Array,
   validIndices: Int32Array,
-  validCount: number,
-  colorScratch: THREE.Color
+  validCount: number
 ) {
   if (!mesh) return;
   const matrixArray = mesh.instanceMatrix.array as Float32Array;
+
+  // Allocate instanceColor up front (mirrors what setColorAt does lazily) so
+  // colors can be written straight into the attribute array.
+  if (!mesh.instanceColor) {
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(
+      new Float32Array(mesh.instanceMatrix.count * 3),
+      3
+    );
+  }
+  const colorArray = mesh.instanceColor.array as Float32Array;
+  const luts = getPhaseColorLuts();
 
   for (let i = 0; i < validCount; i += 1) {
     const dataIndex = validIndices[i];
@@ -147,15 +222,18 @@ export function applyVoxelInstances(
     matrixArray[offset + 14] = zNm[dataIndex]; // translate Z
     matrixArray[offset + 15] = 1;
 
-    colorScratch.setHex(dbzToHex(dbz[dataIndex], phaseCode[dataIndex]));
-    mesh.setColorAt(i, colorScratch);
+    const phase = phaseCode[dataIndex];
+    const lut = phase === PHASE_SNOW ? luts.snow : phase === PHASE_MIXED ? luts.mixed : luts.rain;
+    const lutIndex = dbzToLutIndex(dbz[dataIndex]);
+    const colorOffset = i * 3;
+    colorArray[colorOffset] = lut.r[lutIndex];
+    colorArray[colorOffset + 1] = lut.g[lutIndex];
+    colorArray[colorOffset + 2] = lut.b[lutIndex];
   }
 
   mesh.count = validCount;
   mesh.instanceMatrix.needsUpdate = true;
-  if (mesh.instanceColor) {
-    mesh.instanceColor.needsUpdate = true;
-  }
+  mesh.instanceColor.needsUpdate = true;
 }
 
 export function feetToNm(feet: number): number {
@@ -179,18 +257,33 @@ export function keepVoxelForDeclutter(
   return true;
 }
 
-export function applyConstantColorInstances(
-  mesh: THREE.InstancedMesh | null,
-  soa: EchoTopSoA,
-  meshDummy: THREE.Object3D
-) {
+export function applyConstantColorInstances(mesh: THREE.InstancedMesh | null, soa: EchoTopSoA) {
   if (!mesh) return;
   const { count, x, z, yBase, footprintXNm, footprintYNm } = soa;
+  const matrixArray = mesh.instanceMatrix.array as Float32Array;
+  // Direct column-major matrix writes (scale + translate only), same scheme
+  // as applyVoxelInstances — avoids Object3D compose per instance.
   for (let i = 0; i < count; i++) {
-    meshDummy.position.set(x[i], yBase[i], z[i]);
-    meshDummy.scale.set(footprintXNm, MIN_VOXEL_HEIGHT_NM, footprintYNm);
-    meshDummy.updateMatrix();
-    mesh.setMatrixAt(i, meshDummy.matrix);
+    const offset = i * 16;
+    matrixArray[offset + 0] = footprintXNm; // scale X
+    matrixArray[offset + 1] = 0;
+    matrixArray[offset + 2] = 0;
+    matrixArray[offset + 3] = 0;
+
+    matrixArray[offset + 4] = 0;
+    matrixArray[offset + 5] = MIN_VOXEL_HEIGHT_NM; // scale Y
+    matrixArray[offset + 6] = 0;
+    matrixArray[offset + 7] = 0;
+
+    matrixArray[offset + 8] = 0;
+    matrixArray[offset + 9] = 0;
+    matrixArray[offset + 10] = footprintYNm; // scale Z
+    matrixArray[offset + 11] = 0;
+
+    matrixArray[offset + 12] = x[i]; // translate X
+    matrixArray[offset + 13] = yBase[i]; // translate Y
+    matrixArray[offset + 14] = z[i]; // translate Z
+    matrixArray[offset + 15] = 1;
   }
   mesh.count = count;
   mesh.instanceMatrix.needsUpdate = true;

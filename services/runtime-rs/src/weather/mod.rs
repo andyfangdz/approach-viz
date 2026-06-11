@@ -20,7 +20,7 @@ pub use phase::{resolve_thermo_phase, DualPolEvidence, PhaseScores, ThermoPhaseE
 #[allow(unused_imports)]
 pub use phase_batch::{compute_phase_scores_branchless, BatchPhaseResult};
 #[allow(unused_imports)]
-pub use processor::filter_voxels_by_threshold;
+pub use processor::{filter_voxels_by_threshold, FilterResult};
 
 use std::sync::Arc;
 
@@ -316,10 +316,19 @@ pub(crate) async fn volume(
             .into_response();
     };
 
+    // The voxel scan + brick merge + FlatBuffers encode is pure CPU work that
+    // can take long enough to stall an async worker thread; run it on the
+    // blocking pool so concurrent requests and ingest tasks stay responsive.
     let build_span = tracing::info_span!("runtime.volume.build_wire_payload");
-    match build_span
-        .in_scope(|| build_volume_wire_fb(&scan, query.lat, query.lon, min_dbz, max_range_nm))
-    {
+    let scan_for_encode = Arc::clone(&scan);
+    let (lat, lon) = (query.lat, query.lon);
+    let encode_result = tokio::task::spawn_blocking(move || {
+        build_span.in_scope(|| build_volume_wire_fb(&scan_for_encode, lat, lon, min_dbz, max_range_nm))
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|result| result);
+    match encode_result {
         Ok(body) => {
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -472,16 +481,38 @@ pub(crate) async fn echo_tops(
             .into_response();
     };
 
-    let window = build_query_window(&scan, query.lat, query.lon, DEFAULT_MIN_DBZ, max_range_nm);
-    let build_cells_span = tracing::info_span!("runtime.echo_tops.build_cells");
-    let cells = build_cells_span.in_scope(|| build_echo_top_cells(&scan, &window));
-
     // Content negotiation: FlatBuffers binary or JSON
     let accept = req_headers
         .get("accept")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     let wants_binary = accept.contains(ECHO_TOP_FB_CONTENT_TYPE);
+
+    // Cell filtering scans every stored echo-top record; run it (plus the
+    // optional binary encode) on the blocking pool to keep async workers free.
+    let build_cells_span = tracing::info_span!("runtime.echo_tops.build_cells");
+    let scan_for_build = Arc::clone(&scan);
+    let (lat, lon) = (query.lat, query.lon);
+    let build_result = tokio::task::spawn_blocking(move || {
+        let window = build_query_window(&scan_for_build, lat, lon, DEFAULT_MIN_DBZ, max_range_nm);
+        let cells = build_cells_span.in_scope(|| build_echo_top_cells(&scan_for_build, &window));
+        let wire_body = wants_binary.then(|| build_echo_top_wire_fb(&scan_for_build, &window, &cells));
+        (window, cells, wire_body)
+    })
+    .await;
+    let (window, cells, wire_body) = match build_result {
+        Ok(value) => value,
+        Err(error) => {
+            warn!("Failed to build echo-top cells: {error:#}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to build MRMS echo-top payload."
+                })),
+            )
+                .into_response();
+        }
+    };
 
     let mut headers = HeaderMap::new();
     headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
@@ -496,8 +527,7 @@ pub(crate) async fn echo_tops(
         }
     }
 
-    if wants_binary {
-        let wire_body = build_echo_top_wire_fb(&scan, &window, &cells);
+    if let Some(wire_body) = wire_body {
         headers.insert(
             "Content-Type",
             HeaderValue::from_static(ECHO_TOP_FB_CONTENT_TYPE),

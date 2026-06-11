@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use tracing::warn;
@@ -39,7 +39,7 @@ use crate::utils::{parse_timestamp_utc, round_u16, to_lon360};
 ///
 /// Designed for reuse across levels: call `clear()` then pass to
 /// `filter_voxels_by_threshold` each iteration to avoid re-allocation.
-pub(crate) struct FilterResult {
+pub struct FilterResult {
     /// Flat index into the level's 1D grid array.
     pub indices: Vec<u32>,
     /// Precomputed `(idx / nx) as u16` for each valid voxel.
@@ -248,7 +248,7 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
         .next()
         .ok_or_else(|| anyhow!("Invalid timestamp format: {timestamp}"))?;
 
-    let (levels_result, mut zdr_bundle, mut rhohv_bundle, thermo_aux_bundle, echo_top_bundle) = tokio::join!(
+    let (levels_result, zdr_bundle, rhohv_bundle, thermo_aux_bundle, echo_top_bundle) = tokio::join!(
         parse_reflectivity_levels(state, timestamp, date_part),
         fetch_dual_pol_bundle(state, MRMS_ZDR_PRODUCT_PREFIX, timestamp),
         fetch_dual_pol_bundle(state, MRMS_RHOHV_PRODUCT_PREFIX, timestamp),
@@ -257,6 +257,37 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
     );
     let levels = levels_result?;
 
+    let tile_size = state.cfg.tile_size.max(16);
+    let timestamp = timestamp.to_string();
+    // Scan assembly is heavy synchronous grid compute (33 per-level
+    // filter/gather/score passes plus a full-grid echo-top scan, hundreds of
+    // ms). Run it on the blocking pool so it cannot stall async runtime
+    // workers that are concurrently serving HTTP requests and SQS polling.
+    tokio::task::spawn_blocking(move || {
+        assemble_scan_snapshot(
+            timestamp,
+            levels,
+            zdr_bundle,
+            rhohv_bundle,
+            thermo_aux_bundle,
+            echo_top_bundle,
+            tile_size,
+        )
+    })
+    .await
+    .context("Join error while assembling MRMS scan snapshot")?
+}
+
+fn assemble_scan_snapshot(
+    timestamp: String,
+    levels: Vec<(u8, String, ParsedReflectivityField)>,
+    mut zdr_bundle: DualPolBundle,
+    mut rhohv_bundle: DualPolBundle,
+    thermo_aux_bundle: ThermoAuxBundle,
+    echo_top_bundle: EchoTopBundle,
+    tile_size: u16,
+) -> Result<Arc<ScanSnapshot>> {
+    let timestamp = timestamp.as_str();
     let base_grid = levels
         .first()
         .map(|(_, _, parsed)| parsed.grid.clone())
@@ -347,66 +378,74 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
         || top60_values.is_some()
     {
         echo_tops.reserve(point_count / 32);
-        for row in 0..base_grid.ny as usize {
-            let row_offset = row * base_grid.nx as usize;
-            for col in 0..base_grid.nx as usize {
-                let value_idx = row_offset + col;
-                let top18_feet = top18_values
-                    .and_then(|values| values.get(value_idx).copied())
-                    .and_then(echo_top_km_to_feet)
-                    .unwrap_or(0);
-                let top30_feet = top30_values
-                    .and_then(|values| values.get(value_idx).copied())
-                    .and_then(echo_top_km_to_feet)
-                    .unwrap_or(0);
-                let top50_feet = top50_values
-                    .and_then(|values| values.get(value_idx).copied())
-                    .and_then(echo_top_km_to_feet)
-                    .unwrap_or(0);
-                let top60_feet = top60_values
-                    .and_then(|values| values.get(value_idx).copied())
-                    .and_then(echo_top_km_to_feet)
-                    .unwrap_or(0);
+        let nx = base_grid.nx as usize;
+        // Slice lengths are validated against point_count above, so direct
+        // indexing is in bounds for every value_idx below.
+        let sample =
+            |values: Option<&[f32]>, idx: usize| values.map_or(f32::NAN, |slice| slice[idx]);
+        for value_idx in 0..point_count {
+            let raw18 = sample(top18_values, value_idx);
+            let raw30 = sample(top30_values, value_idx);
+            let raw50 = sample(top50_values, value_idx);
+            let raw60 = sample(top60_values, value_idx);
 
-                if top18_feet == 0 && top30_feet == 0 && top50_feet == 0 && top60_feet == 0 {
-                    continue;
-                }
-
-                if top18_feet > 0 {
-                    max_top18_feet =
-                        Some(max_top18_feet.map_or(top18_feet, |value| value.max(top18_feet)));
-                }
-                if top30_feet > 0 {
-                    max_top30_feet =
-                        Some(max_top30_feet.map_or(top30_feet, |value| value.max(top30_feet)));
-                }
-                if top50_feet > 0 {
-                    max_top50_feet =
-                        Some(max_top50_feet.map_or(top50_feet, |value| value.max(top50_feet)));
-                }
-                if top60_feet > 0 {
-                    max_top60_feet =
-                        Some(max_top60_feet.map_or(top60_feet, |value| value.max(top60_feet)));
-                }
-
-                echo_tops.push(StoredEchoTop {
-                    row: row as u16,
-                    col: col as u16,
-                    top18_feet,
-                    top30_feet,
-                    top50_feet,
-                    top60_feet,
-                });
+            // Fast path: skip grid points with no positive finite echo-top
+            // value (the overwhelming majority of the CONUS grid) before
+            // doing any km→feet conversion or per-product tallying.
+            let has_signal = (raw18.is_finite() && raw18 > 0.0)
+                || (raw30.is_finite() && raw30 > 0.0)
+                || (raw50.is_finite() && raw50 > 0.0)
+                || (raw60.is_finite() && raw60 > 0.0);
+            if !has_signal {
+                continue;
             }
+
+            let top18_feet = echo_top_km_to_feet(raw18).unwrap_or(0);
+            let top30_feet = echo_top_km_to_feet(raw30).unwrap_or(0);
+            let top50_feet = echo_top_km_to_feet(raw50).unwrap_or(0);
+            let top60_feet = echo_top_km_to_feet(raw60).unwrap_or(0);
+
+            if top18_feet == 0 && top30_feet == 0 && top50_feet == 0 && top60_feet == 0 {
+                continue;
+            }
+
+            if top18_feet > 0 {
+                max_top18_feet =
+                    Some(max_top18_feet.map_or(top18_feet, |value| value.max(top18_feet)));
+            }
+            if top30_feet > 0 {
+                max_top30_feet =
+                    Some(max_top30_feet.map_or(top30_feet, |value| value.max(top30_feet)));
+            }
+            if top50_feet > 0 {
+                max_top50_feet =
+                    Some(max_top50_feet.map_or(top50_feet, |value| value.max(top50_feet)));
+            }
+            if top60_feet > 0 {
+                max_top60_feet =
+                    Some(max_top60_feet.map_or(top60_feet, |value| value.max(top60_feet)));
+            }
+
+            echo_tops.push(StoredEchoTop {
+                row: (value_idx / nx) as u16,
+                col: (value_idx % nx) as u16,
+                top18_feet,
+                top30_feet,
+                top50_feet,
+                top60_feet,
+            });
         }
     }
 
-    let tile_size = state.cfg.tile_size.max(16);
     let tile_cols = ((base_grid.nx + tile_size as u32 - 1) / tile_size as u32) as u16;
     let tile_rows = ((base_grid.ny + tile_size as u32 - 1) / tile_size as u32) as u16;
     let tile_count = tile_cols as usize * tile_rows as usize;
 
-    let mut buckets: Vec<Vec<StoredVoxel>> = (0..tile_count).map(|_| Vec::new()).collect();
+    // Voxels are appended in level/row order with their tile index recorded,
+    // then tile-grouped with a counting sort. This replaces thousands of
+    // independently growing per-tile bucket Vecs with two linear passes.
+    let mut all_voxels: Vec<StoredVoxel> = Vec::new();
+    let mut voxel_tile_indices: Vec<u32> = Vec::new();
 
     let precip_field = thermo_aux_bundle
         .precip_flag
@@ -634,11 +673,13 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
         mixed_edge_promoted_voxel_count +=
             promote_mixed_transition_edges(&mut level_voxels, parsed.grid.nx, parsed.grid.ny);
 
+        all_voxels.reserve(level_voxels.len());
+        voxel_tile_indices.reserve(level_voxels.len());
         for voxel in level_voxels {
             let tile_row = voxel.row as usize / tile_size as usize;
             let tile_col = voxel.col as usize / tile_size as usize;
-            let tile_idx = tile_row * tile_cols as usize + tile_col;
-            buckets[tile_idx].push(StoredVoxel {
+            voxel_tile_indices.push((tile_row * tile_cols as usize + tile_col) as u32);
+            all_voxels.push(StoredVoxel {
                 row: voxel.row,
                 col: voxel.col,
                 level_idx: *level_idx,
@@ -649,13 +690,25 @@ pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Resul
         }
     }
 
+    // Counting sort by tile index (stable: forward scan preserves the
+    // level-major insertion order within each tile).
+    let mut tile_counts = vec![0_u32; tile_count];
+    for &tile_idx in &voxel_tile_indices {
+        tile_counts[tile_idx as usize] += 1;
+    }
     let mut tile_offsets = Vec::with_capacity(tile_count + 1);
     tile_offsets.push(0_u32);
-    let total_voxel_count: usize = buckets.iter().map(Vec::len).sum();
-    let mut voxels = Vec::with_capacity(total_voxel_count);
-    for bucket in buckets {
-        voxels.extend(bucket);
-        tile_offsets.push(voxels.len() as u32);
+    let mut running_offset = 0_u32;
+    for &count in &tile_counts {
+        running_offset += count;
+        tile_offsets.push(running_offset);
+    }
+    let mut tile_cursors: Vec<u32> = tile_offsets[..tile_count].to_vec();
+    let mut voxels = vec![StoredVoxel::default(); all_voxels.len()];
+    for (voxel, &tile_idx) in all_voxels.iter().zip(&voxel_tile_indices) {
+        let cursor = &mut tile_cursors[tile_idx as usize];
+        voxels[*cursor as usize] = *voxel;
+        *cursor += 1;
     }
 
     let scan_time_ms = parse_timestamp_utc(timestamp)

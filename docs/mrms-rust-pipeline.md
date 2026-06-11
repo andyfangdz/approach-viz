@@ -13,7 +13,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 
 1. NOAA publishes `ObjectCreated` events to SNS topic `arn:aws:sns:us-east-1:123901341784:NewMRMSObject`.
 2. SQS queue receives those messages (`RawMessageDelivery=true`).
-3. Rust runtime service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, and ingests GRIB2 fields through `grib` with a shared parse-concurrency limiter while overlapping independent bundles (reflectivity, dual-pol, thermo aux, echo tops). Reflectivity decode maps values directly into `dbz_tenths` in one pass, and gzip payload buffers are pre-sized from the trailer ISIZE hint to reduce allocation churn before snapshot assembly/storage.
+3. Rust runtime service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, and ingests GRIB2 fields through `grib` with a shared parse-concurrency limiter while overlapping independent bundles (reflectivity, dual-pol, thermo aux, echo tops). Reflectivity decode maps values directly into `dbz_tenths` in one pass, and gzip payload buffers are pre-sized from the trailer ISIZE hint to reduce allocation churn before snapshot assembly/storage. Scan snapshot assembly (per-level filter/gather/phase passes, the full-grid echo-top scan, and tile grouping) runs on the Tokio blocking pool so it never stalls async workers serving HTTP/SQS; the echo-top scan fast-skips no-signal grid points before unit conversion, and voxels are tile-grouped with a stable counting sort instead of per-tile growing buckets. Query handlers likewise run window filtering + FlatBuffers encoding for volume and echo-top responses on the blocking pool.
 4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the runtime service `v1/weather/volume` endpoint (legacy alias `v1/volume`), and `app/api/weather/nexrad/echo-tops/route.ts` proxies `v1/weather/echo-tops` (legacy alias `v1/echo-tops`).
 5. Client decodes compact binary reflectivity payloads and AVET binary echo-top payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 
@@ -57,7 +57,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `span_z:u16[n]` (merged vertical levels)
 - v5 replaced the hand-rolled v4 binary header/columns with the FlatBuffers table above; column semantics are unchanged from v4.
 - Merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
-- Decoder in `crates/approach-viz-core/src/mrms_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`.
+- Decoder in `crates/approach-viz-core/src/mrms_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`. The worker decode path reads columns through the zero-copy `FbVolumeView` (`crates/approach-viz-core/src/mrms_preprocess.rs`), which validates each column's presence and length once at construction — malformed payloads produce an explicit decode error rather than zero-filled values.
 
 ## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v3`, AVET v3)
 
@@ -67,7 +67,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `x_nm:f32[n]`, `z_nm:f32[n]`, `top18_feet:u16[n]`, `top30_feet:u16[n]`, `top50_feet:u16[n]`, `top60_feet:u16[n]`
 - v3 replaced the hand-rolled v2 64-byte binary header with the FlatBuffers table above; column semantics are unchanged from v2.
 - Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v3` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
-- Decoder in `crates/approach-viz-core/src/echo_top_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`.
+- Decoder in `crates/approach-viz-core/src/echo_top_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`. The worker decode path reads columns through the zero-copy `FbEchoTopView`, with the same construct-time presence/length validation as the volume view.
 
 ## Deployment
 

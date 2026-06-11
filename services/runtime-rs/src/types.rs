@@ -26,7 +26,7 @@ pub struct LevelBounds {
     pub top_feet: u16,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct StoredVoxel {
     pub row: u16,
     pub col: u16,

@@ -76,37 +76,63 @@ impl VolumeSource for DecodedMrmsVolume {
 // FbVolumeView — zero-copy view over FlatBuffers MrmsVolume SoA columns
 // ---------------------------------------------------------------------------
 
+/// Resolve a required FB scalar column once at view-construction time so the
+/// per-element accessors used in the prepare/cross-section hot loops carry no
+/// Option handling. A missing or length-mismatched column is a malformed
+/// payload and fails loudly here instead of silently reading zeros.
+#[allow(dead_code)] // used only in wasm target
+fn require_column<'a, T: flatbuffers::Follow<'a>>(
+    column: Option<flatbuffers::Vector<'a, T>>,
+    expected_len: usize,
+    payload: &str,
+    label: &str,
+) -> Result<flatbuffers::Vector<'a, T>, String> {
+    let column =
+        column.ok_or_else(|| format!("{payload} payload is missing the `{label}` column"))?;
+    if column.len() != expected_len {
+        return Err(format!(
+            "{payload} `{label}` column length {} does not match the declared count {expected_len}",
+            column.len()
+        ));
+    }
+    Ok(column)
+}
+
 /// Zero-copy view over a FlatBuffers `MrmsVolume`'s voxel columns.
 /// Converts from wire encoding (hundredths, millis) to domain units (NM, etc.) inline.
+/// All columns are presence/length-validated once in `new`, so indexed access
+/// is branch-free apart from the slice bounds assert.
 #[allow(dead_code)] // used only in wasm target
+#[derive(Debug)]
 pub(crate) struct FbVolumeView<'a> {
     count: usize,
-    x_hundredths: Option<flatbuffers::Vector<'a, i16>>,
-    z_hundredths: Option<flatbuffers::Vector<'a, i16>>,
-    bottom_feet: Option<flatbuffers::Vector<'a, u16>>,
-    top_feet: Option<flatbuffers::Vector<'a, u16>>,
-    dbz_tenths: Option<flatbuffers::Vector<'a, i16>>,
-    phase: Option<flatbuffers::Vector<'a, u8>>,
-    surface_phase: Option<flatbuffers::Vector<'a, u8>>,
-    span_x: Option<flatbuffers::Vector<'a, u16>>,
-    span_y: Option<flatbuffers::Vector<'a, u16>>,
+    pub(crate) x_hundredths: flatbuffers::Vector<'a, i16>,
+    pub(crate) z_hundredths: flatbuffers::Vector<'a, i16>,
+    pub(crate) bottom_feet: flatbuffers::Vector<'a, u16>,
+    pub(crate) top_feet: flatbuffers::Vector<'a, u16>,
+    pub(crate) dbz_tenths: flatbuffers::Vector<'a, i16>,
+    pub(crate) phase: flatbuffers::Vector<'a, u8>,
+    pub(crate) surface_phase: flatbuffers::Vector<'a, u8>,
+    pub(crate) span_x: flatbuffers::Vector<'a, u16>,
+    pub(crate) span_y: flatbuffers::Vector<'a, u16>,
 }
 
 #[allow(dead_code)] // used only in wasm target
 impl<'a> FbVolumeView<'a> {
-    pub(crate) fn new(fb: &MrmsVolume<'a>) -> Self {
-        Self {
-            count: fb.brick_count() as usize,
-            x_hundredths: fb.x_hundredths(),
-            z_hundredths: fb.z_hundredths(),
-            bottom_feet: fb.bottom_feet(),
-            top_feet: fb.top_feet(),
-            dbz_tenths: fb.dbz_tenths(),
-            phase: fb.phase(),
-            surface_phase: fb.surface_phase(),
-            span_x: fb.span_x(),
-            span_y: fb.span_y(),
-        }
+    pub(crate) fn new(fb: &MrmsVolume<'a>) -> Result<Self, String> {
+        let count = fb.brick_count() as usize;
+        Ok(Self {
+            count,
+            x_hundredths: require_column(fb.x_hundredths(), count, "AVMR", "x_hundredths")?,
+            z_hundredths: require_column(fb.z_hundredths(), count, "AVMR", "z_hundredths")?,
+            bottom_feet: require_column(fb.bottom_feet(), count, "AVMR", "bottom_feet")?,
+            top_feet: require_column(fb.top_feet(), count, "AVMR", "top_feet")?,
+            dbz_tenths: require_column(fb.dbz_tenths(), count, "AVMR", "dbz_tenths")?,
+            phase: require_column(fb.phase(), count, "AVMR", "phase")?,
+            surface_phase: require_column(fb.surface_phase(), count, "AVMR", "surface_phase")?,
+            span_x: require_column(fb.span_x(), count, "AVMR", "span_x")?,
+            span_y: require_column(fb.span_y(), count, "AVMR", "span_y")?,
+        })
     }
 }
 
@@ -117,39 +143,39 @@ impl VolumeSource for FbVolumeView<'_> {
     }
     #[inline]
     fn x_nm(&self, i: usize) -> f32 {
-        self.x_hundredths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 100.0
+        self.x_hundredths.get(i) as f32 / 100.0
     }
     #[inline]
     fn z_nm(&self, i: usize) -> f32 {
-        self.z_hundredths.as_ref().map(|v| v.get(i)).unwrap_or(0) as f32 / 100.0
+        self.z_hundredths.get(i) as f32 / 100.0
     }
     #[inline]
     fn bottom_feet(&self, i: usize) -> u16 {
-        self.bottom_feet.as_ref().map(|v| v.get(i)).unwrap_or(0)
+        self.bottom_feet.get(i)
     }
     #[inline]
     fn top_feet(&self, i: usize) -> u16 {
-        self.top_feet.as_ref().map(|v| v.get(i)).unwrap_or(0)
+        self.top_feet.get(i)
     }
     #[inline]
     fn dbz_tenths(&self, i: usize) -> i16 {
-        self.dbz_tenths.as_ref().map(|v| v.get(i)).unwrap_or(0)
+        self.dbz_tenths.get(i)
     }
     #[inline]
     fn phase(&self, i: usize) -> u8 {
-        self.phase.as_ref().map(|v| v.get(i)).unwrap_or(0)
+        self.phase.get(i)
     }
     #[inline]
     fn surface_phase(&self, i: usize) -> u8 {
-        self.surface_phase.as_ref().map(|v| v.get(i)).unwrap_or(0)
+        self.surface_phase.get(i)
     }
     #[inline]
     fn footprint_x_span(&self, i: usize) -> u16 {
-        self.span_x.as_ref().map(|v| v.get(i)).unwrap_or(1).max(1)
+        self.span_x.get(i).max(1)
     }
     #[inline]
     fn footprint_y_span(&self, i: usize) -> u16 {
-        self.span_y.as_ref().map(|v| v.get(i)).unwrap_or(1).max(1)
+        self.span_y.get(i).max(1)
     }
 }
 
@@ -215,31 +241,35 @@ impl EchoTopSource for EchoTopInput {
 
 /// Zero-copy view over a FlatBuffers `EchoTops` payload's SoA columns.
 /// Top heights are u16 in the buffer — widened to f64 inline at access time.
+/// All columns are presence/length-validated once in `new`, so indexed access
+/// is branch-free apart from the slice bounds assert.
 #[allow(dead_code)] // used only in wasm target
+#[derive(Debug)]
 pub(crate) struct FbEchoTopView<'a> {
     count: usize,
-    et_x_nm: Option<flatbuffers::Vector<'a, f32>>,
-    et_z_nm: Option<flatbuffers::Vector<'a, f32>>,
-    top18: Option<flatbuffers::Vector<'a, u16>>,
-    top30: Option<flatbuffers::Vector<'a, u16>>,
-    top50: Option<flatbuffers::Vector<'a, u16>>,
+    et_x_nm: flatbuffers::Vector<'a, f32>,
+    et_z_nm: flatbuffers::Vector<'a, f32>,
+    top18: flatbuffers::Vector<'a, u16>,
+    top30: flatbuffers::Vector<'a, u16>,
+    top50: flatbuffers::Vector<'a, u16>,
     fp_x: f32,
     fp_y: f32,
 }
 
 #[allow(dead_code)] // used only in wasm target
 impl<'a> FbEchoTopView<'a> {
-    pub(crate) fn new(fb: &crate::generated::EchoTops<'a>) -> Self {
-        Self {
-            count: fb.cell_count() as usize,
-            et_x_nm: fb.x_nm(),
-            et_z_nm: fb.z_nm(),
-            top18: fb.top18_feet(),
-            top30: fb.top30_feet(),
-            top50: fb.top50_feet(),
+    pub(crate) fn new(fb: &crate::generated::EchoTops<'a>) -> Result<Self, String> {
+        let count = fb.cell_count() as usize;
+        Ok(Self {
+            count,
+            et_x_nm: require_column(fb.x_nm(), count, "AVET", "x_nm")?,
+            et_z_nm: require_column(fb.z_nm(), count, "AVET", "z_nm")?,
+            top18: require_column(fb.top18_feet(), count, "AVET", "top18_feet")?,
+            top30: require_column(fb.top30_feet(), count, "AVET", "top30_feet")?,
+            top50: require_column(fb.top50_feet(), count, "AVET", "top50_feet")?,
             fp_x: fb.footprint_x_milli() as f32 / 1000.0,
             fp_y: fb.footprint_y_milli() as f32 / 1000.0,
-        }
+        })
     }
 }
 
@@ -247,15 +277,15 @@ impl EchoTopSource for FbEchoTopView<'_> {
     #[inline]
     fn len(&self) -> usize { self.count }
     #[inline]
-    fn x_nm(&self, i: usize) -> f32 { self.et_x_nm.as_ref().map(|v| v.get(i)).unwrap_or(0.0) }
+    fn x_nm(&self, i: usize) -> f32 { self.et_x_nm.get(i) }
     #[inline]
-    fn z_nm(&self, i: usize) -> f32 { self.et_z_nm.as_ref().map(|v| v.get(i)).unwrap_or(0.0) }
+    fn z_nm(&self, i: usize) -> f32 { self.et_z_nm.get(i) }
     #[inline]
-    fn top18_feet(&self, i: usize) -> f64 { self.top18.as_ref().map(|v| v.get(i) as f64).unwrap_or(0.0) }
+    fn top18_feet(&self, i: usize) -> f64 { self.top18.get(i) as f64 }
     #[inline]
-    fn top30_feet(&self, i: usize) -> f64 { self.top30.as_ref().map(|v| v.get(i) as f64).unwrap_or(0.0) }
+    fn top30_feet(&self, i: usize) -> f64 { self.top30.get(i) as f64 }
     #[inline]
-    fn top50_feet(&self, i: usize) -> f64 { self.top50.as_ref().map(|v| v.get(i) as f64).unwrap_or(0.0) }
+    fn top50_feet(&self, i: usize) -> f64 { self.top50.get(i) as f64 }
     #[inline]
     fn footprint_x_nm(&self) -> f32 { self.fp_x }
     #[inline]
@@ -1183,5 +1213,167 @@ mod tests {
         let result2 =
             prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::Low, false, 40.0);
         assert_eq!(result2.declutter_count, 0, "center 30k ft should NOT pass Low filter");
+    }
+
+    // -----------------------------------------------------------------------
+    // FbVolumeView / FbEchoTopView construction-time validation tests
+    // -----------------------------------------------------------------------
+
+    /// Build an AVMR FB payload with `declared_count` bricks whose columns
+    /// have `columns_len` entries; `include_phase` controls column presence.
+    fn build_volume_payload(
+        declared_count: u32,
+        columns_len: usize,
+        include_phase: bool,
+    ) -> Vec<u8> {
+        use crate::generated::{MrmsVolume as FbMrmsVolume, MrmsVolumeArgs};
+        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
+        let n = columns_len;
+        let x: Vec<i16> = (0..n).map(|i| (i as i16 + 1) * 100).collect();
+        let z: Vec<i16> = (0..n).map(|i| -((i as i16 + 1) * 50)).collect();
+        let bottom: Vec<u16> = vec![3000; n];
+        let top: Vec<u16> = vec![5000; n];
+        let dbz: Vec<i16> = vec![350; n];
+        let phase: Vec<u8> = vec![PHASE_RAIN; n];
+        let surface: Vec<u8> = vec![PHASE_SNOW; n];
+        let span_x: Vec<u16> = vec![0; n]; // exercises the max(1) clamp
+        let span_y: Vec<u16> = vec![2; n];
+
+        let x_vec = builder.create_vector(&x);
+        let z_vec = builder.create_vector(&z);
+        let bottom_vec = builder.create_vector(&bottom);
+        let top_vec = builder.create_vector(&top);
+        let dbz_vec = builder.create_vector(&dbz);
+        let phase_vec = if include_phase {
+            Some(builder.create_vector(&phase))
+        } else {
+            None
+        };
+        let surface_vec = builder.create_vector(&surface);
+        let span_x_vec = builder.create_vector(&span_x);
+        let span_y_vec = builder.create_vector(&span_y);
+
+        let vol = FbMrmsVolume::create(
+            &mut builder,
+            &MrmsVolumeArgs {
+                brick_count: declared_count,
+                x_hundredths: Some(x_vec),
+                z_hundredths: Some(z_vec),
+                bottom_feet: Some(bottom_vec),
+                top_feet: Some(top_vec),
+                dbz_tenths: Some(dbz_vec),
+                phase: phase_vec,
+                surface_phase: Some(surface_vec),
+                span_x: Some(span_x_vec),
+                span_y: Some(span_y_vec),
+                ..Default::default()
+            },
+        );
+        builder.finish(vol, Some("AVMR"));
+        builder.finished_data().to_vec()
+    }
+
+    fn build_echo_top_payload(
+        declared_count: u32,
+        columns_len: usize,
+        include_top50: bool,
+    ) -> Vec<u8> {
+        use crate::generated::{EchoTops as FbEchoTops, EchoTopsArgs};
+        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
+        let n = columns_len;
+        let x: Vec<f32> = (0..n).map(|i| i as f32 + 1.0).collect();
+        let z: Vec<f32> = vec![0.0; n];
+        let tops: Vec<u16> = vec![9000; n];
+
+        let x_vec = builder.create_vector(&x);
+        let z_vec = builder.create_vector(&z);
+        let top18_vec = builder.create_vector(&tops);
+        let top30_vec = builder.create_vector(&tops);
+        let top50_vec = if include_top50 {
+            Some(builder.create_vector(&tops))
+        } else {
+            None
+        };
+
+        let et = FbEchoTops::create(
+            &mut builder,
+            &EchoTopsArgs {
+                cell_count: declared_count,
+                footprint_x_milli: 50,
+                footprint_y_milli: 60,
+                x_nm: Some(x_vec),
+                z_nm: Some(z_vec),
+                top18_feet: Some(top18_vec),
+                top30_feet: Some(top30_vec),
+                top50_feet: top50_vec,
+                ..Default::default()
+            },
+        );
+        builder.finish(et, Some("AVET"));
+        builder.finished_data().to_vec()
+    }
+
+    #[test]
+    fn fb_volume_view_validates_and_reads_columns() {
+        let data = build_volume_payload(2, 2, true);
+        let fb = flatbuffers::root::<crate::generated::MrmsVolume>(&data).unwrap();
+        let view = FbVolumeView::new(&fb).expect("valid payload should build a view");
+
+        assert_eq!(view.voxel_count(), 2);
+        assert!((view.x_nm(0) - 1.0).abs() < 1e-6);
+        assert!((view.x_nm(1) - 2.0).abs() < 1e-6);
+        assert!((view.z_nm(0) - (-0.5)).abs() < 1e-6);
+        assert_eq!(view.bottom_feet(1), 3000);
+        assert_eq!(view.top_feet(1), 5000);
+        assert_eq!(view.dbz_tenths(0), 350);
+        assert_eq!(view.phase(0), PHASE_RAIN);
+        assert_eq!(view.surface_phase(0), PHASE_SNOW);
+        assert_eq!(view.footprint_x_span(0), 1, "zero span clamps to 1");
+        assert_eq!(view.footprint_y_span(0), 2);
+    }
+
+    #[test]
+    fn fb_volume_view_rejects_length_mismatch() {
+        let data = build_volume_payload(3, 2, true);
+        let fb = flatbuffers::root::<crate::generated::MrmsVolume>(&data).unwrap();
+        let error = FbVolumeView::new(&fb).expect_err("length mismatch must fail");
+        assert!(error.contains("x_hundredths"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn fb_volume_view_rejects_missing_column() {
+        let data = build_volume_payload(2, 2, false);
+        let fb = flatbuffers::root::<crate::generated::MrmsVolume>(&data).unwrap();
+        let error = FbVolumeView::new(&fb).expect_err("missing phase column must fail");
+        assert!(error.contains("phase"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn fb_echo_top_view_validates_and_reads_columns() {
+        let data = build_echo_top_payload(2, 2, true);
+        let fb = flatbuffers::root::<crate::generated::EchoTops>(&data).unwrap();
+        let view = FbEchoTopView::new(&fb).expect("valid payload should build a view");
+
+        assert_eq!(view.len(), 2);
+        assert!((view.x_nm(1) - 2.0).abs() < 1e-6);
+        assert!((view.top18_feet(0) - 9000.0).abs() < 1e-9);
+        assert!((view.footprint_x_nm() - 0.05).abs() < 1e-6);
+        assert!((view.footprint_y_nm() - 0.06).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fb_echo_top_view_rejects_missing_column() {
+        let data = build_echo_top_payload(2, 2, false);
+        let fb = flatbuffers::root::<crate::generated::EchoTops>(&data).unwrap();
+        let error = FbEchoTopView::new(&fb).expect_err("missing top50 column must fail");
+        assert!(error.contains("top50_feet"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn fb_echo_top_view_rejects_length_mismatch() {
+        let data = build_echo_top_payload(5, 2, true);
+        let fb = flatbuffers::root::<crate::generated::EchoTops>(&data).unwrap();
+        let error = FbEchoTopView::new(&fb).expect_err("length mismatch must fail");
+        assert!(error.contains("x_nm"), "unexpected error: {error}");
     }
 }

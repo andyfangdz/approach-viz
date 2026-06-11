@@ -55,7 +55,7 @@
 - Workspace check: `cargo check`
 - Runtime crate check: `cargo check -p approach-viz-runtime`
 - Core crate check: `cargo check -p approach-viz-core`
-- Build WASM + copy to `public/`: `npm run build:wasm`
+- Build WASM + copy to `public/`: `npm run build:wasm` (needs `wasm-pack`; if wasm-pack falls back to a system `wasm-opt`, it must be binaryen ≥ 117 — Ubuntu apt's binaryen 108 emits a broken artifact whose externref table cannot grow, trapping at module init)
 - WASM smoke tests (needs localhost:3000): `npm run test:smoke`
 
 ### Runtime Ops
@@ -114,7 +114,9 @@
 - ADS-B runtime payloads with `error` metadata are treated as poll failures in the traffic worker (no silent empty merge), and traffic worker request timeout budget is `12s`.
 - ADS-B history-backfill follow-up failures no longer disappear silently: the web traffic worker surfaces `historyBackfillError` through the worker result into the traffic debug panel, and the native iOS `TrafficService` logs the failure and keeps the affected hexes pending so the next poll retries them.
 - The `/api/traffic/adsbx` proxy validates query params before forwarding: present-but-malformed `radiusNm`/`limit`/`historyMinutes` return 400, finite out-of-range values are clamped to the runtime bounds, `format` must be a known value, and `historyHexes` entries must be hex identifiers (max 400). The Rust runtime applies the same reject-malformed/clamp-out-of-range policy and also rejects non-finite lat/lon (`NaN` included) on weather and traffic endpoints.
-- The runtime HTTP router applies a 30s per-request `TimeoutLayer` (504 on expiry), and the weather volume/echo-tops handlers clone the latest scan `Arc` and release the snapshot read lock before FlatBuffers encoding so ingest writers are never blocked by slow queries.
+- The runtime HTTP router applies a 30s per-request `TimeoutLayer` (504 on expiry), and the weather volume/echo-tops handlers clone the latest scan `Arc` and release the snapshot read lock before FlatBuffers encoding so ingest writers are never blocked by slow queries. CPU-heavy runtime paths run on the Tokio blocking pool instead of async workers: per-request volume/echo-tops window filtering + FlatBuffers encoding, and MRMS scan snapshot assembly during ingest (per-level filter/gather/phase passes, full-grid echo-top scan with a no-signal fast skip, and counting-sort tile grouping).
+- MRMS client rendering uploads voxel instance colors from precomputed per-phase dBZ band LUTs written directly into `instanceColor.array`, writes echo-top instance matrices directly into `instanceMatrix.array`, and receives the debug-panel phase tally from the MRMS worker result instead of recomputing it on the main thread.
+- The WASM AVMR/AVET decoders validate FlatBuffers column presence and length once at view construction, so the per-voxel prepare/cross-section/payload loops carry no Option or length handling; a missing or length-mismatched column fails the poll with an explicit error instead of zero-filling or trapping.
 - Runtime traffic "current aircraft" staleness window is `60s` (`CACHE_CURRENT_STALE_MS`); responses expose stale/freshness markers via `x-approach-viz-traffic-stale-current` and `x-approach-viz-traffic-snapshot-age-ms` headers (proxy passthrough enabled), and JSON payloads include `staleCurrent` + `snapshotAgeMs`.
 - Layer defaults (`DEFAULT_LAYER_STATE`): `approach`, `airspace`, `adsb`, `probsevere`, `guides` = on; `mrms`, `echotops`, `slice` = off.
 - MRMS phase-mode default is `surface` (`Surface Precip Type`); `thermo` is optional.

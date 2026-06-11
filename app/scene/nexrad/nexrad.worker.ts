@@ -7,7 +7,7 @@ import type {
   EchoTopSoA,
   CrossSectionData
 } from './nexrad-types';
-import { MRMS_LEVEL_TAGS, EMPTY_ECHO_TOP_SOA } from './nexrad-types';
+import { MRMS_LEVEL_TAGS, EMPTY_ECHO_TOP_SOA, PHASE_MIXED, PHASE_SNOW } from './nexrad-types';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   decode_and_prepare_mrms,
@@ -70,10 +70,18 @@ export interface PollAndPrepareEchoTopSummary {
   error: string | null;
 }
 
+export interface NexradPhaseCounts {
+  rain: number;
+  mixed: number;
+  snow: number;
+}
+
 export interface NexradPollAndPrepareResult {
   volumePayload: NexradVolumePayload | null;
   preparedVolume: NexradPreparedVolumeData;
   crossSectionData: CrossSectionData | null;
+  /** Per-payload phase tally (debug panel), computed off main thread. */
+  phaseCounts: NexradPhaseCounts | null;
   echoTop18: EchoTopSoA;
   echoTop30: EchoTopSoA;
   echoTop50: EchoTopSoA;
@@ -238,6 +246,21 @@ function echoTopSoATransferables(...soas: EchoTopSoA[]): ArrayBuffer[] {
   return buffers;
 }
 
+function tallyPhaseCounts(phaseCode: Uint8Array, voxelCount: number): NexradPhaseCounts {
+  const counts: NexradPhaseCounts = { rain: 0, mixed: 0, snow: 0 };
+  for (let i = 0; i < voxelCount; i += 1) {
+    const p = phaseCode[i];
+    if (p === PHASE_SNOW) {
+      counts.snow += 1;
+    } else if (p === PHASE_MIXED) {
+      counts.mixed += 1;
+    } else {
+      counts.rain += 1;
+    }
+  }
+  return counts;
+}
+
 function encodePhaseMode(mode: NexradPhaseMode): number {
   return mode === 'surface' ? 1 : 0;
 }
@@ -305,6 +328,7 @@ export class NexradWorkerApi {
     let volumePayload: NexradVolumePayload | null = null;
     let preparedVolume: NexradPreparedVolumeData = emptyPreparedVolume();
     let crossSectionData: CrossSectionData | null = null;
+    let phaseCounts: NexradPhaseCounts | null = null;
 
     if (options.includeVolume) {
       if (!options.volumeUrl) {
@@ -396,6 +420,7 @@ export class NexradWorkerApi {
         },
         extractPhaseDebugHeaderValues(volumeFetch.headers)
       );
+      phaseCounts = tallyPhaseCounts(vp.phaseCode, vp.voxelCount);
 
       const elapsed = roundMs(performance.now() - decodeAndPrepareStartedAt);
       timings.volumeDecodeMs = elapsed;
@@ -464,6 +489,7 @@ export class NexradWorkerApi {
       volumePayload,
       preparedVolume,
       crossSectionData,
+      phaseCounts,
       echoTop18,
       echoTop30,
       echoTop50,
