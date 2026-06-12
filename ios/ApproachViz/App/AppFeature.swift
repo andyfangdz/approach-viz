@@ -176,6 +176,7 @@ struct AppFeature {
         case mrmsPollRequested(Int, MrmsPollingContext)
         case mrmsPollCompleted(Int, NativeWeatherPollResult)
         case weatherReprepareCompleted(Int, NativeMrmsScene?)
+        case weatherReprepareFailed(Int, String)
         case setWeatherMinDbz(Double)
         case setWeatherOpacity(Double)
         case setWeatherPhaseMode(NativeWeatherPhaseMode)
@@ -466,6 +467,16 @@ struct AppFeature {
                 // full poll so the new prepare options still take effect.
                 return weatherPollNow(state: &state)
 
+            case let .weatherReprepareFailed(generation, message):
+                guard generation == state.mrmsGeneration, state.isWeatherPollingActive else {
+                    return .none
+                }
+                // Surface the prepare failure (e.g. a corrupt cached payload)
+                // instead of silently refetching; the immediate poll either
+                // recovers with fresh data or reports its own error.
+                state.mrmsErrorMessage = message
+                return weatherPollNow(state: &state)
+
             case let .setWeatherMinDbz(value):
                 let normalized = min(60, max(5, value.rounded()))
                 guard state.weatherDisplayOptions.minDbz != normalized else { return .none }
@@ -645,8 +656,16 @@ struct AppFeature {
         let generation = state.mrmsGeneration
         return .run { send in
             try await Task.sleep(for: .milliseconds(150))
-            let scene = try? await mrmsClient.reprepare(context)
-            await send(.weatherReprepareCompleted(generation, scene ?? nil))
+            do {
+                // nil means "no cached payload" (poll fallback); a thrown
+                // error is a real prepare failure and must surface loudly.
+                let scene = try await mrmsClient.reprepare(context)
+                await send(.weatherReprepareCompleted(generation, scene))
+            } catch is CancellationError {
+                // Debounce replacement — not a failure.
+            } catch {
+                await send(.weatherReprepareFailed(generation, error.localizedDescription))
+            }
         }
         .cancellable(id: CancelID.mrmsReprepare, cancelInFlight: true)
     }

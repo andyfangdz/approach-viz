@@ -286,6 +286,56 @@ final class AppFeatureTests: XCTestCase {
         }
     }
 
+    func testWeatherReprepareFailureSurfacesErrorAndPollsFresh() async {
+        let initialScene = Self.makeTestMrmsScene()
+        let freshScene = Self.makeTestMrmsScene()
+
+        var initialState = AppFeature.State()
+        initialState.layerState.adsb = false
+        initialState.layerState.mrms = true
+        initialState.sceneData = Self.makeTestScene()
+        initialState.mrmsScene = initialScene
+        initialState.mrmsGeneration = 1
+
+        struct ReprepareError: Error, LocalizedError {
+            var errorDescription: String? { "cached payload corrupt" }
+        }
+
+        let store = TestStore(initialState: initialState) {
+            AppFeature()
+        } withDependencies: {
+            $0.mrmsClient.reprepare = { _ in throw ReprepareError() }
+            $0.mrmsClient.poll = { _ in
+                NativeWeatherPollResult(
+                    mrmsScene: freshScene,
+                    echoTopScene: nil,
+                    volumeError: nil,
+                    echoTopsError: nil
+                )
+            }
+        }
+
+        await store.send(.setWeatherMinDbz(20)) {
+            $0.weatherDisplayOptions.minDbz = 20
+        }
+        // A real prepare failure surfaces loudly and falls back to a fresh
+        // poll, which recovers and clears the error.
+        await store.receive(\.weatherReprepareFailed, timeout: .seconds(2)) {
+            $0.mrmsErrorMessage = "cached payload corrupt"
+        }
+        await store.receive(\.mrmsPollRequested)
+        await store.receive(\.mrmsPollCompleted) {
+            $0.mrmsScene = freshScene
+            $0.mrmsErrorMessage = nil
+        }
+
+        await store.send(.setLayerEnabled(.mrms, false)) {
+            $0.layerState.mrms = false
+            $0.mrmsGeneration = 2
+            $0.mrmsScene = nil
+        }
+    }
+
     func testSliceOptionsNormalizeAndOnlyReprepareWhenSliceEnabled() async {
         var initialState = AppFeature.State()
         initialState.layerState.adsb = false
