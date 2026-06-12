@@ -110,11 +110,6 @@ function useGrowingInstanceCapacity(requiredCount: number): number {
   return capacityRef.current;
 }
 
-function ensureInt32Capacity(array: Int32Array, requiredCount: number): Int32Array {
-  if (array.length >= requiredCount) return array;
-  return new Int32Array(nextInstanceCapacity(Math.max(1, array.length), requiredCount));
-}
-
 function emptyPreparedVolume(): NexradPreparedVolumeData {
   return {
     validCount: 0,
@@ -178,7 +173,6 @@ export function NexradVolumeOverlay({
   applyEarthCurvatureCompensationRef.current = applyEarthCurvatureCompensation;
   const pollNowRef = useRef<(() => void) | null>(null);
   const skipNextRePrepareRef = useRef(false);
-  const payloadIndexScratchRef = useRef<Int32Array>(new Int32Array(0));
   const normalizedCrossSectionHeading = ((Math.round(crossSectionHeadingDeg) % 360) + 360) % 360;
   const normalizedCrossSectionRange = Math.max(30, Math.min(140, Math.round(crossSectionRangeNm)));
   const headingRad = (normalizedCrossSectionHeading * Math.PI) / 180;
@@ -792,16 +786,8 @@ export function NexradVolumeOverlay({
 
     const baseMesh = baseMeshRef.current;
     if (payload) {
-      const payloadIndices = ensureInt32Capacity(payloadIndexScratchRef.current, declutterCount);
-      if (payloadIndices !== payloadIndexScratchRef.current) {
-        payloadIndexScratchRef.current = payloadIndices;
-      }
-      for (let i = 0; i < declutterCount; i += 1) {
-        payloadIndices[i] = volumeData.validIndices[declutterIndices[i]];
-      }
       applyVoxelInstances(
         baseMesh,
-        payload.voxelCount,
         payload.xNm,
         volumeData.yBase,
         payload.zNm,
@@ -812,7 +798,8 @@ export function NexradVolumeOverlay({
         payload.spanX,
         payload.spanY,
         volumeData.effectivePhaseCode,
-        payloadIndices,
+        volumeData.validIndices,
+        declutterIndices,
         declutterCount
       );
     }

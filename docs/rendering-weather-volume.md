@@ -77,6 +77,7 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 ## Instanced Rendering
 
 - All voxels render through one `InstancedMesh` (shared box geometry/material) with per-instance transforms/colors and per-instance dBZ-driven alpha (via `InstancedBufferAttribute` + `onBeforeCompile` shader patch).
+- Per-instance uploads (`applyVoxelInstances`) pair two index spaces that must not be mixed: full-length payload columns (`xNm`/`zNm`/`dbz`/`spanX`/`spanY`) are addressed by raw payload index, while the compacted `prepare_volume` outputs (`yBase`/`heightBase`/`effectivePhaseCode`) are addressed by valid-voxel position. Each instance resolves `declutterIndices[i]` to a valid-voxel position for the compacted arrays, then `validIndices[...]` maps that position to the raw payload index for the payload columns. (Mixing the two previously lifted voxels onto higher layers' altitudes whenever the intensity filter skipped voxels.)
 - Volume uses a dual-pass look (base + glow), but voxel transforms/colors are populated once on the base mesh and the glow pass shares those populated instance buffers to avoid duplicate per-voxel writes.
 - Draw calls remain bounded even during dense precipitation events.
 - Client rendering does not apply client-side voxel decimation; instanced-mesh capacity scales in grow-only buckets so every server record is rendered while avoiding frequent geometry/attribute reallocations when voxel counts fluctuate.
