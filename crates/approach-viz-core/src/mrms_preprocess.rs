@@ -80,7 +80,7 @@ impl VolumeSource for DecodedMrmsVolume {
 /// per-element accessors used in the prepare/cross-section hot loops carry no
 /// Option handling. A missing or length-mismatched column is a malformed
 /// payload and fails loudly here instead of silently reading zeros.
-#[allow(dead_code)] // used only in wasm target
+#[allow(dead_code)] // used only by the wasm/ios bindings
 fn require_column<'a, T: flatbuffers::Follow<'a>>(
     column: Option<flatbuffers::Vector<'a, T>>,
     expected_len: usize,
@@ -102,7 +102,7 @@ fn require_column<'a, T: flatbuffers::Follow<'a>>(
 /// Converts from wire encoding (hundredths, millis) to domain units (NM, etc.) inline.
 /// All columns are presence/length-validated once in `new`, so indexed access
 /// is branch-free apart from the slice bounds assert.
-#[allow(dead_code)] // used only in wasm target
+#[allow(dead_code)] // used only by the wasm/ios bindings
 #[derive(Debug)]
 pub(crate) struct FbVolumeView<'a> {
     count: usize,
@@ -117,7 +117,7 @@ pub(crate) struct FbVolumeView<'a> {
     pub(crate) span_y: flatbuffers::Vector<'a, u16>,
 }
 
-#[allow(dead_code)] // used only in wasm target
+#[allow(dead_code)] // used only by the wasm/ios bindings
 impl<'a> FbVolumeView<'a> {
     pub(crate) fn new(fb: &MrmsVolume<'a>) -> Result<Self, String> {
         let count = fb.brick_count() as usize;

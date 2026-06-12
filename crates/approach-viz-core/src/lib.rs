@@ -5,6 +5,7 @@ pub mod generated;
 #[cfg(feature = "ios")]
 pub mod ios;
 pub mod mrms_preprocess;
+pub mod mrms_render;
 pub mod mrms_wire_codec;
 pub mod traffic_codec;
 pub mod traffic_merge;

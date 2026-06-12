@@ -10,8 +10,11 @@ import AppKit
 struct ApproachMetalSceneView: View {
     let sceneData: NativeSceneData
     let trafficScene: NativeTrafficScene
+    let mrmsScene: NativeMrmsScene?
+    let echoTopScene: NativeEchoTopScene?
     let layerState: NativeLayerState
     let trafficDisplayOptions: NativeTrafficDisplayOptions
+    let weatherDisplayOptions: NativeWeatherDisplayOptions
     let verticalScale: Double
     let capturesRenderStats: Bool
     @Binding var renderStats: ApproachMetalRenderStats
@@ -22,8 +25,11 @@ struct ApproachMetalSceneView: View {
         ApproachMetalViewRepresentable(
             sceneData: sceneData,
             trafficScene: trafficScene,
+            mrmsScene: mrmsScene,
+            echoTopScene: echoTopScene,
             layerState: layerState,
             trafficDisplayOptions: trafficDisplayOptions,
+            weatherDisplayOptions: weatherDisplayOptions,
             terrainData: terrainData,
             verticalScale: verticalScale,
             capturesRenderStats: capturesRenderStats,
@@ -46,8 +52,11 @@ struct ApproachMetalSceneView: View {
 private struct ApproachMetalViewRepresentable: UIViewRepresentable {
     let sceneData: NativeSceneData
     let trafficScene: NativeTrafficScene
+    let mrmsScene: NativeMrmsScene?
+    let echoTopScene: NativeEchoTopScene?
     let layerState: NativeLayerState
     let trafficDisplayOptions: NativeTrafficDisplayOptions
+    let weatherDisplayOptions: NativeWeatherDisplayOptions
     let terrainData: TerrainWireframeData?
     let verticalScale: Double
     let capturesRenderStats: Bool
@@ -69,8 +78,11 @@ private struct ApproachMetalViewRepresentable: UIViewRepresentable {
 private struct ApproachMetalViewRepresentable: NSViewRepresentable {
     let sceneData: NativeSceneData
     let trafficScene: NativeTrafficScene
+    let mrmsScene: NativeMrmsScene?
+    let echoTopScene: NativeEchoTopScene?
     let layerState: NativeLayerState
     let trafficDisplayOptions: NativeTrafficDisplayOptions
+    let weatherDisplayOptions: NativeWeatherDisplayOptions
     let terrainData: TerrainWireframeData?
     let verticalScale: Double
     let capturesRenderStats: Bool
@@ -126,8 +138,11 @@ private extension ApproachMetalViewRepresentable {
         coordinator.update(
             sceneData: sceneData,
             trafficScene: trafficScene,
+            mrmsScene: mrmsScene,
+            echoTopScene: echoTopScene,
             layerState: layerState,
             trafficDisplayOptions: trafficDisplayOptions,
+            weatherDisplayOptions: weatherDisplayOptions,
             terrainData: terrainData,
             verticalScale: verticalScale
         )
@@ -139,8 +154,11 @@ private extension ApproachMetalViewRepresentable {
         coordinator.update(
             sceneData: sceneData,
             trafficScene: trafficScene,
+            mrmsScene: mrmsScene,
+            echoTopScene: echoTopScene,
             layerState: layerState,
             trafficDisplayOptions: trafficDisplayOptions,
+            weatherDisplayOptions: weatherDisplayOptions,
             terrainData: terrainData,
             verticalScale: verticalScale
         )
@@ -187,16 +205,22 @@ private final class Coordinator: NSObject, PlatformGestureRecognizerDelegate {
     func update(
         sceneData: NativeSceneData,
         trafficScene: NativeTrafficScene,
+        mrmsScene: NativeMrmsScene?,
+        echoTopScene: NativeEchoTopScene?,
         layerState: NativeLayerState,
         trafficDisplayOptions: NativeTrafficDisplayOptions,
+        weatherDisplayOptions: NativeWeatherDisplayOptions,
         terrainData: TerrainWireframeData?,
         verticalScale: Double
     ) {
         renderer?.update(
             sceneData: sceneData,
             trafficScene: trafficScene,
+            mrmsScene: mrmsScene,
+            echoTopScene: echoTopScene,
             layerState: layerState,
             trafficDisplayOptions: trafficDisplayOptions,
+            weatherDisplayOptions: weatherDisplayOptions,
             terrainData: terrainData,
             verticalScale: verticalScale
         )

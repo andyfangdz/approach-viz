@@ -28,8 +28,11 @@ private struct ApproachDetailView: View {
                 ApproachMetalSceneView(
                     sceneData: sceneData,
                     trafficScene: store.trafficScene,
+                    mrmsScene: store.mrmsScene,
+                    echoTopScene: store.echoTopScene,
                     layerState: store.layerState,
                     trafficDisplayOptions: store.trafficDisplayOptions,
+                    weatherDisplayOptions: store.weatherDisplayOptions,
                     verticalScale: store.verticalScale,
                     capturesRenderStats: store.activePanel == .debug,
                     renderStats: $renderStats
@@ -65,6 +68,19 @@ private struct ApproachDetailView: View {
                         store.send(.togglePanel(.debug))
                     }
                 }
+                .padding()
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if store.sceneData != nil,
+               store.layerState.slice,
+               let crossSection = store.mrmsScene?.crossSection {
+                CrossSectionHUDView(
+                    crossSection: crossSection,
+                    headingDeg: store.weatherDisplayOptions.crossSectionHeadingDeg,
+                    rangeNm: store.weatherDisplayOptions.crossSectionRangeNm,
+                    echoTopScene: store.echoTopScene
+                )
                 .padding()
             }
         }

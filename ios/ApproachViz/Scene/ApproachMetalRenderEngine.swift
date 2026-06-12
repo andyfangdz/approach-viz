@@ -9,8 +9,11 @@ struct ApproachMetalInvalidation: OptionSet {
     static let viewport = ApproachMetalInvalidation(rawValue: 1 << 2)
     static let overlays = ApproachMetalInvalidation(rawValue: 1 << 3)
     static let trafficGeometry = ApproachMetalInvalidation(rawValue: 1 << 4)
+    static let mrmsGeometry = ApproachMetalInvalidation(rawValue: 1 << 5)
 
-    static let all: ApproachMetalInvalidation = [.geometry, .camera, .viewport, .overlays, .trafficGeometry]
+    static let all: ApproachMetalInvalidation = [
+        .geometry, .camera, .viewport, .overlays, .trafficGeometry, .mrmsGeometry,
+    ]
 }
 
 private final class ApproachMetalPrimitiveLayer<Vertex> {
@@ -88,6 +91,54 @@ private final class ApproachMetalIndexedLayer {
     }
 }
 
+/// Instanced layer: a constant unit cube expanded per instance in the vertex
+/// shader from a per-instance `{center, halfExtent, color}` buffer. Used for
+/// MRMS voxels, where expanding boxes on the CPU would not scale to
+/// widespread-precip brick counts.
+private final class ApproachMetalInstancedLayer<Instance> {
+    private var buffer: MTLBuffer?
+    private(set) var instanceCount = 0
+
+    func upload(device: MTLDevice, instances: [Instance]) {
+        instanceCount = instances.count
+        if instances.isEmpty {
+            buffer = nil
+            return
+        }
+        buffer = instances.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else {
+                return nil
+            }
+            return device.makeBuffer(
+                bytes: baseAddress,
+                length: rawBuffer.count
+            )
+        }
+    }
+
+    func encode(
+        _ encoder: MTLRenderCommandEncoder,
+        pipeline: MTLRenderPipelineState,
+        uniforms: MetalUniforms,
+        depthState: MTLDepthStencilState,
+        verticesPerInstance: Int,
+        configure: ((MTLRenderCommandEncoder) -> Void)? = nil
+    ) {
+        guard let buffer, instanceCount > 0 else { return }
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        encoder.setVertexBytes([uniforms], length: MemoryLayout<MetalUniforms>.stride, index: 1)
+        encoder.setDepthStencilState(depthState)
+        configure?(encoder)
+        encoder.drawPrimitives(
+            type: .triangle,
+            vertexStart: 0,
+            vertexCount: verticesPerInstance,
+            instanceCount: instanceCount
+        )
+    }
+}
+
 private final class ApproachMetalTextLayer {
     private var buffer: MTLBuffer?
     private(set) var count = 0
@@ -126,6 +177,8 @@ final class ApproachMetalRenderEngine {
     private let trianglePipeline: MTLRenderPipelineState
     private let linePipeline: MTLRenderPipelineState
     private let pointPipeline: MTLRenderPipelineState
+    private let voxelPipeline: MTLRenderPipelineState
+    private let voxelFlatPipeline: MTLRenderPipelineState
     private let textPipeline: MTLRenderPipelineState
     private let depthState: MTLDepthStencilState
     private let translucentDepthState: MTLDepthStencilState
@@ -136,6 +189,7 @@ final class ApproachMetalRenderEngine {
     private var invalidation: ApproachMetalInvalidation = .all
     private var scene = RenderScene()
     private var trafficScene = TrafficRenderScene.empty
+    private var mrmsScene = MrmsRenderScene.empty
     private var cameraController = ApproachMetalCameraController()
     private var lastDrawableSize = CGSize.zero
     private var cachedUniforms = MetalUniforms(viewProjectionMatrix: matrix_identity_float4x4)
@@ -149,6 +203,10 @@ final class ApproachMetalRenderEngine {
     private let pointLayer = ApproachMetalPrimitiveLayer<MetalPointVertex>()
     private let trafficLineLayer = ApproachMetalPrimitiveLayer<MetalVertex>()
     private let trafficPointLayer = ApproachMetalPrimitiveLayer<MetalPointVertex>()
+    private let mrmsVoxelLayer = ApproachMetalInstancedLayer<MetalVoxelInstance>()
+    private let mrmsEchoTopLayer = ApproachMetalInstancedLayer<MetalVoxelInstance>()
+    private let mrmsTriangleLayer = ApproachMetalPrimitiveLayer<MetalVertex>()
+    private let mrmsLineLayer = ApproachMetalPrimitiveLayer<MetalVertex>()
     private let airspaceTriangleLayer = ApproachMetalIndexedLayer()
     private let airspaceLineLayer = ApproachMetalIndexedLayer()
     private let textLayer = ApproachMetalTextLayer()
@@ -222,12 +280,16 @@ final class ApproachMetalRenderEngine {
         guard let trianglePipeline = makePipeline(vertex: "basicVertex", fragment: "basicFragment"),
               let linePipeline = makePipeline(vertex: "basicVertex", fragment: "basicFragment"),
               let pointPipeline = makePipeline(vertex: "pointVertex", fragment: "pointFragment"),
+              let voxelPipeline = makePipeline(vertex: "voxelVertex", fragment: "voxelFragment"),
+              let voxelFlatPipeline = makePipeline(vertex: "voxelVertex", fragment: "voxelFlatFragment"),
               let textPipeline = makePipeline(vertex: "textVertex", fragment: "textFragment") else {
             return nil
         }
         self.trianglePipeline = trianglePipeline
         self.linePipeline = linePipeline
         self.pointPipeline = pointPipeline
+        self.voxelPipeline = voxelPipeline
+        self.voxelFlatPipeline = voxelFlatPipeline
         self.textPipeline = textPipeline
     }
 
@@ -245,6 +307,12 @@ final class ApproachMetalRenderEngine {
     func updateTrafficScene(_ trafficScene: TrafficRenderScene) {
         self.trafficScene = trafficScene
         invalidation.formUnion([.trafficGeometry, .overlays])
+        requestRedraw()
+    }
+
+    func updateMrmsScene(_ mrmsScene: MrmsRenderScene) {
+        self.mrmsScene = mrmsScene
+        invalidation.formUnion([.mrmsGeometry, .overlays])
         requestRedraw()
     }
 
@@ -328,6 +396,66 @@ final class ApproachMetalRenderEngine {
             primitiveType: .line
         )
         if airspaceLineLayer.indexCount > 0 { drawCallCount += 1 }
+        // Weather layers blend over airspace but stay under traffic
+        // markers/labels, mirroring the web overlay's render ordering:
+        // altitude guides, then the slice plane, then voxel base + glow
+        // passes (shared instance buffer), then echo-top surfaces.
+        mrmsLineLayer.encode(
+            encoder,
+            pipeline: linePipeline,
+            uniforms: cachedUniforms,
+            depthState: translucentDepthState,
+            primitiveType: .line
+        )
+        if mrmsLineLayer.count > 0 { drawCallCount += 1 }
+        mrmsTriangleLayer.encode(
+            encoder,
+            pipeline: trianglePipeline,
+            uniforms: cachedUniforms,
+            depthState: translucentDepthState,
+            primitiveType: .triangle
+        )
+        if mrmsTriangleLayer.count > 0 { drawCallCount += 1 }
+        var baseShade = mrmsScene.baseShade
+        mrmsVoxelLayer.encode(
+            encoder,
+            pipeline: voxelPipeline,
+            uniforms: cachedUniforms,
+            depthState: translucentDepthState,
+            verticesPerInstance: 36,
+            configure: { encoder in
+                encoder.setFragmentBytes(
+                    &baseShade,
+                    length: MemoryLayout<MetalVoxelShadeParams>.stride,
+                    index: 0
+                )
+            }
+        )
+        if mrmsVoxelLayer.instanceCount > 0 { drawCallCount += 1 }
+        var glowShade = mrmsScene.glowShade
+        mrmsVoxelLayer.encode(
+            encoder,
+            pipeline: voxelPipeline,
+            uniforms: cachedUniforms,
+            depthState: translucentDepthState,
+            verticesPerInstance: 36,
+            configure: { encoder in
+                encoder.setFragmentBytes(
+                    &glowShade,
+                    length: MemoryLayout<MetalVoxelShadeParams>.stride,
+                    index: 0
+                )
+            }
+        )
+        if mrmsVoxelLayer.instanceCount > 0 { drawCallCount += 1 }
+        mrmsEchoTopLayer.encode(
+            encoder,
+            pipeline: voxelFlatPipeline,
+            uniforms: cachedUniforms,
+            depthState: translucentDepthState,
+            verticesPerInstance: 36
+        )
+        if mrmsEchoTopLayer.instanceCount > 0 { drawCallCount += 1 }
         pointLayer.encode(
             encoder,
             pipeline: pointPipeline,
@@ -362,8 +490,11 @@ final class ApproachMetalRenderEngine {
             syncCPUms: syncCPUms,
             uploadCPUms: uploadCPUms,
             labelCPUms: labelCPUms,
-            triangleCount: triangleLayer.count / 3 + airspaceTriangleLayer.indexCount / 3,
-            lineCount: lineLayer.count / 2 + trafficLineLayer.count / 2 + airspaceLineLayer.indexCount / 2,
+            triangleCount: triangleLayer.count / 3 + airspaceTriangleLayer.indexCount / 3
+                + mrmsVoxelLayer.instanceCount * 24 + mrmsEchoTopLayer.instanceCount * 12
+                + mrmsTriangleLayer.count / 3,
+            lineCount: lineLayer.count / 2 + trafficLineLayer.count / 2 + airspaceLineLayer.indexCount / 2
+                + mrmsLineLayer.count / 2,
             pointCount: pointLayer.count + trafficPointLayer.count,
             labelCount: cachedLabels.filter(\.visible).count,
             drawCallCount: drawCallCount
@@ -398,6 +529,19 @@ final class ApproachMetalRenderEngine {
             uploadCPUms = elapsedMillis(since: uploadStart)
         }
 
+        if invalidation.contains(.mrmsGeometry) {
+            let uploadStart = DispatchTime.now().uptimeNanoseconds
+            mrmsVoxelLayer.upload(device: device, instances: mrmsScene.voxelInstances)
+            mrmsEchoTopLayer.upload(device: device, instances: mrmsScene.echoTopInstances)
+            mrmsTriangleLayer.upload(device: device, vertices: mrmsScene.triangleVertices)
+            mrmsLineLayer.upload(device: device, vertices: mrmsScene.lineVertices)
+            let labelKeys = mrmsScene.labels.lazy.map {
+                ApproachMetalTextAtlas.Key(text: $0.text, fontSize: $0.fontSize)
+            }
+            textAtlas.ensureEntries(for: labelKeys)
+            uploadCPUms += elapsedMillis(since: uploadStart)
+        }
+
         if invalidation.contains(.trafficGeometry) {
             let uploadStart = DispatchTime.now().uptimeNanoseconds
             trafficLineLayer.upload(device: device, vertices: trafficScene.lineVertices)
@@ -419,9 +563,10 @@ final class ApproachMetalRenderEngine {
             let labelStart = DispatchTime.now().uptimeNanoseconds
             cachedLabels = projectLabels(in: view, matrix: cachedUniforms.viewProjectionMatrix)
             // Re-ensure the full current label set: an atlas reset triggered by
-            // one label source (scene vs traffic) evicts the other source's
-            // entries, and quads are built from fresh atlas lookups below.
-            let allLabelKeys = (scene.labels + trafficScene.labels).lazy.map {
+            // one label source (scene vs traffic vs weather) evicts the other
+            // sources' entries, and quads are built from fresh atlas lookups
+            // below.
+            let allLabelKeys = (scene.labels + trafficScene.labels + mrmsScene.labels).lazy.map {
                 ApproachMetalTextAtlas.Key(text: $0.text, fontSize: $0.fontSize)
             }
             textAtlas.ensureEntries(for: allLabelKeys)
@@ -439,7 +584,7 @@ final class ApproachMetalRenderEngine {
     private func projectLabels(in view: MTKView, matrix: simd_float4x4) -> [ApproachMetalProjectedLabel] {
         let width = max(1, Float(view.bounds.width))
         let height = max(1, Float(view.bounds.height))
-        let labels = scene.labels + trafficScene.labels
+        let labels = scene.labels + trafficScene.labels + mrmsScene.labels
         var projected = labels.map { label in
             let clip = matrix * SIMD4<Float>(label.position.x, label.position.y, label.position.z, 1)
             guard clip.w > 0 else {
@@ -649,6 +794,7 @@ private extension ApproachMetalInvalidation {
         if contains(.viewport) { parts.append("viewport") }
         if contains(.overlays) { parts.append("overlays") }
         if contains(.trafficGeometry) { parts.append("traffic") }
+        if contains(.mrmsGeometry) { parts.append("mrms") }
         return parts.joined(separator: "+")
     }
 }
