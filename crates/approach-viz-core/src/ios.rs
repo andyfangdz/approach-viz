@@ -55,6 +55,126 @@ pub struct TrafficRenderResult {
     pub tracks: Vec<TrafficRenderTrack>,
 }
 
+/// Cross-section grid built along the requested slice axis (web
+/// `CrossSectionData` semantics): row-major `bins_x * bins_y` grid of max dBZ
+/// per cell (`-1` marks empty cells), the winning phase per cell, and the
+/// per-column echo-top envelope in feet.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct MrmsCrossSection {
+    pub bins_x: u32,
+    pub bins_y: u32,
+    pub grid_dbz: Vec<f32>,
+    pub grid_phase: Vec<u8>,
+    pub top_envelope_feet: Vec<f32>,
+    pub max_top_feet: f32,
+}
+
+/// Render-ready MRMS voxel columns for the native Metal renderer.
+///
+/// Positions/sizes are local-frame nautical miles without vertical
+/// exaggeration; Swift multiplies the `y` center and height by the current
+/// vertical scale. Decode/prepare failures are reported through `error`
+/// (same pattern as `TrafficMergeResult`) with empty columns.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct MrmsRenderVolume {
+    pub voxel_count: u32,
+    pub source_voxel_count: u32,
+    pub valid_count: u32,
+    pub generated_at_ms: i64,
+    pub scan_time_ms: i64,
+    pub center_x_nm: Vec<f32>,
+    pub center_y_nm: Vec<f32>,
+    pub center_z_nm: Vec<f32>,
+    pub size_x_nm: Vec<f32>,
+    pub size_y_nm: Vec<f32>,
+    pub size_z_nm: Vec<f32>,
+    pub dbz: Vec<f32>,
+    pub phase_code: Vec<u8>,
+    pub max_abs_x_nm: f32,
+    pub max_abs_z_nm: f32,
+    pub max_corrected_top_feet: f32,
+    pub cross_section: Option<MrmsCrossSection>,
+    pub error: Option<String>,
+}
+
+impl MrmsRenderVolume {
+    fn failed(error: String) -> Self {
+        Self {
+            voxel_count: 0,
+            source_voxel_count: 0,
+            valid_count: 0,
+            generated_at_ms: 0,
+            scan_time_ms: 0,
+            center_x_nm: Vec::new(),
+            center_y_nm: Vec::new(),
+            center_z_nm: Vec::new(),
+            size_x_nm: Vec::new(),
+            size_y_nm: Vec::new(),
+            size_z_nm: Vec::new(),
+            dbz: Vec::new(),
+            phase_code: Vec::new(),
+            max_abs_x_nm: 0.0,
+            max_abs_z_nm: 0.0,
+            max_corrected_top_feet: 0.0,
+            cross_section: None,
+            error: Some(error),
+        }
+    }
+}
+
+/// One echo-top threshold surface: cell centers in local-frame NM with the
+/// echo-top altitude as an unscaled-NM `y` (web `EchoTopSoA` semantics).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct EchoTopSurface {
+    pub x_nm: Vec<f32>,
+    pub z_nm: Vec<f32>,
+    pub y_nm: Vec<f32>,
+}
+
+/// Render-ready echo-top surfaces plus payload summary for the native
+/// renderer. Decode failures are reported through `error` with empty columns.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct EchoTopsRenderResult {
+    pub source_cell_count: u32,
+    pub generated_at_ms: i64,
+    pub scan_time_ms: i64,
+    pub footprint_x_nm: f32,
+    pub footprint_y_nm: f32,
+    pub max_top18_feet: f32,
+    pub max_top30_feet: f32,
+    pub max_top50_feet: f32,
+    pub max_top60_feet: f32,
+    pub top18: EchoTopSurface,
+    pub top30: EchoTopSurface,
+    pub top50: EchoTopSurface,
+    pub error: Option<String>,
+}
+
+impl EchoTopsRenderResult {
+    fn failed(error: String) -> Self {
+        let empty = || EchoTopSurface {
+            x_nm: Vec::new(),
+            z_nm: Vec::new(),
+            y_nm: Vec::new(),
+        };
+        Self {
+            source_cell_count: 0,
+            generated_at_ms: 0,
+            scan_time_ms: 0,
+            footprint_x_nm: 0.0,
+            footprint_y_nm: 0.0,
+            max_top18_feet: 0.0,
+            max_top30_feet: 0.0,
+            max_top50_feet: 0.0,
+            max_top60_feet: 0.0,
+            top18: empty(),
+            top30: empty(),
+            top50: empty(),
+            error: Some(error),
+        }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct TrafficStateHandle {
     inner: Mutex<crate::traffic_merge::TrafficState>,
@@ -140,6 +260,163 @@ pub fn build_approach_hold_geometry(
         &turn_direction,
         vertical_scale,
     )
+}
+
+/// Decode an AVMR v5 FlatBuffers volume payload and assemble render-ready
+/// voxel columns via the shared `prepare_volume` + `build_render_volume`
+/// pipeline (the same engine the web worker uses through WASM), optionally
+/// building a cross-section grid along the requested slice axis.
+///
+/// `phase_mode`: 0 = altitude/thermodynamic, 1 = surface.
+/// `declutter_mode`: 0 = all, 1 = low, 2 = mid, 3 = high.
+#[uniffi::export]
+#[allow(clippy::too_many_arguments)]
+pub fn decode_and_prepare_mrms_volume(
+    data: Vec<u8>,
+    min_dbz_tenths: i16,
+    phase_mode: u8,
+    declutter_mode: u8,
+    apply_earth_curvature: bool,
+    ref_lat: f64,
+    include_cross_section: bool,
+    slice_axis_x: f64,
+    slice_axis_z: f64,
+    slice_perp_x: f64,
+    slice_perp_z: f64,
+    normalized_range: f64,
+    half_width_nm: f64,
+) -> MrmsRenderVolume {
+    let fb = match flatbuffers::root::<crate::generated::MrmsVolume>(&data) {
+        Ok(volume) => volume,
+        Err(error) => return MrmsRenderVolume::failed(format!("AVMR payload invalid: {error}")),
+    };
+
+    let vol_view = match crate::mrms_preprocess::FbVolumeView::new(&fb) {
+        Ok(view) => view,
+        Err(error) => return MrmsRenderVolume::failed(error),
+    };
+
+    let phase_mode = match phase_mode {
+        1 => crate::types::PhaseMode::Surface,
+        _ => crate::types::PhaseMode::Altitude,
+    };
+    let declutter_mode = match declutter_mode {
+        1 => crate::types::DeclutterMode::Low,
+        2 => crate::types::DeclutterMode::Mid,
+        3 => crate::types::DeclutterMode::High,
+        _ => crate::types::DeclutterMode::All,
+    };
+
+    let prepared = crate::mrms_preprocess::prepare_volume(
+        &vol_view,
+        min_dbz_tenths,
+        phase_mode,
+        declutter_mode,
+        apply_earth_curvature,
+        ref_lat,
+    );
+
+    let cross_section = if include_cross_section {
+        crate::mrms_preprocess::build_cross_section(
+            &vol_view,
+            &prepared,
+            (slice_axis_x, slice_axis_z),
+            (slice_perp_x, slice_perp_z),
+            normalized_range,
+            half_width_nm,
+        )
+        .map(|cs| MrmsCrossSection {
+            bins_x: cs.bins_x as u32,
+            bins_y: cs.bins_y as u32,
+            grid_dbz: cs.grid,
+            grid_phase: cs.phase_grid.into_iter().map(|p| p.max(0) as u8).collect(),
+            top_envelope_feet: cs.top_envelope_feet,
+            max_top_feet: cs.max_top_feet,
+        })
+    } else {
+        None
+    };
+
+    let render = crate::mrms_render::build_render_volume(
+        &vol_view,
+        fb.footprint_x_milli() as f32 / 1000.0,
+        fb.footprint_y_milli() as f32 / 1000.0,
+        &prepared,
+    );
+
+    MrmsRenderVolume {
+        voxel_count: render.center_x_nm.len() as u32,
+        source_voxel_count: fb.brick_count(),
+        valid_count: prepared.valid_count as u32,
+        generated_at_ms: fb.generated_at_ms(),
+        scan_time_ms: fb.scan_time_ms(),
+        center_x_nm: render.center_x_nm,
+        center_y_nm: render.center_y_nm,
+        center_z_nm: render.center_z_nm,
+        size_x_nm: render.size_x_nm,
+        size_y_nm: render.size_y_nm,
+        size_z_nm: render.size_z_nm,
+        dbz: render.dbz,
+        phase_code: render.phase_code,
+        max_abs_x_nm: render.max_abs_x_nm,
+        max_abs_z_nm: render.max_abs_z_nm,
+        max_corrected_top_feet: render.max_corrected_top_feet,
+        cross_section,
+        error: None,
+    }
+}
+
+/// Decode an AVET v3 FlatBuffers echo-tops payload and prepare the 18/30/50
+/// dBZ threshold surfaces through the shared `prepare_echo_top_surfaces`
+/// engine (the same path the web worker uses through WASM).
+#[uniffi::export]
+pub fn decode_and_prepare_echo_tops(
+    data: Vec<u8>,
+    apply_earth_curvature: bool,
+    ref_lat: f64,
+) -> EchoTopsRenderResult {
+    let fb = match flatbuffers::root::<crate::generated::EchoTops>(&data) {
+        Ok(payload) => payload,
+        Err(error) => {
+            return EchoTopsRenderResult::failed(format!("AVET payload invalid: {error}"))
+        }
+    };
+
+    let view = match crate::mrms_preprocess::FbEchoTopView::new(&fb) {
+        Ok(view) => view,
+        Err(error) => return EchoTopsRenderResult::failed(error),
+    };
+
+    let surfaces =
+        crate::mrms_preprocess::prepare_echo_top_surfaces(&view, apply_earth_curvature, ref_lat);
+
+    EchoTopsRenderResult {
+        source_cell_count: fb.source_cell_count(),
+        generated_at_ms: fb.generated_at_ms(),
+        scan_time_ms: fb.scan_time_ms(),
+        footprint_x_nm: surfaces.footprint_x_nm,
+        footprint_y_nm: surfaces.footprint_y_nm,
+        max_top18_feet: f32::from(fb.max_top18_feet()),
+        max_top30_feet: f32::from(fb.max_top30_feet()),
+        max_top50_feet: f32::from(fb.max_top50_feet()),
+        max_top60_feet: f32::from(fb.max_top60_feet()),
+        top18: EchoTopSurface {
+            x_nm: surfaces.x18,
+            z_nm: surfaces.z18,
+            y_nm: surfaces.y_base18,
+        },
+        top30: EchoTopSurface {
+            x_nm: surfaces.x30,
+            z_nm: surfaces.z30,
+            y_nm: surfaces.y_base30,
+        },
+        top50: EchoTopSurface {
+            x_nm: surfaces.x50,
+            z_nm: surfaces.z50,
+            y_nm: surfaces.y_base50,
+        },
+        error: None,
+    }
 }
 
 #[uniffi::export]

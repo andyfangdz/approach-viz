@@ -63,6 +63,7 @@ final class AppFeatureMacTests: XCTestCase {
             $0.trafficGeneration = 1
             $0.trafficScene = .empty
             $0.trafficErrorMessage = nil
+            $0.mrmsGeneration = 1
         }
     }
 

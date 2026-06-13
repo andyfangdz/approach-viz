@@ -4,16 +4,40 @@ import simd
 @MainActor
 final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
     private let engine: ApproachMetalRenderEngine
+    // Each rebuild key holds only the layer flags its build function actually
+    // reads, so toggling a weather layer never re-triangulates airspace (or
+    // resets the pre-interaction camera) and toggling approach/airspace never
+    // rebuilds 100k+ weather voxel instances.
     private struct StaticSceneKey: Equatable {
         let sceneData: NativeSceneData
         let terrainData: TerrainWireframeData?
         let verticalScale: Double
-        let layerState: NativeLayerState
+        let approachEnabled: Bool
+        let airspaceEnabled: Bool
+    }
+
+    private struct MrmsSceneKey: Equatable {
+        let mrmsScene: NativeMrmsScene?
+        let echoTopScene: NativeEchoTopScene?
+        let verticalScale: Double
+        let mrmsEnabled: Bool
+        let echoTopsEnabled: Bool
+        let sliceEnabled: Bool
+        let guidesEnabled: Bool
+        // Only the options that shape geometry directly. Threshold/phase/
+        // declutter arrive through a new `mrmsScene` after the Rust
+        // re-prepare, so keying on them would rebuild 100k+ instances on
+        // every slider tick for nothing.
+        let opacity: Double
+        let sliceHeadingDeg: Double
+        let sliceRangeNm: Double
     }
 
     private var lastStaticSceneKey: StaticSceneKey?
     private var lastTrafficRenderHash: UInt64?
     private var lastTrafficDisplayOptions: NativeTrafficDisplayOptions?
+    private var lastTrafficLayerEnabled: Bool?
+    private var lastMrmsSceneKey: MrmsSceneKey?
 
     init?(
         view: MTKView,
@@ -33,8 +57,11 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
     func update(
         sceneData: NativeSceneData,
         trafficScene: NativeTrafficScene,
+        mrmsScene: NativeMrmsScene?,
+        echoTopScene: NativeEchoTopScene?,
         layerState: NativeLayerState,
         trafficDisplayOptions: NativeTrafficDisplayOptions,
+        weatherDisplayOptions: NativeWeatherDisplayOptions,
         terrainData: TerrainWireframeData?,
         verticalScale: Double
     ) {
@@ -42,7 +69,8 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
             sceneData: sceneData,
             terrainData: terrainData,
             verticalScale: verticalScale,
-            layerState: layerState
+            approachEnabled: layerState.approach,
+            airspaceEnabled: layerState.airspace
         )
         let staticSceneChanged = lastStaticSceneKey != staticSceneKey
         if staticSceneChanged {
@@ -59,6 +87,7 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
         if staticSceneChanged
             || lastTrafficRenderHash != trafficScene.renderHash
             || lastTrafficDisplayOptions != trafficDisplayOptions
+            || lastTrafficLayerEnabled != layerState.adsb
         {
             engine.updateTrafficScene(buildTrafficRenderScene(
                 trafficScene,
@@ -67,6 +96,29 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
             ))
             lastTrafficRenderHash = trafficScene.renderHash
             lastTrafficDisplayOptions = trafficDisplayOptions
+            lastTrafficLayerEnabled = layerState.adsb
+        }
+        let mrmsSceneKey = MrmsSceneKey(
+            mrmsScene: mrmsScene,
+            echoTopScene: echoTopScene,
+            verticalScale: verticalScale,
+            mrmsEnabled: layerState.mrms,
+            echoTopsEnabled: layerState.echotops,
+            sliceEnabled: layerState.slice,
+            guidesEnabled: layerState.guides,
+            opacity: weatherDisplayOptions.opacity,
+            sliceHeadingDeg: weatherDisplayOptions.crossSectionHeadingDeg,
+            sliceRangeNm: weatherDisplayOptions.crossSectionRangeNm
+        )
+        if lastMrmsSceneKey != mrmsSceneKey {
+            engine.updateMrmsScene(buildMrmsRenderScene(
+                mrmsScene,
+                echoTopScene: echoTopScene,
+                layerState: layerState,
+                weatherOptions: weatherDisplayOptions,
+                verticalScale: verticalScale
+            ))
+            lastMrmsSceneKey = mrmsSceneKey
         }
     }
 

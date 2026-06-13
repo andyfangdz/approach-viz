@@ -53,6 +53,26 @@ struct MetalUniforms {
     var viewProjectionMatrix: simd_float4x4
 }
 
+/// Per-voxel instance data for the MRMS weather layer. The GPU expands a
+/// constant unit cube per instance, so 100k-voxel volumes upload 48 bytes per
+/// voxel instead of fully expanded box triangles. `color.a` carries the
+/// dBZ-intensity alpha consumed by the voxel fragment shader's
+/// transmittance shaping.
+struct MetalVoxelInstance {
+    var center: SIMD3<Float>
+    var halfExtent: SIMD3<Float>
+    var color: SIMD4<Float>
+}
+
+/// Per-pass shading constants for the MRMS voxel fragment shader, mirroring
+/// the web material patch parameters: the base pass runs a denser
+/// transmittance curve, the glow pass a softer/larger one.
+struct MetalVoxelShadeParams {
+    var densityScale: Float
+    var softCap: Float
+    var materialOpacity: Float
+}
+
 struct MetalTextVertex {
     var position: SIMD2<Float>
     var texCoord: SIMD2<Float>
@@ -94,6 +114,22 @@ struct TrafficRenderScene {
     var labels: [LabelAnchor] = []
 
     static let empty = TrafficRenderScene()
+}
+
+struct MrmsRenderScene {
+    var voxelInstances: [MetalVoxelInstance] = []
+    var echoTopInstances: [MetalVoxelInstance] = []
+    /// Cross-section slice plane fill.
+    var triangleVertices: [MetalVertex] = []
+    /// Altitude-guide rings plus the slice ground axis line.
+    var lineVertices: [MetalVertex] = []
+    var labels: [LabelAnchor] = []
+    /// Web base pass at the current opacity: lerp(0.12, 0.66, opacity).
+    var baseShade = MetalVoxelShadeParams(densityScale: 1.12, softCap: 2.5, materialOpacity: 0.309)
+    /// Web glow pass at the current opacity: lerp(0.01, 0.08, opacity).
+    var glowShade = MetalVoxelShadeParams(densityScale: 0.62, softCap: 1.6, materialOpacity: 0.0345)
+
+    static let empty = MrmsRenderScene()
 }
 
 struct MetalSceneBounds {

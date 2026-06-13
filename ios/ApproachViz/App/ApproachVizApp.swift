@@ -78,6 +78,11 @@ private struct ApproachVizCommands: Commands {
                 store.send(.setLayerEnabled(.adsb, !store.layerState.adsb))
             }
             .keyboardShortcut("t", modifiers: .command)
+
+            Button(store.layerState.mrms ? "Hide MRMS Weather" : "Show MRMS Weather") {
+                store.send(.setLayerEnabled(.mrms, !store.layerState.mrms))
+            }
+            .keyboardShortcut("w", modifiers: [.command, .shift])
         }
     }
 }

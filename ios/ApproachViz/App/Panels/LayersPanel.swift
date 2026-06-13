@@ -29,6 +29,34 @@ struct NativeLayersPanel: View {
                         set: { store.send(.setLayerEnabled(.adsb, $0)) }
                     )
                 )
+                LayerToggleRow(
+                    title: "MRMS Volume",
+                    isOn: Binding(
+                        get: { store.layerState.mrms },
+                        set: { store.send(.setLayerEnabled(.mrms, $0)) }
+                    )
+                )
+                LayerToggleRow(
+                    title: "Echo Tops",
+                    isOn: Binding(
+                        get: { store.layerState.echotops },
+                        set: { store.send(.setLayerEnabled(.echotops, $0)) }
+                    )
+                )
+                LayerToggleRow(
+                    title: "Vertical Slice",
+                    isOn: Binding(
+                        get: { store.layerState.slice },
+                        set: { store.send(.setLayerEnabled(.slice, $0)) }
+                    )
+                )
+                LayerToggleRow(
+                    title: "Altitude Guides",
+                    isOn: Binding(
+                        get: { store.layerState.guides },
+                        set: { store.send(.setLayerEnabled(.guides, $0)) }
+                    )
+                )
             }
         }
     }
