@@ -15,8 +15,9 @@ BUILD_MODE="${RUNTIME_DEPLOY_BUILD_MODE:-local-cross}"
 LOCAL_CROSS_TOOL="${RUNTIME_LOCAL_CROSS_TOOL:-auto}"
 LOCAL_CROSS_TARGET="${RUNTIME_LOCAL_CROSS_TARGET:-aarch64-unknown-linux-gnu}"
 LOCAL_CROSS_BINARY_PATH="${RUNTIME_LOCAL_CROSS_BINARY_PATH:-}"
-REMOTE_WORKSPACE_DIR="/home/ubuntu/services/approach-viz-runtime-workspace"
-REMOTE_STAGE_DIR="/home/ubuntu/services/approach-viz-runtime-workspace.tmp"
+REMOTE_HOME="${RUNTIME_REMOTE_HOME:-/home/ubuntu}"
+REMOTE_WORKSPACE_DIR="$REMOTE_HOME/services/approach-viz-runtime-workspace"
+REMOTE_STAGE_DIR="$REMOTE_HOME/services/approach-viz-runtime-workspace.tmp"
 REMOTE_SERVICE_DIR="$REMOTE_WORKSPACE_DIR/services/runtime-rs"
 
 if [[ -z "$QUEUE_URL" ]]; then
@@ -156,11 +157,11 @@ sync_source_tree() {
     --no-xattrs
     -czf
     -
-    --exclude='./services/runtime-rs/target'
-    --exclude='./crates/approach-viz-core/target'
-    --exclude='./tools/uniffi-bindgen-swift/target'
-    --exclude='./.git'
-    --exclude='./.DS_Store'
+    --exclude='services/runtime-rs/target'
+    --exclude='crates/approach-viz-core/target'
+    --exclude='tools/uniffi-bindgen-swift/target'
+    --exclude='.git'
+    --exclude='.DS_Store'
   )
 
   tar "${tar_args[@]}" -C "$ROOT_DIR" Cargo.toml Cargo.lock services/runtime-rs crates/approach-viz-core tools/uniffi-bindgen-swift | ssh "$HOST" "

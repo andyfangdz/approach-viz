@@ -105,6 +105,7 @@ export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>
 export RUNTIME_DEPLOY_BUILD_MODE=local-cross
 # Optional: RUNTIME_LOCAL_CROSS_TOOL=zigbuild|cross (default: auto-detect)
 # Optional: RUNTIME_LOCAL_CROSS_TARGET=aarch64-unknown-linux-gnu
+# Optional: RUNTIME_REMOTE_HOME=/home/<user> (default: /home/ubuntu) — remote workspace/staging/service base path
 scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
 ```
 
