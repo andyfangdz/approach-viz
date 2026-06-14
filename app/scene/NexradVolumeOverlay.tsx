@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import type { NexradDebugState, NexradTimingDebugState } from '@/app/app-client/types';
 import type {
   CrossSectionData,
-  NexradPreparedVolumeData,
+  NexradRenderVolumeData,
   NexradVolumeOverlayProps,
   NexradVolumePayload,
   EchoTopPayload,
@@ -17,7 +17,8 @@ import {
   ALTITUDE_GUIDE_STEP_FEET,
   MIN_CROSS_SECTION_HALF_WIDTH_NM,
   MAX_CROSS_SECTION_HALF_WIDTH_NM,
-  EMPTY_ECHO_TOP_SOA
+  EMPTY_ECHO_TOP_SOA,
+  EMPTY_RENDER_VOLUME
 } from './nexrad/nexrad-types';
 import { MIN_NEXRAD_MIN_DBZ } from '@/app/app-client/constants';
 import { buildEchoTopRequestUrl, buildNexradRequestUrl } from './nexrad/nexrad-decode';
@@ -110,20 +111,6 @@ function useGrowingInstanceCapacity(requiredCount: number): number {
   return capacityRef.current;
 }
 
-function emptyPreparedVolume(): NexradPreparedVolumeData {
-  return {
-    validCount: 0,
-    validIndices: new Int32Array(0),
-    yBase: new Float32Array(0),
-    heightBase: new Float32Array(0),
-    correctedBottomFeet: new Float32Array(0),
-    correctedTopFeet: new Float32Array(0),
-    effectivePhaseCode: new Uint8Array(0),
-    declutterIndices: new Int32Array(0),
-    declutterCount: 0
-  };
-}
-
 export function NexradVolumeOverlay({
   refLat,
   refLon,
@@ -194,9 +181,7 @@ export function NexradVolumeOverlay({
   sliceAxisRef.current = sliceAxis;
   const slicePerpAxisRef = useRef(slicePerpAxis);
   slicePerpAxisRef.current = slicePerpAxis;
-  const [volumeData, setVolumeData] = useState<NexradPreparedVolumeData>(() =>
-    emptyPreparedVolume()
-  );
+  const [volumeData, setVolumeData] = useState<NexradRenderVolumeData>(EMPTY_RENDER_VOLUME);
   const [crossSectionData, setCrossSectionData] = useState<CrossSectionData | null>(null);
   const [echoTop18, setEchoTop18] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop30, setEchoTop30] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
@@ -217,9 +202,8 @@ export function NexradVolumeOverlay({
     });
   }, []);
 
-  const declutterIndices = volumeData.declutterIndices;
-  const declutterCount = volumeData.declutterCount;
-  const instanceCapacity = useGrowingInstanceCapacity(declutterCount);
+  const renderedVoxelCount = volumeData.count;
+  const instanceCapacity = useGrowingInstanceCapacity(renderedVoxelCount);
   const instanceAlphaArray = useMemo(() => {
     const array = new Float32Array(instanceCapacity);
     array.fill(1);
@@ -377,7 +361,7 @@ export function NexradVolumeOverlay({
     if (!enabled) {
       setPayload(null);
       setEchoTopPayload(null);
-      setVolumeData(emptyPreparedVolume());
+      setVolumeData(EMPTY_RENDER_VOLUME);
       setCrossSectionData(null);
       setEchoTop18(EMPTY_ECHO_TOP_SOA);
       setEchoTop30(EMPTY_ECHO_TOP_SOA);
@@ -392,7 +376,7 @@ export function NexradVolumeOverlay({
 
     setPayload(null);
     setEchoTopPayload(null);
-    setVolumeData(emptyPreparedVolume());
+    setVolumeData(EMPTY_RENDER_VOLUME);
     setCrossSectionData(null);
     setEchoTop18(EMPTY_ECHO_TOP_SOA);
     setEchoTop30(EMPTY_ECHO_TOP_SOA);
@@ -499,14 +483,14 @@ export function NexradVolumeOverlay({
                 }
                 return nextPayload;
               });
-              setVolumeData(result.preparedVolume);
+              setVolumeData(result.renderVolume);
               setCrossSectionData(result.crossSectionData);
               setPhaseCounts(result.phaseCounts ?? EMPTY_PHASE_COUNTS);
               skipNextRePrepareRef.current = true;
             }
           } else if (!showVolumeRef.current && !showCrossSectionRef.current) {
             setPayload(null);
-            setVolumeData(emptyPreparedVolume());
+            setVolumeData(EMPTY_RENDER_VOLUME);
             setCrossSectionData(null);
             setPhaseCounts(EMPTY_PHASE_COUNTS);
           }
@@ -620,7 +604,7 @@ export function NexradVolumeOverlay({
           slicePerpAxis
         });
         if (cancelled) return;
-        setVolumeData(result.preparedVolume);
+        setVolumeData(result.renderVolume);
         setCrossSectionData(result.crossSectionData);
         if (result.timings?.volumePrepareMs != null) {
           patchTimings({ volumePrepareMs: result.timings.volumePrepareMs });
@@ -678,7 +662,7 @@ export function NexradVolumeOverlay({
     lastPollAt,
     layerCount: payload?.layerSummaries?.length ?? 0,
     voxelCount: payload?.voxelCount ?? 0,
-    renderedVoxelCount: declutterCount,
+    renderedVoxelCount,
     phaseMode: payload?.phaseMode ?? null,
     phaseDetail: payload?.phaseDetail ?? null,
     zdrAgeSeconds: payload?.zdrAgeSeconds ?? null,
@@ -773,11 +757,10 @@ export function NexradVolumeOverlay({
   useEffect(() => {
     const uploadStartedAt = performance.now();
     // Compute per-instance alpha from dBZ intensity (shared by both passes).
-    if (payload) {
-      for (let i = 0; i < declutterCount; i += 1) {
-        const payloadIndex = volumeData.validIndices[declutterIndices[i]];
-        instanceAlphaArray[i] = dbzToAlpha(payload.dbz[payloadIndex]);
-      }
+    // The render columns are flat and instance-ordered, so alpha is a direct
+    // per-instance read — no index resolution.
+    for (let i = 0; i < volumeData.count; i += 1) {
+      instanceAlphaArray[i] = dbzToAlpha(volumeData.dbz[i]);
     }
     const alphaAttribute = voxelGeometry.getAttribute('instanceAlpha');
     if (alphaAttribute) {
@@ -785,24 +768,7 @@ export function NexradVolumeOverlay({
     }
 
     const baseMesh = baseMeshRef.current;
-    if (payload) {
-      applyVoxelInstances(
-        baseMesh,
-        payload.xNm,
-        volumeData.yBase,
-        payload.zNm,
-        volumeData.heightBase,
-        payload.dbz,
-        payload.footprintBaseXNm,
-        payload.footprintBaseYNm,
-        payload.spanX,
-        payload.spanY,
-        volumeData.effectivePhaseCode,
-        volumeData.validIndices,
-        declutterIndices,
-        declutterCount
-      );
-    }
+    applyVoxelInstances(baseMesh, volumeData);
     const glowMesh = glowMeshRef.current;
     if (baseMesh && glowMesh) {
       // Share the populated instance buffers so the glow pass avoids a second
@@ -827,10 +793,7 @@ export function NexradVolumeOverlay({
     // mounted meshes get count set to 0 (or the real count if data exists)
     // instead of rendering an uninitialized instance at origin.
   }, [
-    payload,
     volumeData,
-    declutterIndices,
-    declutterCount,
     echoTop18,
     echoTop30,
     echoTop50,
@@ -842,24 +805,16 @@ export function NexradVolumeOverlay({
   ]);
 
   const guideData = useMemo(() => {
-    if (!showAltitudeGuides || declutterCount === 0 || !payload) {
+    if (!showAltitudeGuides || volumeData.count === 0) {
       return {
         geometry: null as THREE.BufferGeometry | null,
         labels: [] as Array<{ feet: number; yNm: number; extentNm: number }>
       };
     }
-    let extentNm = 0;
-    let maxFeet = 0;
-    for (let i = 0; i < declutterCount; i += 1) {
-      const volIdx = declutterIndices[i];
-      const payloadIdx = volumeData.validIndices[volIdx];
-      extentNm = Math.max(
-        extentNm,
-        Math.abs(payload.xNm[payloadIdx]),
-        Math.abs(payload.zNm[payloadIdx])
-      );
-      maxFeet = Math.max(maxFeet, volumeData.correctedTopFeet[volIdx]);
-    }
+    // Extents over the rendered voxel set come precomputed from the Rust
+    // render-volume join.
+    let extentNm = Math.max(volumeData.maxAbsXNm, volumeData.maxAbsZNm);
+    let maxFeet = volumeData.maxCorrectedTopFeet;
     if (echoTopPayload) {
       maxFeet = Math.max(
         maxFeet,
@@ -888,15 +843,7 @@ export function NexradVolumeOverlay({
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     return { geometry, labels };
-  }, [
-    showAltitudeGuides,
-    declutterCount,
-    declutterIndices,
-    payload,
-    volumeData,
-    echoTopPayload,
-    maxRangeNm
-  ]);
+  }, [showAltitudeGuides, volumeData, echoTopPayload, maxRangeNm]);
 
   useEffect(
     () => () => {
@@ -908,7 +855,7 @@ export function NexradVolumeOverlay({
   if (!enabled) {
     return null;
   }
-  const hasVolume = showVolume && declutterCount > 0;
+  const hasVolume = showVolume && renderedVoxelCount > 0;
   const hasEchoTops =
     showEchoTops && (echoTop18.count > 0 || echoTop30.count > 0 || echoTop50.count > 0);
   const hasCrossSection = showCrossSection && crossSectionData !== null;
@@ -990,16 +937,12 @@ export function NexradVolumeOverlay({
             <div className="mrms-altitude-guide-label">{Math.round(label.feet / 1000)}k</div>
           </Html>
         ))}
-      {hasCrossSection && payload && (
+      {hasCrossSection && (
         <NexradCrossSection
-          payload={payload}
-          volumeData={volumeData}
           crossSectionData={crossSectionData}
           normalizedCrossSectionHeading={normalizedCrossSectionHeading}
           normalizedCrossSectionRange={normalizedCrossSectionRange}
           sliceAxis={sliceAxis}
-          slicePerpAxis={slicePerpAxis}
-          crossSectionHalfWidthNm={crossSectionHalfWidthNm}
           echoTopSummary18={echoTopSummary18}
           echoTopSummary30={echoTopSummary30}
           echoTopSummary50={echoTopSummary50}

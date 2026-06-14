@@ -71,13 +71,17 @@ export function approach_path_resolve_altitudes(params: any): any;
 export function decode_and_prepare_echo_top(data: Uint8Array, apply_earth_curvature: boolean, ref_lat: number): any;
 
 /**
- * Decode, filter, curvature-correct, declutter, and optionally build a
- * cross-section from a raw AVMR binary payload — all in one WASM call.
+ * Decode, filter, curvature-correct, declutter, and join into render-ready
+ * voxel columns from a raw AVMR binary payload — all in one WASM call,
+ * optionally building a cross-section grid.
  *
  * Returns a JS object with three top-level keys:
- *   `prepared`  — NexradPreparedVolumeData (for SAB write)
+ *   `renderVolume` — flat per-rendered-voxel columns + altitude-guide
+ *       extents from `build_render_volume` (the `prepare_volume` dual index
+ *       space is resolved here in Rust; JS never pairs
+ *       `declutterIndices`/`validIndices` with payload columns)
  *   `crossSection` — CrossSectionData | null
- *   `volumePayload` — NexradVolumePayload fields (for transferable arrays)
+ *   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
  *
  * This eliminates all intermediate JS<->WASM boundary crossings for the
  * `poll-and-prepare` hot path.

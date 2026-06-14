@@ -183,13 +183,17 @@ export function decode_and_prepare_echo_top(data, apply_earth_curvature, ref_lat
 }
 
 /**
- * Decode, filter, curvature-correct, declutter, and optionally build a
- * cross-section from a raw AVMR binary payload — all in one WASM call.
+ * Decode, filter, curvature-correct, declutter, and join into render-ready
+ * voxel columns from a raw AVMR binary payload — all in one WASM call,
+ * optionally building a cross-section grid.
  *
  * Returns a JS object with three top-level keys:
- *   `prepared`  — NexradPreparedVolumeData (for SAB write)
+ *   `renderVolume` — flat per-rendered-voxel columns + altitude-guide
+ *       extents from `build_render_volume` (the `prepare_volume` dual index
+ *       space is resolved here in Rust; JS never pairs
+ *       `declutterIndices`/`validIndices` with payload columns)
  *   `crossSection` — CrossSectionData | null
- *   `volumePayload` — NexradVolumePayload fields (for transferable arrays)
+ *   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
  *
  * This eliminates all intermediate JS<->WASM boundary crossings for the
  * `poll-and-prepare` hot path.
@@ -426,10 +430,6 @@ function __wbg_get_imports() {
             const ret = new Uint32Array(getArrayU32FromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg_new_from_slice_c81beab68071e722: function(arg0, arg1) {
-            const ret = new Int32Array(getArrayI32FromWasm0(arg0, arg1));
-            return ret;
-        },
         __wbg_new_from_slice_d188c5ad4ed77989: function(arg0, arg1) {
             const ret = new Int8Array(getArrayI8FromWasm0(arg0, arg1));
             return ret;
@@ -440,10 +440,6 @@ function __wbg_get_imports() {
         },
         __wbg_new_from_slice_e21686f285806d67: function(arg0, arg1) {
             const ret = new Float32Array(getArrayF32FromWasm0(arg0, arg1));
-            return ret;
-        },
-        __wbg_new_from_slice_eb70a1c6dfa6f7a2: function(arg0, arg1) {
-            const ret = new Uint16Array(getArrayU16FromWasm0(arg0, arg1));
             return ret;
         },
         __wbg_new_with_length_51597651c65b2f13: function(arg0) {
@@ -590,19 +586,9 @@ function getArrayF64FromWasm0(ptr, len) {
     return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 
-function getArrayI32FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
-}
-
 function getArrayI8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getInt8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
-}
-
-function getArrayU16FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
 }
 
 function getArrayU32FromWasm0(ptr, len) {
@@ -639,14 +625,6 @@ function getFloat64ArrayMemory0() {
     return cachedFloat64ArrayMemory0;
 }
 
-let cachedInt32ArrayMemory0 = null;
-function getInt32ArrayMemory0() {
-    if (cachedInt32ArrayMemory0 === null || cachedInt32ArrayMemory0.byteLength === 0) {
-        cachedInt32ArrayMemory0 = new Int32Array(wasm.memory.buffer);
-    }
-    return cachedInt32ArrayMemory0;
-}
-
 let cachedInt8ArrayMemory0 = null;
 function getInt8ArrayMemory0() {
     if (cachedInt8ArrayMemory0 === null || cachedInt8ArrayMemory0.byteLength === 0) {
@@ -658,14 +636,6 @@ function getInt8ArrayMemory0() {
 function getStringFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return decodeText(ptr, len);
-}
-
-let cachedUint16ArrayMemory0 = null;
-function getUint16ArrayMemory0() {
-    if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
-        cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
-    }
-    return cachedUint16ArrayMemory0;
 }
 
 let cachedUint32ArrayMemory0 = null;
@@ -790,9 +760,7 @@ function __wbg_finalize_init(instance, module) {
     cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
     cachedFloat64ArrayMemory0 = null;
-    cachedInt32ArrayMemory0 = null;
     cachedInt8ArrayMemory0 = null;
-    cachedUint16ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();

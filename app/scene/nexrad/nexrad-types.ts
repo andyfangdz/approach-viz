@@ -86,21 +86,15 @@ export interface NexradLayerSummary {
   voxelCount: number;
 }
 
+/**
+ * Volume metadata for the debug panel and payload-change signatures. The
+ * per-voxel columns live in {@link NexradRenderVolumeData}, joined in Rust.
+ */
 export interface NexradVolumePayload {
   generatedAt: string;
   radar: NexradRadarPayload | null;
   layerSummaries: NexradLayerSummary[];
   voxelCount: number;
-  xNm: Float32Array;
-  zNm: Float32Array;
-  dbz: Float32Array;
-  /** Scalar base footprint in NM — multiply by max(1, spanX[i]) for per-brick size. */
-  footprintBaseXNm: number;
-  /** Scalar base footprint in NM — multiply by max(1, spanY[i]) for per-brick size. */
-  footprintBaseYNm: number;
-  spanX: Uint16Array;
-  spanY: Uint16Array;
-  phaseCode: Uint8Array;
   phaseMode?: string | null;
   phaseDetail?: string | null;
   zdrAgeSeconds?: number | null;
@@ -266,14 +260,42 @@ export interface CrossSectionData {
   maxTopFeet: number;
 }
 
-export interface NexradPreparedVolumeData {
-  validCount: number;
-  validIndices: Int32Array;
-  yBase: Float32Array;
-  heightBase: Float32Array;
-  correctedBottomFeet: Float32Array;
-  correctedTopFeet: Float32Array;
-  effectivePhaseCode: Uint8Array;
-  declutterIndices: Int32Array;
-  declutterCount: number;
+/**
+ * Flat render-ready voxel columns from the Rust `build_render_volume` join:
+ * one entry per rendered voxel, ordered by declutter selection. The
+ * `prepare_volume` dual index space (`declutterIndices` → `validIndices` →
+ * raw payload columns) is resolved inside Rust, so these columns are
+ * addressed by instance index only. Positions/sizes are unscaled local-frame
+ * NM; the renderer applies vertical scale.
+ */
+export interface NexradRenderVolumeData {
+  count: number;
+  centerXNm: Float32Array;
+  centerYNm: Float32Array;
+  centerZNm: Float32Array;
+  sizeXNm: Float32Array;
+  sizeYNm: Float32Array;
+  sizeZNm: Float32Array;
+  dbz: Float32Array;
+  phaseCode: Uint8Array;
+  /** Altitude-guide extents over the rendered voxel set. */
+  maxAbsXNm: number;
+  maxAbsZNm: number;
+  maxCorrectedTopFeet: number;
 }
+
+const EMPTY_U8 = new Uint8Array(0);
+export const EMPTY_RENDER_VOLUME: NexradRenderVolumeData = {
+  count: 0,
+  centerXNm: EMPTY_F32,
+  centerYNm: EMPTY_F32,
+  centerZNm: EMPTY_F32,
+  sizeXNm: EMPTY_F32,
+  sizeYNm: EMPTY_F32,
+  sizeZNm: EMPTY_F32,
+  dbz: EMPTY_F32,
+  phaseCode: EMPTY_U8,
+  maxAbsXNm: 0,
+  maxAbsZNm: 0,
+  maxCorrectedTopFeet: 0
+};

@@ -1,124 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import type { CrossSectionData, NexradVolumePayload } from './nexrad-types';
-import { CROSS_SECTION_BINS_X, CROSS_SECTION_BINS_Y, PHASE_RAIN } from './nexrad-types';
+import type { CrossSectionData } from './nexrad-types';
 import { dbzToHex, feetToNm, altitudeTickLabel } from './nexrad-render';
 
 interface NexradCrossSectionProps {
-  payload: NexradVolumePayload;
-  volumeData: {
-    validCount: number;
-    validIndices: Int32Array;
-    correctedBottomFeet: Float32Array;
-    correctedTopFeet: Float32Array;
-    effectivePhaseCode: Uint8Array;
-  };
-  crossSectionData?: CrossSectionData | null;
+  /** Slice grid built in Rust alongside the prepare pass (worker result). */
+  crossSectionData: CrossSectionData | null;
   normalizedCrossSectionHeading: number;
   normalizedCrossSectionRange: number;
   sliceAxis: { x: number; z: number };
-  slicePerpAxis: { x: number; z: number };
-  crossSectionHalfWidthNm: number;
   echoTopSummary18: string;
   echoTopSummary30: string;
   echoTopSummary50: string;
 }
 
 export function NexradCrossSection({
-  payload,
-  volumeData,
-  crossSectionData: precomputedCrossSectionData,
+  crossSectionData,
   normalizedCrossSectionHeading,
   normalizedCrossSectionRange,
   sliceAxis,
-  slicePerpAxis,
-  crossSectionHalfWidthNm,
   echoTopSummary18,
   echoTopSummary30,
   echoTopSummary50
 }: NexradCrossSectionProps) {
   const sliceCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  const crossSectionData = useMemo<CrossSectionData | null>(() => {
-    if (precomputedCrossSectionData) {
-      return precomputedCrossSectionData;
-    }
-    const { validCount, validIndices, correctedBottomFeet, correctedTopFeet, effectivePhaseCode } =
-      volumeData;
-    if (validCount === 0 || !payload) return null;
-
-    let maxTopFeet = 0;
-    for (let i = 0; i < validCount; i += 1) {
-      maxTopFeet = Math.max(maxTopFeet, correctedTopFeet[i]);
-    }
-    if (!Number.isFinite(maxTopFeet) || maxTopFeet <= 0) return null;
-    maxTopFeet = Math.max(10_000, Math.ceil(maxTopFeet / 1000) * 1000);
-    const grid = new Float32Array(CROSS_SECTION_BINS_X * CROSS_SECTION_BINS_Y);
-    grid.fill(-1);
-    const phaseGrid = new Int8Array(CROSS_SECTION_BINS_X * CROSS_SECTION_BINS_Y);
-    phaseGrid.fill(PHASE_RAIN);
-    const topEnvelopeFeet = new Float32Array(CROSS_SECTION_BINS_X);
-    for (let i = 0; i < topEnvelopeFeet.length; i += 1) topEnvelopeFeet[i] = 0;
-
-    for (let i = 0; i < validCount; i += 1) {
-      const idx = validIndices[i];
-      const vx = payload.xNm[idx];
-      const vz = payload.zNm[idx];
-
-      const alongNm = vx * sliceAxis.x + vz * sliceAxis.z;
-      if (alongNm < -normalizedCrossSectionRange || alongNm > normalizedCrossSectionRange) {
-        continue;
-      }
-      const crossNm = Math.abs(vx * slicePerpAxis.x + vz * slicePerpAxis.z);
-      if (crossNm > crossSectionHalfWidthNm) continue;
-
-      const x01 = (alongNm + normalizedCrossSectionRange) / (normalizedCrossSectionRange * 2);
-      const binX = Math.max(
-        0,
-        Math.min(CROSS_SECTION_BINS_X - 1, Math.floor(x01 * CROSS_SECTION_BINS_X))
-      );
-      const bottomFeet = Math.max(0, correctedBottomFeet[i]);
-      const topFeet = Math.max(0, correctedTopFeet[i]);
-      const y0 = Math.max(
-        0,
-        Math.min(
-          CROSS_SECTION_BINS_Y - 1,
-          Math.floor((bottomFeet / maxTopFeet) * CROSS_SECTION_BINS_Y)
-        )
-      );
-      const y1 = Math.max(
-        0,
-        Math.min(CROSS_SECTION_BINS_Y - 1, Math.ceil((topFeet / maxTopFeet) * CROSS_SECTION_BINS_Y))
-      );
-      topEnvelopeFeet[binX] = Math.max(topEnvelopeFeet[binX], topFeet);
-      for (let y = y0; y <= y1; y += 1) {
-        const gridIdx = y * CROSS_SECTION_BINS_X + binX;
-        const vDbz = payload.dbz[idx];
-        if (vDbz > grid[gridIdx]) {
-          grid[gridIdx] = vDbz;
-          phaseGrid[gridIdx] = effectivePhaseCode[i];
-        }
-      }
-    }
-
-    return {
-      binsX: CROSS_SECTION_BINS_X,
-      binsY: CROSS_SECTION_BINS_Y,
-      grid,
-      phaseGrid,
-      topEnvelopeFeet,
-      maxTopFeet
-    };
-  }, [
-    precomputedCrossSectionData,
-    payload,
-    volumeData,
-    sliceAxis,
-    slicePerpAxis,
-    normalizedCrossSectionRange,
-    crossSectionHalfWidthNm
-  ]);
 
   const crossSectionDataRef = useRef(crossSectionData);
   crossSectionDataRef.current = crossSectionData;
