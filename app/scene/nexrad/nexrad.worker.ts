@@ -242,9 +242,11 @@ function encodeDeclutterMode(mode: NexradDeclutterMode): number {
 }
 
 /** Collect transferable ArrayBuffers from render volume columns (zero-copy
- *  postMessage). Skips the empty singleton so its shared buffers stay intact. */
+ *  postMessage). Skips the shared empty singleton by identity so its
+ *  module-level shared buffers are never neutered; a real zero-count result
+ *  carries fresh per-call buffers that are safe to transfer. */
 function renderVolumeTransferables(render: NexradRenderVolumeData): ArrayBuffer[] {
-  if (render.count === 0) return [];
+  if (render === EMPTY_RENDER_VOLUME) return [];
   return [
     render.centerXNm.buffer as ArrayBuffer,
     render.centerYNm.buffer as ArrayBuffer,
