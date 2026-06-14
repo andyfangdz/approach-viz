@@ -5,8 +5,15 @@ use std::process::Command;
 
 type BuildResult<T> = Result<T, Box<dyn std::error::Error>>;
 
+const ENV_GIT_BRANCH: &str = "APPROACH_VIZ_RUNTIME_BUILD_GIT_BRANCH";
+const ENV_GIT_SHA: &str = "APPROACH_VIZ_RUNTIME_BUILD_GIT_SHA";
+const ENV_GIT_DIRTY: &str = "APPROACH_VIZ_RUNTIME_BUILD_GIT_DIRTY";
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed={ENV_GIT_BRANCH}");
+    println!("cargo:rerun-if-env-changed={ENV_GIT_SHA}");
+    println!("cargo:rerun-if-env-changed={ENV_GIT_DIRTY}");
     emit_git_rerun_hints();
 
     let version = build_service_version().unwrap_or_else(|error| {
@@ -17,9 +24,9 @@ fn main() {
 
 fn build_service_version() -> BuildResult<String> {
     let timestamp = chrono::Utc::now().format("%Y%m%d.%H%M%S").to_string();
-    let git_branch = sanitize_version_component(&run_git_command(&["rev-parse", "--abbrev-ref", "HEAD"])?);
-    let git_sha = sanitize_version_component(&run_git_command(&["rev-parse", "--short=12", "HEAD"])?);
-    let is_dirty = git_worktree_is_dirty()?;
+    let metadata = resolve_build_metadata()?;
+    let git_branch = sanitize_version_component(&metadata.branch);
+    let git_sha = sanitize_version_component(&metadata.sha);
 
     if git_branch.is_empty() {
         return Err("Resolved git branch is empty after sanitization.".into());
@@ -28,10 +35,54 @@ fn build_service_version() -> BuildResult<String> {
         return Err("Resolved git sha is empty after sanitization.".into());
     }
     let mut version = format!("{timestamp}-{git_branch}-{git_sha}");
-    if is_dirty {
+    if metadata.is_dirty {
         version.push_str("-dirty");
     }
     Ok(version)
+}
+
+struct BuildMetadata {
+    branch: String,
+    sha: String,
+    is_dirty: bool,
+}
+
+fn resolve_build_metadata() -> BuildResult<BuildMetadata> {
+    let env_branch = env::var(ENV_GIT_BRANCH).ok();
+    let env_sha = env::var(ENV_GIT_SHA).ok();
+    let env_dirty = env::var(ENV_GIT_DIRTY).ok();
+
+    if env_branch.is_some() || env_sha.is_some() || env_dirty.is_some() {
+        let branch = env_branch.ok_or_else(|| {
+            format!("{ENV_GIT_BRANCH} is required when build git metadata is provided.")
+        })?;
+        let sha = env_sha.ok_or_else(|| {
+            format!("{ENV_GIT_SHA} is required when build git metadata is provided.")
+        })?;
+        let dirty_value = env_dirty.ok_or_else(|| {
+            format!("{ENV_GIT_DIRTY} is required when build git metadata is provided.")
+        })?;
+        let is_dirty = parse_bool_env(ENV_GIT_DIRTY, &dirty_value)?;
+        return Ok(BuildMetadata {
+            branch,
+            sha,
+            is_dirty,
+        });
+    }
+
+    Ok(BuildMetadata {
+        branch: run_git_command(&["rev-parse", "--abbrev-ref", "HEAD"])?,
+        sha: run_git_command(&["rev-parse", "--short=12", "HEAD"])?,
+        is_dirty: git_worktree_is_dirty()?,
+    })
+}
+
+fn parse_bool_env(name: &str, value: &str) -> BuildResult<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => Ok(true),
+        "0" | "false" | "no" => Ok(false),
+        _ => Err(format!("{name} must be true or false, got {value:?}.").into()),
+    }
 }
 
 fn git_worktree_is_dirty() -> BuildResult<bool> {
@@ -93,8 +144,14 @@ fn emit_git_rerun_hints() {
         }
     };
 
-    println!("cargo:rerun-if-changed={}", git_dir_path.join("HEAD").display());
-    println!("cargo:rerun-if-changed={}", git_dir_path.join("index").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        git_dir_path.join("HEAD").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        git_dir_path.join("index").display()
+    );
 
     let head_path = git_dir_path.join("HEAD");
     let head = match fs::read_to_string(head_path) {

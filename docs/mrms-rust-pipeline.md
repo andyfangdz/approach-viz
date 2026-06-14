@@ -96,7 +96,7 @@ export RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY=5
 scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
 ```
 
-Default behavior prefers local cross-compile (skip OCI compile by cross-compiling locally for Linux ARM64), then falls back to remote build if no local cross tool is detected and `RUNTIME_DEPLOY_BUILD_MODE` is unset.
+Default behavior prefers local cross-compile (skip OCI compile by cross-compiling locally for Linux ARM64), then falls back to remote build if no local cross tool is detected and `RUNTIME_DEPLOY_BUILD_MODE` is unset. Deploy builds stamp the runtime trace `service.version` from the local Git branch/SHA/dirty state so remote builds do not require a `.git` directory in the staged source tree.
 
 Optional explicit local cross mode:
 
@@ -120,8 +120,8 @@ Prerequisite for local cross mode: install either `cargo-zigbuild` (`cargo insta
 
 This script:
 
-- syncs `services/runtime-rs/` through a staged remote directory replacement (prevents stale file collisions from prior layouts) and excludes local `target/` build artifacts from upload
-- uploads a local cross-compiled `aarch64-unknown-linux-gnu` binary (`RUNTIME_DEPLOY_BUILD_MODE=local-cross`, default preference with auto-fallback) or builds `cargo build --release` on host (`RUNTIME_DEPLOY_BUILD_MODE=remote`)
+- syncs the Rust workspace files needed for `approach-viz-runtime` (`Cargo.toml`, `Cargo.lock`, `services/runtime-rs/`, `crates/approach-viz-core/`, and `tools/uniffi-bindgen-swift/`) through a staged remote workspace replacement (prevents stale file collisions from prior layouts) and excludes local `target/` build artifacts from upload
+- uploads a locked local cross-compiled `aarch64-unknown-linux-gnu` binary (`RUNTIME_DEPLOY_BUILD_MODE=local-cross`, default preference with auto-fallback) or builds `cargo build --release --locked` on host (`RUNTIME_DEPLOY_BUILD_MODE=remote`)
 - backs up any existing `/usr/local/bin/approach-viz-runtime` to `approach-viz-runtime.previous` and installs the new binary; on a failed post-restart health check it automatically rolls back to the previous binary
 - installs/enables `approach-viz-runtime.service`
 - configures Tailscale Funnel path `/runtime-v1`

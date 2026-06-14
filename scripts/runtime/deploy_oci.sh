@@ -15,8 +15,9 @@ BUILD_MODE="${RUNTIME_DEPLOY_BUILD_MODE:-local-cross}"
 LOCAL_CROSS_TOOL="${RUNTIME_LOCAL_CROSS_TOOL:-auto}"
 LOCAL_CROSS_TARGET="${RUNTIME_LOCAL_CROSS_TARGET:-aarch64-unknown-linux-gnu}"
 LOCAL_CROSS_BINARY_PATH="${RUNTIME_LOCAL_CROSS_BINARY_PATH:-}"
-REMOTE_SERVICE_DIR="\$HOME/services/approach-viz-runtime"
-REMOTE_STAGE_DIR="\$HOME/services/approach-viz-runtime.tmp"
+REMOTE_WORKSPACE_DIR="/home/ubuntu/services/approach-viz-runtime-workspace"
+REMOTE_STAGE_DIR="/home/ubuntu/services/approach-viz-runtime-workspace.tmp"
+REMOTE_SERVICE_DIR="$REMOTE_WORKSPACE_DIR/services/runtime-rs"
 
 if [[ -z "$QUEUE_URL" ]]; then
     echo "RUNTIME_MRMS_SQS_QUEUE_URL (or MRMS_SQS_QUEUE_URL) is required in environment." >&2
@@ -56,11 +57,41 @@ echo "Deploy build mode: $BUILD_MODE"
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SERVICE_DIR="$ROOT_DIR/services/runtime-rs"
+CORE_DIR="$ROOT_DIR/crates/approach-viz-core"
+UNIFFI_BINDGEN_DIR="$ROOT_DIR/tools/uniffi-bindgen-swift"
 
 if [[ ! -f "$SERVICE_DIR/Cargo.toml" ]]; then
   echo "Missing Rust service manifest at $SERVICE_DIR/Cargo.toml" >&2
   exit 1
 fi
+
+if [[ ! -f "$CORE_DIR/Cargo.toml" ]]; then
+  echo "Missing Rust core manifest at $CORE_DIR/Cargo.toml" >&2
+  exit 1
+fi
+
+if [[ ! -f "$UNIFFI_BINDGEN_DIR/Cargo.toml" ]]; then
+  echo "Missing UniFFI bindgen manifest at $UNIFFI_BINDGEN_DIR/Cargo.toml" >&2
+  exit 1
+fi
+
+if [[ ! -f "$ROOT_DIR/Cargo.lock" ]]; then
+  echo "Missing workspace lockfile at $ROOT_DIR/Cargo.lock" >&2
+  exit 1
+fi
+
+GIT_BRANCH="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
+GIT_SHA="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD)"
+GIT_DIRTY="false"
+if [[ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)" ]]; then
+  GIT_DIRTY="true"
+fi
+RUNTIME_BUILD_METADATA_ENV=(
+  "APPROACH_VIZ_RUNTIME_BUILD_GIT_BRANCH=$GIT_BRANCH"
+  "APPROACH_VIZ_RUNTIME_BUILD_GIT_SHA=$GIT_SHA"
+  "APPROACH_VIZ_RUNTIME_BUILD_GIT_DIRTY=$GIT_DIRTY"
+)
+printf -v RUNTIME_BUILD_METADATA_ENV_SHELL "%q " "${RUNTIME_BUILD_METADATA_ENV[@]}"
 
 build_local_cross_binary() {
   if [[ -n "$LOCAL_CROSS_BINARY_PATH" ]]; then
@@ -87,15 +118,17 @@ build_local_cross_binary() {
 
   case "$tool" in
     zigbuild)
-      cargo zigbuild \
+      env "${RUNTIME_BUILD_METADATA_ENV[@]}" cargo zigbuild \
         --manifest-path "$SERVICE_DIR/Cargo.toml" \
         --release \
+        --locked \
         --target "$LOCAL_CROSS_TARGET"
       ;;
     cross)
-      cross build \
+      env "${RUNTIME_BUILD_METADATA_ENV[@]}" cross build \
         --manifest-path "$SERVICE_DIR/Cargo.toml" \
         --release \
+        --locked \
         --target "$LOCAL_CROSS_TARGET"
       ;;
     *)
@@ -123,18 +156,21 @@ sync_source_tree() {
     --no-xattrs
     -czf
     -
-    --exclude='./target'
+    --exclude='./services/runtime-rs/target'
+    --exclude='./crates/approach-viz-core/target'
+    --exclude='./tools/uniffi-bindgen-swift/target'
     --exclude='./.git'
     --exclude='./.DS_Store'
   )
 
-  tar "${tar_args[@]}" -C "$SERVICE_DIR" . | ssh "$HOST" "
+  tar "${tar_args[@]}" -C "$ROOT_DIR" Cargo.toml Cargo.lock services/runtime-rs crates/approach-viz-core tools/uniffi-bindgen-swift | ssh "$HOST" "
 set -euo pipefail
 rm -rf \"$REMOTE_STAGE_DIR\"
+mkdir -p \"\$(dirname \"$REMOTE_STAGE_DIR\")\"
 mkdir -p \"$REMOTE_STAGE_DIR\"
 tar -xzf - -C \"$REMOTE_STAGE_DIR\"
-rm -rf \"$REMOTE_SERVICE_DIR\"
-mv \"$REMOTE_STAGE_DIR\" \"$REMOTE_SERVICE_DIR\"
+rm -rf \"$REMOTE_WORKSPACE_DIR\"
+mv \"$REMOTE_STAGE_DIR\" \"$REMOTE_WORKSPACE_DIR\"
 "
 }
 
@@ -142,8 +178,8 @@ install_binary_remote_build() {
   ssh "$HOST" "
 set -euo pipefail
 source \"\$HOME/.cargo/env\"
-cd \"$REMOTE_SERVICE_DIR\"
-cargo build --release
+cd \"$REMOTE_WORKSPACE_DIR\"
+env $RUNTIME_BUILD_METADATA_ENV_SHELL cargo build --release --locked -p approach-viz-runtime
 if [[ -x /usr/local/bin/approach-viz-runtime ]]; then
   sudo cp -f /usr/local/bin/approach-viz-runtime /usr/local/bin/approach-viz-runtime.previous
 fi
@@ -186,7 +222,7 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/home/ubuntu/services/approach-viz-runtime
+WorkingDirectory=$REMOTE_SERVICE_DIR
 Environment=RUST_LOG=info
 Environment=AWS_REGION=us-east-1
 Environment=RUNTIME_LISTEN_ADDR=127.0.0.1:9191
