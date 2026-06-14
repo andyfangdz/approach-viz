@@ -3,11 +3,17 @@ import { applyPhaseDebugValues, extractPhaseDebugHeaderValues } from './nexrad-d
 import type {
   NexradVolumePayload,
   NexradLayerSummary,
-  NexradPreparedVolumeData,
+  NexradRenderVolumeData,
   EchoTopSoA,
   CrossSectionData
 } from './nexrad-types';
-import { MRMS_LEVEL_TAGS, EMPTY_ECHO_TOP_SOA, PHASE_MIXED, PHASE_SNOW } from './nexrad-types';
+import {
+  MRMS_LEVEL_TAGS,
+  EMPTY_ECHO_TOP_SOA,
+  EMPTY_RENDER_VOLUME,
+  PHASE_MIXED,
+  PHASE_SNOW
+} from './nexrad-types';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   decode_and_prepare_mrms,
@@ -78,7 +84,7 @@ export interface NexradPhaseCounts {
 
 export interface NexradPollAndPrepareResult {
   volumePayload: NexradVolumePayload | null;
-  preparedVolume: NexradPreparedVolumeData;
+  renderVolume: NexradRenderVolumeData;
   crossSectionData: CrossSectionData | null;
   /** Per-payload phase tally (debug panel), computed off main thread. */
   phaseCounts: NexradPhaseCounts | null;
@@ -90,40 +96,15 @@ export interface NexradPollAndPrepareResult {
 }
 
 export interface NexradRePrepareResult {
-  preparedVolume: NexradPreparedVolumeData;
+  renderVolume: NexradRenderVolumeData;
   crossSectionData: CrossSectionData | null;
   timings: { volumePrepareMs: number | null } | null;
 }
 
 // --- Helpers ---
 
-function volumeTransferables(payload: NexradVolumePayload): ArrayBuffer[] {
-  return [
-    payload.xNm.buffer as ArrayBuffer,
-    payload.zNm.buffer as ArrayBuffer,
-    payload.dbz.buffer as ArrayBuffer,
-    payload.spanX.buffer as ArrayBuffer,
-    payload.spanY.buffer as ArrayBuffer,
-    payload.phaseCode.buffer as ArrayBuffer
-  ];
-}
-
 function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
-}
-
-function emptyPreparedVolume(): NexradPreparedVolumeData {
-  return {
-    validCount: 0,
-    validIndices: new Int32Array(0),
-    yBase: new Float32Array(0),
-    heightBase: new Float32Array(0),
-    correctedBottomFeet: new Float32Array(0),
-    correctedTopFeet: new Float32Array(0),
-    effectivePhaseCode: new Uint8Array(0),
-    declutterIndices: new Int32Array(0),
-    declutterCount: 0
-  };
 }
 
 function normalizeFetchUrl(url: string): string {
@@ -161,36 +142,18 @@ async function fetchArrayBuffer(
 }
 
 /** Structural contract of the wasm-bindgen `decode_and_prepare_mrms` result. */
-interface WasmPreparedVolume {
-  validCount: number;
-  validIndices: Int32Array;
-  yBase: Float32Array;
-  heightBase: Float32Array;
-  correctedBottomFeet: Float32Array;
-  correctedTopFeet: Float32Array;
-  effectivePhaseCode: Uint8Array;
-  declutterIndices: Int32Array;
-  declutterCount: number;
-}
-
 interface WasmVolumePayload {
   generatedAtMs: number;
   scanTimeMs: number;
   layerCount: number;
   layerVoxelCounts: Uint32Array;
   voxelCount: number;
-  xNm: Float32Array;
-  zNm: Float32Array;
-  dbz: Float32Array;
-  footprintBaseXNm: number;
-  footprintBaseYNm: number;
-  spanX: Uint16Array;
-  spanY: Uint16Array;
+  /** Full payload length — feeds the debug phase tally, not rendering. */
   phaseCode: Uint8Array;
 }
 
 interface WasmDecodeAndPrepareMrmsResult {
-  prepared: WasmPreparedVolume;
+  renderVolume: NexradRenderVolumeData;
   crossSection: CrossSectionData | null;
   volumePayload: WasmVolumePayload;
 }
@@ -278,17 +241,21 @@ function encodeDeclutterMode(mode: NexradDeclutterMode): number {
   }
 }
 
-/** Collect transferable ArrayBuffers from prepared volume data. */
-function preparedVolumeTransferables(prepared: NexradPreparedVolumeData): ArrayBuffer[] {
-  if (prepared.validCount === 0 && prepared.declutterCount === 0) return [];
+/** Collect transferable ArrayBuffers from render volume columns (zero-copy
+ *  postMessage). Skips the shared empty singleton by identity so its
+ *  module-level shared buffers are never neutered; a real zero-count result
+ *  carries fresh per-call buffers that are safe to transfer. */
+function renderVolumeTransferables(render: NexradRenderVolumeData): ArrayBuffer[] {
+  if (render === EMPTY_RENDER_VOLUME) return [];
   return [
-    prepared.validIndices.buffer as ArrayBuffer,
-    prepared.yBase.buffer as ArrayBuffer,
-    prepared.heightBase.buffer as ArrayBuffer,
-    prepared.correctedBottomFeet.buffer as ArrayBuffer,
-    prepared.correctedTopFeet.buffer as ArrayBuffer,
-    prepared.effectivePhaseCode.buffer as ArrayBuffer,
-    prepared.declutterIndices.buffer as ArrayBuffer
+    render.centerXNm.buffer as ArrayBuffer,
+    render.centerYNm.buffer as ArrayBuffer,
+    render.centerZNm.buffer as ArrayBuffer,
+    render.sizeXNm.buffer as ArrayBuffer,
+    render.sizeYNm.buffer as ArrayBuffer,
+    render.sizeZNm.buffer as ArrayBuffer,
+    render.dbz.buffer as ArrayBuffer,
+    render.phaseCode.buffer as ArrayBuffer
   ];
 }
 
@@ -326,7 +293,7 @@ export class NexradWorkerApi {
     };
 
     let volumePayload: NexradVolumePayload | null = null;
-    let preparedVolume: NexradPreparedVolumeData = emptyPreparedVolume();
+    let renderVolume: NexradRenderVolumeData = EMPTY_RENDER_VOLUME;
     let crossSectionData: CrossSectionData | null = null;
     let phaseCounts: NexradPhaseCounts | null = null;
 
@@ -357,24 +324,13 @@ export class NexradWorkerApi {
         options.crossSectionHalfWidthNm
       ) as WasmDecodeAndPrepareMrmsResult;
 
-      // Unpack prepared volume
-      const wasmPrepared = result.prepared;
-      preparedVolume = {
-        validCount: wasmPrepared.validCount,
-        validIndices: wasmPrepared.validIndices,
-        yBase: wasmPrepared.yBase,
-        heightBase: wasmPrepared.heightBase,
-        correctedBottomFeet: wasmPrepared.correctedBottomFeet,
-        correctedTopFeet: wasmPrepared.correctedTopFeet,
-        effectivePhaseCode: wasmPrepared.effectivePhaseCode,
-        declutterIndices: wasmPrepared.declutterIndices,
-        declutterCount: wasmPrepared.declutterCount
-      };
+      // Flat render-ready columns — the dual-index join already ran in Rust.
+      renderVolume = result.renderVolume;
 
       // Cross-section (null if not requested or empty volume)
       crossSectionData = result.crossSection;
 
-      // Build NexradVolumePayload from WASM-converted fields
+      // Build NexradVolumePayload metadata from WASM fields
       const vp = result.volumePayload;
       const generatedAtMs: number = vp.generatedAtMs;
       const scanTimeMs: number = vp.scanTimeMs;
@@ -408,15 +364,7 @@ export class NexradWorkerApi {
           generatedAt,
           radar: null,
           layerSummaries,
-          voxelCount: vp.voxelCount,
-          xNm: vp.xNm,
-          zNm: vp.zNm,
-          dbz: vp.dbz,
-          footprintBaseXNm: vp.footprintBaseXNm,
-          footprintBaseYNm: vp.footprintBaseYNm,
-          spanX: vp.spanX,
-          spanY: vp.spanY,
-          phaseCode: vp.phaseCode
+          voxelCount: vp.voxelCount
         },
         extractPhaseDebugHeaderValues(volumeFetch.headers)
       );
@@ -487,7 +435,7 @@ export class NexradWorkerApi {
     // Build result and transfer list
     const result: NexradPollAndPrepareResult = {
       volumePayload,
-      preparedVolume,
+      renderVolume,
       crossSectionData,
       phaseCounts,
       echoTop18,
@@ -498,8 +446,7 @@ export class NexradWorkerApi {
     };
 
     const transferList: ArrayBuffer[] = [
-      ...(volumePayload ? volumeTransferables(volumePayload) : []),
-      ...preparedVolumeTransferables(preparedVolume),
+      ...renderVolumeTransferables(renderVolume),
       ...crossSectionTransferables(crossSectionData),
       ...echoTopSoATransferables(echoTop18, echoTop30, echoTop50)
     ];
@@ -532,30 +479,19 @@ export class NexradWorkerApi {
       options.crossSectionHalfWidthNm
     ) as WasmDecodeAndPrepareMrmsResult;
 
-    const wasmPrepared = result.prepared;
-    const preparedVolume: NexradPreparedVolumeData = {
-      validCount: wasmPrepared.validCount,
-      validIndices: wasmPrepared.validIndices,
-      yBase: wasmPrepared.yBase,
-      heightBase: wasmPrepared.heightBase,
-      correctedBottomFeet: wasmPrepared.correctedBottomFeet,
-      correctedTopFeet: wasmPrepared.correctedTopFeet,
-      effectivePhaseCode: wasmPrepared.effectivePhaseCode,
-      declutterIndices: wasmPrepared.declutterIndices,
-      declutterCount: wasmPrepared.declutterCount
-    };
+    const renderVolume: NexradRenderVolumeData = result.renderVolume;
     const crossSectionData: CrossSectionData | null = result.crossSection;
 
     const prepareMs = roundMs(performance.now() - prepareStartedAt);
 
     const rePrepareResult: NexradRePrepareResult = {
-      preparedVolume,
+      renderVolume,
       crossSectionData,
       timings: { volumePrepareMs: prepareMs }
     };
 
     const transferList: ArrayBuffer[] = [
-      ...preparedVolumeTransferables(preparedVolume),
+      ...renderVolumeTransferables(renderVolume),
       ...crossSectionTransferables(crossSectionData)
     ];
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { NexradDeclutterMode } from '@/app/app-client/types';
-import type { DbzColorBand, EchoTopSoA } from './nexrad-types';
+import type { DbzColorBand, EchoTopSoA, NexradRenderVolumeData } from './nexrad-types';
 import {
   NEXRAD_COLOR_GAIN,
   MIN_VISIBLE_LUMINANCE,
@@ -167,31 +167,18 @@ export function patchMaterialForInstanceAlpha(
 }
 
 /**
- * Two index spaces meet here and must not be mixed: `xNm`/`zNm`/`dbz`/
- * `spanX`/`spanY` are full-length payload columns addressed by raw payload
- * index, while `yBase`/`heightBase`/`phaseCode` are the compacted outputs of
- * `prepare_volume` addressed by valid-voxel position (parallel to
- * `validIndices`). Each instance i resolves `declutterIndices[i]` to a
- * compacted position, then `validIndices[...]` maps that to the raw payload
- * index.
+ * Upload flat render-ready voxel columns into instance matrices/colors. The
+ * columns come pre-joined from the Rust `build_render_volume` pass (the
+ * `prepare_volume` dual index space is resolved there), so every column is
+ * addressed by instance index alone.
  */
 export function applyVoxelInstances(
   mesh: THREE.InstancedMesh | null,
-  xNm: Float32Array,
-  yBase: Float32Array,
-  zNm: Float32Array,
-  heightBase: Float32Array,
-  dbz: Float32Array,
-  footprintBaseXNm: number,
-  footprintBaseYNm: number,
-  spanX: Uint16Array,
-  spanY: Uint16Array,
-  phaseCode: Uint8Array,
-  validIndices: Int32Array,
-  declutterIndices: Int32Array,
-  declutterCount: number
+  render: NexradRenderVolumeData
 ) {
   if (!mesh) return;
+  const { count, centerXNm, centerYNm, centerZNm, sizeXNm, sizeYNm, sizeZNm, dbz, phaseCode } =
+    render;
   const matrixArray = mesh.instanceMatrix.array as Float32Array;
 
   // Allocate instanceColor up front (mirrors what setColorAt does lazily) so
@@ -205,43 +192,41 @@ export function applyVoxelInstances(
   const colorArray = mesh.instanceColor.array as Float32Array;
   const luts = getPhaseColorLuts();
 
-  for (let i = 0; i < declutterCount; i += 1) {
-    const validIndex = declutterIndices[i];
-    const dataIndex = validIndices[validIndex];
+  for (let i = 0; i < count; i += 1) {
     const offset = i * 16;
 
     // Direct matrix manipulation: only scale and translate are needed.
     // Matrix format is column-major.
-    matrixArray[offset + 0] = footprintBaseXNm * Math.max(1, spanX[dataIndex]); // scale X
+    matrixArray[offset + 0] = sizeXNm[i]; // scale X
     matrixArray[offset + 1] = 0;
     matrixArray[offset + 2] = 0;
     matrixArray[offset + 3] = 0;
 
     matrixArray[offset + 4] = 0;
-    matrixArray[offset + 5] = heightBase[validIndex]; // scale Y
+    matrixArray[offset + 5] = sizeYNm[i]; // scale Y
     matrixArray[offset + 6] = 0;
     matrixArray[offset + 7] = 0;
 
     matrixArray[offset + 8] = 0;
     matrixArray[offset + 9] = 0;
-    matrixArray[offset + 10] = footprintBaseYNm * Math.max(1, spanY[dataIndex]); // scale Z
+    matrixArray[offset + 10] = sizeZNm[i]; // scale Z
     matrixArray[offset + 11] = 0;
 
-    matrixArray[offset + 12] = xNm[dataIndex]; // translate X
-    matrixArray[offset + 13] = yBase[validIndex]; // translate Y
-    matrixArray[offset + 14] = zNm[dataIndex]; // translate Z
+    matrixArray[offset + 12] = centerXNm[i]; // translate X
+    matrixArray[offset + 13] = centerYNm[i]; // translate Y
+    matrixArray[offset + 14] = centerZNm[i]; // translate Z
     matrixArray[offset + 15] = 1;
 
-    const phase = phaseCode[validIndex];
+    const phase = phaseCode[i];
     const lut = phase === PHASE_SNOW ? luts.snow : phase === PHASE_MIXED ? luts.mixed : luts.rain;
-    const lutIndex = dbzToLutIndex(dbz[dataIndex]);
+    const lutIndex = dbzToLutIndex(dbz[i]);
     const colorOffset = i * 3;
     colorArray[colorOffset] = lut.r[lutIndex];
     colorArray[colorOffset + 1] = lut.g[lutIndex];
     colorArray[colorOffset + 2] = lut.b[lutIndex];
   }
 
-  mesh.count = declutterCount;
+  mesh.count = count;
   mesh.instanceMatrix.needsUpdate = true;
   mesh.instanceColor.needsUpdate = true;
 }

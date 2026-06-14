@@ -17,13 +17,17 @@ fn js_err<E: std::fmt::Display>(context: &str, error: E) -> JsValue {
 // MRMS Decode + Prepare + Cross-Section (single boundary crossing)
 // ---------------------------------------------------------------------------
 
-/// Decode, filter, curvature-correct, declutter, and optionally build a
-/// cross-section from a raw AVMR binary payload — all in one WASM call.
+/// Decode, filter, curvature-correct, declutter, and join into render-ready
+/// voxel columns from a raw AVMR binary payload — all in one WASM call,
+/// optionally building a cross-section grid.
 ///
 /// Returns a JS object with three top-level keys:
-///   `prepared`  — NexradPreparedVolumeData (for SAB write)
+///   `renderVolume` — flat per-rendered-voxel columns + altitude-guide
+///       extents from `build_render_volume` (the `prepare_volume` dual index
+///       space is resolved here in Rust; JS never pairs
+///       `declutterIndices`/`validIndices` with payload columns)
 ///   `crossSection` — CrossSectionData | null
-///   `volumePayload` — NexradVolumePayload fields (for transferable arrays)
+///   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
 ///
 /// This eliminates all intermediate JS<->WASM boundary crossings for the
 /// `poll-and-prepare` hot path.
@@ -51,7 +55,7 @@ pub fn decode_and_prepare_mrms(
 
     // Zero-copy volume view — reads directly from the FB buffer. Column
     // presence/length is validated once here so every per-voxel loop below
-    // (prepare, cross-section, payload conversion) is free of Option checks.
+    // (prepare, cross-section, render-volume join) is free of Option checks.
     let vol_view =
         crate::mrms_preprocess::FbVolumeView::new(&fb).map_err(|e| JsValue::from_str(&e))?;
 
@@ -85,21 +89,33 @@ pub fn decode_and_prepare_mrms(
         None
     };
 
-    // 4. Build result object
+    // 4. Join prepare outputs with payload columns into flat render columns
+    //    (the same `build_render_volume` path the native iOS/macOS app uses).
+    let render = crate::mrms_render::build_render_volume(
+        &vol_view,
+        fb.footprint_x_milli() as f32 / 1000.0,
+        fb.footprint_y_milli() as f32 / 1000.0,
+        &prepared,
+    );
+
+    // 5. Build result object
     let root = js_sys::Object::new();
 
-    // -- prepared volume --
-    let prep_obj = js_sys::Object::new();
-    set_prop(&prep_obj, "validCount", &JsValue::from(prepared.valid_count as u32))?;
-    set_prop(&prep_obj, "validIndices", &js_sys::Int32Array::from(&prepared.valid_indices[..]).into())?;
-    set_prop(&prep_obj, "yBase", &js_sys::Float32Array::from(&prepared.y_base[..]).into())?;
-    set_prop(&prep_obj, "heightBase", &js_sys::Float32Array::from(&prepared.height_base[..]).into())?;
-    set_prop(&prep_obj, "correctedBottomFeet", &js_sys::Float32Array::from(&prepared.corrected_bottom_feet[..]).into())?;
-    set_prop(&prep_obj, "correctedTopFeet", &js_sys::Float32Array::from(&prepared.corrected_top_feet[..]).into())?;
-    set_prop(&prep_obj, "effectivePhaseCode", &js_sys::Uint8Array::from(&prepared.effective_phase_code[..]).into())?;
-    set_prop(&prep_obj, "declutterIndices", &js_sys::Int32Array::from(&prepared.declutter_indices[..]).into())?;
-    set_prop(&prep_obj, "declutterCount", &JsValue::from(prepared.declutter_count as u32))?;
-    set_prop(&root, "prepared", &prep_obj.into())?;
+    // -- render volume (flat per-rendered-voxel columns + guide extents) --
+    let render_obj = js_sys::Object::new();
+    set_prop(&render_obj, "count", &JsValue::from(render.center_x_nm.len() as u32))?;
+    set_prop(&render_obj, "centerXNm", &js_sys::Float32Array::from(&render.center_x_nm[..]).into())?;
+    set_prop(&render_obj, "centerYNm", &js_sys::Float32Array::from(&render.center_y_nm[..]).into())?;
+    set_prop(&render_obj, "centerZNm", &js_sys::Float32Array::from(&render.center_z_nm[..]).into())?;
+    set_prop(&render_obj, "sizeXNm", &js_sys::Float32Array::from(&render.size_x_nm[..]).into())?;
+    set_prop(&render_obj, "sizeYNm", &js_sys::Float32Array::from(&render.size_y_nm[..]).into())?;
+    set_prop(&render_obj, "sizeZNm", &js_sys::Float32Array::from(&render.size_z_nm[..]).into())?;
+    set_prop(&render_obj, "dbz", &js_sys::Float32Array::from(&render.dbz[..]).into())?;
+    set_prop(&render_obj, "phaseCode", &js_sys::Uint8Array::from(&render.phase_code[..]).into())?;
+    set_prop(&render_obj, "maxAbsXNm", &JsValue::from(render.max_abs_x_nm))?;
+    set_prop(&render_obj, "maxAbsZNm", &JsValue::from(render.max_abs_z_nm))?;
+    set_prop(&render_obj, "maxCorrectedTopFeet", &JsValue::from(render.max_corrected_top_feet))?;
+    set_prop(&root, "renderVolume", &render_obj.into())?;
 
     // -- cross-section --
     match &cross_section {
@@ -118,7 +134,9 @@ pub fn decode_and_prepare_mrms(
         }
     }
 
-    // -- volume payload — built directly from FB vectors (no owned decode) --
+    // -- volume payload — metadata read directly from the FB root. The raw
+    //    positional/size columns are not emitted: rendering consumes the
+    //    joined `renderVolume` columns instead.
     let vp_obj = js_sys::Object::new();
     let brick_count = fb.brick_count() as usize;
 
@@ -133,37 +151,9 @@ pub fn decode_and_prepare_mrms(
         .unwrap_or_default();
     set_prop(&vp_obj, "layerVoxelCounts", &js_sys::Uint32Array::from(&lvc[..]).into())?;
 
-    // xNm, zNm — convert from i16 hundredths to f32 NM. The view validated
-    // each column's presence and length up front, so these loops iterate the
-    // FB vectors directly with no per-element Option handling.
-    let mut x_nm = Vec::with_capacity(brick_count);
-    for value in vol_view.x_hundredths.iter() {
-        x_nm.push(value as f32 / 100.0);
-    }
-    let mut z_nm = Vec::with_capacity(brick_count);
-    for value in vol_view.z_hundredths.iter() {
-        z_nm.push(value as f32 / 100.0);
-    }
-    set_prop(&vp_obj, "xNm", &js_sys::Float32Array::from(&x_nm[..]).into())?;
-    set_prop(&vp_obj, "zNm", &js_sys::Float32Array::from(&z_nm[..]).into())?;
-
-    // dbz — convert from i16 tenths to f32 whole dBZ
-    let mut dbz_f32 = Vec::with_capacity(brick_count);
-    for value in vol_view.dbz_tenths.iter() {
-        dbz_f32.push(value as f32 / 10.0);
-    }
-    set_prop(&vp_obj, "dbz", &js_sys::Float32Array::from(&dbz_f32[..]).into())?;
-
-    // Footprint — pass scalar base NM + per-brick u16 span arrays.
-    // The renderer computes footprintNm = base * max(1, span[i]) inline.
-    set_prop(&vp_obj, "footprintBaseXNm", &JsValue::from(fb.footprint_x_milli() as f32 / 1000.0))?;
-    set_prop(&vp_obj, "footprintBaseYNm", &JsValue::from(fb.footprint_y_milli() as f32 / 1000.0))?;
-    let span_x: Vec<u16> = vol_view.span_x.iter().collect();
-    let span_y: Vec<u16> = vol_view.span_y.iter().collect();
-    set_prop(&vp_obj, "spanX", &js_sys::Uint16Array::from(&span_x[..]).into())?;
-    set_prop(&vp_obj, "spanY", &js_sys::Uint16Array::from(&span_y[..]).into())?;
-
-    // Phase code — u8 column maps straight onto the FB buffer bytes
+    // Phase code — u8 column maps straight onto the FB buffer bytes. Kept at
+    // full payload length so the worker's debug phase tally covers every
+    // voxel, not just the rendered subset.
     set_prop(
         &vp_obj,
         "phaseCode",
