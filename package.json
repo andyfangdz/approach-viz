@@ -51,7 +51,7 @@
     "@takram/three-geospatial": "^0.6.0",
     "@vercel/analytics": "^1.6.1",
     "3d-tiles-renderer": "^0.4.21",
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "^12.10.1",
     "comlink": "^4.4.2",
     "dd-trace": "^5.85.0",
     "egm96-universal": "^1.1.1",
