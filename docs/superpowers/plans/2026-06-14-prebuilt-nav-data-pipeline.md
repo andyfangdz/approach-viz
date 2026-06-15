@@ -43,6 +43,7 @@
 ## Task 1: Land the curl_retry resilience already in the working tree
 
 **Files:**
+
 - Modify (already edited): `scripts/download-data.sh`, `AGENTS.md`
 
 - [ ] **Step 1: Confirm the changes are present**
@@ -67,6 +68,7 @@ git commit -m "Retry transient HTTP failures in download-data.sh"
 ## Task 2: Add the shared schema-version file and write it into the DB
 
 **Files:**
+
 - Create: `scripts/data-schema-version.json`
 - Modify: `scripts/build-db.ts` (imports near top; metadata inserts near the existing `insertMetadata.run('generated_at', ...)` block)
 
@@ -107,10 +109,12 @@ insertMetadata.run('schema_version', String(readSchemaVersion()));
 - [ ] **Step 4: Build the DB and confirm the row exists**
 
 Run (uses the source files already downloaded in `public/data/`):
+
 ```bash
 npm run build-db && \
 node --input-type=commonjs -e 'const D=require("better-sqlite3");const db=new D("data/approach-viz.sqlite",{readonly:true});console.log(db.prepare("SELECT value FROM metadata WHERE key=?").get("schema_version"));'
 ```
+
 Expected: prints `{ value: '1' }`.
 
 > Note: `--input-type=commonjs` forces CJS so `require("better-sqlite3")` works even though the package is ESM.
@@ -132,6 +136,7 @@ git commit -m "Write schema_version into the built SQLite DB"
 ## Task 3: DB metadata reader (`db-metadata.mjs`) — TDD
 
 **Files:**
+
 - Create: `scripts/db-metadata.mjs`
 - Test: `scripts/db-metadata.test.mjs`
 
@@ -214,7 +219,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error('usage: node scripts/db-metadata.mjs <db-path> [key]');
     process.exit(2);
   }
-  process.stdout.write(key ? readMetadataKey(dbPath, key) : JSON.stringify(readAllMetadata(dbPath)));
+  process.stdout.write(
+    key ? readMetadataKey(dbPath, key) : JSON.stringify(readAllMetadata(dbPath))
+  );
 }
 ```
 
@@ -235,6 +242,7 @@ git commit -m "Add DB metadata reader util"
 ## Task 4: Release-tag + manifest builder (`build-manifest.mjs`) — TDD
 
 **Files:**
+
 - Create: `scripts/build-manifest.mjs`
 - Test: `scripts/build-manifest.test.mjs`
 
@@ -365,6 +373,7 @@ git commit -m "Add release-tag + manifest builder"
 ## Task 5: Wire the script tests into `npm run test`
 
 **Files:**
+
 - Modify: `package.json` (`scripts` block)
 
 - [ ] **Step 1: Add the `test:scripts` script and append it to `test`**
@@ -399,6 +408,7 @@ git commit -m "Run script unit tests in npm run test"
 ## Task 6: Publisher workflow (`publish-data.yml`)
 
 **Files:**
+
 - Create: `.github/workflows/publish-data.yml`
 
 - [ ] **Step 1: Create the workflow**
@@ -413,7 +423,7 @@ name: Publish Nav Data
 
 on:
   schedule:
-    - cron: "0 9 * * *" # daily ~09:00 UTC
+    - cron: '0 9 * * *' # daily ~09:00 UTC
   workflow_dispatch:
 
 permissions:
@@ -497,10 +507,10 @@ jobs:
         if: steps.release_exists.outputs.exists == 'false' && steps.pin_exists.outputs.exists == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "Bump nav data pin to ${{ steps.manifest.outputs.tag }}"
-          title: "Bump nav data pin to ${{ steps.manifest.outputs.tag }}"
-          body: "Automated pin bump after publishing release `${{ steps.manifest.outputs.tag }}`."
-          branch: "auto/nav-data-${{ steps.manifest.outputs.tag }}"
+          commit-message: 'Bump nav data pin to ${{ steps.manifest.outputs.tag }}'
+          title: 'Bump nav data pin to ${{ steps.manifest.outputs.tag }}'
+          body: 'Automated pin bump after publishing release `${{ steps.manifest.outputs.tag }}`.'
+          branch: 'auto/nav-data-${{ steps.manifest.outputs.tag }}'
           add-paths: data-version.json
 ```
 
@@ -544,6 +554,7 @@ gh run list --workflow "Publish Nav Data" --limit 1
 # then watch the latest run:
 gh run watch "$(gh run list --workflow 'Publish Nav Data' --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
+
 Expected: the run succeeds and creates a release (it will NOT open an auto-PR yet, because `data-version.json` does not exist — that is intentional during bootstrap).
 
 - [ ] **Step 3: Capture the released tag (used in Task 9)**
@@ -552,6 +563,7 @@ Expected: the run succeeds and creates a release (it will NOT open an auto-PR ye
 gh release list --json tagName,createdAt \
   --jq 'map(select(.tagName|startswith("data-")))|sort_by(.createdAt)|last|.tagName'
 ```
+
 Expected: prints something like `data-2506-2505-s1`. Record this value — Task 9 reads it programmatically, so no manual copy is strictly required, but note it for sanity-checking.
 
 ---
@@ -568,6 +580,7 @@ git checkout -b nav-data-consumer-flip
 ## Task 7: Schema-guard verifier (`verify-db.mjs`) — TDD
 
 **Files:**
+
 - Create: `scripts/verify-db.mjs`
 - Test: `scripts/verify-db.test.mjs`
 
@@ -696,6 +709,7 @@ git commit -m "Add fail-loud DB schema-version guard"
 ## Task 8: Consumer download script (`fetch-data.sh`)
 
 **Files:**
+
 - Create: `scripts/fetch-data.sh`
 
 - [ ] **Step 1: Create the script**
@@ -793,6 +807,7 @@ git commit -m "Add fetch-data.sh consumer download script"
 ## Task 9: Add the pin file and end-to-end verify the download
 
 **Files:**
+
 - Create: `data-version.json` (repo root)
 
 - [ ] **Step 1: Write `data-version.json` from the published release tag**
@@ -804,6 +819,7 @@ test -n "$TAG" # fail loudly if no release exists yet (do Phase 1.5 first)
 node --input-type=commonjs -e 'const fs=require("fs");fs.writeFileSync("data-version.json", JSON.stringify({tag: process.argv[1]}, null, 2)+"\n")' "$TAG"
 cat data-version.json
 ```
+
 Expected: `data-version.json` contains `{ "tag": "data-2506-2505-s1" }` (your actual tag).
 
 - [ ] **Step 2: Run the consumer path end-to-end against the real release**
@@ -812,6 +828,7 @@ Expected: `data-version.json` contains `{ "tag": "data-2506-2505-s1" }` (your ac
 rm -f data/approach-viz.sqlite
 npm run fetch-data
 ```
+
 Expected: downloads the manifest + gz, passes the sha256 check, unpacks, prints `✅ DB schema v1 matches code`, then `✅ Nav DB ready ...`.
 
 - [ ] **Step 3: Confirm the app still builds against the downloaded DB**
@@ -831,6 +848,7 @@ git commit -m "Pin nav data to first published release"
 ## Task 10: Flip `build` and `dev` to the consumer path
 
 **Files:**
+
 - Modify: `package.json` (`build` and `dev` scripts)
 
 - [ ] **Step 1: Add `fetch-data` and flip the scripts**
@@ -838,24 +856,31 @@ git commit -m "Pin nav data to first published release"
 In `package.json`:
 
 Add to `scripts`:
+
 ```json
     "fetch-data": "bash scripts/fetch-data.sh",
 ```
 
 Change `dev` from:
+
 ```json
     "dev": "npm run build:sw && { [ -f data/approach-viz.sqlite ] || npm run prepare-data; } && node scripts/dev-with-ddtrace.mjs",
 ```
+
 to:
+
 ```json
     "dev": "npm run build:sw && { [ -f data/approach-viz.sqlite ] || npm run fetch-data; } && node scripts/dev-with-ddtrace.mjs",
 ```
 
 Change `build` from:
+
 ```json
     "build": "npm run build:sw && npm run prepare-data && next build",
 ```
+
 to:
+
 ```json
     "build": "npm run build:sw && npm run fetch-data && next build",
 ```
@@ -868,6 +893,7 @@ to:
 rm -f data/approach-viz.sqlite data/approach-viz.sqlite.gz
 npm run build
 ```
+
 Expected: `build:sw` runs, `fetch-data` downloads + verifies the pinned DB, `next build` succeeds. No FAA/aeronav requests occur.
 
 - [ ] **Step 3: Run the quality gates**
@@ -887,6 +913,7 @@ git commit -m "Build/dev fetch the pinned prebuilt DB instead of building from F
 ## Task 11: Update documentation
 
 **Files:**
+
 - Modify: `AGENTS.md`
 - Modify: `docs/data-sources.md`
 
@@ -911,7 +938,7 @@ Find the bullet beginning `- Vercel (preview + production) deliberately runs the
 In the bullet beginning `- \`scripts/download-data.sh\` pins the Class B/C/D airspace`, append this sentence at the end:
 
 ```markdown
- `download-data.sh` + `build-db` now run only in the `Publish Nav Data` workflow (and local `prepare-data`), not on every Vercel deploy.
+`download-data.sh` + `build-db` now run only in the `Publish Nav Data` workflow (and local `prepare-data`), not on every Vercel deploy.
 ```
 
 - [ ] **Step 4: Document the model in `docs/data-sources.md`**
@@ -979,4 +1006,7 @@ deploys green before merging.
   the release, not a conflicting pin PR.
 - **Empty-array expansion** in `fetch-data.sh` uses `"${AUTH[@]+"${AUTH[@]}"}"` so it
   is safe under `set -u` on macOS bash 3.2 as well as Linux bash 5.
+
+```
+
 ```

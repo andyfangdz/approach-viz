@@ -74,7 +74,7 @@ Two halves that never run on the same machine.
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key property:** because the consumer pins an *exact* tag, it downloads via the
+**Key property:** because the consumer pins an _exact_ tag, it downloads via the
 public direct asset URL (`/releases/download/<tag>/<asset>`), which is CDN-backed,
 unauthenticated, and makes **zero `api.github.com` calls** — sidestepping the exact
 rate-limit/504 class that triggered this work.
@@ -151,7 +151,7 @@ Steps:
    `api.github.com` release lookup, matching the existing macOS workflow).
 3. Read `cifp_cycle`, `dtpp_cycle_number`, `schema_version` from the built DB's
    `metadata` table via a small node read (`verify-db.mjs` validates schema on the
-   consumer side; the publisher only needs to *extract* these values for the tag).
+   consumer side; the publisher only needs to _extract_ these values for the tag).
 4. Compute `TAG=data-<cifp>-<dtpp>-s<schema>`.
 5. If a release with `TAG` already exists (`gh release view`) → **exit 0 (no-op)**.
 6. Else: gzip DB; write `manifest.json`
@@ -240,4 +240,7 @@ The consumer cannot be flipped before a release exists, so:
 - No automatic schema-version bumping — it is a deliberate human action.
 - No self-healing fallback to `prepare-data` on the consumer (rejected in favor of
   fail-loud).
+
+```
+
 ```
