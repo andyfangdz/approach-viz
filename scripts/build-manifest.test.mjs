@@ -44,3 +44,15 @@ test('buildManifest throws on missing metadata', () => {
   const { dbPath, gzPath } = makeFixture({ schema_version: '1' });
   assert.throws(() => buildManifest({ dbPath, gzPath, builtAt: 'x' }), /missing 'cifp_cycle'/);
 });
+
+test('buildManifest throws on non-integer schema_version', () => {
+  const { dbPath, gzPath } = makeFixture({
+    schema_version: 'oops',
+    cifp_cycle: '2506',
+    dtpp_cycle_number: '2505'
+  });
+  assert.throws(
+    () => buildManifest({ dbPath, gzPath, builtAt: 'x' }),
+    /schema_version is not an integer/
+  );
+});

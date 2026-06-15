@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { readAllMetadata } from './db-metadata.mjs';
 
 function sha256(filePath) {
@@ -13,12 +14,20 @@ export function buildManifest({ dbPath, gzPath, builtAt }) {
       throw new Error(`DB metadata missing '${key}' (got ${JSON.stringify(md)})`);
     }
   }
+  // Don't trust the DB value blindly: a non-integer would serialize to JSON
+  // `null` in the manifest (silent corruption). Fail loudly instead.
+  const schemaVersion = Number(md.schema_version);
+  if (!Number.isInteger(schemaVersion)) {
+    throw new Error(
+      `DB metadata schema_version is not an integer: ${JSON.stringify(md.schema_version)}`
+    );
+  }
   const tag = `data-${md.cifp_cycle}-${md.dtpp_cycle_number}-s${md.schema_version}`;
   return {
     tag,
     manifest: {
       tag,
-      schemaVersion: Number(md.schema_version),
+      schemaVersion,
       cifpCycle: md.cifp_cycle,
       dtppCycle: md.dtpp_cycle_number,
       dbSha256: sha256(dbPath),
@@ -29,7 +38,7 @@ export function buildManifest({ dbPath, gzPath, builtAt }) {
 }
 
 // CLI: node scripts/build-manifest.mjs <db> <gz> <manifest-out>  -> prints TAG
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [dbPath, gzPath, outPath] = process.argv.slice(2);
   if (!dbPath || !gzPath || !outPath) {
     console.error('usage: node scripts/build-manifest.mjs <db> <gz> <manifest-out>');

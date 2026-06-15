@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { pathToFileURL } from 'node:url';
 
 export function readAllMetadata(dbPath) {
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
@@ -21,7 +22,7 @@ export function readMetadataKey(dbPath, key) {
 }
 
 // CLI: node scripts/db-metadata.mjs <db-path> [key]
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [dbPath, key] = process.argv.slice(2);
   if (!dbPath) {
     console.error('usage: node scripts/db-metadata.mjs <db-path> [key]');
