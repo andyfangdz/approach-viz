@@ -15,15 +15,26 @@ mkdir -p "$CIFP_DIR" "$AIRSPACE_DIR" "$APPROACH_DB_DIR"
 echo "Fetching FAA instrument approach database release..."
 APPROACH_DB_RELEASE_API="https://api.github.com/repos/andyfangdz/faa-instrument-approach-db/releases/latest"
 
+# Every upstream here (api.github.com, the GitHub release CDN, aeronav.faa.gov,
+# raw.githubusercontent.com) intermittently returns transient 5xx/timeout
+# errors that otherwise fail the entire build — e.g. a 504 from api.github.com
+# has broken Vercel deploys. Wrap curl so those are retried with exponential
+# backoff (1s,2s,4s,8s,16s). curl's --retry only retries the transient class
+# (timeouts and HTTP 408/429/5xx), so a genuine 4xx (e.g. a CIFP cycle that no
+# longer exists, 404) still fails fast instead of looping.
+curl_retry() {
+  curl -fsSL --retry 5 --retry-connrefused "$@"
+}
+
 # Anonymous api.github.com requests are rate-limited per IP, which 403s on
 # shared CI runners; authenticate when a token is available. The release-asset
 # download below stays unauthenticated: it redirects to a signed CDN URL that
 # rejects requests carrying an Authorization header.
 github_api_curl() {
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$@"
+    curl_retry -H "Authorization: Bearer $GITHUB_TOKEN" "$@"
   else
-    curl -fsSL "$@"
+    curl_retry "$@"
   fi
 }
 
@@ -61,7 +72,7 @@ if [ -z "$CIFP_CYCLE" ]; then
 fi
 
 echo "Fetching approach DB from $APPROACH_DB_URL..."
-curl -fsSL "$APPROACH_DB_URL" -o "$APPROACH_DB_DIR/approaches.json"
+curl_retry "$APPROACH_DB_URL" -o "$APPROACH_DB_DIR/approaches.json"
 
 # dtpp_cycle_number inside the JSON is the d-TPP cycle (can differ from CIFP cycle)
 DTPP_CYCLE="$(node -e '
@@ -76,7 +87,7 @@ echo "📌 CIFP cycle: $CIFP_CYCLE, d-TPP cycle: $DTPP_CYCLE"
 # ── Step 2: Download the matching CIFP ───────────────────────────────────────
 CIFP_ZIP_URL="https://aeronav.faa.gov/Upload_313-d/cifp/CIFP_${CIFP_CYCLE}.zip"
 echo "Fetching CIFP from $CIFP_ZIP_URL..."
-if ! curl -fsSL "$CIFP_ZIP_URL" -o "/tmp/cifp.zip"; then
+if ! curl_retry "$CIFP_ZIP_URL" -o "/tmp/cifp.zip"; then
   echo "❌ Failed to download CIFP_${CIFP_CYCLE}.zip — cycle may no longer be available on FAA servers"
   exit 1
 fi
@@ -96,7 +107,7 @@ download_airspace() {
   local source_file="$2"
   local target_file="$3"
   echo "Fetching Class $class_name airspace..."
-  curl -fsSL "$AIRSPACE_BASE_URL/$source_file" -o "$target_file.tmp"
+  curl_retry "$AIRSPACE_BASE_URL/$source_file" -o "$target_file.tmp"
   # Validate the payload is parseable GeoJSON before moving it into place.
   node -e '
     const fs = require("fs");

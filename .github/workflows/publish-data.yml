@@ -1,0 +1,112 @@
+# Builds the nav DB from FAA sources and publishes it as a GitHub Release so the
+# Vercel/dev build can download a prebuilt artifact instead of fetching FAA data
+# at deploy time. Idempotent: skips when a release for this dataset already exists.
+name: Publish Nav Data
+
+on:
+  schedule:
+    - cron: '0 9 * * *' # daily ~09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write # create releases; commit the pin-bump branch
+  pull-requests: write # open the pin-bump PR
+
+# Serialize publisher runs so an overlapping schedule + manual dispatch cannot
+# both pass the release-existence check and then collide on `gh release create`.
+concurrency:
+  group: publish-nav-data
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare data (fetch FAA sources + build DB)
+        run: npm run prepare-data
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Gzip DB and build manifest
+        id: manifest
+        run: |
+          gzip -kf data/approach-viz.sqlite
+          TAG="$(node scripts/build-manifest.mjs \
+            data/approach-viz.sqlite \
+            data/approach-viz.sqlite.gz \
+            data/manifest.json)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Computed tag: $TAG"
+
+      - name: Check whether release already exists
+        id: release_exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.manifest.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists; nothing to publish."
+          else
+            # Distinguish a genuine "not found" from a transient/auth error so a
+            # GitHub API blip cannot be misread as "this dataset is new" — fail
+            # loudly instead of proceeding to a confusing create attempt.
+            err="$(gh release view "$TAG" 2>&1 || true)"
+            if printf '%s' "$err" | grep -qi 'release not found'; then
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::gh release view failed for an unexpected reason: $err"
+              exit 1
+            fi
+          fi
+
+      - name: Create release
+        if: steps.release_exists.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.manifest.outputs.tag }}" \
+            data/approach-viz.sqlite.gz \
+            data/manifest.json \
+            --title "${{ steps.manifest.outputs.tag }}" \
+            --notes "Prebuilt approach-viz.sqlite. See manifest.json for cycles and hashes."
+
+      - name: Check whether pin file exists (skip auto-PR during bootstrap)
+        id: pin_exists
+        run: |
+          if [ -f data-version.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write new pin value
+        if: steps.release_exists.outputs.exists == 'false' && steps.pin_exists.outputs.exists == 'true'
+        run: |
+          node --input-type=commonjs -e '
+            const fs = require("fs");
+            fs.writeFileSync("data-version.json", JSON.stringify({ tag: process.argv[1] }, null, 2) + "\n");
+          ' "${{ steps.manifest.outputs.tag }}"
+
+      - name: Open pin-bump PR
+        if: steps.release_exists.outputs.exists == 'false' && steps.pin_exists.outputs.exists == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: 'Bump nav data pin to ${{ steps.manifest.outputs.tag }}'
+          title: 'Bump nav data pin to ${{ steps.manifest.outputs.tag }}'
+          body: 'Automated pin bump after publishing release `${{ steps.manifest.outputs.tag }}`.'
+          branch: 'auto/nav-data-${{ steps.manifest.outputs.tag }}'
+          add-paths: data-version.json

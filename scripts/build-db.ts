@@ -51,6 +51,18 @@ const AIRSPACE_DIR = path.join(DATA_DIR, 'airspace');
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'approach-viz.sqlite');
 
+const SCHEMA_VERSION_PATH = path.join(process.cwd(), 'scripts', 'data-schema-version.json');
+
+function readSchemaVersion(): number {
+  const parsed = JSON.parse(fs.readFileSync(SCHEMA_VERSION_PATH, 'utf8')) as {
+    schemaVersion?: number;
+  };
+  if (typeof parsed.schemaVersion !== 'number' || !Number.isInteger(parsed.schemaVersion)) {
+    throw new Error(`Invalid schemaVersion in ${SCHEMA_VERSION_PATH}`);
+  }
+  return parsed.schemaVersion;
+}
+
 function parseAltitude(alt: string | undefined): number {
   if (!alt || alt === 'SFC') return 0;
   const parsed = parseInt(alt, 10);
@@ -375,6 +387,7 @@ function main() {
   insertMetadata.run('cifp_cycle', cifpCycle);
   // dtpp_cycle_number from approaches.json (d-TPP cycle embedded by scraper)
   insertMetadata.run('dtpp_cycle_number', minimumsDb.dtpp_cycle_number || '');
+  insertMetadata.run('schema_version', String(readSchemaVersion()));
   insertMetadata.run('generated_at', new Date().toISOString());
   insertMetadata.run('airport_count', String(parsed.airports.size));
   insertMetadata.run(
