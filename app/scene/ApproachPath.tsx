@@ -137,34 +137,22 @@ export const ApproachPath = memo(function ApproachPath({
 
   // A transition that ends in a no-fix course-reversal intercept leg (`CI`/`VI`,
   // e.g. the KDDC I14 FLACK teardrop) has nothing downstream to roll out onto.
-  // Append the final approach's first fix (the IF where the final segment
-  // begins) carrying the published inbound course, so the shared engine renders
-  // the reversal as a single smooth arc terminating on that fix, where it meets
-  // the final approach course.
+  // Append the final approach's first course-carrying fix leg (the FAF/localizer
+  // leg) so the shared engine renders the reversal as a single smooth arc that
+  // rolls out tangent onto the final approach course at an interior point, then
+  // continues inbound toward that fix.
   const renderTransitions = useMemo(() => {
     const reversalIntercept = new Set(['CI', 'VI']);
-    const finalIfLeg = approach.finalLegs[0];
-    const inboundCourse = approach.finalLegs.find(
+    const inboundLeg = approach.finalLegs.find(
       (leg) => typeof leg.course === 'number' && Number.isFinite(leg.course)
-    )?.course;
+    );
     return Array.from(approach.transitions.entries()).map(
       ([name, legs]): [string, ApproachLeg[]] => {
         const last = legs[legs.length - 1];
-        if (
-          !last ||
-          !reversalIntercept.has(last.pathTerminator) ||
-          !finalIfLeg ||
-          typeof inboundCourse !== 'number'
-        ) {
+        if (!last || !reversalIntercept.has(last.pathTerminator) || !inboundLeg) {
           return [name, legs];
         }
-        const joinLeg: ApproachLeg = {
-          ...finalIfLeg,
-          pathTerminator: 'CF',
-          course: inboundCourse,
-          altitude: finalIfLeg.altitude ?? last.altitude,
-          isMissedApproach: false
-        };
+        const joinLeg: ApproachLeg = { ...inboundLeg, isMissedApproach: false };
         return [name, [...legs, joinLeg]];
       }
     );

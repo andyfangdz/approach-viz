@@ -242,7 +242,7 @@ pub(crate) fn build_path_geometry_internal(
                     })
                     .and_then(|localizer_leg| {
                         let localizer_wp = resolve_waypoint(waypoints, &localizer_leg.waypoint_id)?;
-                        let (rollout_x, rollout_z) = coords::lat_lon_to_local(
+                        let (localizer_x, localizer_z) = coords::lat_lon_to_local(
                             localizer_wp.lat,
                             localizer_wp.lon,
                             ref_lat,
@@ -253,13 +253,18 @@ pub(crate) fn build_path_geometry_internal(
                         // Outbound apex (last plotted) and outbound fix (before it).
                         let apex = *points.last().unwrap();
                         let outbound_fix = points[points.len() - 2];
+                        let outbound_fix_2 = Vec2::new(outbound_fix.x, outbound_fix.z);
+                        let apex_2 = Vec2::new(apex.x, apex.z);
+                        // Roll out tangent onto the final approach course at an
+                        // interior point (not the course fix itself).
+                        let rollout = course_reversal_rollout_point(
+                            outbound_fix_2,
+                            apex_2,
+                            Vec2::new(localizer_x, localizer_z),
+                            localizer_course_true,
+                        )?;
                         Some((
-                            build_arc_through_three_points(
-                                Vec2::new(outbound_fix.x, outbound_fix.z),
-                                Vec2::new(apex.x, apex.z),
-                                Vec2::new(rollout_x, rollout_z),
-                                y,
-                            ),
+                            build_arc_through_three_points(outbound_fix_2, apex_2, rollout, y),
                             localizer_course_true,
                         ))
                     })
@@ -771,6 +776,69 @@ pub(crate) fn build_arc_through_three_points(p0: Vec2, p1: Vec2, p2: Vec2, y: f6
         ));
     }
     points
+}
+
+
+/// Roll-out point for a teardrop/course-reversal: the point where the circle
+/// passing through the outbound fix (`outbound_fix`) and the outbound apex
+/// (`apex`) and tangent to the final approach course line (through
+/// `line_point`, heading `line_course_true_deg`) touches that line. The arc
+/// rolls out tangent onto the course there — an interior point on the course,
+/// not the course fix itself. `None` when no feasible tangent circle exists.
+pub(crate) fn course_reversal_rollout_point(
+    outbound_fix: Vec2,
+    apex: Vec2,
+    line_point: Vec2,
+    line_course_true_deg: f64,
+) -> Option<Vec2> {
+    let chord = apex.sub(outbound_fix);
+    if chord.len() < 1e-6 {
+        return None;
+    }
+    // The circle center lies on the perpendicular bisector of (outbound_fix, apex).
+    let perp = Vec2::new(-chord.y, chord.x);
+    let mid = Vec2::new((outbound_fix.x + apex.x) * 0.5, (outbound_fix.y + apex.y) * 0.5);
+    let line_rad = line_course_true_deg.to_radians();
+    let line_dir = Vec2::new(line_rad.sin(), -line_rad.cos());
+    let line_normal = Vec2::new(-line_dir.y, line_dir.x);
+
+    // center = mid + t*perp ; require |center - outbound_fix| = dist(center, line):
+    //   (pn^2 - pp) t^2 + (2 bn pn - 2 ap) t + (bn^2 - aa) = 0
+    let a = mid.sub(outbound_fix);
+    let aa = a.dot(a);
+    let ap = a.dot(perp);
+    let pp = perp.dot(perp);
+    let b = mid.sub(line_point);
+    let bn = b.dot(line_normal);
+    let pn = perp.dot(line_normal);
+    let qa = pn * pn - pp;
+    let qb = 2.0 * bn * pn - 2.0 * ap;
+    let qc = bn * bn - aa;
+
+    let mut best_t: Option<(f64, f64)> = None; // (radius, t)
+    let mut consider = |t: f64| {
+        let center = mid.add(perp.scale(t));
+        let radius = center.sub(outbound_fix).len();
+        if radius.is_finite() && radius > 0.2 && radius < 20.0 && best_t.is_none_or(|(r, _)| radius < r) {
+            best_t = Some((radius, t));
+        }
+    };
+    if qa.abs() < 1e-9 {
+        if qb.abs() > 1e-9 {
+            consider(-qc / qb);
+        }
+    } else {
+        let disc = qb * qb - 4.0 * qa * qc;
+        if disc >= 0.0 {
+            let root = disc.sqrt();
+            consider((-qb + root) / (2.0 * qa));
+            consider((-qb - root) / (2.0 * qa));
+        }
+    }
+    let (_, t) = best_t?;
+    let center = mid.add(perp.scale(t));
+    let along = center.sub(line_point).dot(line_dir);
+    Some(line_point.add(line_dir.scale(along)))
 }
 
 

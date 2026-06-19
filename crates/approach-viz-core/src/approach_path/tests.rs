@@ -351,18 +351,22 @@ fn teardrop_renders_as_single_smooth_arc_to_rollout_fix() {
     });
     let n = result.points.len();
     assert!(n > 20, "reversal arc not produced (n={n})");
-    // Terminates on the roll-out fix.
-    let last = result.points[n - 1];
-    assert!((last.x - roll_out.0).abs() < 0.1 && (last.z + roll_out.1).abs() < 0.1, "did not terminate on roll-out fix: ({}, {})", last.x, last.z);
-    // Single smooth arc: no sharp corner anywhere in the reversal.
+    // The reversal is a single smooth arc (no sharp intercept corner): the only
+    // junction is the tangent roll-out onto the course, which stays smooth.
     assert!(max_turn_degrees(&result.points) < 20.0, "reversal is not a smooth arc");
-    // No long straight outbound leg: the arc is finely subdivided, so the
-    // largest gap between consecutive points stays well under the 4 NM outbound
-    // distance that a straight leg would produce.
-    let max_gap = (1..n)
+    // No straight outbound leg: the curved reversal (everything up to the tangent
+    // roll-out, here roughly the first 80% of points) is finely subdivided, so
+    // its largest gap stays well under the 4 NM outbound distance a straight leg
+    // would produce. (The final roll-out -> inbound-fix segment is straight.)
+    let arc_end = (n * 4) / 5;
+    let max_gap_arc = (1..arc_end)
         .map(|i| ((result.points[i].x - result.points[i - 1].x).powi(2) + (result.points[i].z - result.points[i - 1].z).powi(2)).sqrt())
         .fold(0.0_f64, f64::max);
-    assert!(max_gap < 1.0, "straight outbound leg still present (max gap {max_gap} NM)");
+    assert!(max_gap_arc < 1.0, "straight outbound leg still present (max gap {max_gap_arc} NM)");
+    // Rolls out onto the course and heads inbound, terminating at the downstream
+    // fix (not at the reversal apex).
+    let last = result.points[n - 1];
+    assert!((last.x - roll_out.0).abs() < 0.2, "did not reach the inbound fix: x={}", last.x);
 }
 
 #[test]

@@ -48,38 +48,12 @@ enum ApproachPathGeometry {
 
         // A transition that ends in a no-fix course-reversal intercept leg
         // (`CI`/`VI`, e.g. the KDDC I14 FLACK teardrop) has nothing downstream to
-        // roll out onto. Append the final approach's first fix (the IF where the
-        // final segment begins) carrying the published inbound course, so the
-        // shared engine renders the reversal as a single smooth arc terminating
-        // on that fix, where it meets the final approach course.
+        // roll out onto. Append the final approach's first course-carrying fix
+        // leg (the FAF/localizer leg) so the shared engine renders the reversal
+        // as a single smooth arc that rolls out tangent onto the final approach
+        // course at an interior point, then continues inbound toward that fix.
         let reversalInterceptTerminators: Set<String> = ["CI", "VI"]
-        let finalIfLeg = approach.finalLegs.first
-        let reversalInboundCourse = approach.finalLegs.first { ($0.course?.isFinite ?? false) }?.course
-        let courseReversalJoinLeg: ApproachLeg? = {
-            guard let finalIfLeg, let reversalInboundCourse else { return nil }
-            return ApproachLeg(
-                sequence: finalIfLeg.sequence,
-                waypointId: finalIfLeg.waypointId,
-                waypointName: finalIfLeg.waypointName,
-                pathTerminator: "CF",
-                altitude: finalIfLeg.altitude,
-                altitudeConstraint: finalIfLeg.altitudeConstraint,
-                course: reversalInboundCourse,
-                distance: nil,
-                holdCourse: nil,
-                holdDistance: nil,
-                turnDirection: nil,
-                holdTurnDirection: nil,
-                rfCenterWaypointId: nil,
-                rfTurnDirection: nil,
-                verticalAngleDeg: nil,
-                rnpServiceLevels: nil,
-                isFinalApproachFix: false,
-                isInitialFix: false,
-                isFinalFix: false,
-                isMissedApproach: false
-            )
-        }()
+        let courseReversalJoinLeg = approach.finalLegs.first { ($0.course?.isFinite ?? false) }
         let transitionPolylines = approach.transitions.compactMap { transition -> ApproachPolyline? in
             var transitionLegs = transition.legs
             if let lastLeg = transitionLegs.last,
