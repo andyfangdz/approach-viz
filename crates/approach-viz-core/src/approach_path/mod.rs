@@ -28,6 +28,9 @@ pub(crate) const MAX_VI_TURN_RADIUS_NM: f64 = 0.9;
 // Fallback outbound length for course-from-fix legs that do not publish a
 // distance (`FA`/`FM`), so the outbound leg is still visible.
 pub(crate) const COURSE_FROM_FIX_DEFAULT_DISTANCE_NM: f64 = 3.0;
+// Upper bound on the inbound (return) leg drawn for a teardrop/course-reversal
+// intercept leg, so a long published outbound distance cannot run away.
+pub(crate) const MAX_REVERSAL_INBOUND_NM: f64 = 12.0;
 
 #[cfg(test)]
 mod tests;

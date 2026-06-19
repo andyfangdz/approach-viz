@@ -243,6 +243,38 @@ pub(crate) fn build_path_geometry_internal(
                     last_plotted_point.z - heading_rad.cos() * distance_nm,
                 ));
             }
+
+            // Inbound side of a teardrop/course-reversal: an intercept leg
+            // (`CI`/`VI`) that terminates the segment immediately after a
+            // course-from-fix outbound leg. Draw the inbound leg along the
+            // published intercept course (mirroring the outbound distance) so
+            // the reversal turns back toward the inbound approach course
+            // instead of dead-ending at a short turn stub (for example the
+            // `KDDC I14` `FLACK` transition teardrop at OWENJ).
+            let reversal_outbound_distance = leg_index
+                .checked_sub(1)
+                .and_then(|index| legs.get(index))
+                .filter(|previous| is_course_from_fix_leg(&previous.path_terminator))
+                .and_then(|previous| previous.distance)
+                .filter(|distance| distance.is_finite() && *distance > 0.0);
+            if next_wp.is_none()
+                && matches!(leg.path_terminator.as_str(), "CI" | "VI")
+                && reversal_outbound_distance.is_some()
+            {
+                let inbound_length_nm =
+                    reversal_outbound_distance.unwrap().clamp(1.0, MAX_REVERSAL_INBOUND_NM);
+                let mut reversal_points = heading_transition_points.take().unwrap_or_default();
+                let inbound_start = reversal_points.last().copied().unwrap_or(last_plotted_point);
+                let inbound_end = Vec3::new(
+                    inbound_start.x + heading_rad.sin() * inbound_length_nm,
+                    y,
+                    inbound_start.z - heading_rad.cos() * inbound_length_nm,
+                );
+                reversal_points.push(inbound_end);
+                current_point = Some(inbound_end);
+                heading_transition_points = Some(reversal_points);
+            }
+
             pending_course_to_fix_turn_heading = Some(heading_true);
             pending_course_to_fix_turn_direction = if is_fix_join_terminator(next_leg.map(|leg| leg.path_terminator.as_str())) {
                 next_leg.and_then(|leg| leg.turn_direction.clone())

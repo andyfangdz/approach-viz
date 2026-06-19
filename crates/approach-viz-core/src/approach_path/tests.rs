@@ -277,6 +277,43 @@ fn course_from_fix_leg_draws_outbound_teardrop_segment() {
 }
 
 #[test]
+fn teardrop_intercept_leg_completes_inbound_reversal() {
+    // KDDC I14 FLACK teardrop tail: TF to OWENJ, FC outbound, then a terminal
+    // `CI` intercept. The `CI` must fly an inbound leg back along its published
+    // course (mirroring the outbound distance) instead of dead-ending at a short
+    // turn stub.
+    let ref_lat = 40.0;
+    let ref_lon = -100.0;
+    let outbound_nm = 6.0;
+    let legs = vec![
+        make_leg(ApproachPathLeg { sequence: 10, waypoint_id: "APT_OWENJ".into(), waypoint_name: "OWENJ".into(), path_terminator: "TF".into(), altitude: Some(4400.0), altitude_constraint: None, course: None, distance: None, hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 20, waypoint_id: "APT_OWENJ".into(), waypoint_name: "OWENJ".into(), path_terminator: "FC".into(), altitude: Some(4400.0), altitude_constraint: None, course: Some(0.0), distance: Some(outbound_nm), hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 30, waypoint_id: "APT_".into(), waypoint_name: "".into(), path_terminator: "CI".into(), altitude: Some(4400.0), altitude_constraint: None, course: Some(180.0), distance: None, hold_course: None, hold_distance: None, turn_direction: Some("L".into()), hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+    ];
+    let waypoints = vec![local_waypoint("APT_OWENJ", 0.0, 0.0, ref_lat, ref_lon)];
+    let result = build_path_geometry(BuildPathGeometryParams {
+        legs: legs.clone(),
+        waypoints,
+        resolved_altitudes: resolved_altitudes(&legs),
+        initial_altitude_feet: 4400.0,
+        vertical_scale: 1.0,
+        ref_lat,
+        ref_lon,
+        mag_var: 0.0,
+        show_turn_constraint_labels: false,
+    });
+    // Outbound course 000 projects due north (-z); the path must reach roughly
+    // outbound_nm north, then the inbound 180 leg must return a comparable
+    // distance back south, ending well below the outbound apex.
+    let apex_z = result.points.iter().map(|p| p.z).fold(f64::MAX, f64::min);
+    assert!(apex_z <= -(outbound_nm - 0.5), "outbound apex too short z={apex_z}");
+    let last = *result.points.last().unwrap();
+    // The reversal returns south: the final point sits at least half the
+    // outbound length back toward the fix rather than stalling at the apex.
+    assert!(last.z > apex_z + outbound_nm * 0.5, "inbound leg too short: last z={}", last.z);
+}
+
+#[test]
 fn hold_geometry_produces_closed_racetrack_points_at_requested_altitude() {
     let points = build_hold_points(Vec2::new(2.0, -1.0), 45.0, 4.0, 4000.0, "R", 1.0);
     assert!(points.len() > 60);
