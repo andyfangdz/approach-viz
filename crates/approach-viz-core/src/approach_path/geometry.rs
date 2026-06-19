@@ -257,7 +257,17 @@ pub(crate) fn build_path_geometry_internal(
                         // Outbound apex (last plotted) and outbound fix (before it).
                         let apex = *points.last().unwrap();
                         let outbound_fix_2 = Vec2::new(points[points.len() - 2].x, points[points.len() - 2].z);
-                        let apex_2 = Vec2::new(apex.x, apex.z);
+                        // Cap the apex distance so a long outbound leg does not
+                        // bulge the loop far past the course fix (keeps the
+                        // teardrop compact, near the course fix's level).
+                        let outbound_vec = Vec2::new(apex.x, apex.z).sub(outbound_fix_2);
+                        let outbound_len = outbound_vec.len();
+                        let apex_2 = if outbound_len > 1e-6 {
+                            let capped = outbound_len.min(TEARDROP_MAX_OUTBOUND_NM);
+                            outbound_fix_2.add(outbound_vec.scale(capped / outbound_len))
+                        } else {
+                            Vec2::new(apex.x, apex.z)
+                        };
                         let rollout = course_reversal_rollout_point(
                             outbound_fix_2,
                             apex_2,
