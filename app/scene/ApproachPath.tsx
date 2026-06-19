@@ -136,23 +136,35 @@ export const ApproachPath = memo(function ApproachPath({
   const holdLegs = useMemo(() => allLegs.filter((leg) => isHoldLeg(leg)), [allLegs]);
 
   // A transition that ends in a no-fix course-reversal intercept leg (`CI`/`VI`,
-  // e.g. the KDDC I14 FLACK teardrop) has nothing downstream to intercept, so
-  // the reversal would dead-end / run parallel to the final approach course
-  // instead of rejoining it. Append the final approach's first course-carrying
-  // fix leg (the FAF/localizer leg) so the intercept turns back onto the final
-  // approach course in one continuous turn and merges with the final segment.
+  // e.g. the KDDC I14 FLACK teardrop) has nothing downstream to roll out onto.
+  // Append the final approach's first fix (the IF where the final segment
+  // begins) carrying the published inbound course, so the shared engine renders
+  // the reversal as a single smooth arc terminating on that fix, where it meets
+  // the final approach course.
   const renderTransitions = useMemo(() => {
     const reversalIntercept = new Set(['CI', 'VI']);
-    const inboundLeg = approach.finalLegs.find(
+    const finalIfLeg = approach.finalLegs[0];
+    const inboundCourse = approach.finalLegs.find(
       (leg) => typeof leg.course === 'number' && Number.isFinite(leg.course)
-    );
+    )?.course;
     return Array.from(approach.transitions.entries()).map(
       ([name, legs]): [string, ApproachLeg[]] => {
         const last = legs[legs.length - 1];
-        if (!last || !reversalIntercept.has(last.pathTerminator) || !inboundLeg) {
+        if (
+          !last ||
+          !reversalIntercept.has(last.pathTerminator) ||
+          !finalIfLeg ||
+          typeof inboundCourse !== 'number'
+        ) {
           return [name, legs];
         }
-        const joinLeg: ApproachLeg = { ...inboundLeg, isMissedApproach: false };
+        const joinLeg: ApproachLeg = {
+          ...finalIfLeg,
+          pathTerminator: 'CF',
+          course: inboundCourse,
+          altitude: finalIfLeg.altitude ?? last.altitude,
+          isMissedApproach: false
+        };
         return [name, [...legs, joinLeg]];
       }
     );
