@@ -54,8 +54,12 @@ pub(crate) fn build_path_geometry_internal(
     let mut pending_course_to_fix_turn_direction: Option<String> = None;
     let mut pending_course_to_fix_prefers_course_intercept = false;
     let mut last_leg_course_heading_true: Option<f64> = None;
+    let mut skip_next_leg = false;
 
     for (leg_index, leg) in legs.iter().enumerate() {
+        if std::mem::take(&mut skip_next_leg) {
+            continue;
+        }
         let resolved_altitude = resolved_altitudes
             .get(leg_index)
             .copied()
@@ -222,11 +226,11 @@ pub(crate) fn build_path_geometry_internal(
 
             // Teardrop/course-reversal inbound side: an intercept leg (`CI`/`VI`)
             // immediately after a course-from-fix outbound leg, joining a
-            // downstream final approach course fix. Render the whole reversal as
-            // a single smooth circular arc through the outbound fix, the outbound
-            // apex, and the roll-out fix (no straight outbound leg), terminating
-            // on the final approach course fix (for example `KDDC I14` `FLACK`:
-            // OWENJ -> apex -> WEROM).
+            // downstream final approach course fix. Render the reversal as a
+            // single smooth circular arc through the outbound fix and the
+            // outbound apex that rolls out tangent onto the final approach course
+            // at an interior point (no straight outbound leg), terminating at
+            // that roll-out point (for example `KDDC I14` `FLACK` at OWENJ).
             let previous_is_course_from_fix = leg_index
                 .checked_sub(1)
                 .and_then(|index| legs.get(index))
@@ -252,11 +256,8 @@ pub(crate) fn build_path_geometry_internal(
                             coords::magnetic_to_true_heading(localizer_leg.course.unwrap(), mag_var);
                         // Outbound apex (last plotted) and outbound fix (before it).
                         let apex = *points.last().unwrap();
-                        let outbound_fix = points[points.len() - 2];
-                        let outbound_fix_2 = Vec2::new(outbound_fix.x, outbound_fix.z);
+                        let outbound_fix_2 = Vec2::new(points[points.len() - 2].x, points[points.len() - 2].z);
                         let apex_2 = Vec2::new(apex.x, apex.z);
-                        // Roll out tangent onto the final approach course at an
-                        // interior point (not the course fix itself).
                         let rollout = course_reversal_rollout_point(
                             outbound_fix_2,
                             apex_2,
@@ -273,16 +274,18 @@ pub(crate) fn build_path_geometry_internal(
             };
 
             if let Some((arc_points, localizer_course_true)) = course_reversal_arc {
-                // Replace the straight outbound leg with the smooth reversal arc.
+                // Drop the straight outbound apex; the reversal arc starts at the
+                // outbound fix and ends at the interior roll-out point.
                 points.pop();
                 current_point = arc_points.last().copied();
                 heading_transition_points = Some(arc_points);
                 last_leg_course_heading_true = Some(localizer_course_true);
-                // Leave the pending course-to-fix join clear so the roll-out fix
-                // and the downstream final approach course draw straight.
                 pending_course_to_fix_turn_heading = None;
                 pending_course_to_fix_turn_direction = None;
                 pending_course_to_fix_prefers_course_intercept = false;
+                // Terminate the reversal at the roll-out point; the downstream
+                // final approach course leg is shown by the final segment.
+                skip_next_leg = true;
             } else {
                 if let Some(last_leg_course_heading_true) = last_leg_course_heading_true {
                     let vi_turn_radius = (distance_nm * 0.9)
@@ -779,12 +782,11 @@ pub(crate) fn build_arc_through_three_points(p0: Vec2, p1: Vec2, p2: Vec2, y: f6
 }
 
 
-/// Roll-out point for a teardrop/course-reversal: the point where the circle
-/// passing through the outbound fix (`outbound_fix`) and the outbound apex
-/// (`apex`) and tangent to the final approach course line (through
-/// `line_point`, heading `line_course_true_deg`) touches that line. The arc
-/// rolls out tangent onto the course there — an interior point on the course,
-/// not the course fix itself. `None` when no feasible tangent circle exists.
+/// Roll-out point for a teardrop/course-reversal: where the circle through the
+/// outbound fix and the outbound apex, tangent to the final approach course line
+/// (through `line_point`, heading `line_course_true_deg`), touches that line —
+/// an interior point on the course, not the course fix. `None` when no feasible
+/// tangent circle exists.
 pub(crate) fn course_reversal_rollout_point(
     outbound_fix: Vec2,
     apex: Vec2,
@@ -795,15 +797,12 @@ pub(crate) fn course_reversal_rollout_point(
     if chord.len() < 1e-6 {
         return None;
     }
-    // The circle center lies on the perpendicular bisector of (outbound_fix, apex).
     let perp = Vec2::new(-chord.y, chord.x);
     let mid = Vec2::new((outbound_fix.x + apex.x) * 0.5, (outbound_fix.y + apex.y) * 0.5);
     let line_rad = line_course_true_deg.to_radians();
     let line_dir = Vec2::new(line_rad.sin(), -line_rad.cos());
     let line_normal = Vec2::new(-line_dir.y, line_dir.x);
 
-    // center = mid + t*perp ; require |center - outbound_fix| = dist(center, line):
-    //   (pn^2 - pp) t^2 + (2 bn pn - 2 ap) t + (bn^2 - aa) = 0
     let a = mid.sub(outbound_fix);
     let aa = a.dot(a);
     let ap = a.dot(perp);
@@ -815,7 +814,7 @@ pub(crate) fn course_reversal_rollout_point(
     let qb = 2.0 * bn * pn - 2.0 * ap;
     let qc = bn * bn - aa;
 
-    let mut best_t: Option<(f64, f64)> = None; // (radius, t)
+    let mut best_t: Option<(f64, f64)> = None;
     let mut consider = |t: f64| {
         let center = mid.add(perp.scale(t));
         let radius = center.sub(outbound_fix).len();
