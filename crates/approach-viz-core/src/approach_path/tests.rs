@@ -241,6 +241,42 @@ fn af_arc_lands_at_target_endpoint() {
 }
 
 #[test]
+fn course_from_fix_leg_draws_outbound_teardrop_segment() {
+    // KDDC I14 FLACK transition shape: a fix-anchored leg (TF to OWENJ) followed
+    // by an outbound `FC` course-from-fix leg that forms the outbound side of the
+    // teardrop course reversal. The `FC` leg must project outbound from the fix
+    // along its published course for its distance rather than collapsing onto the
+    // fix waypoint.
+    let ref_lat = 40.0;
+    let ref_lon = -100.0;
+    let legs = vec![
+        make_leg(ApproachPathLeg { sequence: 10, waypoint_id: "APT_OWENJ".into(), waypoint_name: "OWENJ".into(), path_terminator: "TF".into(), altitude: Some(4400.0), altitude_constraint: None, course: None, distance: None, hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 20, waypoint_id: "APT_OWENJ".into(), waypoint_name: "OWENJ".into(), path_terminator: "FC".into(), altitude: Some(4400.0), altitude_constraint: None, course: Some(90.0), distance: Some(6.0), hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+    ];
+    let waypoints = vec![local_waypoint("APT_OWENJ", 0.0, 0.0, ref_lat, ref_lon)];
+    let result = build_path_geometry(BuildPathGeometryParams {
+        legs: legs.clone(),
+        waypoints,
+        resolved_altitudes: resolved_altitudes(&legs),
+        initial_altitude_feet: 4400.0,
+        vertical_scale: 1.0,
+        ref_lat,
+        ref_lon,
+        mag_var: 0.0,
+        show_turn_constraint_labels: false,
+    });
+    // The fix anchor plus the outbound endpoint must both be present.
+    assert_eq!(result.points.len(), 2);
+    let fix = result.points[0];
+    let outbound = result.points[result.points.len() - 1];
+    assert!(fix.x.abs() < 0.05);
+    assert!(fix.z.abs() < 0.05);
+    // Course 090 true projects due east (+x) for the published 6.0 NM distance.
+    assert!((outbound.x - 6.0).abs() < 0.1);
+    assert!(outbound.z.abs() < 0.1);
+}
+
+#[test]
 fn hold_geometry_produces_closed_racetrack_points_at_requested_altitude() {
     let points = build_hold_points(Vec2::new(2.0, -1.0), 45.0, 4.0, 4000.0, "R", 1.0);
     assert!(points.len() > 60);

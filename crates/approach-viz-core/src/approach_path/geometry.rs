@@ -69,7 +69,31 @@ pub(crate) fn build_path_geometry_internal(
         let mut current_point: Option<Vec3> = None;
         let mut heading_transition_points: Option<Vec<Vec3>> = None;
 
-        if let Some(waypoint) = waypoint {
+        if is_course_from_fix_leg(&leg.path_terminator)
+            && waypoint.is_some()
+            && leg.course.is_some_and(|course| course.is_finite())
+        {
+            // Outbound course-from-fix leg (teardrop/course-reversal outbound,
+            // e.g. KDDC I14 FLACK transition `FC` at OWENJ). Anchor at the fix
+            // and project an outbound segment along the published course so the
+            // leg is drawn rather than collapsing onto the fix waypoint.
+            let fix_wp = waypoint.unwrap();
+            let (fix_x, fix_z) = coords::lat_lon_to_local(fix_wp.lat, fix_wp.lon, ref_lat, ref_lon);
+            push_point(&mut points, Vec3::new(fix_x, y, fix_z));
+
+            let heading_true = coords::magnetic_to_true_heading(leg.course.unwrap(), mag_var);
+            let heading_rad = heading_true.to_radians();
+            let distance_nm = leg
+                .distance
+                .filter(|distance| distance.is_finite() && *distance > 0.0)
+                .unwrap_or(COURSE_FROM_FIX_DEFAULT_DISTANCE_NM);
+            current_point = Some(Vec3::new(
+                fix_x + heading_rad.sin() * distance_nm,
+                y,
+                fix_z - heading_rad.cos() * distance_nm,
+            ));
+            last_leg_course_heading_true = Some(heading_true);
+        } else if let Some(waypoint) = waypoint {
             let (x, z) = coords::lat_lon_to_local(waypoint.lat, waypoint.lon, ref_lat, ref_lon);
             current_point = Some(Vec3::new(x, y, z));
             last_leg_course_heading_true = leg

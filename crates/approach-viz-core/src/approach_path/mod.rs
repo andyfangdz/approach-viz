@@ -25,6 +25,9 @@ pub(crate) const MIN_HEADING_TRANSITION_DELTA_DEG: f64 = 6.0;
 pub(crate) const MAX_HEADING_TRANSITION_DELTA_DEG: f64 = 210.0;
 pub(crate) const MIN_VI_TURN_RADIUS_NM: f64 = 0.55;
 pub(crate) const MAX_VI_TURN_RADIUS_NM: f64 = 0.9;
+// Fallback outbound length for course-from-fix legs that do not publish a
+// distance (`FA`/`FM`), so the outbound leg is still visible.
+pub(crate) const COURSE_FROM_FIX_DEFAULT_DISTANCE_NM: f64 = 3.0;
 
 #[cfg(test)]
 mod tests;
