@@ -135,6 +135,29 @@ export const ApproachPath = memo(function ApproachPath({
 
   const holdLegs = useMemo(() => allLegs.filter((leg) => isHoldLeg(leg)), [allLegs]);
 
+  // A transition that ends in a no-fix course-reversal intercept leg (`CI`/`VI`,
+  // e.g. the KDDC I14 FLACK teardrop) has nothing downstream to intercept, so
+  // the reversal would dead-end / run parallel to the final approach course
+  // instead of rejoining it. Append the final approach's first course-carrying
+  // fix leg (the FAF/localizer leg) so the intercept turns back onto the final
+  // approach course in one continuous turn and merges with the final segment.
+  const renderTransitions = useMemo(() => {
+    const reversalIntercept = new Set(['CI', 'VI']);
+    const inboundLeg = approach.finalLegs.find(
+      (leg) => typeof leg.course === 'number' && Number.isFinite(leg.course)
+    );
+    return Array.from(approach.transitions.entries()).map(
+      ([name, legs]): [string, ApproachLeg[]] => {
+        const last = legs[legs.length - 1];
+        if (!last || !reversalIntercept.has(last.pathTerminator) || !inboundLeg) {
+          return [name, legs];
+        }
+        const joinLeg: ApproachLeg = { ...inboundLeg, isMissedApproach: false };
+        return [name, [...legs, joinLeg]];
+      }
+    );
+  }, [approach.transitions, approach.finalLegs]);
+
   const holdAltitudes = useMemo(() => {
     const altitudes = new Map<ApproachLeg, number>();
     for (const leg of holdLegs) {
@@ -170,7 +193,7 @@ export const ApproachPath = memo(function ApproachPath({
         />
       )}
 
-      {Array.from(approach.transitions.entries()).map(([name, legs]) => (
+      {renderTransitions.map(([name, legs]) => (
         <PathTube
           key={name}
           legs={legs}
