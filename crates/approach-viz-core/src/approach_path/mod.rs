@@ -31,6 +31,11 @@ pub(crate) const COURSE_FROM_FIX_DEFAULT_DISTANCE_NM: f64 = 3.0;
 // Upper bound on the inbound (return) leg drawn for a teardrop/course-reversal
 // intercept leg, so a long published outbound distance cannot run away.
 pub(crate) const MAX_REVERSAL_INBOUND_NM: f64 = 12.0;
+// Turn radius for the reversal turn itself. A course reversal is one continuous,
+// broad turn on the plate; the tight VI heading-stub radius renders a sharp
+// spike instead, so the reversal turn uses its own wider radius band.
+pub(crate) const REVERSAL_TURN_MIN_RADIUS_NM: f64 = 1.0;
+pub(crate) const REVERSAL_TURN_MAX_RADIUS_NM: f64 = 2.5;
 
 #[cfg(test)]
 mod tests;

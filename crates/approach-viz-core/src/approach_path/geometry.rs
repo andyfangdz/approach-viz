@@ -261,9 +261,27 @@ pub(crate) fn build_path_geometry_internal(
                 && matches!(leg.path_terminator.as_str(), "CI" | "VI")
                 && reversal_outbound_distance.is_some()
             {
-                let inbound_length_nm =
-                    reversal_outbound_distance.unwrap().clamp(1.0, MAX_REVERSAL_INBOUND_NM);
-                let mut reversal_points = heading_transition_points.take().unwrap_or_default();
+                let outbound_distance_nm = reversal_outbound_distance.unwrap();
+                let inbound_length_nm = outbound_distance_nm.clamp(1.0, MAX_REVERSAL_INBOUND_NM);
+                // Rebuild the reversal as a single broad, continuous turn. The
+                // tight VI heading-stub radius renders a sharp spike, but a
+                // course reversal is one smooth turn on the plate; scale the
+                // turn radius to the outbound leg length so the outbound leg
+                // curves continuously into the inbound leg.
+                let reversal_radius_nm = (outbound_distance_nm * 0.25)
+                    .clamp(REVERSAL_TURN_MIN_RADIUS_NM, REVERSAL_TURN_MAX_RADIUS_NM);
+                let mut reversal_points = last_leg_course_heading_true
+                    .map(|outbound_heading_true| {
+                        build_heading_transition_arc_points(
+                            last_plotted_point,
+                            outbound_heading_true,
+                            heading_true,
+                            y,
+                            leg.turn_direction.as_deref(),
+                            reversal_radius_nm,
+                        )
+                    })
+                    .unwrap_or_default();
                 let inbound_start = reversal_points.last().copied().unwrap_or(last_plotted_point);
                 let inbound_end = Vec3::new(
                     inbound_start.x + heading_rad.sin() * inbound_length_nm,

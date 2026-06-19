@@ -311,6 +311,11 @@ fn teardrop_intercept_leg_completes_inbound_reversal() {
     // The reversal returns south: the final point sits at least half the
     // outbound length back toward the fix rather than stalling at the apex.
     assert!(last.z > apex_z + outbound_nm * 0.5, "inbound leg too short: last z={}", last.z);
+    // The reversal turn is a single broad, continuous turn (not a tight spike):
+    // the left turn off the 000 outbound must sweep well past the tight VI stub
+    // radius laterally before the inbound leg.
+    let widest_x = result.points.iter().map(|p| p.x).fold(f64::MAX, f64::min);
+    assert!(widest_x <= -2.0, "reversal turn too tight (spike): widest x={widest_x}");
 }
 
 #[test]
@@ -359,3 +364,4 @@ fn missed_profile_honors_published_climb_requirement() {
     assert!(with_requirement[2] > without_requirement[2] + 800.0);
     assert!(with_requirement[3] >= 6000.0);
 }
+
