@@ -47,6 +47,11 @@ pub(crate) const ROLLOUT_RADIUS_MAX_NM: f64 = 20.0;
 // spike instead, so the reversal turn uses its own wider radius band.
 pub(crate) const REVERSAL_TURN_MIN_RADIUS_NM: f64 = 1.0;
 pub(crate) const REVERSAL_TURN_MAX_RADIUS_NM: f64 = 2.5;
+// Turn radius for the lead turn that rolls a DME arc (`AF`/`RF`) out onto the
+// inbound course. The chart shows the aircraft leaving the arc at a lead radial
+// and rolling out on the inbound course near the terminating fix, rather than
+// cornering sharply at the fix; this radius shapes that fillet.
+pub(crate) const DME_ARC_LEAD_TURN_RADIUS_NM: f64 = 2.0;
 
 #[cfg(test)]
 mod tests;

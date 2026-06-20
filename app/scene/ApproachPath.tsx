@@ -135,21 +135,25 @@ export const ApproachPath = memo(function ApproachPath({
 
   const holdLegs = useMemo(() => allLegs.filter((leg) => isHoldLeg(leg)), [allLegs]);
 
-  // A transition that ends in a no-fix course-reversal intercept leg (`CI`/`VI`,
-  // e.g. the KDDC I14 FLACK teardrop) has nothing downstream to roll out onto.
   // Append the final approach's first course-carrying fix leg (the FAF/localizer
-  // leg) so the shared engine renders the reversal as a single smooth arc that
-  // rolls out tangent onto the final approach course at an interior point, then
-  // continues inbound toward that fix.
+  // leg) to transitions that need a downstream course to roll out onto:
+  //   - A no-fix course-reversal intercept (`CI`/`VI`, e.g. the KDDC I14 FLACK
+  //     teardrop) so the shared engine renders the reversal as a single smooth
+  //     arc that rolls out tangent onto the final approach course.
+  //   - A DME arc (`AF`/`RF`, e.g. the KDDC I14 POKPE/EARPP 14 DME arcs) so the
+  //     engine rolls the arc out onto the inbound course with a lead turn near
+  //     the fix instead of cornering sharply at it.
+  // Either way the appended leg is consumed by the engine and the inbound course
+  // itself is drawn by the segment that owns it.
   const renderTransitions = useMemo(() => {
-    const reversalIntercept = new Set(['CI', 'VI']);
+    const rollOutTerminator = new Set(['CI', 'VI', 'AF', 'RF']);
     const inboundLeg = approach.finalLegs.find(
       (leg) => typeof leg.course === 'number' && Number.isFinite(leg.course)
     );
     return Array.from(approach.transitions.entries()).map(
       ([name, legs]): [string, ApproachLeg[]] => {
         const last = legs[legs.length - 1];
-        if (!last || !reversalIntercept.has(last.pathTerminator) || !inboundLeg) {
+        if (!last || !rollOutTerminator.has(last.pathTerminator) || !inboundLeg) {
           return [name, legs];
         }
         const joinLeg: ApproachLeg = { ...inboundLeg, isMissedApproach: false };

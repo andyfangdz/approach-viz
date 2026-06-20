@@ -415,3 +415,90 @@ fn missed_profile_honors_published_climb_requirement() {
     assert!(with_requirement[2] > without_requirement[2] + 800.0);
     assert!(with_requirement[3] >= 6000.0);
 }
+
+#[test]
+fn dme_arc_lead_turn_rolls_out_onto_inbound_course() {
+    // A DME arc (`AF`) terminating at a fix, followed by an inbound course leg
+    // (as the scene composition appends), should roll out of the arc with a
+    // smooth lead turn onto the inbound course near the fix instead of a sharp
+    // corner. Synthetic geometry: a 10 NM arc centered at the origin, an initial
+    // fix due east of the center, an arc fix due north of it, and an inbound
+    // course running due south (heading inward, through the center).
+    let ref_lat = 40.0;
+    let ref_lon = -100.0;
+    let waypoints = vec![
+        local_waypoint("CTR", 0.0, 0.0, ref_lat, ref_lon),
+        local_waypoint("IAF", 10.0, 0.0, ref_lat, ref_lon),
+        local_waypoint("ARCFIX", 0.0, 10.0, ref_lat, ref_lon),
+        // Inbound target down a 225 deg (south-west) course from the arc fix —
+        // clearly off the radial so the lead turn corner is well defined.
+        local_waypoint("TGT", -3.54, 6.46, ref_lat, ref_lon),
+    ];
+    let leg = |id: &str, pt: &str, course: Option<f64>, rf_center: Option<&str>, rf_turn: Option<&str>| {
+        make_leg(ApproachPathLeg {
+            sequence: 0,
+            waypoint_id: id.into(),
+            waypoint_name: id.into(),
+            path_terminator: pt.into(),
+            altitude: Some(4000.0),
+            altitude_constraint: None,
+            course,
+            distance: None,
+            hold_course: None,
+            hold_distance: None,
+            turn_direction: None,
+            hold_turn_direction: None,
+            rf_center_waypoint_id: rf_center.map(|s| s.to_string()),
+            rf_turn_direction: rf_turn.map(|s| s.to_string()),
+            vertical_angle_deg: None,
+            rnp_service_levels: None,
+            is_final_approach_fix: false,
+            is_initial_fix: false,
+            is_final_fix: false,
+            is_missed_approach: false,
+        })
+    };
+    // Arc travels counter-clockwise (east fix -> north fix), then joins a course
+    // of 225 deg (south-west) — the appended inbound leg.
+    let legs = vec![
+        leg("IAF", "IF", None, None, None),
+        leg("ARCFIX", "AF", None, Some("CTR"), Some("L")),
+        leg("TGT", "CF", Some(225.0), None, None),
+    ];
+    let result = build_path_geometry(BuildPathGeometryParams {
+        resolved_altitudes: resolved_altitudes(&legs),
+        legs,
+        waypoints,
+        initial_altitude_feet: 4000.0,
+        vertical_scale: 1.0,
+        ref_lat,
+        ref_lon,
+        mag_var: 0.0,
+        show_turn_constraint_labels: false,
+    });
+
+    // The corner is smoothed: no single bend approaches the ~90 deg sharp turn
+    // that a plain arc-then-straight-leg join would produce.
+    assert!(
+        max_turn_degrees(&result.points) < 25.0,
+        "expected a smooth lead turn, got max bend {} deg",
+        max_turn_degrees(&result.points)
+    );
+    // The path rolls out established on the inbound course (225 deg) near the
+    // arc fix rather than cornering at it.
+    let last = result.points[result.points.len() - 1];
+    let second_last = result.points[result.points.len() - 2];
+    let rollout_heading = segment_heading_degrees(second_last, last);
+    assert!(
+        (rollout_heading - 225.0).abs() < 12.0,
+        "expected roll-out heading ~225 deg, got {} deg",
+        rollout_heading
+    );
+    let arc_fix_z = -10.0;
+    assert!(
+        ((last.x).powi(2) + (last.z - arc_fix_z).powi(2)).sqrt() < 5.0,
+        "expected roll-out near the arc fix, got ({}, {})",
+        last.x,
+        last.z
+    );
+}
