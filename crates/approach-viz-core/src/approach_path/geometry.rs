@@ -326,6 +326,15 @@ pub(crate) fn build_path_geometry_internal(
                 // outbound leg is still completed as a single broad, continuous
                 // turn plus an inbound leg mirroring the outbound distance, so
                 // the reversal does not dead-end at a short turn stub.
+                //
+                // This is deliberately gated on `next_wp.is_none()`: when a client
+                // has appended a downstream course leg (`next_wp` is `Some`) the
+                // `course_reversal_arc` roll-out above is the intended path. If
+                // that roll-out fails (`course_reversal_rollout_point` returns
+                // `None` for degenerate geometry — rare for real CIFP teardrops),
+                // we intentionally fall through to the standard `CI`/`VI` ->
+                // course-intercept join toward that appended fix rather than this
+                // no-fix mirror, since the appended course is the better target.
                 let reversal_outbound_distance = leg_index
                     .checked_sub(1)
                     .and_then(|index| legs.get(index))
@@ -828,7 +837,11 @@ pub(crate) fn course_reversal_rollout_point(
     let mut consider = |t: f64| {
         let center = mid.add(perp.scale(t));
         let radius = center.sub(outbound_fix).len();
-        if radius.is_finite() && radius > 0.2 && radius < 20.0 && best_t.is_none_or(|(r, _)| radius < r) {
+        if radius.is_finite()
+            && radius > ROLLOUT_RADIUS_MIN_NM
+            && radius < ROLLOUT_RADIUS_MAX_NM
+            && best_t.is_none_or(|(r, _)| radius < r)
+        {
             best_t = Some((radius, t));
         }
     };
