@@ -65,7 +65,7 @@
 - One-shot ingest profile helper: `bash .agents/skills/runtime-profile-ingestion/scripts/profile_ingest_one_shot.sh --timestamp <ts> --repeats <n>`
 - Live route latency profile helper: `bash .agents/skills/runtime-profile-live/scripts/profile_runtime_routes.sh --iterations 20`
 - Live traffic stress helper: `bash .agents/skills/runtime-stress-traffic-live/scripts/stress_runtime_traffic.sh --requests 1200 --concurrency 40`
-- Approach plate visual check (compare computed approach geometry to the real FAA plate): `bash .agents/skills/approach-plate-visual-check/scripts/fetch_plate.sh <ICAO> "<chart name>"` then dump engine geometry (`.agents/skills/approach-plate-visual-check/templates/dump_geometry.rs.txt`) and plot with `scripts/plot_geometry.py`. See `.agents/skills/approach-plate-visual-check/SKILL.md`. Use when changing approach-path rendering or when a procedure looks wrong versus the chart.
+- Approach plate visual check (compare computed approach geometry to the real FAA plate): `bash .agents/skills/approach-plate-visual-check/scripts/fetch_plate.sh <ICAO> "<chart name>"` then dump engine geometry (`.agents/skills/approach-plate-visual-check/templates/dump_geometry.rs.txt`) and either plot beside the plate with `scripts/plot_geometry.py` or overlay it directly on the georeferenced plate (GPTS/LPTS control points) with `scripts/overlay_geometry.py`. See `.agents/skills/approach-plate-visual-check/SKILL.md`. Use when changing approach-path rendering or when a procedure looks wrong versus the chart.
 
 ## Repository Layout
 

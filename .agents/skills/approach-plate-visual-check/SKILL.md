@@ -17,9 +17,17 @@ makes that comparison repeatable:
    and iOS).
 3. Plot the geometry north-up and compare it to the plate's plan view.
 
-Key caveat: **FAA plan views are schematic, not to scale.** Match topology and
-shape (which fix the curve starts at, which way it bulges, where it rejoins the
-course), not pixel positions. A pixel overlay will not line up.
+Key caveat: **FAA plan views are schematic, not to scale.** For the side-by-side
+plot, match topology and shape (which fix the curve starts at, which way it
+bulges, where it rejoins the course), not pixel positions.
+
+For a closer check, step 4 can instead **overlay** the computed geometry directly
+on the plate using the plate's embedded georeference (GPTS/LPTS viewport control
+points — the same data the app's `ApproachPlateSurface` uses). That shows whether
+the computed arc/turn actually lies on the chart's drawn arc and exactly where it
+diverges. The bilinear control-point map has a little slack (~1-2 NM over a full
+US plate) plus schematic distortion, so judge a turn's shape and placement
+against the chart line, not sub-NM pixels.
 
 ## Inputs
 
@@ -48,10 +56,18 @@ bash "$SKILL/scripts/fetch_plate.sh" KDDC "ILS OR LOC RWY 14" --clip "40 95 320 
 cargo test -p approach-viz-core dump_plate_geometry
 #   -> writes /tmp/plate_geometry.txt   (DELETE the temp test before committing)
 
-# 3. Plot side-by-side with the plate plan view:
+# 3a. Plot side-by-side with the plate plan view:
 python3 "$SKILL/scripts/plot_geometry.py" /tmp/plate_geometry.txt /tmp/compare.png \
   --plate .tmp/plate-visual-check/KDDC/00676IL14_plan.png --xlim -11 2 --ylim 3 22
 #   -> View /tmp/compare.png and iterate on the geometry.
+
+# 3b. (Optional) Overlay the geometry directly on the georeferenced plate. Use
+#     --ref-lat/--ref-lon = the same projection reference used in the dump (the
+#     airport), and --zoom-fix to center on a fix of interest.
+python3 "$SKILL/scripts/overlay_geometry.py" \
+  .tmp/plate-visual-check/KDDC/00676IL14.pdf /tmp/plate_geometry.txt \
+  --ref-lat 37.7631 --ref-lon -99.9654 --zoom-fix WEROM --pad 230 --out /tmp/overlay.png
+#   -> View /tmp/overlay.png: computed path drawn on top of the chart.
 ```
 
 ## Workflow
@@ -69,7 +85,9 @@ python3 "$SKILL/scripts/plot_geometry.py" /tmp/plate_geometry.txt /tmp/compare.p
    (final, each transition, missed, hold). The dump uses the same
    `build_path_geometry` the web (WASM) and iOS (UniFFI) clients call.
 4. **Plot + compare.** `plot_geometry.py` draws the geometry north-up next to
-   the plate. Compare topology/shape, then adjust the engine
+   the plate (compare topology/shape). For a precise check, `overlay_geometry.py`
+   draws the geometry _on_ the georeferenced plate so you can see exactly where
+   the computed arc/turn leaves the chart's drawn line. Then adjust the engine
    (`crates/approach-viz-core/src/approach_path/`) and re-dump.
 5. **Clean up.** Delete the temporary dump test before committing. The plate
    PNGs and `/tmp` artifacts are scratch.
@@ -93,11 +111,14 @@ special-cased).
 - `scripts/find_plate.py` — look up a plate PDF name in the d-TPP metafile.
 - `scripts/render_plate.py` — render a PDF page/region to PNG (PyMuPDF).
 - `scripts/plot_geometry.py` — plot a segments file, optionally beside the plate.
+- `scripts/overlay_geometry.py` — overlay a segments file on the georeferenced
+  plate (GPTS/LPTS control points) for a precise on-chart comparison.
 - `templates/dump_geometry.rs.txt` — diagnostic test template for the geometry dump.
 
 ## Notes
 
-- Python deps (`pymupdf`, `matplotlib`, `pillow`) are auto-installed on demand.
+- Python deps (`pymupdf`, `matplotlib`, `pillow`, plus `numpy` for
+  `overlay_geometry.py`) are auto-installed on demand.
 - Network access to `aeronav.faa.gov` is required to fetch the metafile/plate.
 - The metafile is cached per cycle under the output directory; `--cycle YYMM`
   pins a specific AIRAC cycle (default: latest).
