@@ -54,8 +54,12 @@ pub(crate) fn build_path_geometry_internal(
     let mut pending_course_to_fix_turn_direction: Option<String> = None;
     let mut pending_course_to_fix_prefers_course_intercept = false;
     let mut last_leg_course_heading_true: Option<f64> = None;
+    let mut skip_next_leg = false;
 
     for (leg_index, leg) in legs.iter().enumerate() {
+        if std::mem::take(&mut skip_next_leg) {
+            continue;
+        }
         let resolved_altitude = resolved_altitudes
             .get(leg_index)
             .copied()
@@ -69,7 +73,31 @@ pub(crate) fn build_path_geometry_internal(
         let mut current_point: Option<Vec3> = None;
         let mut heading_transition_points: Option<Vec<Vec3>> = None;
 
-        if let Some(waypoint) = waypoint {
+        if is_course_from_fix_leg(&leg.path_terminator)
+            && waypoint.is_some()
+            && leg.course.is_some_and(|course| course.is_finite())
+        {
+            // Outbound course-from-fix leg (teardrop/course-reversal outbound,
+            // e.g. KDDC I14 FLACK transition `FC` at OWENJ). Anchor at the fix
+            // and project an outbound segment along the published course so the
+            // leg is drawn rather than collapsing onto the fix waypoint.
+            let fix_wp = waypoint.unwrap();
+            let (fix_x, fix_z) = coords::lat_lon_to_local(fix_wp.lat, fix_wp.lon, ref_lat, ref_lon);
+            push_point(&mut points, Vec3::new(fix_x, y, fix_z));
+
+            let heading_true = coords::magnetic_to_true_heading(leg.course.unwrap(), mag_var);
+            let heading_rad = heading_true.to_radians();
+            let distance_nm = leg
+                .distance
+                .filter(|distance| distance.is_finite() && *distance > 0.0)
+                .unwrap_or(COURSE_FROM_FIX_DEFAULT_DISTANCE_NM);
+            current_point = Some(Vec3::new(
+                fix_x + heading_rad.sin() * distance_nm,
+                y,
+                fix_z - heading_rad.cos() * distance_nm,
+            ));
+            last_leg_course_heading_true = Some(heading_true);
+        } else if let Some(waypoint) = waypoint {
             let (x, z) = coords::lat_lon_to_local(waypoint.lat, waypoint.lon, ref_lat, ref_lon);
             current_point = Some(Vec3::new(x, y, z));
             last_leg_course_heading_true = leg
@@ -196,37 +224,155 @@ pub(crate) fn build_path_geometry_internal(
                 }
             }
 
-            if let Some(last_leg_course_heading_true) = last_leg_course_heading_true {
-                let vi_turn_radius = (distance_nm * 0.9)
-                    .clamp(MIN_VI_TURN_RADIUS_NM, MAX_VI_TURN_RADIUS_NM);
-                let arc_points = build_heading_transition_arc_points(
-                    last_plotted_point,
-                    last_leg_course_heading_true,
-                    heading_true,
-                    y,
-                    leg.turn_direction.as_deref(),
-                    vi_turn_radius,
-                );
-                if !arc_points.is_empty() {
-                    current_point = arc_points.last().copied();
-                    heading_transition_points = Some(arc_points);
-                }
-            }
-            if current_point.is_none() {
-                current_point = Some(Vec3::new(
-                    last_plotted_point.x + heading_rad.sin() * distance_nm,
-                    y,
-                    last_plotted_point.z - heading_rad.cos() * distance_nm,
-                ));
-            }
-            pending_course_to_fix_turn_heading = Some(heading_true);
-            pending_course_to_fix_turn_direction = if is_fix_join_terminator(next_leg.map(|leg| leg.path_terminator.as_str())) {
-                next_leg.and_then(|leg| leg.turn_direction.clone())
+            // Teardrop/course-reversal inbound side: an intercept leg (`CI`/`VI`)
+            // immediately after a course-from-fix outbound leg, joining a
+            // downstream final approach course fix. Render the reversal as a
+            // single smooth circular arc through the outbound fix and the
+            // outbound apex that rolls out tangent onto the final approach course
+            // at an interior point (no straight outbound leg), terminating at
+            // that roll-out point (for example `KDDC I14` `FLACK` at OWENJ).
+            let previous_is_course_from_fix = leg_index
+                .checked_sub(1)
+                .and_then(|index| legs.get(index))
+                .is_some_and(|previous| is_course_from_fix_leg(&previous.path_terminator));
+            let course_reversal_arc = if matches!(leg.path_terminator.as_str(), "CI" | "VI")
+                && previous_is_course_from_fix
+                && points.len() >= 2
+            {
+                next_leg
+                    .filter(|next_leg| {
+                        is_fix_join_terminator(Some(next_leg.path_terminator.as_str()))
+                            && next_leg.course.is_some_and(|course| course.is_finite())
+                    })
+                    .and_then(|localizer_leg| {
+                        let localizer_wp = resolve_waypoint(waypoints, &localizer_leg.waypoint_id)?;
+                        let (localizer_x, localizer_z) = coords::lat_lon_to_local(
+                            localizer_wp.lat,
+                            localizer_wp.lon,
+                            ref_lat,
+                            ref_lon,
+                        );
+                        let localizer_course_true =
+                            coords::magnetic_to_true_heading(localizer_leg.course.unwrap(), mag_var);
+                        // Outbound apex (last plotted) and outbound fix (before it).
+                        let apex = *points.last().unwrap();
+                        let outbound_fix_2 = Vec2::new(points[points.len() - 2].x, points[points.len() - 2].z);
+                        // Cap the apex distance so a long outbound leg does not
+                        // bulge the loop far past the course fix (keeps the
+                        // teardrop compact, near the course fix's level).
+                        let outbound_vec = Vec2::new(apex.x, apex.z).sub(outbound_fix_2);
+                        let outbound_len = outbound_vec.len();
+                        let apex_2 = if outbound_len > 1e-6 {
+                            let capped = outbound_len.min(TEARDROP_MAX_OUTBOUND_NM);
+                            outbound_fix_2.add(outbound_vec.scale(capped / outbound_len))
+                        } else {
+                            Vec2::new(apex.x, apex.z)
+                        };
+                        let rollout = course_reversal_rollout_point(
+                            outbound_fix_2,
+                            apex_2,
+                            Vec2::new(localizer_x, localizer_z),
+                            localizer_course_true,
+                        )?;
+                        Some((
+                            build_arc_through_three_points(outbound_fix_2, apex_2, rollout, y),
+                            localizer_course_true,
+                        ))
+                    })
             } else {
                 None
             };
-            pending_course_to_fix_prefers_course_intercept = true;
-            last_leg_course_heading_true = Some(heading_true);
+
+            if let Some((arc_points, localizer_course_true)) = course_reversal_arc {
+                // Drop the straight outbound apex; the reversal arc starts at the
+                // outbound fix and ends at the interior roll-out point.
+                points.pop();
+                current_point = arc_points.last().copied();
+                heading_transition_points = Some(arc_points);
+                last_leg_course_heading_true = Some(localizer_course_true);
+                pending_course_to_fix_turn_heading = None;
+                pending_course_to_fix_turn_direction = None;
+                pending_course_to_fix_prefers_course_intercept = false;
+                // Terminate the reversal at the roll-out point; the downstream
+                // final approach course leg is shown by the final segment.
+                skip_next_leg = true;
+            } else {
+                if let Some(last_leg_course_heading_true) = last_leg_course_heading_true {
+                    let vi_turn_radius = (distance_nm * 0.9)
+                        .clamp(MIN_VI_TURN_RADIUS_NM, MAX_VI_TURN_RADIUS_NM);
+                    let arc_points = build_heading_transition_arc_points(
+                        last_plotted_point,
+                        last_leg_course_heading_true,
+                        heading_true,
+                        y,
+                        leg.turn_direction.as_deref(),
+                        vi_turn_radius,
+                    );
+                    if !arc_points.is_empty() {
+                        current_point = arc_points.last().copied();
+                        heading_transition_points = Some(arc_points);
+                    }
+                }
+                if current_point.is_none() {
+                    current_point = Some(Vec3::new(
+                        last_plotted_point.x + heading_rad.sin() * distance_nm,
+                        y,
+                        last_plotted_point.z - heading_rad.cos() * distance_nm,
+                    ));
+                }
+
+                // Fallback when no downstream final approach course is available
+                // to roll out onto: a terminal `CI`/`VI` after a course-from-fix
+                // outbound leg is still completed as a single broad, continuous
+                // turn plus an inbound leg mirroring the outbound distance, so
+                // the reversal does not dead-end at a short turn stub.
+                let reversal_outbound_distance = leg_index
+                    .checked_sub(1)
+                    .and_then(|index| legs.get(index))
+                    .filter(|previous| is_course_from_fix_leg(&previous.path_terminator))
+                    .and_then(|previous| previous.distance)
+                    .filter(|distance| distance.is_finite() && *distance > 0.0);
+                if next_wp.is_none()
+                    && matches!(leg.path_terminator.as_str(), "CI" | "VI")
+                    && reversal_outbound_distance.is_some()
+                {
+                    let outbound_distance_nm = reversal_outbound_distance.unwrap();
+                    let inbound_length_nm = outbound_distance_nm.clamp(1.0, MAX_REVERSAL_INBOUND_NM);
+                    let reversal_radius_nm = (outbound_distance_nm * 0.25)
+                        .clamp(REVERSAL_TURN_MIN_RADIUS_NM, REVERSAL_TURN_MAX_RADIUS_NM);
+                    let mut reversal_points = last_leg_course_heading_true
+                        .map(|outbound_heading_true| {
+                            build_heading_transition_arc_points(
+                                last_plotted_point,
+                                outbound_heading_true,
+                                heading_true,
+                                y,
+                                leg.turn_direction.as_deref(),
+                                reversal_radius_nm,
+                            )
+                        })
+                        .unwrap_or_default();
+                    let inbound_start =
+                        reversal_points.last().copied().unwrap_or(last_plotted_point);
+                    let inbound_end = Vec3::new(
+                        inbound_start.x + heading_rad.sin() * inbound_length_nm,
+                        y,
+                        inbound_start.z - heading_rad.cos() * inbound_length_nm,
+                    );
+                    reversal_points.push(inbound_end);
+                    current_point = Some(inbound_end);
+                    heading_transition_points = Some(reversal_points);
+                }
+
+                pending_course_to_fix_turn_heading = Some(heading_true);
+                pending_course_to_fix_turn_direction = if is_fix_join_terminator(next_leg.map(|leg| leg.path_terminator.as_str())) {
+                    next_leg.and_then(|leg| leg.turn_direction.clone())
+                } else {
+                    None
+                };
+                pending_course_to_fix_prefers_course_intercept = true;
+                last_leg_course_heading_true = Some(heading_true);
+            }
         } else {
             last_leg_course_heading_true = None;
         }
@@ -586,6 +732,122 @@ pub(crate) fn build_course_to_fix_turn_points(
         a_score.partial_cmp(&b_score).unwrap()
     });
     feasible_candidates.remove(0).points
+}
+
+
+/// Build the circular arc that passes through three points (`p0` -> `p1` ->
+/// `p2`), sweeping the direction that goes through `p1`. Returned points run
+/// from just after `p0` to `p2`. Used to render a teardrop/course-reversal as a
+/// single smooth curve (outbound fix -> outbound apex -> roll-out fix) with no
+/// straight outbound leg, terminating on the final approach course fix.
+pub(crate) fn build_arc_through_three_points(p0: Vec2, p1: Vec2, p2: Vec2, y: f64) -> Vec<Vec3> {
+    let d = 2.0 * (p0.x * (p1.y - p2.y) + p1.x * (p2.y - p0.y) + p2.x * (p0.y - p1.y));
+    if d.abs() < 1e-9 {
+        // Degenerate (collinear): fall back to a straight segment.
+        return vec![Vec3::new(p1.x, y, p1.y), Vec3::new(p2.x, y, p2.y)];
+    }
+    let p0_sq = p0.x * p0.x + p0.y * p0.y;
+    let p1_sq = p1.x * p1.x + p1.y * p1.y;
+    let p2_sq = p2.x * p2.x + p2.y * p2.y;
+    let center = Vec2::new(
+        (p0_sq * (p1.y - p2.y) + p1_sq * (p2.y - p0.y) + p2_sq * (p0.y - p1.y)) / d,
+        (p0_sq * (p2.x - p1.x) + p1_sq * (p0.x - p2.x) + p2_sq * (p1.x - p0.x)) / d,
+    );
+    let radius = p0.sub(center).len();
+    let two_pi = PI * 2.0;
+    let normalize_positive = |value: f64| {
+        let mut wrapped = value % two_pi;
+        if wrapped < 0.0 {
+            wrapped += two_pi;
+        }
+        wrapped
+    };
+    let start_angle = (p0.y - center.y).atan2(p0.x - center.x);
+    let through_ccw = normalize_positive((p1.y - center.y).atan2(p1.x - center.x) - start_angle);
+    let end_ccw = normalize_positive((p2.y - center.y).atan2(p2.x - center.x) - start_angle);
+    // Sweep counter-clockwise from p0 if the mid point lies on that side,
+    // otherwise clockwise; either way the arc passes through p1.
+    let (total, counter_clockwise) = if through_ccw <= end_ccw + 1e-9 {
+        (end_ccw, true)
+    } else {
+        (two_pi - end_ccw, false)
+    };
+
+    let steps = ((total / (PI / 48.0)).ceil() as usize).max(16);
+    let mut points = Vec::with_capacity(steps);
+    for step in 1..=steps {
+        let t = step as f64 / steps as f64;
+        let angle = if counter_clockwise {
+            start_angle + total * t
+        } else {
+            start_angle - total * t
+        };
+        points.push(Vec3::new(
+            center.x + angle.cos() * radius,
+            y,
+            center.y + angle.sin() * radius,
+        ));
+    }
+    points
+}
+
+
+/// Roll-out point for a teardrop/course-reversal: where the circle through the
+/// outbound fix and the outbound apex, tangent to the final approach course line
+/// (through `line_point`, heading `line_course_true_deg`), touches that line —
+/// an interior point on the course, not the course fix. `None` when no feasible
+/// tangent circle exists.
+pub(crate) fn course_reversal_rollout_point(
+    outbound_fix: Vec2,
+    apex: Vec2,
+    line_point: Vec2,
+    line_course_true_deg: f64,
+) -> Option<Vec2> {
+    let chord = apex.sub(outbound_fix);
+    if chord.len() < 1e-6 {
+        return None;
+    }
+    let perp = Vec2::new(-chord.y, chord.x);
+    let mid = Vec2::new((outbound_fix.x + apex.x) * 0.5, (outbound_fix.y + apex.y) * 0.5);
+    let line_rad = line_course_true_deg.to_radians();
+    let line_dir = Vec2::new(line_rad.sin(), -line_rad.cos());
+    let line_normal = Vec2::new(-line_dir.y, line_dir.x);
+
+    let a = mid.sub(outbound_fix);
+    let aa = a.dot(a);
+    let ap = a.dot(perp);
+    let pp = perp.dot(perp);
+    let b = mid.sub(line_point);
+    let bn = b.dot(line_normal);
+    let pn = perp.dot(line_normal);
+    let qa = pn * pn - pp;
+    let qb = 2.0 * bn * pn - 2.0 * ap;
+    let qc = bn * bn - aa;
+
+    let mut best_t: Option<(f64, f64)> = None;
+    let mut consider = |t: f64| {
+        let center = mid.add(perp.scale(t));
+        let radius = center.sub(outbound_fix).len();
+        if radius.is_finite() && radius > 0.2 && radius < 20.0 && best_t.is_none_or(|(r, _)| radius < r) {
+            best_t = Some((radius, t));
+        }
+    };
+    if qa.abs() < 1e-9 {
+        if qb.abs() > 1e-9 {
+            consider(-qc / qb);
+        }
+    } else {
+        let disc = qb * qb - 4.0 * qa * qc;
+        if disc >= 0.0 {
+            let root = disc.sqrt();
+            consider((-qb + root) / (2.0 * qa));
+            consider((-qb - root) / (2.0 * qa));
+        }
+    }
+    let (_, t) = best_t?;
+    let center = mid.add(perp.scale(t));
+    let along = center.sub(line_point).dot(line_dir);
+    Some(line_point.add(line_dir.scale(along)))
 }
 
 

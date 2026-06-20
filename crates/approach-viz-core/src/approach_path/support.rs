@@ -79,6 +79,16 @@ pub(crate) fn is_no_fix_heading_leg(path_terminator: &str) -> bool {
     matches!(path_terminator, "VI" | "VA" | "VR" | "VD" | "VM" | "CI" | "CD")
 }
 
+/// Course-from-a-fix legs originate at a named fix and proceed outbound along a
+/// published course until reaching an altitude (`FA`), a distance (`FC`), a DME
+/// distance (`FD`), or a manual/vector termination (`FM`). They form the
+/// outbound leg of a teardrop/course-reversal (paired with a downstream `CI`),
+/// so they must be drawn as an outbound segment from the fix rather than
+/// collapsing back onto the fix waypoint.
+pub(crate) fn is_course_from_fix_leg(path_terminator: &str) -> bool {
+    matches!(path_terminator, "FA" | "FC" | "FD" | "FM")
+}
+
 pub(crate) fn push_point(points: &mut Vec<Vec3>, point: Vec3) {
     if points
         .last()

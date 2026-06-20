@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Approach Plate Visual Check'
+  short_description: 'Compare computed approach geometry against the FAA plate'
+  default_prompt: "Fetch and render the FAA approach plate for the given airport and approach, dump the shared engine's computed top-down geometry, and plot them side by side so the rendered path can be compared with the chart."

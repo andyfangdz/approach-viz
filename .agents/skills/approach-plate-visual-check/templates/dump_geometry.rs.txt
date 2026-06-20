@@ -1,0 +1,80 @@
+// Template: temporary diagnostic test that dumps computed approach-path geometry
+// to a "segments file" for `plot_geometry.py`. Paste into
+// `crates/approach-viz-core/src/approach_path/tests.rs`, edit the legs/waypoints
+// for the procedure under test, run with:
+//
+//   cargo test -p approach-viz-core dump_plate_geometry
+//
+// then plot with scripts/plot_geometry.py, and DELETE the test before committing.
+//
+// Coordinates are written as the engine's local scene NM (x = east, z = -north),
+// using the airport as the projection reference — the same frame the renderer
+// uses. Build legs from real CIFP rows (FAACIFP18; see docs/data-sources.md) and
+// real fix lat/lons so the dump matches what ships. `mag_var` is the airport's
+// magnetic variation.
+
+#[test]
+fn dump_plate_geometry() {
+    use std::io::Write;
+
+    // Airport projection reference (lat, lon) and magnetic variation.
+    let (ref_lat, ref_lon, mag_var) = (37.7631, -99.9654, 8.0);
+
+    let wp = |id: &str, lat: f64, lon: f64| ApproachWaypoint {
+        id: id.into(), name: id.into(), lat, lon, waypoint_type: "t".into(),
+    };
+    let waypoints = vec![
+        wp("APT_WEROM", 38.05539, -100.14750),
+        wp("APT_RAVEN", 37.85541, -100.02300),
+        wp("APT_OWENJ", 38.01703, -99.99093),
+        // ... every fix referenced by the legs below ...
+    ];
+
+    let mk = |w: &str, pt: &str, course: Option<f64>, dist: Option<f64>,
+              turn: Option<&str>, alt: f64| ApproachPathLeg {
+        sequence: 0, waypoint_id: w.into(), waypoint_name: w.into(),
+        path_terminator: pt.into(), altitude: Some(alt), altitude_constraint: None,
+        course, distance: dist, hold_course: None, hold_distance: None,
+        turn_direction: turn.map(|t| t.into()), hold_turn_direction: None,
+        rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None,
+        rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false,
+        is_final_fix: false, is_missed_approach: false,
+    };
+
+    // One segment per procedure piece you want to inspect (final, each
+    // transition, missed, etc.). Mirror the real CIFP path/terminator codes.
+    let segments: Vec<(&str, Vec<ApproachPathLeg>)> = vec![
+        ("transition", vec![
+            mk("APT_OWENJ", "TF", None, None, None, 4400.0),
+            mk("APT_OWENJ", "FC", Some(306.0), Some(6.3), None, 4400.0),
+            mk("APT_", "CI", Some(176.0), None, Some("L"), 4400.0),
+            mk("APT_RAVEN", "CF", Some(146.0), None, None, 4400.0),
+        ]),
+        ("final", vec![
+            mk("APT_WEROM", "IF", None, None, None, 4600.0),
+            mk("APT_RAVEN", "CF", Some(146.0), Some(13.4), None, 4400.0),
+        ]),
+    ];
+
+    let mut file = std::fs::File::create("/tmp/plate_geometry.txt").unwrap();
+    for w in &waypoints {
+        let (x, z) = crate::coords::lat_lon_to_local(w.lat, w.lon, ref_lat, ref_lon);
+        writeln!(file, "FIX {} {:.3} {:.3}", w.name, x, z).unwrap();
+    }
+    for (label, legs) in segments {
+        let result = build_path_geometry(BuildPathGeometryParams {
+            resolved_altitudes: legs.iter().map(|l| l.altitude.unwrap_or(0.0)).collect(),
+            legs,
+            waypoints: waypoints.clone(),
+            initial_altitude_feet: 4400.0,
+            vertical_scale: 1.0,
+            ref_lat, ref_lon, mag_var,
+            show_turn_constraint_labels: false,
+        });
+        write!(file, "SEG {label}").unwrap();
+        for p in &result.points {
+            write!(file, " {:.3},{:.3}", p.x, p.z).unwrap();
+        }
+        writeln!(file).unwrap();
+    }
+}

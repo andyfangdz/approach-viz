@@ -46,11 +46,25 @@ enum ApproachPathGeometry {
             sceneData.minimumsSummary?.da?.altitude ??
             sceneData.minimumsSummary?.mda?.altitude
 
-        let transitionPolylines = approach.transitions.compactMap { transition in
-            polyline(
-                for: transition.legs,
+        // A transition that ends in a no-fix course-reversal intercept leg
+        // (`CI`/`VI`, e.g. the KDDC I14 FLACK teardrop) has nothing downstream to
+        // roll out onto. Append the final approach's first course-carrying fix
+        // leg (the FAF/localizer leg) so the shared engine renders the reversal
+        // as a single smooth arc that rolls out tangent onto the final approach
+        // course at an interior point, then continues inbound toward that fix.
+        let reversalInterceptTerminators: Set<String> = ["CI", "VI"]
+        let courseReversalJoinLeg = approach.finalLegs.first { ($0.course?.isFinite ?? false) }
+        let transitionPolylines = approach.transitions.compactMap { transition -> ApproachPolyline? in
+            var transitionLegs = transition.legs
+            if let lastLeg = transitionLegs.last,
+               reversalInterceptTerminators.contains(lastLeg.pathTerminator),
+               let courseReversalJoinLeg {
+                transitionLegs.append(courseReversalJoinLeg)
+            }
+            return polyline(
+                for: transitionLegs,
                 resolvedAltitudes: altitudeValues(
-                    for: transition.legs,
+                    for: transitionLegs,
                     altitudesBySequence: altitudeData.transitionAltitudesByName[transition.name] ?? [:]
                 ),
                 sceneData: sceneData,
