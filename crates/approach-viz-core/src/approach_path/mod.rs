@@ -35,6 +35,13 @@ pub(crate) const MAX_REVERSAL_INBOUND_NM: f64 = 12.0;
 // a long published outbound leg does not bulge the loop far past the course fix;
 // keeps the rendered teardrop compact (near the course fix's level).
 pub(crate) const TEARDROP_MAX_OUTBOUND_NM: f64 = 4.0;
+// Acceptance window for the teardrop reversal roll-out circle radius
+// (`course_reversal_rollout_point`). The minimum is a degeneracy floor (reject
+// near-zero/collapsed circles, not an operational turn radius); the maximum
+// rejects runaway tangent circles. The window comfortably contains the real
+// reversal radius (~`TEARDROP_MAX_OUTBOUND_NM`/2 .. a few NM).
+pub(crate) const ROLLOUT_RADIUS_MIN_NM: f64 = 0.2;
+pub(crate) const ROLLOUT_RADIUS_MAX_NM: f64 = 20.0;
 // Turn radius for the reversal turn itself. A course reversal is one continuous,
 // broad turn on the plate; the tight VI heading-stub radius renders a sharp
 // spike instead, so the reversal turn uses its own wider radius band.
