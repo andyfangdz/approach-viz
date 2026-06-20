@@ -645,84 +645,133 @@ pub(crate) fn build_dme_arc_lead_turn(
     let fix_angle = (-w.y).atan2(w.x);
     let turn_sign = if arc_turn_direction == "R" { -1.0 } else { 1.0 };
 
-    // Approach DME arcs always roll out onto a course heading inward (toward the
-    // airport, inside the arc), so the lead turn curves the same rotational way
-    // as the arc: the fillet is tangent internally to the arc (its center sits a
-    // turn radius inside the arc, offset toward the arc center) and tangent to
-    // the inbound course line. Solve |fix + a·u + r·n_in − arc_center| =
-    // arc_radius − r for the along-course offset `a` of the fillet center; keep
-    // the root that rolls out tightest to the fix.
-    let target = arc_radius - r;
-    let wn = w.dot(n_in);
-    let disc = wu * wu - (arc_radius * arc_radius + r * r + 2.0 * r * wn - target * target);
-    if disc < 0.0 {
-        return None;
-    }
-    let sqrt_disc = disc.sqrt();
+    // The lead turn fillet is tangent to both the DME arc and the inbound course
+    // line, and must curve the same rotational way the arc is being flown so the
+    // path stays smooth at the lead point (no cusp). Its center can sit on either
+    // side of the inbound course line (offset `±r·n_in`) and be tangent to the
+    // arc internally (`arc_radius − r`) or externally (`arc_radius + r`); which
+    // combination is the correct lead turn depends on the arc's approach side and
+    // turn direction. Enumerate all four and keep the candidate whose fillet
+    // enters tangent to the arc in the travel direction and rolls out established
+    // on the inbound course, with the roll-out tightest to the fix.
     let mut best: Option<(f64, Vec3, Vec<Vec3>)> = None;
-    for a in [-wu + sqrt_disc, -wu - sqrt_disc] {
-        let center = arc_fix.add(u.scale(a)).add(n_in.scale(r));
-        let center_offset = center.sub(arc_center);
-        let center_offset_len = center_offset.len();
-        if center_offset_len < 1e-6 {
+    for &(normal, target) in &[
+        (n_in, arc_radius - r),
+        (n_in, arc_radius + r),
+        (n_in.scale(-1.0), arc_radius - r),
+        (n_in.scale(-1.0), arc_radius + r),
+    ] {
+        let wn = w.dot(normal);
+        // Solve |fix + a·u + r·normal − arc_center| = target for the along-course
+        // offset `a` of the fillet center.
+        let disc = wu * wu - (arc_radius * arc_radius + r * r + 2.0 * r * wn - target * target);
+        if disc < 0.0 {
             continue;
         }
-        // Lead point: where the ray arc_center→fillet-center crosses the arc.
-        let lead = arc_center.add(center_offset.scale(arc_radius / center_offset_len));
-        let lead_offset = lead.sub(arc_center);
-        let lead_angle = (-lead_offset.y).atan2(lead_offset.x);
-        // Where the lead point sits relative to the fix along the arc, signed by
-        // the direction of travel (positive = before the fix, a true lead;
-        // small negative = a slight overshoot past the fix, still acceptable).
-        let mut lead_ahead = turn_sign * (fix_angle - lead_angle);
-        while lead_ahead > PI {
-            lead_ahead -= 2.0 * PI;
-        }
-        while lead_ahead < -PI {
-            lead_ahead += 2.0 * PI;
-        }
-        if lead_ahead <= -0.2 || lead_ahead >= PI * 0.75 {
-            continue;
-        }
-        // Roll-out point: the foot of the perpendicular from the fillet center to
-        // the inbound course line (the fillet center sits `r·n_in` off the line).
-        let rollout = arc_fix.add(u.scale(a));
-        let mut fillet = build_minor_arc_points(center, lead, rollout, r, y);
-        if fillet.is_empty() {
-            continue;
-        }
-        // When the roll-out lands short of the fix (the inbound course line is
-        // drawn from the fix onward by the segment that owns it), continue
-        // straight to the fix so the lead turn connects to it without a gap.
-        if a < -1e-3 {
-            fillet.push(Vec3::new(arc_fix.x, y, arc_fix.y));
-        }
-        // Prefer the root whose roll-out is tightest to the fix.
-        let score = a.abs();
-        if best.as_ref().is_none_or(|(best_score, _, _)| score < *best_score) {
-            best = Some((score, Vec3::new(lead.x, y, lead.y), fillet));
+        let sqrt_disc = disc.sqrt();
+        for a in [-wu + sqrt_disc, -wu - sqrt_disc] {
+            let center = arc_fix.add(u.scale(a)).add(normal.scale(r));
+            let center_offset = center.sub(arc_center);
+            let center_offset_len = center_offset.len();
+            if center_offset_len < 1e-6 {
+                continue;
+            }
+            // Lead point: where the ray arc_center→fillet-center crosses the arc.
+            let lead = arc_center.add(center_offset.scale(arc_radius / center_offset_len));
+            let lead_offset = lead.sub(arc_center);
+            let lead_angle = (-lead_offset.y).atan2(lead_offset.x);
+            // Where the lead point sits relative to the fix along the arc, signed
+            // by the direction of travel (positive = a true lead before the fix;
+            // small negative = a slight overshoot past the fix, still acceptable).
+            let mut lead_ahead = turn_sign * (fix_angle - lead_angle);
+            while lead_ahead > PI {
+                lead_ahead -= 2.0 * PI;
+            }
+            while lead_ahead < -PI {
+                lead_ahead += 2.0 * PI;
+            }
+            if lead_ahead <= -0.25 || lead_ahead >= PI * 0.75 {
+                continue;
+            }
+            // The arc's travel heading at the lead point (the fillet must enter
+            // tangent in this direction to avoid a cusp at the lead point).
+            let travel = if arc_turn_direction == "R" {
+                Vec2::new(-lead_offset.y, lead_offset.x)
+            } else {
+                Vec2::new(lead_offset.y, -lead_offset.x)
+            };
+            // Roll-out point: the foot of the perpendicular from the fillet center
+            // to the inbound course line (the center sits `r·normal` off it).
+            let rollout = arc_fix.add(u.scale(a));
+            let Some((fillet, sweep)) = build_fillet_arc(center, lead, travel, rollout, r, y) else {
+                continue;
+            };
+            // Keep the gentle lead turn: a corner-rounding turn sweeps well under
+            // half a circle. Larger sweeps are the wrong-way-around solutions.
+            if sweep >= PI * 1.1 {
+                continue;
+            }
+            // The fillet must roll out established on the inbound course (heading
+            // `u`), not back onto it from the wrong side.
+            if fillet.len() < 2 {
+                continue;
+            }
+            let last = fillet[fillet.len() - 1];
+            let prev = fillet[fillet.len() - 2];
+            let exit = Vec2::new(last.x - prev.x, last.z - prev.z);
+            if exit.len() < 1e-6 || exit.normalize().dot(u) < 0.98 {
+                continue;
+            }
+            let mut fillet = fillet;
+            // When the roll-out lands short of the fix (the inbound course line is
+            // drawn from the fix onward by the segment that owns it), continue
+            // straight to the fix so the lead turn connects to it without a gap.
+            if a < -1e-3 {
+                fillet.push(Vec3::new(arc_fix.x, y, arc_fix.y));
+            }
+            // Prefer the gentlest turn (smallest sweep) — the natural lead turn.
+            if best.as_ref().is_none_or(|(best_sweep, _, _)| sweep < *best_sweep) {
+                best = Some((sweep, Vec3::new(lead.x, y, lead.y), fillet));
+            }
         }
     }
     best.map(|(_, lead, fillet)| (lead, fillet))
 }
 
-/// Points along the minor circular arc (radius `r`, center `center`) from `from`
-/// to `to`, in the `build_rf_arc_points` angle convention. The endpoints are
-/// assumed to lie on the circle; the shorter sweep direction is chosen.
-fn build_minor_arc_points(center: Vec2, from: Vec2, to: Vec2, r: f64, y: f64) -> Vec<Vec3> {
+/// Points along the circular arc (radius `r`, center `center`) from `from` to
+/// `to`, swept in whichever rotational direction leaves `from` tangent to
+/// `initial_heading` (so the arc continues smoothly from an incoming path with
+/// that heading), plus the absolute sweep angle (radians). In the
+/// `build_rf_arc_points` angle convention a point at angle `θ` is
+/// `(cx + cosθ·r, cy − sinθ·r)`. Returns `None` for degenerate input.
+fn build_fillet_arc(
+    center: Vec2,
+    from: Vec2,
+    initial_heading: Vec2,
+    to: Vec2,
+    r: f64,
+    y: f64,
+) -> Option<(Vec<Vec3>, f64)> {
     let from_offset = from.sub(center);
     let to_offset = to.sub(center);
-    if from_offset.len() < 1e-6 || to_offset.len() < 1e-6 {
-        return Vec::new();
+    if from_offset.len() < 1e-6 || to_offset.len() < 1e-6 || initial_heading.len() < 1e-6 {
+        return None;
     }
     let from_angle = (-from_offset.y).atan2(from_offset.x);
     let to_angle = (-to_offset.y).atan2(to_offset.x);
+    // Tangent at `from` for increasing polar angle; pick the sweep direction
+    // whose tangent agrees with the requested entry heading.
+    let tangent_increasing = Vec2::new(-from_angle.sin(), -from_angle.cos());
+    let increasing = tangent_increasing.dot(initial_heading) >= 0.0;
     let mut delta = to_angle - from_angle;
-    while delta > PI {
-        delta -= 2.0 * PI;
-    }
-    while delta < -PI {
-        delta += 2.0 * PI;
+    if increasing {
+        while delta <= 0.0 {
+            delta += 2.0 * PI;
+        }
+    } else {
+        while delta >= 0.0 {
+            delta -= 2.0 * PI;
+        }
     }
     let steps = ((delta.abs() / (PI / 24.0)).ceil() as usize).max(6);
     let mut points = Vec::with_capacity(steps);
@@ -735,7 +784,7 @@ fn build_minor_arc_points(center: Vec2, from: Vec2, to: Vec2, r: f64, y: f64) ->
             center.y - angle.sin() * r,
         ));
     }
-    points
+    Some((points, delta.abs()))
 }
 
 pub(crate) fn build_course_to_fix_turn_points(

@@ -51,7 +51,7 @@ pub(crate) const REVERSAL_TURN_MAX_RADIUS_NM: f64 = 2.5;
 // inbound course. The chart shows the aircraft leaving the arc at a lead radial
 // and rolling out on the inbound course near the terminating fix, rather than
 // cornering sharply at the fix; this radius shapes that fillet.
-pub(crate) const DME_ARC_LEAD_TURN_RADIUS_NM: f64 = 1.2;
+pub(crate) const DME_ARC_LEAD_TURN_RADIUS_NM: f64 = 1.0;
 
 #[cfg(test)]
 mod tests;
