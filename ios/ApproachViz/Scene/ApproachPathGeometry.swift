@@ -46,18 +46,24 @@ enum ApproachPathGeometry {
             sceneData.minimumsSummary?.da?.altitude ??
             sceneData.minimumsSummary?.mda?.altitude
 
-        // A transition that ends in a no-fix course-reversal intercept leg
-        // (`CI`/`VI`, e.g. the KDDC I14 FLACK teardrop) has nothing downstream to
-        // roll out onto. Append the final approach's first course-carrying fix
-        // leg (the FAF/localizer leg) so the shared engine renders the reversal
-        // as a single smooth arc that rolls out tangent onto the final approach
-        // course at an interior point, then continues inbound toward that fix.
-        let reversalInterceptTerminators: Set<String> = ["CI", "VI"]
+        // Append the final approach's first course-carrying fix leg (the
+        // FAF/localizer leg) to transitions that need a downstream course to roll
+        // out onto:
+        //   - A no-fix course-reversal intercept (`CI`/`VI`, e.g. the KDDC I14
+        //     FLACK teardrop) so the shared engine renders the reversal as a
+        //     single smooth arc that rolls out tangent onto the final approach
+        //     course at an interior point.
+        //   - A DME arc (`AF`/`RF`, e.g. the KDDC I14 POKPE/EARPP 14 DME arcs) so
+        //     the engine rolls the arc out onto the inbound course with a lead
+        //     turn near the fix instead of cornering sharply at it.
+        // Either way the appended leg is consumed by the engine and the inbound
+        // course itself is drawn by the segment that owns it.
+        let rollOutTerminators: Set<String> = ["CI", "VI", "AF", "RF"]
         let courseReversalJoinLeg = approach.finalLegs.first { ($0.course?.isFinite ?? false) }
         let transitionPolylines = approach.transitions.compactMap { transition -> ApproachPolyline? in
             var transitionLegs = transition.legs
             if let lastLeg = transitionLegs.last,
-               reversalInterceptTerminators.contains(lastLeg.pathTerminator),
+               rollOutTerminators.contains(lastLeg.pathTerminator),
                let courseReversalJoinLeg {
                 transitionLegs.append(courseReversalJoinLeg)
             }

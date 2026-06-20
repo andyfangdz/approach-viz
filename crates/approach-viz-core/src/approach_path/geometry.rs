@@ -486,13 +486,56 @@ pub(crate) fn build_path_geometry_internal(
             {
                 let (center_x, center_z) =
                     coords::lat_lon_to_local(center_waypoint.lat, center_waypoint.lon, ref_lat, ref_lon);
-                for arc_point in build_rf_arc_points(
-                    previous_point.unwrap(),
-                    current_point,
-                    Vec2::new(center_x, center_z),
-                    leg.rf_turn_direction.as_deref().unwrap_or("R"),
-                ) {
-                    push_point(&mut points, arc_point);
+                let arc_center = Vec2::new(center_x, center_z);
+                let arc_turn_direction = leg.rf_turn_direction.as_deref().unwrap_or("R");
+                // When the arc terminates by joining an inbound course (the next
+                // leg is a course-carrying fix leg), roll out of the arc with a
+                // lead turn near the fix — matching the charted lead-radial turn —
+                // instead of cornering sharply onto the inbound course. The
+                // downstream course is then drawn by the segment that owns it, so
+                // consume the appended inbound leg here.
+                let lead_turn = legs
+                    .get(leg_index + 1)
+                    .filter(|next_leg| {
+                        is_fix_join_terminator(Some(next_leg.path_terminator.as_str()))
+                            && next_leg.course.is_some_and(|course| course.is_finite())
+                    })
+                    .and_then(|inbound_leg| {
+                        let inbound_course_true = coords::magnetic_to_true_heading(
+                            inbound_leg.course.unwrap(),
+                            mag_var,
+                        );
+                        build_dme_arc_lead_turn(
+                            arc_center,
+                            Vec2::new(current_point.x, current_point.z),
+                            arc_turn_direction,
+                            inbound_course_true,
+                            DME_ARC_LEAD_TURN_RADIUS_NM,
+                            current_point.y,
+                        )
+                    });
+                if let Some((lead_point, fillet_points)) = lead_turn {
+                    for arc_point in build_rf_arc_points(
+                        previous_point.unwrap(),
+                        lead_point,
+                        arc_center,
+                        arc_turn_direction,
+                    ) {
+                        push_point(&mut points, arc_point);
+                    }
+                    for fillet_point in fillet_points {
+                        push_point(&mut points, fillet_point);
+                    }
+                    skip_next_leg = true;
+                } else {
+                    for arc_point in build_rf_arc_points(
+                        previous_point.unwrap(),
+                        current_point,
+                        arc_center,
+                        arc_turn_direction,
+                    ) {
+                        push_point(&mut points, arc_point);
+                    }
                 }
             } else {
                 push_point(&mut points, current_point);
@@ -559,6 +602,141 @@ pub(crate) fn build_rf_arc_points(start: Vec3, end: Vec3, center: Vec2, turn_dir
     points
 }
 
+
+/// Where an `AF`/`RF` DME-arc leg terminating at `arc_fix` rolls out onto an
+/// inbound course, build a tangent lead turn (a fillet of radius
+/// `turn_radius_nm`): the path leaves the arc at a lead point and rolls out on
+/// the inbound course near the fix, matching the charted lead-radial turn
+/// instead of cornering sharply at the fix.
+///
+/// Returns `(lead_point_on_arc, fillet_points)` where `fillet_points` ends at
+/// the roll-out point on the inbound course, or `None` when no valid tangent
+/// fillet exists (degenerate geometry — e.g. a near-radial inbound course or a
+/// turn radius too large for the arc), so the caller falls back to the full
+/// arc. Works in local NM (`Vec2 { x = east, y = local z }`), matching
+/// `build_rf_arc_points` (turn direction `"R"` decreases the polar angle, `"L"`
+/// increases it; a point at angle `θ` is `(cx + cosθ·r, cy − sinθ·r)`).
+pub(crate) fn build_dme_arc_lead_turn(
+    arc_center: Vec2,
+    arc_fix: Vec2,
+    arc_turn_direction: &str,
+    inbound_course_true_deg: f64,
+    turn_radius_nm: f64,
+    y: f64,
+) -> Option<(Vec3, Vec<Vec3>)> {
+    let r = turn_radius_nm;
+    let w = arc_fix.sub(arc_center);
+    let arc_radius = w.len();
+    if !arc_radius.is_finite() || arc_radius <= r * 1.1 {
+        return None;
+    }
+    let course_rad = inbound_course_true_deg.to_radians();
+    // Inbound direction unit vector (east, local z).
+    let u = Vec2::new(course_rad.sin(), -course_rad.cos());
+    // Unit normal toward the arc center: the component of (center - fix)
+    // perpendicular to the inbound course.
+    let to_center = arc_center.sub(arc_fix);
+    let n_raw = to_center.sub(u.scale(to_center.dot(u)));
+    if n_raw.len() < 1e-6 {
+        return None; // inbound course is ~radial; the corner is ill-defined
+    }
+    let n_in = n_raw.normalize();
+    let wu = w.dot(u);
+    let fix_angle = (-w.y).atan2(w.x);
+    let turn_sign = if arc_turn_direction == "R" { -1.0 } else { 1.0 };
+
+    // Approach DME arcs always roll out onto a course heading inward (toward the
+    // airport, inside the arc), so the lead turn curves the same rotational way
+    // as the arc: the fillet is tangent internally to the arc (its center sits a
+    // turn radius inside the arc, offset toward the arc center) and tangent to
+    // the inbound course line. Solve |fix + a·u + r·n_in − arc_center| =
+    // arc_radius − r for the along-course offset `a` of the fillet center; keep
+    // the root that rolls out tightest to the fix.
+    let target = arc_radius - r;
+    let wn = w.dot(n_in);
+    let disc = wu * wu - (arc_radius * arc_radius + r * r + 2.0 * r * wn - target * target);
+    if disc < 0.0 {
+        return None;
+    }
+    let sqrt_disc = disc.sqrt();
+    let mut best: Option<(f64, Vec3, Vec<Vec3>)> = None;
+    for a in [-wu + sqrt_disc, -wu - sqrt_disc] {
+        let center = arc_fix.add(u.scale(a)).add(n_in.scale(r));
+        let center_offset = center.sub(arc_center);
+        let center_offset_len = center_offset.len();
+        if center_offset_len < 1e-6 {
+            continue;
+        }
+        // Lead point: where the ray arc_center→fillet-center crosses the arc.
+        let lead = arc_center.add(center_offset.scale(arc_radius / center_offset_len));
+        let lead_offset = lead.sub(arc_center);
+        let lead_angle = (-lead_offset.y).atan2(lead_offset.x);
+        // Where the lead point sits relative to the fix along the arc, signed by
+        // the direction of travel (positive = before the fix, a true lead;
+        // small negative = a slight overshoot past the fix, still acceptable).
+        let mut lead_ahead = turn_sign * (fix_angle - lead_angle);
+        while lead_ahead > PI {
+            lead_ahead -= 2.0 * PI;
+        }
+        while lead_ahead < -PI {
+            lead_ahead += 2.0 * PI;
+        }
+        if lead_ahead <= -0.2 || lead_ahead >= PI * 0.75 {
+            continue;
+        }
+        // Roll-out point: the foot of the perpendicular from the fillet center to
+        // the inbound course line (the fillet center sits `r·n_in` off the line).
+        let rollout = arc_fix.add(u.scale(a));
+        let mut fillet = build_minor_arc_points(center, lead, rollout, r, y);
+        if fillet.is_empty() {
+            continue;
+        }
+        // When the roll-out lands short of the fix (the inbound course line is
+        // drawn from the fix onward by the segment that owns it), continue
+        // straight to the fix so the lead turn connects to it without a gap.
+        if a < -1e-3 {
+            fillet.push(Vec3::new(arc_fix.x, y, arc_fix.y));
+        }
+        // Prefer the root whose roll-out is tightest to the fix.
+        let score = a.abs();
+        if best.as_ref().is_none_or(|(best_score, _, _)| score < *best_score) {
+            best = Some((score, Vec3::new(lead.x, y, lead.y), fillet));
+        }
+    }
+    best.map(|(_, lead, fillet)| (lead, fillet))
+}
+
+/// Points along the minor circular arc (radius `r`, center `center`) from `from`
+/// to `to`, in the `build_rf_arc_points` angle convention. The endpoints are
+/// assumed to lie on the circle; the shorter sweep direction is chosen.
+fn build_minor_arc_points(center: Vec2, from: Vec2, to: Vec2, r: f64, y: f64) -> Vec<Vec3> {
+    let from_offset = from.sub(center);
+    let to_offset = to.sub(center);
+    if from_offset.len() < 1e-6 || to_offset.len() < 1e-6 {
+        return Vec::new();
+    }
+    let from_angle = (-from_offset.y).atan2(from_offset.x);
+    let to_angle = (-to_offset.y).atan2(to_offset.x);
+    let mut delta = to_angle - from_angle;
+    while delta > PI {
+        delta -= 2.0 * PI;
+    }
+    while delta < -PI {
+        delta += 2.0 * PI;
+    }
+    let steps = ((delta.abs() / (PI / 24.0)).ceil() as usize).max(6);
+    let mut points = Vec::with_capacity(steps);
+    for step in 1..=steps {
+        let t = step as f64 / steps as f64;
+        let angle = from_angle + delta * t;
+        points.push(Vec3::new(
+            center.x + angle.cos() * r,
+            y,
+            center.y - angle.sin() * r,
+        ));
+    }
+    points
+}
 
 pub(crate) fn build_course_to_fix_turn_points(
     start: Vec3,
