@@ -102,7 +102,9 @@ def main():
         return b @ lat_c, b @ lon_c
 
     def uv_of(lat, lon):
-        # Invert the near-linear bilinear map with a few Newton steps.
+        # Invert the near-linear bilinear map with a few Newton steps. Stop once
+        # converged, and fail loudly if the Jacobian is singular or the step
+        # blows up rather than silently returning nonsense pixel coordinates.
         u, v = 0.5, 0.5
         for _ in range(50):
             la, lo = latlon_of(u, v)
@@ -112,9 +114,15 @@ def main():
                     [lon_c[1] + lon_c[3] * v, lon_c[2] + lon_c[3] * u],
                 ]
             )
+            if abs(np.linalg.det(jac)) < 1e-12:
+                raise SystemExit("Plate georeference is singular; cannot invert (lat,lon)->(u,v).")
             du = np.linalg.solve(jac, np.array([lat - la, lon - lo]))
             u += du[0]
             v += du[1]
+            if np.linalg.norm(du) < 1e-9:
+                break
+        else:
+            raise SystemExit("Plate georeference inversion did not converge (ill-conditioned viewport).")
         return u, v
 
     doc = fitz.open(args.pdf)
