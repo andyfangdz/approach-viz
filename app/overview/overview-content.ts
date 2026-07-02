@@ -157,14 +157,62 @@ export const SECTIONS: Section[] = [
         blocks: [
           {
             kind: 'p',
-            text: 'The engine takes parsed CIFP legs plus waypoints and returns everything a renderer needs: resolved altitudes per leg (`resolve_approach_altitudes`), sampled 3D path points with vertical guide lines and turn-constraint labels (`build_path_geometry`), and standalone racetrack hold geometry. Turn joins between legs are radius-constrained arc-plus-tangent constructions (minimum turn radius 0.45 NM) rather than hard corners; no-fix heading legs (VI/VA/VR/VD/VM/CI/CD) become turn stubs with 0.55–0.9 NM radii; RF/AF arcs use their published center fixes. Missed-approach climbs default to 200 ft/NM unless the plate publishes an explicit gradient.'
+            text: 'The engine takes parsed CIFP legs plus waypoints and returns everything a renderer needs: resolved altitudes per leg (`resolve_approach_altitudes`), sampled 3D path points with vertical guide lines and turn-constraint labels (`build_path_geometry`), and standalone racetrack hold geometry. Missed-approach climbs default to 200 ft/NM unless the plate publishes an explicit gradient. Every ARINC 424 path terminator in the FAA data gets an explicit treatment, and joins between legs are always radius-constrained arcs rather than hard corners:'
           },
           {
-            kind: 'list',
-            items: [
-              '**Course-from-fix legs** (`FA`/`FC`/`FD`/`FM`) project an outbound apex from the originating fix along the published course; a plain one renders as a straight outbound segment rather than collapsing onto the fix.',
-              '**Teardrop course reversals** (course-from-fix outbound + a no-fix `CI`/`VI` intercept, e.g. `KDDC I14` `FLACK` at `OWENJ`) render as one smooth circular arc through the outbound fix and apex that rolls out **tangent onto the final approach course** — `course_reversal_rollout_point` finds the tangent point on the course line and `build_arc_through_three_points` draws the continuous curve; no straight outbound leg, no spike. With no roll-out course available, a terminal `CI`/`VI` falls back to a single broad continuous turn plus a mirrored inbound leg.',
-              '**DME-arc roll-outs:** an `AF`/`RF` arc that joins an inbound course exits through a lead-turn fillet (`build_dme_arc_lead_turn`, radius `DME_ARC_LEAD_TURN_RADIUS_NM`) tangent to both the arc and the course — matching the charted lead radial. All four tangency combinations (center side × internal/external) are enumerated and the gentlest cusp-free turn wins, so both arc directions (`POKPE` clockwise, `EARPP` counter-clockwise) roll out cleanly; an arc with no inbound course still draws in full to its terminating fix.'
+            kind: 'table',
+            head: ['Legs', 'Meaning', 'How it renders'],
+            rows: [
+              [
+                '`IF`',
+                'Initial fix',
+                'Plots the fix as a path vertex — segments anchor here; no synthesized geometry.'
+              ],
+              [
+                '`TF` · `DF` · `CF`',
+                'Track / direct / course to fix',
+                'Straight segment to the fix. These are the **join terminators**: a pending turn parked by a preceding heading or climb leg is consumed here — `CF` with a published course turns onto that course first and intercepts the fix, `TF`/`DF` get a radius-constrained arc-plus-tangent onto the fix (minimum 0.45 NM). Missed-approach fix-to-fix joins with a published `L`/`R` turn direction also curve instead of cornering.'
+              ],
+              [
+                '`RF` · `AF`',
+                'Constant-radius / DME arc',
+                'Sampled arc around the published center fix (`rf_center_waypoint_id`; turn direction defaults right). When the next leg carries the inbound course, the arc truncates at a lead-turn fillet (`build_dme_arc_lead_turn`) — all four tangency combinations are enumerated and the gentlest cusp-free turn that rolls out toward the fix wins (`POKPE` clockwise, `EARPP` counter-clockwise both work). Without an inbound course the full arc draws to its terminating fix.'
+              ],
+              [
+                '`FA` · `FC` · `FD` · `FM`',
+                'Course from fix',
+                "Straight outbound segment to an apex projected from the fix along the published course — the leg's published distance when present, 3 NM fallback. Never collapses onto the fix; forms the outbound side of a teardrop when a `CI`/`VI` follows."
+              ],
+              [
+                '`CI` · `VI`',
+                'Course / heading to intercept',
+                'Three cases. After a course-from-fix leg with the final course available downstream: a **teardrop course reversal** — one smooth circular arc through the outbound fix and apex that rolls out tangent onto the final approach course (`course_reversal_rollout_point` + `build_arc_through_three_points`), e.g. `KDDC I14` `FLACK` at `OWENJ`. Terminal after a course-from-fix leg with no roll-out fix: a single broad reversal turn (1.0–2.5 NM radius, sized from the outbound distance) plus a mirrored inbound leg up to 12 NM. Anywhere else: a heading stub like the row below.'
+              ],
+              [
+                '`VA` · `VR` · `VM`',
+                'Heading to altitude / radial / manual',
+                'Short heading stubs — sized against the distance to the next fix (clamped 0.25–1.2 NM, 0.45 NM default) and joined by 0.55–0.9 NM heading-transition arcs; each parks a pending turn that the next fix-join leg consumes.'
+              ],
+              [
+                '`CD` · `VD`',
+                'Course / heading to distance',
+                'Heading stubs like the row above; when no next fix pins the length, the published DME distance sizes the stub (clamped to roughly 0.45–2.5 NM).'
+              ],
+              [
+                '`CA`',
+                'Course to altitude',
+                'Synthesized climb segment along the published course — length derived from the required climb at 200 ft/NM. A near-level `CA` ahead of a turning fix join folds into the turn instead of drawing a stub, and the altitude surfaces as a turn-constraint label.'
+              ],
+              [
+                '`HA` · `HF` · `HM`',
+                'Holds',
+                'Kept out of the main path stream entirely: the scene layer filters hold legs and renders Rust-generated racetrack overlays (dashed prisms) with annotations instead.'
+              ],
+              [
+                'everything else',
+                '—',
+                'A leg that names a fix plots at that fix; an unrecognized no-fix leg contributes nothing — the engine skips it rather than fabricating geometry.'
+              ]
             ]
           },
           {
