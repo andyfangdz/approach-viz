@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Create/update SQS subscription for NOAA MRMS SNS notifications."""
+"""Create/update SQS subscription for NOAA MRMS SNS notifications.
+
+Idempotent: safe to re-run. On every run it (re)applies the MessageBody
+filter policy to the live subscription via ``sns:SetSubscriptionAttributes``
+so only ``CONUS/MergedReflectivityQC_00.50/`` S3 events are forwarded to SQS
+(the runtime's only ingest trigger). Without this, an already-existing
+subscription keeps forwarding all ~241 MRMS products — ~240x unnecessary SQS
+API calls and cost.
+
+Required IAM permissions for the invoking principal: ``sqs:CreateQueue``,
+``sqs:GetQueueAttributes``, ``sqs:SetQueueAttributes``, ``sns:Subscribe``,
+and ``sns:SetSubscriptionAttributes``.
+"""
 
 from __future__ import annotations
 
@@ -101,17 +113,35 @@ def main() -> None:
         }
     )
 
+    subscription_attributes = {
+        "RawMessageDelivery": "true",
+        "FilterPolicy": filter_policy,
+        "FilterPolicyScope": "MessageBody",
+    }
+
     response = sns.subscribe(
         TopicArn=args.topic_arn,
         Protocol="sqs",
         Endpoint=queue_arn,
-        Attributes={
-            "RawMessageDelivery": "true",
-            "FilterPolicy": filter_policy,
-            "FilterPolicyScope": "MessageBody",
-        },
+        Attributes=subscription_attributes,
         ReturnSubscriptionArn=True,
     )
+    subscription_arn = response.get("SubscriptionArn")
+
+    # `sns.subscribe` only applies `Attributes` when it CREATES the
+    # subscription. For an already-existing subscription (the common case when
+    # re-running this script) it returns the existing ARN and silently ignores
+    # the attributes — so a subscription created before the filter policy keeps
+    # forwarding all ~241 MRMS products, inflating SQS API charges ~240x.
+    # Explicitly (re)apply the attributes so the live subscription actually
+    # picks up the filter without manual AWS console work.
+    if subscription_arn and subscription_arn != "PendingConfirmation":
+        for attribute_name, attribute_value in subscription_attributes.items():
+            sns.set_subscription_attributes(
+                SubscriptionArn=subscription_arn,
+                AttributeName=attribute_name,
+                AttributeValue=attribute_value,
+            )
 
     output = {
         "region": args.region,
@@ -119,9 +149,21 @@ def main() -> None:
         "queueName": args.queue_name,
         "queueUrl": queue_url,
         "queueArn": queue_arn,
-        "subscriptionArn": response.get("SubscriptionArn"),
+        "subscriptionArn": subscription_arn,
+        "filterPolicyApplied": subscription_arn not in (None, "PendingConfirmation"),
     }
     print(json.dumps(output, indent=2))
+    print()
+    if output["filterPolicyApplied"]:
+        print(
+            "Applied MessageBody filter policy (CONUS/MergedReflectivityQC_00.50/ only) "
+            "to the live subscription; all other MRMS products are no longer forwarded to SQS."
+        )
+    else:
+        print(
+            "WARNING: subscription is pending confirmation; filter policy not applied. "
+            "Re-run once the subscription is confirmed."
+        )
     print()
     print("Set this for the Rust runtime service:")
     print(f"RUNTIME_MRMS_SQS_QUEUE_URL={queue_url}")

@@ -60,7 +60,7 @@
 
 ### Runtime Ops
 
-- Provision SNS/SQS: `python3 scripts/mrms/setup_sns_sqs.py`
+- Provision SNS/SQS: `python3 scripts/mrms/setup_sns_sqs.py` — idempotent; on every run it (re)applies the MessageBody filter policy to the live subscription via `sns:SetSubscriptionAttributes` (only `CONUS/MergedReflectivityQC_00.50/` S3 events reach SQS). This matters because `sns:Subscribe` ignores `Attributes` on an already-existing subscription, so the filter policy would otherwise never take effect on the deployed subscription and the queue keeps receiving all ~241 MRMS products (~240x extra SQS API calls/cost). Invoking principal needs `sqs:CreateQueue`/`GetQueueAttributes`/`SetQueueAttributes` and `sns:Subscribe`/`SetSubscriptionAttributes`.
 - Deploy runtime to OCI: `RUNTIME_MRMS_SQS_QUEUE_URL=... scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>` (host argument is required; the script stages the Rust workspace members needed for `approach-viz-runtime` plus `Cargo.toml`/`Cargo.lock`, stamps runtime trace `service.version` from the local Git branch/SHA/dirty state, backs up the previous binary, and auto-rolls back on a failed post-deploy health check)
 - One-shot ingest profile helper: `bash .agents/skills/runtime-profile-ingestion/scripts/profile_ingest_one_shot.sh --timestamp <ts> --repeats <n>`
 - Live route latency profile helper: `bash .agents/skills/runtime-profile-live/scripts/profile_runtime_routes.sh --iterations 20`
