@@ -172,7 +172,7 @@ function BlockView({ block }: { block: Block }) {
 function DiagramView({ id }: { id: 'system' | 'mrms' | 'workers' | 'plate' }) {
   switch (id) {
     case 'system':
-      return <SystemMap onJump={() => undefined} />;
+      return <SystemMap />;
     case 'mrms':
       return <MrmsPipelineDiagram />;
     case 'workers':

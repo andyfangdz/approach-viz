@@ -205,7 +205,7 @@ function edgePath(from: SysNode, to: SysNode): string {
   return `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
 }
 
-export function SystemMap({ onJump }: { onJump: (id: string) => void }) {
+export function SystemMap() {
   const [focus, setFocus] = useState<string | null>(null);
   const nodeById = new Map(NODES.map((n) => [n.id, n]));
   const focused = focus ? nodeById.get(focus) : undefined;
@@ -255,9 +255,22 @@ export function SystemMap({ onJump }: { onJump: (id: string) => void }) {
               <g
                 key={n.id}
                 className={`ov-sysnode ${lit ? 'ov-lit' : 'ov-dim'} ${focus === n.id ? 'ov-focus' : ''}`}
+                role="button"
+                tabIndex={0}
+                aria-label={`${n.title} — show connections`}
+                aria-pressed={focus === n.id}
                 onClick={(ev) => {
                   ev.stopPropagation();
                   setFocus(focus === n.id ? null : n.id);
+                }}
+                onKeyDown={(ev) => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    setFocus(focus === n.id ? null : n.id);
+                  } else if (ev.key === 'Escape') {
+                    setFocus(null);
+                  }
                 }}
               >
                 <rect
@@ -287,11 +300,8 @@ export function SystemMap({ onJump }: { onJump: (id: string) => void }) {
           <span className="ov-syscard-title">{focused.title}</span>
           <span className="ov-syscard-desc">{focused.desc}</span>
           {focused.jump && (
-            <a
-              className="ov-syscard-jump"
-              href={`#${focused.jump}`}
-              onClick={() => onJump(focused.jump as string)}
-            >
+            // plain anchor: the container's scroll-spy re-syncs the rail as the jump scrolls
+            <a className="ov-syscard-jump" href={`#${focused.jump}`}>
               GO TO SECTION ↓
             </a>
           )}

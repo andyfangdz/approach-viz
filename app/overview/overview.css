@@ -782,8 +782,17 @@ a.ov-code-link:hover code {
 }
 
 .ov-sysnode:hover rect,
-.ov-sysnode.ov-focus rect {
+.ov-sysnode.ov-focus rect,
+.ov-sysnode:focus-visible rect {
   stroke-width: 1.5;
+}
+
+.ov-sysnode:focus {
+  outline: none;
+}
+
+.ov-sysnode:focus-visible rect:first-of-type {
+  stroke-dasharray: 4 3;
 }
 
 .ov-dim {
