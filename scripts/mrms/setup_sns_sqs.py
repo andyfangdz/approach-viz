@@ -89,7 +89,14 @@ def parse_args() -> argparse.Namespace:
         help="Queue-name prefix used to discover stale MRMS queues "
         "(default: approach-viz)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.audit_only and (args.cleanup_stale_subscriptions or args.delete_stale_queues):
+        parser.error(
+            "--audit-only is strictly read-only and cannot be combined with "
+            "--cleanup-stale-subscriptions or --delete-stale-queues; drop "
+            "--audit-only to run cleanup"
+        )
+    return args
 
 
 # Only forward S3 notifications for the base-level reflectivity product.
@@ -262,10 +269,12 @@ def audit_stale_resources(
     else:
         print("No stale MRMS-topic subscriptions owned by this account.")
 
+    queue_urls = []
     try:
-        queue_urls = sqs.list_queues(QueueNamePrefix=args.stale_queue_prefix).get(
-            "QueueUrls", []
-        )
+        for page in sqs.get_paginator("list_queues").paginate(
+            QueueNamePrefix=args.stale_queue_prefix
+        ):
+            queue_urls.extend(page.get("QueueUrls", []))
     except ClientError as error:
         iam_hint(error, "sqs:ListQueues")
     stale_queue_urls = [
