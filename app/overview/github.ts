@@ -4,7 +4,7 @@ const GITHUB_BRANCH = 'master';
 /* Repo-relative paths we are willing to link: top-level source dirs plus a few
    root files. Generated trees (data/, public/, .tmp/) stay unlinked. */
 const REPO_PATH_RE =
-  /^(?:(?:app|lib|scripts|crates|services|ios|sw|schemas|docs|packages|tools)\/[^\s`*]*|AGENTS\.md|CLAUDE\.md|next\.config\.ts|package\.json|Cargo\.toml)$/;
+  /^(?:(?:app|lib|scripts|crates|services|ios|sw|schemas|docs|packages|tools|\.agents)\/[^\s`*]*|AGENTS\.md|CLAUDE\.md|next\.config\.ts|package\.json|Cargo\.toml)$/;
 
 /* Files referenced without a dot extension — everything else extensionless
    is treated as a directory (tree link). */
