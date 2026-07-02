@@ -57,3 +57,6 @@ ios/ApproachViz/RustBridge/Generated/simulator/
 # type declarations) for CI typecheck/build and Vercel deployment without requiring
 # wasm-pack/Rust toolchain.
 .build-benchmark
+
+# Python bytecode caches (e.g. from running scripts/mrms/*.py)
+__pycache__/

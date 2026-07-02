@@ -60,7 +60,7 @@
 
 ### Runtime Ops
 
-- Provision SNS/SQS: `python3 scripts/mrms/setup_sns_sqs.py`
+- Provision SNS/SQS: `python3 scripts/mrms/setup_sns_sqs.py` — idempotently applies the MRMS product filter policy via `set_subscription_attributes` (a bare `sns.subscribe` cannot update an existing subscription's attributes), verifies the live filter policy and fails loudly on mismatch, and audits for stale MRMS-topic subscriptions/queues that bill one SQS request per SNS delivery even when unconsumed (`--audit-only` for read-only checks; `--cleanup-stale-subscriptions` / `--delete-stale-queues` to remove them). The runtime's SQS consumer acknowledges each received batch with a single `delete_message_batch` call instead of per-message deletes.
 - Deploy runtime to OCI: `RUNTIME_MRMS_SQS_QUEUE_URL=... scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>` (host argument is required; the script stages the Rust workspace members needed for `approach-viz-runtime` plus `Cargo.toml`/`Cargo.lock`, stamps runtime trace `service.version` from the local Git branch/SHA/dirty state, backs up the previous binary, and auto-rolls back on a failed post-deploy health check)
 - One-shot ingest profile helper: `bash .agents/skills/runtime-profile-ingestion/scripts/profile_ingest_one_shot.sh --timestamp <ts> --repeats <n>`
 - Live route latency profile helper: `bash .agents/skills/runtime-profile-live/scripts/profile_runtime_routes.sh --iterations 20`

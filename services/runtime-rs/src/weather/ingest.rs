@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
+use aws_sdk_sqs::types::DeleteMessageBatchRequestEntry;
 use aws_sdk_sqs::Client as SqsClient;
 use chrono::Utc;
 use regex::Regex;
@@ -113,7 +114,8 @@ async fn sqs_loop(state: AppState, queue_url: &str) -> Result<()> {
             continue;
         }
 
-        for message in messages {
+        let mut delete_entries = Vec::with_capacity(messages.len());
+        for (index, message) in messages.iter().enumerate() {
             let mut extracted_timestamps = Vec::new();
             if let Some(body) = message.body() {
                 extracted_timestamps = extract_timestamps_from_sqs_body(body, &base_key_regex);
@@ -124,15 +126,38 @@ async fn sqs_loop(state: AppState, queue_url: &str) -> Result<()> {
             }
 
             if let Some(receipt_handle) = message.receipt_handle() {
-                if let Err(error) = sqs_client
-                    .delete_message()
-                    .queue_url(queue_url)
+                match DeleteMessageBatchRequestEntry::builder()
+                    .id(index.to_string())
                     .receipt_handle(receipt_handle)
-                    .send()
-                    .await
+                    .build()
                 {
-                    warn!("Failed to delete SQS message: {error}");
+                    Ok(entry) => delete_entries.push(entry),
+                    Err(error) => warn!("Failed to build SQS batch delete entry: {error}"),
                 }
+            }
+        }
+
+        // One batch delete per receive keeps SQS request volume at ~2 calls per
+        // poll cycle instead of 1 + N (deletes are billed per API call).
+        if !delete_entries.is_empty() {
+            match sqs_client
+                .delete_message_batch()
+                .queue_url(queue_url)
+                .set_entries(Some(delete_entries))
+                .send()
+                .await
+            {
+                Ok(result) => {
+                    for failure in result.failed() {
+                        warn!(
+                            "Failed to delete SQS message (id={}, code={}): {}",
+                            failure.id(),
+                            failure.code(),
+                            failure.message().unwrap_or("no detail"),
+                        );
+                    }
+                }
+                Err(error) => warn!("SQS delete_message_batch failed: {error}"),
             }
         }
     }
