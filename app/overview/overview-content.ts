@@ -160,6 +160,14 @@ export const SECTIONS: Section[] = [
             text: 'The engine takes parsed CIFP legs plus waypoints and returns everything a renderer needs: resolved altitudes per leg (`resolve_approach_altitudes`), sampled 3D path points with vertical guide lines and turn-constraint labels (`build_path_geometry`), and standalone racetrack hold geometry. Turn joins between legs are radius-constrained arc-plus-tangent constructions (minimum turn radius 0.45 NM) rather than hard corners; no-fix heading legs (VI/VA/VR/VD/VM/CI/CD) become turn stubs with 0.55–0.9 NM radii; RF/AF arcs use their published center fixes. Missed-approach climbs default to 200 ft/NM unless the plate publishes an explicit gradient.'
           },
           {
+            kind: 'list',
+            items: [
+              '**Course-from-fix legs** (`FA`/`FC`/`FD`/`FM`) project an outbound apex from the originating fix along the published course; a plain one renders as a straight outbound segment rather than collapsing onto the fix.',
+              '**Teardrop course reversals** (course-from-fix outbound + a no-fix `CI`/`VI` intercept, e.g. `KDDC I14` `FLACK` at `OWENJ`) render as one smooth circular arc through the outbound fix and apex that rolls out **tangent onto the final approach course** — `course_reversal_rollout_point` finds the tangent point on the course line and `build_arc_through_three_points` draws the continuous curve; no straight outbound leg, no spike. With no roll-out course available, a terminal `CI`/`VI` falls back to a single broad continuous turn plus a mirrored inbound leg.',
+              '**DME-arc roll-outs:** an `AF`/`RF` arc that joins an inbound course exits through a lead-turn fillet (`build_dme_arc_lead_turn`, radius `DME_ARC_LEAD_TURN_RADIUS_NM`) tangent to both the arc and the course — matching the charted lead radial. All four tangency combinations (center side × internal/external) are enumerated and the gentlest cusp-free turn wins, so both arc directions (`POKPE` clockwise, `EARPP` counter-clockwise) roll out cleanly; an arc with no inbound course still draws in full to its terminating fix.'
+            ]
+          },
+          {
             kind: 'files',
             paths: [
               'crates/approach-viz-core/src/approach_path/geometry.rs',
@@ -402,7 +410,7 @@ export const SECTIONS: Section[] = [
           { kind: 'diagram', id: 'mrms' },
           {
             kind: 'p',
-            text: 'NOAA publishes the MRMS mosaic to the `noaa-mrms-pds` S3 bucket and announces new objects on SNS. A filtered SQS subscription (only `CONUS/MergedReflectivityQC_00.50/` keys) tells the runtime a new scan exists; a bootstrap loop also lists S3 every 5 minutes as a belt-and-suspenders path. Each timestamp then fans out into a parallel fetch of **33 reflectivity levels** (0.5–19 km), dual-pol `MergedZdr` + `MergedRhoHV` bundles, thermodynamic aux fields (freezing level, wet-bulb & surface temperature, bright-band top/bottom, PrecipFlag, radar quality index) and four `EchoTop` products.'
+            text: 'NOAA publishes the MRMS mosaic to the `noaa-mrms-pds` S3 bucket and announces new objects on SNS. A filtered SQS subscription (only `CONUS/MergedReflectivityQC_00.50/` keys) tells the runtime a new scan exists; a bootstrap loop also lists S3 every 5 minutes as a belt-and-suspenders path. The provisioning script applies that filter policy idempotently via `set_subscription_attributes` (a bare `subscribe` cannot update an existing subscription), verifies the live policy and fails loudly on mismatch, and audits for stale MRMS subscriptions/queues — each one bills an SQS request per SNS delivery even when unconsumed (`--audit-only` / cleanup flags). The consumer acknowledges each received batch with a single `delete_message_batch` instead of per-message deletes. Each timestamp then fans out into a parallel fetch of **33 reflectivity levels** (0.5–19 km), dual-pol `MergedZdr` + `MergedRhoHV` bundles, thermodynamic aux fields (freezing level, wet-bulb & surface temperature, bright-band top/bottom, PrecipFlag, radar quality index) and four `EchoTop` products.'
           },
           {
             kind: 'p',
@@ -588,6 +596,7 @@ export const SECTIONS: Section[] = [
               "**Vertical profile:** the final descent uses the plate's published VDA/TCH from `approaches.json`, falling back to FAF→MAP interpolation when a runway-anchored glidepath would force an immediate climb.",
               '**Missed approach:** starts at the MAP using the selected minimums (Cat A preferred), climbs at the published gradient when the plate text parses, otherwise 200 ft/NM; `CA` legs without a fix synthesize climb stubs.',
               '**Holds:** generated in Rust as separate racetrack overlays (dashed prisms) with annotations, never mixed into the main path stream.',
+              "**Course-supplying legs:** the scene composition (web `ApproachPath.tsx` + iOS `ApproachPathGeometry.swift`) appends the final approach's first course-carrying fix leg (the FAF/localizer leg) to transitions ending in `CI`/`VI` or `AF`/`RF` so the engine knows the inbound course — the appended leg is consumed by the teardrop roll-out or DME-arc lead turn, not drawn as a separate inbound segment.",
               '**Constraint furniture:** vertical guide lines and turn-constraint labels come straight from the Rust `verticalLines` / `turnConstraintLabels` outputs; waypoints render as markers with declutter-stable labels.'
             ]
           },
@@ -890,6 +899,7 @@ export const SECTIONS: Section[] = [
             items: [
               '**Web:** `format:check` → `typecheck` → `lint` (typescript-eslint recommended, a real gate) → `test` (parser, geometry, layers, MRMS, worker lifecycle, API routes). CI builds with `build:sw` + `npx next build` to avoid data downloads.',
               '**Rust:** `cargo check` across the workspace; regression tests for the MRMS render join live next to the code they protect.',
+              '**Plate visual check:** a scripted workflow (`.agents/skills/approach-plate-visual-check/`) fetches the real FAA plate, dumps engine geometry, and plots it beside — or overlays it directly onto — the georeferenced chart via its GPTS/LPTS control points; used whenever approach-path rendering changes or a procedure looks wrong versus the chart.',
               '**Runtime:** live integration tests (`test:integration:runtime`) plus profiling/stress helper scripts under `.agents/skills/`.',
               '**Native:** `test:ios` does build-for-testing + snapshot/TestStore suites; `test:macos` mirrors it; a manual-dispatch GitHub workflow runs macOS native tests on demand.'
             ]
