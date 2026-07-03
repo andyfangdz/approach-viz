@@ -472,3 +472,61 @@ test('rust wasm VI-to-CF join aligns with published final course near the fix', 
   const finalSegmentHeading = segmentHeadingDegrees(secondLast, last);
   assert.ok(finalSegmentHeading < 10 || finalSegmentHeading > 350);
 });
+
+test('rust wasm path geometry renders PI procedure turn as a course reversal', () => {
+  const refLat = 41;
+  const refLon = -70;
+  // KACK VOR RWY 24 shape: IF at the fix, PI procedure turn (45° excursion
+  // course, remain within 10 NM, right-hand reversal), CF back to the same fix.
+  const legs = [
+    makeLeg({
+      sequence: 10,
+      waypointId: 'APT_ACK',
+      pathTerminator: 'IF',
+      altitude: 1800,
+      isInitialFix: true
+    }),
+    makeLeg({
+      sequence: 20,
+      waypointId: 'APT_ACK',
+      pathTerminator: 'PI',
+      course: 15,
+      distance: 10,
+      turnDirection: 'R',
+      altitude: 1800
+    }),
+    makeLeg({
+      sequence: 30,
+      waypointId: 'APT_ACK',
+      pathTerminator: 'CF',
+      course: 240,
+      distance: 6,
+      altitude: 800
+    })
+  ];
+  const waypoints = [localWaypoint('APT_ACK', 0, 0, refLat, refLon)];
+
+  const result = approach_path_build_geometry({
+    legs,
+    waypoints,
+    resolvedAltitudes: resolvedAltitudes(legs),
+    initialAltitudeFeet: 1800,
+    verticalScale: 1,
+    refLat,
+    refLon,
+    magVar: 0,
+    showTurnConstraintLabels: false
+  });
+
+  // The charted reversal maneuver is drawn (not a zero-length stub at the fix)
+  // and stays within the published remain-within limit.
+  assert.ok(result.points.length > 30);
+  const maxExcursion = Math.max(
+    ...result.points.map((p: { x: number; z: number }) => Math.hypot(p.x, p.z))
+  );
+  assert.ok(maxExcursion >= 3, `PT maneuver too small: ${maxExcursion} NM`);
+  assert.ok(maxExcursion <= 10, `PT exceeds remain-within limit: ${maxExcursion} NM`);
+  // The CF returns the path to the fix.
+  const last = result.points[result.points.length - 1];
+  assert.ok(Math.hypot(last.x, last.z) < 0.05);
+});

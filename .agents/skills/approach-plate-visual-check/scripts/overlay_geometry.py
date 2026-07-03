@@ -151,8 +151,12 @@ def main():
         elif tok[0] == "SEG" and len(tok) >= 3:
             segments.append((tok[1], [tuple(map(float, p.split(","))) for p in tok[2:]]))
 
+    # Segment labels color by their prefix before ':' (e.g. "transition:FLACK",
+    # "hold:DDC_HM"), matching the app's per-kind colors; unknown kinds fall
+    # back to a palette that avoids the known colors so e.g. a second
+    # transition can never collide with the missed-approach red.
     known = {"final": "#10b010", "localizer": "#10b010", "transition": "#f0a000", "missed": "#d02020", "hold": "#2020e0"}
-    palette = ["#f0a000", "#d02020", "#2020e0", "purple", "teal", "magenta"]
+    palette = ["purple", "teal", "magenta", "#7a5230", "#446644"]
 
     fig, ax = plt.subplots(figsize=(12, 12))
     ax.imshow(img)
@@ -162,7 +166,8 @@ def main():
             ix, iy = pixel_of(*latlon_from_local(x, z))
             xs.append(ix)
             ys.append(iy)
-        ax.plot(xs, ys, color=known.get(label.lower(), palette[i % len(palette)]), lw=2.6, label=label, alpha=0.9)
+        base = label.lower().split(":", 1)[0]
+        ax.plot(xs, ys, color=known.get(base, palette[i % len(palette)]), lw=2.6, label=label, alpha=0.9)
     for name, (x, z) in fixes.items():
         ix, iy = pixel_of(*latlon_from_local(x, z))
         ax.scatter([ix], [iy], c="cyan", s=28, zorder=5, edgecolors="black")

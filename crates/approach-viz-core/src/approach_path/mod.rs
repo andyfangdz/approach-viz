@@ -52,6 +52,19 @@ pub(crate) const REVERSAL_TURN_MAX_RADIUS_NM: f64 = 2.5;
 // and rolling out on the inbound course near the terminating fix, rather than
 // cornering sharply at the fix; this radius shapes that fillet.
 pub(crate) const DME_ARC_LEAD_TURN_RADIUS_NM: f64 = 2.0;
+// Procedure-turn (`PI`) rendering. The CIFP publishes the 45° excursion-leg
+// course, the remain-within distance limit, and the reversal turn direction;
+// the maneuver proportions are standardized here. The outbound leg runs this
+// fraction of the remain-within limit before the 45° turn so the whole
+// maneuver (outbound + excursion + reversal) stays well inside the limit.
+pub(crate) const PROCEDURE_TURN_DEFAULT_LIMIT_NM: f64 = 10.0;
+pub(crate) const PROCEDURE_TURN_OUTBOUND_LIMIT_FRACTION: f64 = 0.4;
+pub(crate) const PROCEDURE_TURN_MIN_OUTBOUND_NM: f64 = 1.5;
+pub(crate) const PROCEDURE_TURN_MAX_OUTBOUND_NM: f64 = 5.0;
+// Straight 45° excursion leg between the two turns (~1 minute at approach
+// category speeds, matching the charted barb proportions).
+pub(crate) const PROCEDURE_TURN_EXCURSION_NM: f64 = 1.6;
+pub(crate) const PROCEDURE_TURN_RADIUS_NM: f64 = 0.9;
 
 #[cfg(test)]
 mod tests;

@@ -204,6 +204,11 @@ export const SECTIONS: Section[] = [
                 'Synthesized climb segment along the published course — length derived from the required climb at 200 ft/NM. A near-level `CA` ahead of a turning fix join folds into the turn instead of drawing a stub, and the altitude surfaces as a turn-constraint label.'
               ],
               [
+                '`PI`',
+                'Procedure turn',
+                'The full charted 45°/180° barb reversal anchored at its fix (`build_procedure_turn_points`), e.g. `KACK` VOR RWY 24 at the `ACK` VOR: outbound on the reciprocal of the inbound course, 45° turn onto the published excursion (barb) course, straight excursion leg, 180° reversal, then a tangent roll-out onto the inbound course outbound of the fix — sized to stay inside the published remain-within limit. The inbound course comes from the following `CF` back to the same fix (which draws the inbound course itself) or derives from the excursion course + reversal direction; contradictory or missing course data falls back to draw-to-fix rather than fabricating a maneuver.'
+              ],
+              [
                 '`HA` · `HF` · `HM`',
                 'Holds',
                 'Kept out of the main path stream entirely: the scene layer filters hold legs and renders Rust-generated racetrack overlays (dashed prisms) with annotations instead.'
