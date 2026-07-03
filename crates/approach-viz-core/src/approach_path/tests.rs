@@ -632,3 +632,34 @@ fn procedure_turn_without_course_data_keeps_fix_anchor() {
         assert!(p.x.abs() < 0.05 && p.z.abs() < 0.05, "unexpected fabricated geometry");
     }
 }
+
+#[test]
+fn procedure_turn_with_contradictory_turn_direction_keeps_fix_anchor() {
+    // Both courses are published and imply a right-hand reversal (excursion 45°
+    // left of the outbound), but the record publishes a left reversal. The
+    // contradiction marks the record malformed: keep the draw-to-fix fallback
+    // instead of rendering a possibly mirror-imaged maneuver.
+    let ref_lat = 41.0;
+    let ref_lon = -70.0;
+    let legs = vec![
+        make_leg(ApproachPathLeg { sequence: 10, waypoint_id: "APT_FIX".into(), waypoint_name: "FIX".into(), path_terminator: "IF".into(), altitude: Some(2000.0), altitude_constraint: None, course: None, distance: None, hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: true, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 20, waypoint_id: "APT_FIX".into(), waypoint_name: "FIX".into(), path_terminator: "PI".into(), altitude: Some(2000.0), altitude_constraint: None, course: Some(15.0), distance: Some(10.0), turn_direction: Some("L".into()), hold_course: None, hold_distance: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 30, waypoint_id: "APT_FIX".into(), waypoint_name: "FIX".into(), path_terminator: "CF".into(), altitude: Some(1000.0), altitude_constraint: None, course: Some(240.0), distance: Some(6.0), hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+    ];
+    let waypoints = vec![local_waypoint("APT_FIX", 0.0, 0.0, ref_lat, ref_lon)];
+    let result = build_path_geometry(BuildPathGeometryParams {
+        legs: legs.clone(),
+        waypoints,
+        resolved_altitudes: resolved_altitudes(&legs),
+        initial_altitude_feet: 2000.0,
+        vertical_scale: 1.0,
+        ref_lat,
+        ref_lon,
+        mag_var: 0.0,
+        show_turn_constraint_labels: false,
+    });
+    assert!(!result.points.is_empty());
+    for p in &result.points {
+        assert!(p.x.abs() < 0.05 && p.z.abs() < 0.05, "unexpected fabricated geometry");
+    }
+}

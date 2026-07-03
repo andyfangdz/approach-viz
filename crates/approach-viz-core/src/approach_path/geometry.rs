@@ -1342,6 +1342,18 @@ pub(crate) fn build_procedure_turn_points(
     }
     let initial_turn = if initial_delta >= 0.0 { "R" } else { "L" };
     let reversal_turn = if initial_delta >= 0.0 { "L" } else { "R" };
+    // When both courses are published, the maneuver side is fully determined by
+    // their geometry; a published reversal direction that contradicts it means
+    // the record is malformed, so keep the draw-to-fix fallback rather than
+    // rendering a possibly mirror-imaged maneuver from inconsistent data.
+    if inbound_course_true_deg.is_some()
+        && excursion_course_true_deg.is_some()
+        && reversal_turn_direction.is_some_and(|published| {
+            matches!(published, "L" | "R") && published != reversal_turn
+        })
+    {
+        return None;
+    }
 
     let dir_of = |heading_true: f64| {
         let rad = heading_true.to_radians();
