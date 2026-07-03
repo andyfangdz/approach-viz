@@ -663,3 +663,134 @@ fn procedure_turn_with_contradictory_turn_direction_keeps_fix_anchor() {
         assert!(p.x.abs() < 0.05 && p.z.abs() < 0.05, "unexpected fabricated geometry");
     }
 }
+
+#[test]
+fn hold_leg_length_prefers_published_distance() {
+    assert_eq!(resolve_hold_leg_length_nm(Some(10.0), Some(1.0), 12000.0), 10.0);
+    assert_eq!(resolve_hold_leg_length_nm(Some(4.0), None, 500.0), 4.0);
+}
+
+#[test]
+fn hold_leg_length_derives_time_based_holds_from_max_holding_speed() {
+    // 1-minute hold at 2,700 ft: 200 KIAS tier, TAS ≈ 200 × 1.054 → ~3.5 NM.
+    let low = resolve_hold_leg_length_nm(None, Some(1.0), 2700.0);
+    assert!((low - 3.51).abs() < 0.05, "low-tier length {low}");
+    // Same timing higher up rides the faster tiers and the TAS correction.
+    let mid = resolve_hold_leg_length_nm(None, Some(1.0), 10000.0);
+    assert!((mid - 4.6).abs() < 0.05, "mid-tier length {mid}");
+    let high = resolve_hold_leg_length_nm(None, Some(1.0), 17000.0);
+    assert!((high - 5.9).abs() < 0.1, "high-tier length {high}");
+    assert!(low < mid && mid < high);
+}
+
+#[test]
+fn hold_leg_length_defaults_to_standard_pattern_timing() {
+    // Neither time nor distance published: standard 1-minute pattern below
+    // 14,000 ft, 1.5 minutes above.
+    let low = resolve_hold_leg_length_nm(None, None, 4400.0);
+    assert!((low - resolve_hold_leg_length_nm(None, Some(1.0), 4400.0)).abs() < 1e-9);
+    let high = resolve_hold_leg_length_nm(None, None, 16000.0);
+    assert!((high - resolve_hold_leg_length_nm(None, Some(1.5), 16000.0)).abs() < 1e-9);
+    // Degenerate altitude input clamps instead of poisoning the result.
+    assert!(resolve_hold_leg_length_nm(None, None, f64::NAN).is_finite());
+}
+
+#[test]
+fn hold_protected_area_matches_published_terps_dimensions() {
+    // 4,400 ft is in the 200-KIAS tier; table 16-3-1 (RNAV column) selects
+    // pattern 6, whose table 16-6-1 dimensions the boundary must honor:
+    // course-line extent A-L + L-M + M-G and the M-E / L-I widths.
+    let heading = 356.0;
+    let leg_nm = resolve_hold_leg_length_nm(None, Some(1.0), 4400.0);
+    let area = build_hold_protected_area(0.0, 0.0, heading, leg_nm, 4400.0, "R", 1.0);
+    assert!(area.primary.len() > 100);
+    assert_eq!(area.primary.first(), area.primary.last());
+    assert!((area.primary[0].y - crate::coords::alt_to_y(4400.0, 1.0)).abs() < 1e-9);
+
+    let (pattern, a_l, l_m, m_g, l_i, m_e, _) = *terps_holding_pattern_dimensions(4400.0);
+    assert_eq!(pattern, 6);
+    assert!(leg_nm <= l_m, "test premise: standard 1-minute leg fits pattern 6");
+    let support = |ring: &[Point3], dir: (f64, f64)| {
+        ring.iter()
+            .map(|p| p.x * dir.0 + p.z * dir.1)
+            .fold(f64::MIN, f64::max)
+    };
+    let heading_rad = heading_deg_to_rad(heading);
+    let inbound = (heading_rad.sin(), -heading_rad.cos());
+    let outbound = (-inbound.0, -inbound.1);
+    let holding = (-inbound.1, inbound.0); // right of the inbound course
+    // Along-course extents: A-L past the fix, L-M + M-G beyond it.
+    assert!((support(&area.primary, inbound) - a_l).abs() < 0.15);
+    assert!((support(&area.primary, outbound) - (l_m + m_g)).abs() < 0.15);
+    // Widths: M-E on the holding side, L-I (= M-H) on the non-holding side.
+    assert!((support(&area.primary, holding) - m_e).abs() < 0.15);
+    assert!(
+        (support(&area.primary, (-holding.0, -holding.1)) - l_i).abs() < 0.15
+    );
+    // Secondary ring surrounds the primary at the published 2 NM width.
+    for step in 0..24 {
+        let theta = step as f64 / 24.0 * std::f64::consts::TAU;
+        let dir = (theta.cos(), theta.sin());
+        let gap = support(&area.secondary, dir) - support(&area.primary, dir);
+        assert!((gap - HOLD_SECONDARY_WIDTH_NM).abs() < 0.05, "secondary gap {gap}");
+    }
+    // The drawn racetrack stays well inside the primary boundary.
+    let racetrack = build_hold_points(Vec2::new(0.0, 0.0), heading, leg_nm, 4400.0, "R", 1.0);
+    for step in 0..24 {
+        let theta = step as f64 / 24.0 * std::f64::consts::TAU;
+        let dir = (theta.cos(), theta.sin());
+        let racetrack_support = racetrack
+            .iter()
+            .map(|p| p.x * dir.0 + p.z * dir.1)
+            .fold(f64::MIN, f64::max);
+        assert!(
+            support(&area.primary, dir) >= racetrack_support + 1.0,
+            "primary hugs the racetrack along {theta}"
+        );
+    }
+}
+
+#[test]
+fn hold_protected_area_selects_pattern_by_speed_tier_and_stretches_long_legs() {
+    // Speed-tier / altitude selection from table 16-3-1 (RNAV column).
+    assert_eq!(terps_holding_pattern_dimensions(2000.0).0, 4);
+    assert_eq!(terps_holding_pattern_dimensions(6000.0).0, 6);
+    assert_eq!(terps_holding_pattern_dimensions(10000.0).0, 10);
+    assert_eq!(terps_holding_pattern_dimensions(17000.0).0, 17);
+    assert_eq!(terps_holding_pattern_dimensions(60000.0).0, 31);
+
+    // A leg longer than the pattern's L-M stretches the body by the excess.
+    let (_, a_l, l_m, m_g, ..) = *terps_holding_pattern_dimensions(10000.0);
+    let long_leg = l_m + 5.0;
+    let area = build_hold_protected_area(0.0, 0.0, 0.0, long_leg, 10000.0, "R", 1.0);
+    let support = |ring: &[Point3], dir: (f64, f64)| {
+        ring.iter()
+            .map(|p| p.x * dir.0 + p.z * dir.1)
+            .fold(f64::MIN, f64::max)
+    };
+    // Inbound course 000 true: outbound extent is due south (+z).
+    assert!((support(&area.primary, (0.0, 1.0)) - (long_leg + m_g)).abs() < 0.15);
+    assert!((support(&area.primary, (0.0, -1.0)) - a_l).abs() < 0.15);
+}
+
+#[test]
+fn hold_protected_area_mirrors_with_turn_direction() {
+    let leg_nm = 4.0;
+    let right = build_hold_protected_area(0.0, 0.0, 0.0, leg_nm, 3000.0, "R", 1.0);
+    let left = build_hold_protected_area(0.0, 0.0, 0.0, leg_nm, 3000.0, "L", 1.0);
+    // Inbound course 000 true: right turns hold east (+x), left turns west.
+    // Table 16-6-1 widths are asymmetric (M-E holding side vs L-I), so the
+    // extents must lean with the turn while mirroring exactly.
+    let east = |ring: &[Point3]| ring.iter().map(|p| p.x).fold(f64::MIN, f64::max);
+    let west = |ring: &[Point3]| ring.iter().map(|p| p.x).fold(f64::MAX, f64::min);
+    let (_, _, _, _, l_i, m_e, _) = *terps_holding_pattern_dimensions(3000.0);
+    assert!((east(&right.primary) - m_e).abs() < 0.15);
+    assert!((west(&right.primary) + l_i).abs() < 0.15);
+    assert!((east(&right.primary) + west(&left.primary)).abs() < 1e-9);
+    assert!((west(&right.primary) + east(&left.primary)).abs() < 1e-9);
+}
+
+
+fn heading_deg_to_rad(heading: f64) -> f64 {
+    heading.to_radians()
+}

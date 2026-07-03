@@ -22,6 +22,7 @@ interface ApproachPathProps {
   missedApproachStartAltitudeFeet?: number;
   minimumsLabel?: string;
   missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
+  showHoldProtectedAreas?: boolean;
 }
 
 export const ApproachPath = memo(function ApproachPath({
@@ -31,7 +32,8 @@ export const ApproachPath = memo(function ApproachPath({
   verticalScale,
   missedApproachStartAltitudeFeet,
   minimumsLabel,
-  missedApproachClimbRequirement
+  missedApproachClimbRequirement,
+  showHoldProtectedAreas = false
 }: ApproachPathProps) {
   const refLat = airport.lat;
   const refLon = airport.lon;
@@ -238,6 +240,7 @@ export const ApproachPath = memo(function ApproachPath({
           magVar={airport.magVar}
           color={COLORS.hold}
           verticalScale={verticalScale}
+          showProtectedArea={showHoldProtectedAreas}
         />
       ))}
     </group>

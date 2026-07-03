@@ -187,6 +187,7 @@ struct AppFeature {
 
     enum LayerKind: Equatable {
         case approach
+        case holdAreas
         case airspace
         case adsb
         case mrms
@@ -312,6 +313,10 @@ struct AppFeature {
                 case .approach:
                     guard state.layerState.approach != isEnabled else { return .none }
                     state.layerState.approach = isEnabled
+                    return .none
+                case .holdAreas:
+                    guard state.layerState.holdAreas != isEnabled else { return .none }
+                    state.layerState.holdAreas = isEnabled
                     return .none
                 case .airspace:
                     guard state.layerState.airspace != isEnabled else { return .none }

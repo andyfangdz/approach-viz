@@ -88,6 +88,17 @@ pub struct TurnConstraintLabel {
     pub text: String,
 }
 
+/// Closed primary/secondary protected-area boundary rings for a hold (see
+/// `build_hold_protected_area`); each ring repeats its first point at the end.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "wasm", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "ios", derive(uniffi::Record))]
+pub struct HoldProtectedArea {
+    pub primary: Vec<Point3>,
+    pub secondary: Vec<Point3>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "wasm", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]

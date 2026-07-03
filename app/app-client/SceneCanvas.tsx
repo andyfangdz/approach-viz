@@ -520,6 +520,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
             missedApproachClimbRequirement={missedApproachClimbRequirement}
+            showHoldProtectedAreas={layers.holdareas}
           />
         )}
 

@@ -147,6 +147,8 @@ struct NativeTrafficScene: Hashable {
 
 struct NativeLayerState: Hashable {
     var approach = true
+    // TERPS-style hold protected-area overlay (default off, matching web).
+    var holdAreas = false
     var airspace = true
     var adsb = true
     // Weather layer defaults match the web `DEFAULT_LAYER_STATE`:
@@ -406,6 +408,9 @@ struct ApproachLeg: Codable, Hashable {
     let distance: Double?
     let holdCourse: Double?
     let holdDistance: Double?
+    // Holding time in minutes when the CIFP publishes a time instead of a leg
+    // distance ("T"-coded route distance field, e.g. 1.0-minute holds).
+    let holdTime: Double?
     let turnDirection: String?
     let holdTurnDirection: String?
     let rfCenterWaypointId: String?

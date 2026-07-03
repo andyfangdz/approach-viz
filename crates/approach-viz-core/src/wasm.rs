@@ -550,6 +550,42 @@ pub fn approach_path_build_geometry(params: JsValue) -> Result<JsValue, JsValue>
 }
 
 #[wasm_bindgen]
+pub fn approach_path_build_hold_protected_area(
+    center_x: f64,
+    center_z: f64,
+    heading_deg: f64,
+    leg_length_nm: f64,
+    altitude_feet: f64,
+    turn_direction: String,
+    vertical_scale: f64,
+) -> Result<JsValue, JsValue> {
+    let result = crate::approach_path::build_hold_protected_area(
+        center_x,
+        center_z,
+        heading_deg,
+        leg_length_nm,
+        altitude_feet,
+        &turn_direction,
+        vertical_scale,
+    );
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|error| js_err("failed to encode hold protected area", error))
+}
+
+#[wasm_bindgen]
+pub fn approach_path_resolve_hold_leg_length_nm(
+    hold_distance_nm: Option<f64>,
+    hold_time_minutes: Option<f64>,
+    altitude_feet: f64,
+) -> f64 {
+    crate::approach_path::resolve_hold_leg_length_nm(
+        hold_distance_nm,
+        hold_time_minutes,
+        altitude_feet,
+    )
+}
+
+#[wasm_bindgen]
 pub fn approach_path_build_hold_points(
     center_x: f64,
     center_z: f64,

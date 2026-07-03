@@ -5,7 +5,9 @@ import test from 'node:test';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import {
   approach_path_build_geometry,
+  approach_path_build_hold_protected_area,
   approach_path_resolve_altitudes,
+  approach_path_resolve_hold_leg_length_nm,
   initSync
 } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
@@ -529,4 +531,37 @@ test('rust wasm path geometry renders PI procedure turn as a course reversal', (
   // The CF returns the path to the fix.
   const last = result.points[result.points.length - 1];
   assert.ok(Math.hypot(last.x, last.z) < 0.05);
+});
+
+test('rust wasm hold leg length uses published distance, else altitude-aware max holding speed', () => {
+  // Published distance wins untouched.
+  assert.equal(approach_path_resolve_hold_leg_length_nm(10, 1, 12000), 10);
+  // 1-minute hold at 2,700 ft: 200 KIAS tier with the ~2%/1,000 ft TAS
+  // correction → about 3.5 NM instead of the old fixed 4 NM.
+  const low = approach_path_resolve_hold_leg_length_nm(undefined, 1, 2700) as number;
+  assert.ok(Math.abs(low - 3.51) < 0.05, `low-tier length ${low}`);
+  // Faster tiers above 6,000 / 14,000 ft grow the leg for the same timing.
+  const mid = approach_path_resolve_hold_leg_length_nm(undefined, 1, 10000) as number;
+  const high = approach_path_resolve_hold_leg_length_nm(undefined, 1, 17000) as number;
+  assert.ok(low < mid && mid < high);
+  // Neither time nor distance published: standard 1-minute pattern timing.
+  const standard = approach_path_resolve_hold_leg_length_nm(undefined, undefined, 2700) as number;
+  assert.equal(standard, low);
+});
+
+test('rust wasm hold protected area returns closed primary and secondary rings', () => {
+  const area = approach_path_build_hold_protected_area(0, 0, 356, 3.6, 4400, 'R', 1) as {
+    primary: { x: number; y: number; z: number }[];
+    secondary: { x: number; y: number; z: number }[];
+  };
+  assert.ok(area.primary.length > 100);
+  assert.deepEqual(area.primary[0], area.primary[area.primary.length - 1]);
+  assert.deepEqual(area.secondary[0], area.secondary[area.secondary.length - 1]);
+  // The primary ring clears the fix by at least the base tolerance buffer in
+  // every direction, and the secondary ring sits outside the primary.
+  const minRadius = Math.min(...area.primary.map((p) => Math.hypot(p.x, p.z)));
+  assert.ok(minRadius >= 2 - 0.05, `primary ring too tight: ${minRadius}`);
+  const maxPrimary = Math.max(...area.primary.map((p) => Math.hypot(p.x, p.z)));
+  const maxSecondary = Math.max(...area.secondary.map((p) => Math.hypot(p.x, p.z)));
+  assert.ok(maxSecondary > maxPrimary + 1.5);
 });

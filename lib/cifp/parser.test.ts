@@ -65,6 +65,23 @@ test('parses HM hold metadata including turn direction, hold course, and hold di
   assert.equal(hm.holdTurnDirection, 'R');
   assert.equal(hm.holdCourse, 49.3);
   assert.equal(hm.holdDistance, 4);
+  // Distance-coded hold: no published time.
+  assert.equal(hm.holdTime, undefined);
+});
+
+test('parses time-coded holds ("T010" route distance field) as holdTime minutes', () => {
+  const padq = getApproach('PADQ', 'I26-Y');
+  const hm = findLeg(padq, 70);
+
+  assert.equal(hm.pathTerminator, 'HM');
+  assert.equal(hm.holdCourse, 179);
+  assert.equal(hm.holdDistance, undefined);
+  assert.equal(hm.holdTime, 1);
+
+  const hf = padq.transitions.get('ODK')?.find((leg) => leg.pathTerminator === 'HF');
+  assert.ok(hf);
+  assert.equal(hf.holdDistance, undefined);
+  assert.equal(hf.holdTime, 1);
 });
 
 test('parses RF/AF arc metadata and turn directions from real procedures', () => {
