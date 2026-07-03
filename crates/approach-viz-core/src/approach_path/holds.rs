@@ -5,6 +5,46 @@ use crate::coords;
 
 use super::*;
 
+/// Resolve a hold's straight-leg length in NM from what the CIFP publishes.
+/// A published distance wins as-is. A published time (or, when neither is
+/// published, the standard pattern timing — 1 minute at or below 14,000 ft
+/// MSL, 1.5 minutes above) is flown at the FAA maximum holding airspeed for
+/// the hold altitude (AIM 5-3-8), converted from indicated to true airspeed
+/// with the standard ~2%-per-1,000-ft rule, so a 1-minute hold at altitude
+/// renders at the ground distance that timing actually covers.
+pub fn resolve_hold_leg_length_nm(
+    hold_distance_nm: Option<f64>,
+    hold_time_minutes: Option<f64>,
+    altitude_feet: f64,
+) -> f64 {
+    if let Some(distance) =
+        hold_distance_nm.filter(|distance| distance.is_finite() && *distance > 0.0)
+    {
+        return distance;
+    }
+    let altitude = if altitude_feet.is_finite() {
+        altitude_feet.max(0.0)
+    } else {
+        0.0
+    };
+    let time_minutes = hold_time_minutes
+        .filter(|time| time.is_finite() && *time > 0.0)
+        .unwrap_or(if altitude <= HOLD_IAS_MID_CEILING_FT {
+            HOLD_STANDARD_TIME_LOW_MIN
+        } else {
+            HOLD_STANDARD_TIME_HIGH_MIN
+        });
+    let max_ias_kt = if altitude <= HOLD_IAS_LOW_CEILING_FT {
+        HOLD_MAX_IAS_LOW_KT
+    } else if altitude <= HOLD_IAS_MID_CEILING_FT {
+        HOLD_MAX_IAS_MID_KT
+    } else {
+        HOLD_MAX_IAS_HIGH_KT
+    };
+    let tas_kt = max_ias_kt * (1.0 + HOLD_TAS_FACTOR_PER_1000_FT * altitude / 1000.0);
+    tas_kt * time_minutes / 60.0
+}
+
 pub fn build_hold_geometry(
     center_x: f64,
     center_z: f64,

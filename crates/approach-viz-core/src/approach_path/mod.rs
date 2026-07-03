@@ -65,6 +65,21 @@ pub(crate) const PROCEDURE_TURN_MAX_OUTBOUND_NM: f64 = 5.0;
 // category speeds, matching the charted barb proportions).
 pub(crate) const PROCEDURE_TURN_EXCURSION_NM: f64 = 1.6;
 pub(crate) const PROCEDURE_TURN_RADIUS_NM: f64 = 0.9;
+// Time-based hold sizing (`resolve_hold_leg_length_nm`). Straight-leg length
+// for a hold published with a time instead of a distance is derived from the
+// FAA maximum holding airspeed for the hold altitude (AIM 5-3-8: 200 KIAS at
+// or below 6,000 ft MSL, 230 KIAS through 14,000 ft, 265 KIAS above),
+// converted to true airspeed with the standard ~2%-per-1,000-ft rule. Holds
+// publishing neither time nor distance use the standard pattern timing:
+// 1 minute at or below 14,000 ft MSL, 1.5 minutes above.
+pub(crate) const HOLD_MAX_IAS_LOW_KT: f64 = 200.0;
+pub(crate) const HOLD_MAX_IAS_MID_KT: f64 = 230.0;
+pub(crate) const HOLD_MAX_IAS_HIGH_KT: f64 = 265.0;
+pub(crate) const HOLD_IAS_LOW_CEILING_FT: f64 = 6_000.0;
+pub(crate) const HOLD_IAS_MID_CEILING_FT: f64 = 14_000.0;
+pub(crate) const HOLD_TAS_FACTOR_PER_1000_FT: f64 = 0.02;
+pub(crate) const HOLD_STANDARD_TIME_LOW_MIN: f64 = 1.0;
+pub(crate) const HOLD_STANDARD_TIME_HIGH_MIN: f64 = 1.5;
 
 #[cfg(test)]
 mod tests;

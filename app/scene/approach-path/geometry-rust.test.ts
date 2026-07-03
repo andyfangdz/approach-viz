@@ -6,6 +6,7 @@ import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import {
   approach_path_build_geometry,
   approach_path_resolve_altitudes,
+  approach_path_resolve_hold_leg_length_nm,
   initSync
 } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
@@ -529,4 +530,20 @@ test('rust wasm path geometry renders PI procedure turn as a course reversal', (
   // The CF returns the path to the fix.
   const last = result.points[result.points.length - 1];
   assert.ok(Math.hypot(last.x, last.z) < 0.05);
+});
+
+test('rust wasm hold leg length uses published distance, else altitude-aware max holding speed', () => {
+  // Published distance wins untouched.
+  assert.equal(approach_path_resolve_hold_leg_length_nm(10, 1, 12000), 10);
+  // 1-minute hold at 2,700 ft: 200 KIAS tier with the ~2%/1,000 ft TAS
+  // correction → about 3.5 NM instead of the old fixed 4 NM.
+  const low = approach_path_resolve_hold_leg_length_nm(undefined, 1, 2700) as number;
+  assert.ok(Math.abs(low - 3.51) < 0.05, `low-tier length ${low}`);
+  // Faster tiers above 6,000 / 14,000 ft grow the leg for the same timing.
+  const mid = approach_path_resolve_hold_leg_length_nm(undefined, 1, 10000) as number;
+  const high = approach_path_resolve_hold_leg_length_nm(undefined, 1, 17000) as number;
+  assert.ok(low < mid && mid < high);
+  // Neither time nor distance published: standard 1-minute pattern timing.
+  const standard = approach_path_resolve_hold_leg_length_nm(undefined, undefined, 2700) as number;
+  assert.equal(standard, low);
 });

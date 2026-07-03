@@ -550,6 +550,19 @@ pub fn approach_path_build_geometry(params: JsValue) -> Result<JsValue, JsValue>
 }
 
 #[wasm_bindgen]
+pub fn approach_path_resolve_hold_leg_length_nm(
+    hold_distance_nm: Option<f64>,
+    hold_time_minutes: Option<f64>,
+    altitude_feet: f64,
+) -> f64 {
+    crate::approach_path::resolve_hold_leg_length_nm(
+        hold_distance_nm,
+        hold_time_minutes,
+        altitude_feet,
+    )
+}
+
+#[wasm_bindgen]
 pub fn approach_path_build_hold_points(
     center_x: f64,
     center_z: f64,

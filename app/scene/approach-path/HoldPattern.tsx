@@ -3,7 +3,10 @@ import { Html, Line } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { ensureWasm } from '../shared/wasm-loader';
-import { approach_path_build_hold_points } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+import {
+  approach_path_build_hold_points,
+  approach_path_resolve_hold_leg_length_nm
+} from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 import { formatHoldDistance } from './curves';
 import {
   altToY,
@@ -41,20 +44,26 @@ export function HoldPattern({
       ? magneticToTrueHeading(headingCandidate, magVar)
       : 0;
   const holdDistanceCandidate = leg.holdDistance ?? leg.distance;
-  const holdDistance =
+  const publishedDistance =
     typeof holdDistanceCandidate === 'number' && Number.isFinite(holdDistanceCandidate)
       ? holdDistanceCandidate
-      : 4;
+      : undefined;
+  const publishedTimeMinutes =
+    typeof leg.holdTime === 'number' && Number.isFinite(leg.holdTime) ? leg.holdTime : undefined;
   const turnDirection = leg.holdTurnDirection ?? 'R';
   const magneticHeading = normalizeHeading(leg.holdCourse ?? leg.course ?? heading);
   const trueHeading = normalizeHeading(heading);
-  const holdLabel = `HOLD ${Math.round(magneticHeading)}°M/${Math.round(trueHeading)}°T ${formatHoldDistance(holdDistance)}NM ${turnDirection === 'R' ? 'RIGHT' : 'LEFT'} TURNS`;
   const center = useMemo(() => {
     if (!wp) return null;
     return latLonToLocal(wp.lat, wp.lon, refLat, refLon);
   }, [wp, refLat, refLon]);
 
   const [points, setPoints] = useState<[number, number, number][]>([]);
+  // Straight-leg length resolved by the shared Rust engine: a published
+  // distance as-is, otherwise the published (or standard) holding time flown
+  // at the altitude's maximum holding speed. Starts at the published distance
+  // so label offsets have a value before the WASM module loads.
+  const [holdDistance, setHoldDistance] = useState<number>(publishedDistance ?? 4);
   useEffect(() => {
     let cancelled = false;
     if (!center || altitude <= 0) {
@@ -65,16 +74,22 @@ export function HoldPattern({
     }
     void ensureWasm()
       .then(() => {
+        const legLengthNm = approach_path_resolve_hold_leg_length_nm(
+          publishedDistance,
+          publishedTimeMinutes,
+          altitude
+        ) as number;
         const result = approach_path_build_hold_points(
           center.x,
           center.z,
           heading,
-          holdDistance,
+          legLengthNm,
           altitude,
           turnDirection,
           verticalScale
         ) as { x: number; y: number; z: number }[];
         if (cancelled) return;
+        setHoldDistance(legLengthNm);
         setPoints(result.map((point) => [point.x, point.y, point.z]));
       })
       .catch((error) => {
@@ -85,7 +100,20 @@ export function HoldPattern({
     return () => {
       cancelled = true;
     };
-  }, [center, altitude, heading, holdDistance, turnDirection, verticalScale]);
+  }, [
+    center,
+    altitude,
+    heading,
+    publishedDistance,
+    publishedTimeMinutes,
+    turnDirection,
+    verticalScale
+  ]);
+  const holdLengthLabel =
+    publishedDistance === undefined && publishedTimeMinutes !== undefined
+      ? `${formatHoldDistance(publishedTimeMinutes)}MIN (${formatHoldDistance(holdDistance)}NM)`
+      : `${formatHoldDistance(holdDistance)}NM`;
+  const holdLabel = `HOLD ${Math.round(magneticHeading)}°M/${Math.round(trueHeading)}°T ${holdLengthLabel} ${turnDirection === 'R' ? 'RIGHT' : 'LEFT'} TURNS`;
   const labelPosition = useMemo<[number, number, number]>(() => {
     if (!center) return [0, 0, 0];
     const headingRad = (heading * Math.PI) / 180;

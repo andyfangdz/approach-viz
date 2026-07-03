@@ -163,6 +163,17 @@ export function approach_path_resolve_altitudes(params) {
 }
 
 /**
+ * @param {number | null | undefined} hold_distance_nm
+ * @param {number | null | undefined} hold_time_minutes
+ * @param {number} altitude_feet
+ * @returns {number}
+ */
+export function approach_path_resolve_hold_leg_length_nm(hold_distance_nm, hold_time_minutes, altitude_feet) {
+    const ret = wasm.approach_path_resolve_hold_leg_length_nm(!isLikeNone(hold_distance_nm), isLikeNone(hold_distance_nm) ? 0 : hold_distance_nm, !isLikeNone(hold_time_minutes), isLikeNone(hold_time_minutes) ? 0 : hold_time_minutes, altitude_feet);
+    return ret;
+}
+
+/**
  * Decode an AVET binary echo-top payload and build prepared surfaces in one WASM call.
  *
  * Returns `{ top18, top30, top50, summary }` where each top is an SoA object

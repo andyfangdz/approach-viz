@@ -22,6 +22,9 @@ export interface ApproachLeg {
   distance?: number;
   holdCourse?: number;
   holdDistance?: number;
+  // Holding time in minutes when the CIFP publishes a time instead of a leg
+  // distance (ARINC 424 "T"-coded route distance field, e.g. "T010" = 1.0 min).
+  holdTime?: number;
   turnDirection?: 'L' | 'R';
   holdTurnDirection?: 'L' | 'R';
   rfCenterWaypointId?: string;
@@ -294,9 +297,22 @@ interface ParsedApproachRecord {
   altitudeText: string;
   course?: number;
   distance?: number;
+  holdTime?: number;
   turnDirection?: 'L' | 'R';
   rfCenterFix?: string;
   line: string;
+}
+
+// The ARINC 424 route distance/holding field is time-coded when it starts
+// with 'T': the remaining digits are tenths of minutes (e.g. "T010" = 1.0
+// minute holding legs) instead of a distance.
+function parseHoldTimeMinutesField(line: string, range: SliceRange): number | undefined {
+  const raw = sliceField(line, range).trim();
+  const match = /^T(\d{3})$/.exec(raw);
+  if (!match) {
+    return undefined;
+  }
+  return parseInt(match[1], 10) / 10;
 }
 
 function parseApproachRecord(line: string, airportId: string): ParsedApproachRecord | null {
@@ -316,6 +332,7 @@ function parseApproachRecord(line: string, airportId: string): ParsedApproachRec
     turnDirectionRaw === 'L' || turnDirectionRaw === 'R' ? turnDirectionRaw : undefined;
   const course = parseDecimalTenthsField(line, FIELD.approachCourse);
   const distance = parseDecimalTenthsField(line, FIELD.approachDistance);
+  const holdTime = parseHoldTimeMinutesField(line, FIELD.approachDistance);
   const isArcLeg = pathTerminator === 'RF' || pathTerminator === 'AF';
   const rfCenterFix =
     pathTerminator === 'RF'
@@ -339,6 +356,7 @@ function parseApproachRecord(line: string, airportId: string): ParsedApproachRec
     altitudeText: sliceField(line, FIELD.approachAltitude),
     course,
     distance,
+    holdTime,
     turnDirection,
     rfCenterFix: isArcLeg && rfCenterFix ? rfCenterFix : undefined,
     line
@@ -575,6 +593,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       altitudeText,
       course,
       distance,
+      holdTime,
       turnDirection,
       rfCenterFix
     } = record;
@@ -610,6 +629,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
     const isArcLeg = pathTerminator === 'RF' || pathTerminator === 'AF';
     const holdCourse = isHold ? course : undefined;
     const holdDistance = isHold ? distance : undefined;
+    const holdTimeMinutes = isHold ? holdTime : undefined;
     const holdTurnDirection = isHold ? turnDirection : undefined;
     const rfTurnDirection = isArcLeg ? turnDirection : undefined;
     const rfCenterWaypointId = rfCenterFix
@@ -629,6 +649,7 @@ export function parseCIFP(content: string, airportFilter?: string): CIFPData {
       distance,
       holdCourse,
       holdDistance,
+      holdTime: holdTimeMinutes,
       turnDirection,
       holdTurnDirection,
       rfCenterWaypointId,

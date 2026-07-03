@@ -663,3 +663,34 @@ fn procedure_turn_with_contradictory_turn_direction_keeps_fix_anchor() {
         assert!(p.x.abs() < 0.05 && p.z.abs() < 0.05, "unexpected fabricated geometry");
     }
 }
+
+#[test]
+fn hold_leg_length_prefers_published_distance() {
+    assert_eq!(resolve_hold_leg_length_nm(Some(10.0), Some(1.0), 12000.0), 10.0);
+    assert_eq!(resolve_hold_leg_length_nm(Some(4.0), None, 500.0), 4.0);
+}
+
+#[test]
+fn hold_leg_length_derives_time_based_holds_from_max_holding_speed() {
+    // 1-minute hold at 2,700 ft: 200 KIAS tier, TAS ≈ 200 × 1.054 → ~3.5 NM.
+    let low = resolve_hold_leg_length_nm(None, Some(1.0), 2700.0);
+    assert!((low - 3.51).abs() < 0.05, "low-tier length {low}");
+    // Same timing higher up rides the faster tiers and the TAS correction.
+    let mid = resolve_hold_leg_length_nm(None, Some(1.0), 10000.0);
+    assert!((mid - 4.6).abs() < 0.05, "mid-tier length {mid}");
+    let high = resolve_hold_leg_length_nm(None, Some(1.0), 17000.0);
+    assert!((high - 5.9).abs() < 0.1, "high-tier length {high}");
+    assert!(low < mid && mid < high);
+}
+
+#[test]
+fn hold_leg_length_defaults_to_standard_pattern_timing() {
+    // Neither time nor distance published: standard 1-minute pattern below
+    // 14,000 ft, 1.5 minutes above.
+    let low = resolve_hold_leg_length_nm(None, None, 4400.0);
+    assert!((low - resolve_hold_leg_length_nm(None, Some(1.0), 4400.0)).abs() < 1e-9);
+    let high = resolve_hold_leg_length_nm(None, None, 16000.0);
+    assert!((high - resolve_hold_leg_length_nm(None, Some(1.5), 16000.0)).abs() < 1e-9);
+    // Degenerate altitude input clamps instead of poisoning the result.
+    assert!(resolve_hold_leg_length_nm(None, None, f64::NAN).is_finite());
+}

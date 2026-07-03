@@ -199,12 +199,28 @@ for (const spec of specs) {
     )
     .join(',\n            ');
 
+  // Hold timing is not part of the engine's ApproachPathLeg (clients resolve
+  // the leg length before calling the hold builder), so ship it alongside the
+  // legs keyed by (waypoint id, sequence) for the dump's hold pass.
+  const holdTimesRust = allLegs
+    .filter(
+      (leg) =>
+        ['HM', 'HF', 'HA'].includes(leg.pathTerminator) &&
+        typeof leg.holdTime === 'number' &&
+        Number.isFinite(leg.holdTime)
+    )
+    .map((leg) => `(${rustStr(leg.waypointId)}.to_string(), ${leg.sequence}, ${leg.holdTime}f64)`)
+    .join(',\n            ');
+
   procBlocks.push(`    PlateProc {
         key: ${rustStr(key)}.to_string(),
         ref_lat: ${airport.lat}f64,
         ref_lon: ${airport.lon}f64,
         mag_var: ${airport.magVar}f64,
         elevation: ${airport.elevation}f64,
+        hold_times: vec![
+            ${holdTimesRust}
+        ],
         waypoints: vec![
             ${waypointsRust}
         ],
@@ -258,6 +274,8 @@ struct PlateProc {
     ref_lon: f64,
     mag_var: f64,
     elevation: f64,
+    // Published hold times in minutes, keyed by (waypoint id, sequence).
+    hold_times: Vec<(String, i32, f64)>,
     waypoints: Vec<ApproachWaypoint>,
     final_legs: Vec<ApproachPathLeg>,
     transitions: Vec<(String, Vec<ApproachPathLeg>)>,
@@ -393,8 +411,10 @@ fn dump_plate_geometry() {
             );
         }
 
-        // Holds (HoldPattern.tsx): heading = mag course + mag_var, distance
-        // fallback 4 NM, right turns by default, altitude from the resolved map.
+        // Holds (HoldPattern.tsx): heading = mag course + mag_var, leg length
+        // via the shared resolver (published distance, else published/standard
+        // time at the altitude's max holding speed), right turns by default,
+        // altitude from the resolved map.
         let mut hold_sources: Vec<(f64, &ApproachPathLeg)> = Vec::new();
         for (i, leg) in p.final_legs.iter().enumerate() {
             let alt = resolved.final_altitudes.get(i).copied().or(leg.altitude).unwrap_or(p.elevation);
@@ -433,11 +453,16 @@ fn dump_plate_geometry() {
                 .filter(|c| c.is_finite())
                 .map(|c| (c + p.mag_var).rem_euclid(360.0))
                 .unwrap_or(0.0);
-            let dist = leg
-                .hold_distance
-                .or(leg.distance)
-                .filter(|d| d.is_finite())
-                .unwrap_or(4.0);
+            let hold_time = p
+                .hold_times
+                .iter()
+                .find(|(id, sequence, _)| *id == leg.waypoint_id && *sequence == leg.sequence)
+                .map(|(_, _, minutes)| *minutes);
+            let dist = resolve_hold_leg_length_nm(
+                leg.hold_distance.or(leg.distance).filter(|d| d.is_finite()),
+                hold_time,
+                altitude,
+            );
             let turn = leg.hold_turn_direction.clone().unwrap_or_else(|| "R".to_string());
             let points = build_hold_geometry(cx, cz, heading, dist, altitude, &turn, 1.0);
             let short = leg.waypoint_id.split('_').next_back().unwrap_or(&leg.waypoint_id);

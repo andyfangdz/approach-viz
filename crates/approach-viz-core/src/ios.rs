@@ -242,6 +242,15 @@ pub fn build_approach_path_geometry(
 }
 
 #[uniffi::export]
+pub fn resolve_approach_hold_leg_length_nm(
+    hold_distance_nm: Option<f64>,
+    hold_time_minutes: Option<f64>,
+    altitude_feet: f64,
+) -> f64 {
+    approach_path::resolve_hold_leg_length_nm(hold_distance_nm, hold_time_minutes, altitude_feet)
+}
+
+#[uniffi::export]
 pub fn build_approach_hold_geometry(
     center_x: f64,
     center_z: f64,

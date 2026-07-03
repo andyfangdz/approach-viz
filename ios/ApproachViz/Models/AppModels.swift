@@ -406,6 +406,9 @@ struct ApproachLeg: Codable, Hashable {
     let distance: Double?
     let holdCourse: Double?
     let holdDistance: Double?
+    // Holding time in minutes when the CIFP publishes a time instead of a leg
+    // distance ("T"-coded route distance field, e.g. 1.0-minute holds).
+    let holdTime: Double?
     let turnDirection: String?
     let holdTurnDirection: String?
     let rfCenterWaypointId: String?

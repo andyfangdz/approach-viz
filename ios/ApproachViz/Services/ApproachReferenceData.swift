@@ -144,6 +144,7 @@ enum ApproachReferenceData {
             distance: fafLeg.distance,
             holdCourse: fafLeg.holdCourse,
             holdDistance: fafLeg.holdDistance,
+            holdTime: fafLeg.holdTime,
             turnDirection: fafLeg.turnDirection,
             holdTurnDirection: fafLeg.holdTurnDirection,
             rfCenterWaypointId: fafLeg.rfCenterWaypointId,

@@ -586,10 +586,18 @@ private func appendHoldPatterns(
             airport: sceneData.airport,
             verticalScale: verticalScale
         )
+        // Straight-leg length from the shared engine: a published distance
+        // as-is, otherwise the published (or standard) holding time flown at
+        // the altitude's maximum holding speed.
+        let holdLegLengthNm = resolveApproachHoldLegLengthNm(
+            holdDistanceNm: leg.holdDistance ?? leg.distance,
+            holdTimeMinutes: leg.holdTime,
+            altitudeFeet: altitudeFeet
+        )
         let holdPoints = buildHoldPoints(
             center: SIMD2(Double(center.x), Double(center.z)),
             headingDegrees: normalizeHeadingDegrees(holdCourse + sceneData.airport.magneticVariation),
-            holdDistanceNm: leg.holdDistance ?? leg.distance ?? 4,
+            holdDistanceNm: holdLegLengthNm,
             altitudeFeet: altitudeFeet,
             turnDirection: leg.holdTurnDirection?.first ?? "R",
             verticalScale: verticalScale
@@ -607,9 +615,13 @@ private func appendHoldPatterns(
                 scene.focusBounds.include(point)
             }
         }
-        let label = makeHoldLabel(leg: leg, magneticVariation: sceneData.airport.magneticVariation)
+        let label = makeHoldLabel(
+            leg: leg,
+            magneticVariation: sceneData.airport.magneticVariation,
+            legLengthNm: holdLegLengthNm
+        )
         if let label {
-            scene.labels.append(labelAnchor(for: label, center: center, course: holdCourse + sceneData.airport.magneticVariation, distance: leg.holdDistance ?? leg.distance ?? 4, turnDirection: leg.holdTurnDirection ?? "R"))
+            scene.labels.append(labelAnchor(for: label, center: center, course: holdCourse + sceneData.airport.magneticVariation, distance: holdLegLengthNm, turnDirection: leg.holdTurnDirection ?? "R"))
         }
     }
 }
@@ -1053,12 +1065,19 @@ private func metalScenePoint(lat: Double, lon: Double, altitudeFeet: Double, air
     return SIMD3<Float>(Float(point.xNm), Float(point.yNm), Float(point.zNm))
 }
 
-private func makeHoldLabel(leg: ApproachLeg, magneticVariation: Double) -> String? {
+private func makeHoldLabel(leg: ApproachLeg, magneticVariation: Double, legLengthNm: Double) -> String? {
     let magneticHeading = normalizeHeadingDegrees(leg.holdCourse ?? leg.course ?? 0)
     let trueHeading = normalizeHeadingDegrees(magneticHeading + magneticVariation)
-    let holdDistance = leg.holdDistance ?? leg.distance ?? 4
     let turnDirection = (leg.holdTurnDirection ?? "R") == "R" ? "RIGHT" : "LEFT"
-    return "HOLD \(Int(magneticHeading.rounded()))°M/\(Int(trueHeading.rounded()))°T \(formatHoldDistance(holdDistance)) \(turnDirection) TURNS"
+    // Time-published holds label the timing alongside the speed-derived
+    // length; distance-published (and default) holds label the length alone.
+    let lengthLabel: String
+    if leg.holdDistance ?? leg.distance == nil, let holdTime = leg.holdTime {
+        lengthLabel = "\(formatHoldQuantity(holdTime))MIN (\(formatHoldQuantity(legLengthNm))NM)"
+    } else {
+        lengthLabel = "\(formatHoldQuantity(legLengthNm))NM"
+    }
+    return "HOLD \(Int(magneticHeading.rounded()))°M/\(Int(trueHeading.rounded()))°T \(lengthLabel) \(turnDirection) TURNS"
 }
 
 private func labelAnchor(for text: String, center: SIMD3<Float>, course: Double, distance: Double, turnDirection: String) -> LabelAnchor {
@@ -1082,10 +1101,10 @@ private func normalizeHeadingDegrees(_ degrees: Double) -> Double {
     return wrapped < 0 ? wrapped + 360.0 : wrapped
 }
 
-private func formatHoldDistance(_ distanceNm: Double) -> String {
-    let rounded = (distanceNm * 10).rounded() / 10
+private func formatHoldQuantity(_ value: Double) -> String {
+    let rounded = (value * 10).rounded() / 10
     if abs(rounded.rounded() - rounded) < 0.05 {
-        return "\(Int(rounded.rounded()))NM"
+        return "\(Int(rounded.rounded()))"
     }
-    return "\(rounded.formatted(.number.precision(.fractionLength(1))))NM"
+    return rounded.formatted(.number.precision(.fractionLength(1)))
 }
