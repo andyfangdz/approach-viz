@@ -769,8 +769,8 @@ fn hold_protected_area_mirrors_with_turn_direction() {
     };
     let right_cx = area_centroid_x(&right.primary);
     let left_cx = area_centroid_x(&left.primary);
-    // The lean is modest — the largest (end-of-pattern) disks sit on the
-    // shared inbound course line — but its sign must follow the turn side.
-    assert!(right_cx > left_cx + 0.05, "no lean: right {right_cx}, left {left_cx}");
+    // The swept pattern uses the true holding-speed turn radius, so the
+    // envelope leans clearly to the holding side.
+    assert!(right_cx > left_cx + 0.6, "no lean: right {right_cx}, left {left_cx}");
     assert!((right_cx + left_cx).abs() < 1e-6, "mirror not symmetric");
 }

@@ -93,13 +93,16 @@ pub fn build_hold_protected_area(
     let leg_time_hr = leg_length / tas_kt;
     let turn_time_hr = (180.0 / turn_rate_deg_per_sec) / 3600.0;
 
-    // Nominal racetrack in the drawn shape's local frame (fix at the origin,
-    // inbound along `forward`), with cumulative time-from-fix per sample.
+    // Nominal FLOWN racetrack (fix at the origin, inbound along `forward`),
+    // with cumulative time-from-fix per sample. Unlike the compact display
+    // racetrack, the swept pattern uses the true turn radius at holding speed
+    // (radius = TAS / (20π·rate)), so the protected area offsets clearly to
+    // the holding side and the turn direction is visible in the envelope.
     let heading_rad = heading_deg.to_radians();
     let forward = Vec2::new(heading_rad.sin(), -heading_rad.cos());
     let right = Vec2::new(heading_rad.cos(), heading_rad.sin());
     let turn_sign = if turn_direction == "L" { -1.0 } else { 1.0 };
-    let radius = (leg_length / 8.0).max(0.6);
+    let radius = tas_kt / (20.0 * PI * turn_rate_deg_per_sec);
     let offset = turn_sign * radius;
     let world = |forward_offset: f64, right_offset: f64| {
         Vec2::new(
@@ -128,12 +131,16 @@ pub fn build_hold_protected_area(
             world(-leg_length - radius * angle.cos(), offset + radius * angle.sin()),
             turn_time_hr + leg_time_hr + t * turn_time_hr,
         ));
-        // Inbound leg back to the fix.
-        samples.push((
-            world(-leg_length + t * leg_length, 0.0),
-            2.0 * turn_time_hr + leg_time_hr + t * leg_time_hr,
-        ));
+        // Inbound leg back to the fix: the aircraft is re-established on
+        // course guidance converging on the fix, so instead of continuing the
+        // dead-reckoning growth, the protection tapers back down to the base
+        // fix tolerance at fix passage (negative time encodes the taper; see
+        // the protection computation below).
+        samples.push((world(-leg_length + t * leg_length, 0.0), -(1.0 - t)));
     }
+    // Peak dead-reckoning drift: accumulated through the near turn, outbound
+    // leg, and far turn (the unguided portion of the circuit).
+    let peak_time_hr = 2.0 * turn_time_hr + leg_time_hr;
 
     // Convex envelope of the protection disks via the support function: for
     // each outline direction, the farthest disk in that direction contributes
@@ -146,7 +153,14 @@ pub fn build_hold_protected_area(
         let direction = Vec2::new(theta.cos(), theta.sin());
         let mut best: Option<(f64, Vec2, f64)> = None;
         for (disk_center, time_hr) in &samples {
-            let protection = HOLD_TEMPLATE_BASE_BUFFER_NM + wind_kt * time_hr;
+            // Non-negative times are elapsed dead-reckoning hours from the
+            // fix; negative values encode the inbound-leg taper fraction from
+            // the peak drift back down to the base fix tolerance.
+            let protection = if *time_hr >= 0.0 {
+                HOLD_TEMPLATE_BASE_BUFFER_NM + wind_kt * time_hr
+            } else {
+                HOLD_TEMPLATE_BASE_BUFFER_NM + wind_kt * peak_time_hr * (-time_hr)
+            };
             let support = disk_center.dot(direction) + protection;
             if best.as_ref().is_none_or(|(current, _, _)| support > *current) {
                 best = Some((support, *disk_center, protection));
