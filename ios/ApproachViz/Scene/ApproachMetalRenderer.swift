@@ -1104,7 +1104,7 @@ private func makeHoldLabel(leg: ApproachLeg, magneticVariation: Double, legLengt
     // Time-published holds label the timing alongside the speed-derived
     // length; distance-published (and default) holds label the length alone.
     let lengthLabel: String
-    if leg.holdDistance ?? leg.distance == nil, let holdTime = leg.holdTime {
+    if (leg.holdDistance ?? leg.distance) == nil, let holdTime = leg.holdTime {
         lengthLabel = "\(formatHoldQuantity(holdTime))MIN (\(formatHoldQuantity(legLengthNm))NM)"
     } else {
         lengthLabel = "\(formatHoldQuantity(legLengthNm))NM"
