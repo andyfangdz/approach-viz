@@ -696,26 +696,46 @@ fn hold_leg_length_defaults_to_standard_pattern_timing() {
 }
 
 #[test]
-fn hold_protected_area_encloses_racetrack_with_growing_downwind_buffer() {
+fn hold_protected_area_matches_published_terps_dimensions() {
+    // 4,400 ft is in the 200-KIAS tier; table 16-3-1 (RNAV column) selects
+    // pattern 6, whose table 16-6-1 dimensions the boundary must honor:
+    // course-line extent A-L + L-M + M-G and the M-E / L-I widths.
     let heading = 356.0;
     let leg_nm = resolve_hold_leg_length_nm(None, Some(1.0), 4400.0);
-    let racetrack = build_hold_points(Vec2::new(0.0, 0.0), heading, leg_nm, 4400.0, "R", 1.0);
     let area = build_hold_protected_area(0.0, 0.0, heading, leg_nm, 4400.0, "R", 1.0);
-
-    // Closed rings at the hold altitude.
     assert!(area.primary.len() > 100);
     assert_eq!(area.primary.first(), area.primary.last());
-    assert_eq!(area.secondary.first(), area.secondary.last());
     assert!((area.primary[0].y - crate::coords::alt_to_y(4400.0, 1.0)).abs() < 1e-9);
 
-    // Every racetrack point sits at least the base buffer inside the primary
-    // ring: its distance to the nearest ring point exceeds a coarse bound and
-    // the ring's support in every direction clears the point by the buffer.
+    let (pattern, a_l, l_m, m_g, l_i, m_e, _) = *terps_holding_pattern_dimensions(4400.0);
+    assert_eq!(pattern, 6);
+    assert!(leg_nm <= l_m, "test premise: standard 1-minute leg fits pattern 6");
     let support = |ring: &[Point3], dir: (f64, f64)| {
         ring.iter()
             .map(|p| p.x * dir.0 + p.z * dir.1)
             .fold(f64::MIN, f64::max)
     };
+    let heading_rad = heading_deg_to_rad(heading);
+    let inbound = (heading_rad.sin(), -heading_rad.cos());
+    let outbound = (-inbound.0, -inbound.1);
+    let holding = (-inbound.1, inbound.0); // right of the inbound course
+    // Along-course extents: A-L past the fix, L-M + M-G beyond it.
+    assert!((support(&area.primary, inbound) - a_l).abs() < 0.15);
+    assert!((support(&area.primary, outbound) - (l_m + m_g)).abs() < 0.15);
+    // Widths: M-E on the holding side, L-I (= M-H) on the non-holding side.
+    assert!((support(&area.primary, holding) - m_e).abs() < 0.15);
+    assert!(
+        (support(&area.primary, (-holding.0, -holding.1)) - l_i).abs() < 0.15
+    );
+    // Secondary ring surrounds the primary at the published 2 NM width.
+    for step in 0..24 {
+        let theta = step as f64 / 24.0 * std::f64::consts::TAU;
+        let dir = (theta.cos(), theta.sin());
+        let gap = support(&area.secondary, dir) - support(&area.primary, dir);
+        assert!((gap - HOLD_SECONDARY_WIDTH_NM).abs() < 0.05, "secondary gap {gap}");
+    }
+    // The drawn racetrack stays well inside the primary boundary.
+    let racetrack = build_hold_points(Vec2::new(0.0, 0.0), heading, leg_nm, 4400.0, "R", 1.0);
     for step in 0..24 {
         let theta = step as f64 / 24.0 * std::f64::consts::TAU;
         let dir = (theta.cos(), theta.sin());
@@ -723,29 +743,34 @@ fn hold_protected_area_encloses_racetrack_with_growing_downwind_buffer() {
             .iter()
             .map(|p| p.x * dir.0 + p.z * dir.1)
             .fold(f64::MIN, f64::max);
-        let primary_support = support(&area.primary, dir);
         assert!(
-            primary_support >= racetrack_support + HOLD_TEMPLATE_BASE_BUFFER_NM - 0.05,
-            "primary boundary hugs the racetrack too closely along {theta}"
+            support(&area.primary, dir) >= racetrack_support + 1.0,
+            "primary hugs the racetrack along {theta}"
         );
-        // Secondary ring is the primary plus the fixed secondary width.
-        let secondary_support = support(&area.secondary, dir);
-        assert!((secondary_support - primary_support - HOLD_SECONDARY_WIDTH_NM).abs() < 0.05);
     }
+}
 
-    // The buffer grows with elapsed pattern time, so the boundary reaches
-    // farther on the outbound end (flown last before returning to the fix)
-    // than the base buffer alone.
-    let outbound_dir_rad = (heading + 180.0_f64).to_radians();
-    let outbound = (outbound_dir_rad.sin(), -outbound_dir_rad.cos());
-    let racetrack_outbound = racetrack
-        .iter()
-        .map(|p| p.x * outbound.0 + p.z * outbound.1)
-        .fold(f64::MIN, f64::max);
-    assert!(
-        support(&area.primary, outbound) > racetrack_outbound + HOLD_TEMPLATE_BASE_BUFFER_NM + 0.3,
-        "no downwind growth on the outbound end"
-    );
+#[test]
+fn hold_protected_area_selects_pattern_by_speed_tier_and_stretches_long_legs() {
+    // Speed-tier / altitude selection from table 16-3-1 (RNAV column).
+    assert_eq!(terps_holding_pattern_dimensions(2000.0).0, 4);
+    assert_eq!(terps_holding_pattern_dimensions(6000.0).0, 6);
+    assert_eq!(terps_holding_pattern_dimensions(10000.0).0, 10);
+    assert_eq!(terps_holding_pattern_dimensions(17000.0).0, 17);
+    assert_eq!(terps_holding_pattern_dimensions(60000.0).0, 31);
+
+    // A leg longer than the pattern's L-M stretches the body by the excess.
+    let (_, a_l, l_m, m_g, ..) = *terps_holding_pattern_dimensions(10000.0);
+    let long_leg = l_m + 5.0;
+    let area = build_hold_protected_area(0.0, 0.0, 0.0, long_leg, 10000.0, "R", 1.0);
+    let support = |ring: &[Point3], dir: (f64, f64)| {
+        ring.iter()
+            .map(|p| p.x * dir.0 + p.z * dir.1)
+            .fold(f64::MIN, f64::max)
+    };
+    // Inbound course 000 true: outbound extent is due south (+z).
+    assert!((support(&area.primary, (0.0, 1.0)) - (long_leg + m_g)).abs() < 0.15);
+    assert!((support(&area.primary, (0.0, -1.0)) - a_l).abs() < 0.15);
 }
 
 #[test]
@@ -753,24 +778,19 @@ fn hold_protected_area_mirrors_with_turn_direction() {
     let leg_nm = 4.0;
     let right = build_hold_protected_area(0.0, 0.0, 0.0, leg_nm, 3000.0, "R", 1.0);
     let left = build_hold_protected_area(0.0, 0.0, 0.0, leg_nm, 3000.0, "L", 1.0);
-    // Inbound course 000 true: right turns put the racetrack east (+x), left
-    // turns put it west; the protected areas must lean the same way. Support
-    // sampling emits unevenly spaced vertices, so use the polygon (shoelace)
-    // centroid, which depends only on the boundary geometry.
-    let area_centroid_x = |ring: &[Point3]| {
-        let mut area2 = 0.0;
-        let mut moment_x = 0.0;
-        for pair in ring.windows(2) {
-            let cross = pair[0].x * pair[1].z - pair[1].x * pair[0].z;
-            area2 += cross;
-            moment_x += (pair[0].x + pair[1].x) * cross;
-        }
-        moment_x / (3.0 * area2)
-    };
-    let right_cx = area_centroid_x(&right.primary);
-    let left_cx = area_centroid_x(&left.primary);
-    // The swept pattern uses the true holding-speed turn radius, so the
-    // envelope leans clearly to the holding side.
-    assert!(right_cx > left_cx + 0.6, "no lean: right {right_cx}, left {left_cx}");
-    assert!((right_cx + left_cx).abs() < 1e-6, "mirror not symmetric");
+    // Inbound course 000 true: right turns hold east (+x), left turns west.
+    // Table 16-6-1 widths are asymmetric (M-E holding side vs L-I), so the
+    // extents must lean with the turn while mirroring exactly.
+    let east = |ring: &[Point3]| ring.iter().map(|p| p.x).fold(f64::MIN, f64::max);
+    let west = |ring: &[Point3]| ring.iter().map(|p| p.x).fold(f64::MAX, f64::min);
+    let (_, _, _, _, l_i, m_e, _) = *terps_holding_pattern_dimensions(3000.0);
+    assert!((east(&right.primary) - m_e).abs() < 0.15);
+    assert!((west(&right.primary) + l_i).abs() < 0.15);
+    assert!((east(&right.primary) + west(&left.primary)).abs() < 1e-9);
+    assert!((west(&right.primary) + east(&left.primary)).abs() < 1e-9);
+}
+
+
+fn heading_deg_to_rad(heading: f64) -> f64 {
+    heading.to_radians()
 }
