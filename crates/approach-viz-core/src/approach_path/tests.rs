@@ -502,3 +502,133 @@ fn dme_arc_lead_turn_rolls_out_onto_inbound_course() {
         last.z
     );
 }
+
+#[test]
+fn procedure_turn_leg_renders_charted_reversal() {
+    // KACK VOR RWY 24 shape: IF at the VOR, a `PI` procedure turn (45° excursion
+    // course published, remain within 10 NM, right-hand reversal), then a `CF`
+    // back to the same fix on the inbound course. The PT must render the full
+    // charted maneuver — outbound on the reciprocal, 45° barb excursion, 180°
+    // reversal, roll-out on the inbound course — instead of collapsing onto the
+    // fix as a zero-length segment.
+    let ref_lat = 41.0;
+    let ref_lon = -70.0;
+    let inbound_course = 240.0;
+    let legs = vec![
+        make_leg(ApproachPathLeg { sequence: 10, waypoint_id: "APT_ACK".into(), waypoint_name: "ACK".into(), path_terminator: "IF".into(), altitude: Some(1800.0), altitude_constraint: None, course: None, distance: None, hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: true, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 20, waypoint_id: "APT_ACK".into(), waypoint_name: "ACK".into(), path_terminator: "PI".into(), altitude: Some(1800.0), altitude_constraint: None, course: Some(15.0), distance: Some(10.0), hold_course: None, hold_distance: None, turn_direction: Some("R".into()), hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 30, waypoint_id: "APT_ACK".into(), waypoint_name: "ACK".into(), path_terminator: "CF".into(), altitude: Some(800.0), altitude_constraint: None, course: Some(inbound_course), distance: Some(6.0), hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+    ];
+    let waypoints = vec![local_waypoint("APT_ACK", 0.0, 0.0, ref_lat, ref_lon)];
+    let result = build_path_geometry(BuildPathGeometryParams {
+        legs: legs.clone(),
+        waypoints,
+        resolved_altitudes: resolved_altitudes(&legs),
+        initial_altitude_feet: 1800.0,
+        vertical_scale: 1.0,
+        ref_lat,
+        ref_lon,
+        mag_var: 0.0,
+        show_turn_constraint_labels: false,
+    });
+    let n = result.points.len();
+    assert!(n > 30, "procedure turn not drawn (n={n})");
+    // Starts at the fix and (via the CF) returns to it.
+    let first = result.points[0];
+    let last = result.points[n - 1];
+    assert!(first.x.abs() < 0.05 && first.z.abs() < 0.05);
+    assert!(last.x.abs() < 0.05 && last.z.abs() < 0.05);
+    // Remains within the published distance limit but actually flies outbound.
+    let max_excursion = result
+        .points
+        .iter()
+        .map(|p| (p.x * p.x + p.z * p.z).sqrt())
+        .fold(0.0_f64, f64::max);
+    assert!(max_excursion <= 10.0, "PT exceeds remain-within limit: {max_excursion} NM");
+    assert!(max_excursion >= 3.0, "PT maneuver too small: {max_excursion} NM");
+    // The excursion (barb) lies left of the outbound track: with inbound 240 the
+    // outbound is 060, whose right normal points southeast; the loop must bulge
+    // to the northwest (negative right-normal cross-track).
+    let outbound_rad = (inbound_course - 180.0_f64).to_radians();
+    let dir = (outbound_rad.sin(), -outbound_rad.cos());
+    let right_normal = (-dir.1, dir.0);
+    let min_cross_track = result
+        .points
+        .iter()
+        .map(|p| p.x * right_normal.0 + p.z * right_normal.1)
+        .fold(f64::MAX, f64::min);
+    assert!(min_cross_track < -0.5, "barb on the wrong side: {min_cross_track}");
+    // Before the final run to the fix, the path is established on the inbound
+    // course line outbound of the fix (the roll-out point).
+    let inbound_rad = inbound_course.to_radians();
+    let inbound_dir = (inbound_rad.sin(), -inbound_rad.cos());
+    let rollout = result.points[n - 2];
+    let along = rollout.x * inbound_dir.0 + rollout.z * inbound_dir.1;
+    let cross = rollout.x * -inbound_dir.1 + rollout.z * inbound_dir.0;
+    assert!(cross.abs() < 0.15, "roll-out not on the inbound course: {cross}");
+    assert!(along < -0.5, "roll-out not outbound of the fix: {along}");
+}
+
+#[test]
+fn procedure_turn_mirrors_for_left_reversal() {
+    // Left-hand reversal: the 45° excursion course sits right of the outbound
+    // course, so the loop must bulge to the right of the outbound track.
+    let ref_lat = 41.0;
+    let ref_lon = -70.0;
+    let legs = vec![
+        make_leg(ApproachPathLeg { sequence: 10, waypoint_id: "APT_FIX".into(), waypoint_name: "FIX".into(), path_terminator: "IF".into(), altitude: Some(2000.0), altitude_constraint: None, course: None, distance: None, hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: true, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 20, waypoint_id: "APT_FIX".into(), waypoint_name: "FIX".into(), path_terminator: "PI".into(), altitude: Some(2000.0), altitude_constraint: None, course: Some(105.0), distance: Some(10.0), hold_course: None, hold_distance: None, turn_direction: Some("L".into()), hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 30, waypoint_id: "APT_FIX".into(), waypoint_name: "FIX".into(), path_terminator: "CF".into(), altitude: Some(1000.0), altitude_constraint: None, course: Some(240.0), distance: Some(6.0), hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+    ];
+    let waypoints = vec![local_waypoint("APT_FIX", 0.0, 0.0, ref_lat, ref_lon)];
+    let result = build_path_geometry(BuildPathGeometryParams {
+        legs: legs.clone(),
+        waypoints,
+        resolved_altitudes: resolved_altitudes(&legs),
+        initial_altitude_feet: 2000.0,
+        vertical_scale: 1.0,
+        ref_lat,
+        ref_lon,
+        mag_var: 0.0,
+        show_turn_constraint_labels: false,
+    });
+    assert!(result.points.len() > 30);
+    let outbound_rad = 60.0_f64.to_radians();
+    let dir = (outbound_rad.sin(), -outbound_rad.cos());
+    let right_normal = (-dir.1, dir.0);
+    let max_cross_track = result
+        .points
+        .iter()
+        .map(|p| p.x * right_normal.0 + p.z * right_normal.1)
+        .fold(f64::MIN, f64::max);
+    assert!(max_cross_track > 0.5, "left-reversal barb on the wrong side: {max_cross_track}");
+}
+
+#[test]
+fn procedure_turn_without_course_data_keeps_fix_anchor() {
+    // A `PI` with no published excursion course and no following course leg has
+    // nothing to orient the maneuver; it must keep the pre-existing draw-to-fix
+    // behavior (no fabricated reversal, no panic).
+    let ref_lat = 41.0;
+    let ref_lon = -70.0;
+    let legs = vec![
+        make_leg(ApproachPathLeg { sequence: 10, waypoint_id: "APT_FIX".into(), waypoint_name: "FIX".into(), path_terminator: "IF".into(), altitude: Some(2000.0), altitude_constraint: None, course: None, distance: None, hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: true, is_final_fix: false, is_missed_approach: false }),
+        make_leg(ApproachPathLeg { sequence: 20, waypoint_id: "APT_FIX".into(), waypoint_name: "FIX".into(), path_terminator: "PI".into(), altitude: Some(2000.0), altitude_constraint: None, course: None, distance: Some(10.0), hold_course: None, hold_distance: None, turn_direction: None, hold_turn_direction: None, rf_center_waypoint_id: None, rf_turn_direction: None, vertical_angle_deg: None, rnp_service_levels: None, is_final_approach_fix: false, is_initial_fix: false, is_final_fix: false, is_missed_approach: false }),
+    ];
+    let waypoints = vec![local_waypoint("APT_FIX", 0.0, 0.0, ref_lat, ref_lon)];
+    let result = build_path_geometry(BuildPathGeometryParams {
+        legs: legs.clone(),
+        waypoints,
+        resolved_altitudes: resolved_altitudes(&legs),
+        initial_altitude_feet: 2000.0,
+        vertical_scale: 1.0,
+        ref_lat,
+        ref_lon,
+        mag_var: 0.0,
+        show_turn_constraint_labels: false,
+    });
+    assert!(!result.points.is_empty());
+    for p in &result.points {
+        assert!(p.x.abs() < 0.05 && p.z.abs() < 0.05, "unexpected fabricated geometry");
+    }
+}

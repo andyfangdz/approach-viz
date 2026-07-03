@@ -75,13 +75,23 @@ python3 -c "import fitz" >/dev/null 2>&1 || pip install --quiet pymupdf >/dev/nu
 
 dtpp_base="https://aeronav.faa.gov/d-tpp"
 
-# Discover the latest cycle from the d-TPP index when not pinned.
+# Discover the latest cycle from the d-TPP index when not pinned. The FAA
+# pre-creates directories for future cycles before their metafile exists, so
+# probe candidates newest-first and keep the first cycle whose metafile is
+# actually there instead of blindly taking the numeric maximum.
 if [ -z "$cycle" ]; then
   echo "Discovering latest d-TPP cycle..." >&2
-  cycle="$(curl -fsSL "$dtpp_base/" 2>/dev/null \
+  candidates="$(curl -fsSL "$dtpp_base/" 2>/dev/null \
     | grep -oiE 'href="/d-tpp/[0-9]{4}/"' \
     | grep -oE '[0-9]{4}' \
-    | sort -n | tail -1 || true)"
+    | sort -rn | uniq || true)"
+  for candidate in $candidates; do
+    if curl -fsL -r 0-0 -o /dev/null "$dtpp_base/$candidate/xml_data/d-TPP_Metafile.xml" 2>/dev/null; then
+      cycle="$candidate"
+      break
+    fi
+    echo "Cycle $candidate has no metafile yet; trying the previous cycle..." >&2
+  done
   if [ -z "$cycle" ]; then
     echo "Could not auto-discover the cycle. Pass --cycle YYMM (e.g., 2606)." >&2
     exit 1

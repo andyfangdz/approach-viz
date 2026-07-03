@@ -97,6 +97,45 @@ pub(crate) fn build_path_geometry_internal(
                 fix_z - heading_rad.cos() * distance_nm,
             ));
             last_leg_course_heading_true = Some(heading_true);
+        } else if leg.path_terminator == "PI" && waypoint.is_some() {
+            // Procedure turn (charted barb PT, e.g. KACK VOR RWY 24 at ACK):
+            // outbound on the reciprocal of the inbound course, 45° excursion
+            // leg on the published course, 180° reversal, then roll out on the
+            // inbound course outbound of the fix. The following course-to-fix
+            // leg (`CF` back to the same fix) draws the inbound course itself.
+            let fix_wp = waypoint.unwrap();
+            let (fix_x, fix_z) = coords::lat_lon_to_local(fix_wp.lat, fix_wp.lon, ref_lat, ref_lon);
+            let inbound_leg = legs.get(leg_index + 1).filter(|next_leg| {
+                is_fix_join_terminator(Some(next_leg.path_terminator.as_str()))
+                    && next_leg.course.is_some_and(|course| course.is_finite())
+            });
+            let inbound_course_true = inbound_leg
+                .map(|next_leg| coords::magnetic_to_true_heading(next_leg.course.unwrap(), mag_var));
+            let excursion_course_true = leg
+                .course
+                .filter(|course| course.is_finite())
+                .map(|course| coords::magnetic_to_true_heading(course, mag_var));
+            if let Some((turn_points, inbound_true)) = build_procedure_turn_points(
+                Vec2::new(fix_x, fix_z),
+                excursion_course_true,
+                inbound_course_true,
+                leg.turn_direction.as_deref(),
+                leg.distance,
+                inbound_leg.is_none(),
+                y,
+            ) {
+                current_point = turn_points.last().copied();
+                heading_transition_points = Some(turn_points);
+                last_leg_course_heading_true = Some(inbound_true);
+                pending_course_to_fix_turn_heading = None;
+                pending_course_to_fix_turn_direction = None;
+                pending_course_to_fix_prefers_course_intercept = false;
+            } else {
+                // No usable course data: keep the pre-existing draw-to-fix
+                // behavior rather than fabricating a reversal shape.
+                current_point = Some(Vec3::new(fix_x, y, fix_z));
+                last_leg_course_heading_true = None;
+            }
         } else if let Some(waypoint) = waypoint {
             let (x, z) = coords::lat_lon_to_local(waypoint.lat, waypoint.lon, ref_lat, ref_lon);
             current_point = Some(Vec3::new(x, y, z));
@@ -1242,5 +1281,147 @@ pub(crate) fn build_heading_transition_arc_points(
         ));
     }
     points
+}
+
+
+/// Build the points of a charted 45°/180° procedure turn (`PI` leg) anchored at
+/// `fix`: outbound on the reciprocal of the inbound course, a 45° turn onto the
+/// published excursion (barb) course, a straight excursion leg, a 180° reversal
+/// turn, then an intercept back to the inbound course with a tangent roll-out,
+/// ending on the course outbound of the fix. The CIFP publishes the excursion
+/// course (`excursion_course_true_deg`), the remain-within limit (`limit_nm`),
+/// and the reversal turn direction; the inbound course comes from the following
+/// course-to-fix leg when available, otherwise it is derived from the excursion
+/// course and reversal direction (the excursion leg is 45° off the outbound).
+///
+/// Returns `(points, inbound_course_true_deg)` — `points` starts at the fix and
+/// ends established on the inbound course (extended to the fix itself when
+/// `extend_inbound_to_fix` is set, for a `PI` with no following course leg) —
+/// or `None` when neither the excursion course nor an inbound course is
+/// available to orient the maneuver.
+pub(crate) fn build_procedure_turn_points(
+    fix: Vec2,
+    excursion_course_true_deg: Option<f64>,
+    inbound_course_true_deg: Option<f64>,
+    reversal_turn_direction: Option<&str>,
+    limit_nm: Option<f64>,
+    extend_inbound_to_fix: bool,
+    y: f64,
+) -> Option<(Vec<Vec3>, f64)> {
+    let normalize_signed_delta_deg = |delta: f64| {
+        let mut normalized = (((delta + 180.0) % 360.0) + 360.0) % 360.0 - 180.0;
+        if normalized <= -180.0 {
+            normalized += 360.0;
+        }
+        normalized
+    };
+    // The excursion leg sits 45° off the outbound course, on the side opposite
+    // the reversal turn (left barb pairs with a right reversal and vice versa).
+    let excursion_offset_sign = if reversal_turn_direction == Some("L") {
+        1.0
+    } else {
+        -1.0
+    };
+    let (inbound_true, excursion_true) = match (inbound_course_true_deg, excursion_course_true_deg)
+    {
+        (Some(inbound), Some(excursion)) => (inbound, excursion),
+        (Some(inbound), None) => (
+            inbound,
+            coords::normalize_heading(inbound + 180.0 + excursion_offset_sign * 45.0),
+        ),
+        (None, Some(excursion)) => (
+            coords::normalize_heading(excursion - excursion_offset_sign * 45.0 + 180.0),
+            excursion,
+        ),
+        (None, None) => return None,
+    };
+    let outbound_true = coords::normalize_heading(inbound_true + 180.0);
+    let initial_delta = normalize_signed_delta_deg(excursion_true - outbound_true);
+    if initial_delta.abs() < 5.0 || initial_delta.abs() > 135.0 {
+        return None; // excursion course inconsistent with the outbound course
+    }
+    let initial_turn = if initial_delta >= 0.0 { "R" } else { "L" };
+    let reversal_turn = if initial_delta >= 0.0 { "L" } else { "R" };
+
+    let dir_of = |heading_true: f64| {
+        let rad = heading_true.to_radians();
+        Vec2::new(rad.sin(), -rad.cos())
+    };
+    let outbound_dir = dir_of(outbound_true);
+    let excursion_dir = dir_of(excursion_true);
+    let inbound_dir = dir_of(inbound_true);
+    let reciprocal_true = coords::normalize_heading(excursion_true + 180.0);
+    let reciprocal_dir = dir_of(reciprocal_true);
+
+    let limit = limit_nm
+        .filter(|limit| limit.is_finite() && *limit > 0.0)
+        .unwrap_or(PROCEDURE_TURN_DEFAULT_LIMIT_NM);
+    let outbound_nm = (limit * PROCEDURE_TURN_OUTBOUND_LIMIT_FRACTION)
+        .clamp(PROCEDURE_TURN_MIN_OUTBOUND_NM, PROCEDURE_TURN_MAX_OUTBOUND_NM);
+    let radius = PROCEDURE_TURN_RADIUS_NM;
+
+    let mut points = vec![Vec3::new(fix.x, y, fix.y)];
+    let turn_start = fix.add(outbound_dir.scale(outbound_nm));
+    points.push(Vec3::new(turn_start.x, y, turn_start.y));
+    points.extend(build_heading_transition_arc_points(
+        Vec3::new(turn_start.x, y, turn_start.y),
+        outbound_true,
+        excursion_true,
+        y,
+        Some(initial_turn),
+        radius,
+    ));
+    let excursion_start = points.last().copied().unwrap();
+    let excursion_end = Vec2::new(excursion_start.x, excursion_start.z)
+        .add(excursion_dir.scale(PROCEDURE_TURN_EXCURSION_NM));
+    points.push(Vec3::new(excursion_end.x, y, excursion_end.y));
+    points.extend(build_heading_transition_arc_points(
+        Vec3::new(excursion_end.x, y, excursion_end.y),
+        excursion_true,
+        reciprocal_true,
+        y,
+        Some(reversal_turn),
+        radius,
+    ));
+    let reversal_end = points.last().copied().unwrap();
+
+    // Intercept of the post-reversal track with the inbound course line through
+    // the fix: reversal_end + t·reciprocal_dir = fix + s·inbound_dir.
+    let denominator = reciprocal_dir.x * inbound_dir.y - reciprocal_dir.y * inbound_dir.x;
+    if denominator.abs() < 1e-6 {
+        return None;
+    }
+    let delta = fix.sub(Vec2::new(reversal_end.x, reversal_end.z));
+    let t = (delta.x * inbound_dir.y - delta.y * inbound_dir.x) / denominator;
+    if t <= 0.0 {
+        return None; // reversal rolled out past the course line
+    }
+    let intercept = Vec2::new(reversal_end.x, reversal_end.z).add(reciprocal_dir.scale(t));
+    // The roll-out must land outbound of the fix so the inbound course leg that
+    // follows still has a run back to the fix.
+    if fix.sub(intercept).dot(inbound_dir) <= 0.2 {
+        return None;
+    }
+    let intercept_delta_deg =
+        normalize_signed_delta_deg(inbound_true - reciprocal_true).abs();
+    let fillet_tangent_nm = radius * (intercept_delta_deg.to_radians() * 0.5).tan();
+    if t > fillet_tangent_nm + 0.05 {
+        let fillet_start = intercept.sub(reciprocal_dir.scale(fillet_tangent_nm));
+        points.push(Vec3::new(fillet_start.x, y, fillet_start.y));
+        points.extend(build_heading_transition_arc_points(
+            Vec3::new(fillet_start.x, y, fillet_start.y),
+            reciprocal_true,
+            inbound_true,
+            y,
+            Some(reversal_turn),
+            radius,
+        ));
+    } else {
+        points.push(Vec3::new(intercept.x, y, intercept.y));
+    }
+    if extend_inbound_to_fix {
+        points.push(Vec3::new(fix.x, y, fix.y));
+    }
+    Some((points, inbound_true))
 }
 

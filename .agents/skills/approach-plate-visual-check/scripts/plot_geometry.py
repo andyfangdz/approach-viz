@@ -22,7 +22,9 @@ pixels). Without --plate, renders the geometry alone.
 import argparse
 
 
-# Stable colors for common segment labels; anything else cycles a palette.
+# Stable colors keyed by the segment label's prefix before ':' (for example
+# "transition:FLACK" -> transition); unknown kinds cycle a palette that avoids
+# the known colors so they can never collide with e.g. the missed-approach red.
 KNOWN_COLORS = {
     "final": "#0a0",
     "localizer": "#0a0",
@@ -30,7 +32,7 @@ KNOWN_COLORS = {
     "missed": "#d22",
     "hold": "#22d",
 }
-PALETTE = ["goldenrod", "#d22", "#22d", "purple", "orange", "teal", "magenta"]
+PALETTE = ["purple", "teal", "magenta", "#7a5230", "#446644"]
 
 
 def load_segments(path):
@@ -53,7 +55,7 @@ def draw(ax, fixes, segments, title):
     for i, (label, pts) in enumerate(segments):
         xs = [p[0] for p in pts]
         ns = [-p[1] for p in pts]  # north = -z
-        color = KNOWN_COLORS.get(label.lower(), PALETTE[i % len(PALETTE)])
+        color = KNOWN_COLORS.get(label.lower().split(":", 1)[0], PALETTE[i % len(PALETTE)])
         ax.plot(xs, ns, color=color, lw=2.2, label=label)
     for name, (x, z) in fixes.items():
         ax.scatter([x], [-z], color="black", s=18, zorder=5)
