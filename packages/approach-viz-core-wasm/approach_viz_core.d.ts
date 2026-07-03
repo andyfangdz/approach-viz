@@ -60,6 +60,8 @@ export function approach_path_build_geometry(params: any): any;
 
 export function approach_path_build_hold_points(center_x: number, center_z: number, heading_deg: number, hold_distance_nm: number, altitude_feet: number, turn_direction: string, vertical_scale: number): any;
 
+export function approach_path_build_hold_protected_area(center_x: number, center_z: number, heading_deg: number, leg_length_nm: number, altitude_feet: number, turn_direction: string, vertical_scale: number): any;
+
 export function approach_path_resolve_altitudes(params: any): any;
 
 export function approach_path_resolve_hold_leg_length_nm(hold_distance_nm: number | null | undefined, hold_time_minutes: number | null | undefined, altitude_feet: number): number;
@@ -126,6 +128,7 @@ export interface InitOutput {
     readonly __wbg_wasmtrafficstate_free: (a: number, b: number) => void;
     readonly approach_path_build_geometry: (a: any) => [number, number, number];
     readonly approach_path_build_hold_points: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly approach_path_build_hold_protected_area: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly approach_path_resolve_altitudes: (a: any) => [number, number, number];
     readonly approach_path_resolve_hold_leg_length_nm: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];

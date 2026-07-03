@@ -151,6 +151,26 @@ export function approach_path_build_hold_points(center_x, center_z, heading_deg,
 }
 
 /**
+ * @param {number} center_x
+ * @param {number} center_z
+ * @param {number} heading_deg
+ * @param {number} leg_length_nm
+ * @param {number} altitude_feet
+ * @param {string} turn_direction
+ * @param {number} vertical_scale
+ * @returns {any}
+ */
+export function approach_path_build_hold_protected_area(center_x, center_z, heading_deg, leg_length_nm, altitude_feet, turn_direction, vertical_scale) {
+    const ptr0 = passStringToWasm0(turn_direction, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.approach_path_build_hold_protected_area(center_x, center_z, heading_deg, leg_length_nm, altitude_feet, ptr0, len0, vertical_scale);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * @param {any} params
  * @returns {any}
  */

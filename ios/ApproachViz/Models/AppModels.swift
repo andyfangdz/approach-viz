@@ -147,6 +147,8 @@ struct NativeTrafficScene: Hashable {
 
 struct NativeLayerState: Hashable {
     var approach = true
+    // TERPS-style hold protected-area overlay (default off, matching web).
+    var holdAreas = false
     var airspace = true
     var adsb = true
     // Weather layer defaults match the web `DEFAULT_LAYER_STATE`:

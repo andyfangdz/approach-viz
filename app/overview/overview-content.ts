@@ -211,7 +211,7 @@ export const SECTIONS: Section[] = [
               [
                 '`HA` · `HF` · `HM`',
                 'Holds',
-                'Kept out of the main path stream entirely: the scene layer filters hold legs and renders Rust-generated racetrack overlays (dashed prisms) with annotations instead. Straight-leg length comes from the shared `resolve_hold_leg_length_nm`: a published distance as-is, otherwise the published hold time (or the standard 1 min / 1.5 min pattern) flown at the altitude-tiered FAA maximum holding airspeed (200/230/265 KIAS, TAS-corrected ~2% per 1,000 ft) — so a 1-minute hold renders at the ground distance that timing actually covers.'
+                'Kept out of the main path stream entirely: the scene layer filters hold legs and renders Rust-generated racetrack overlays (dashed prisms) with annotations instead. Straight-leg length comes from the shared `resolve_hold_leg_length_nm`: a published distance as-is, otherwise the published hold time (or the standard 1 min / 1.5 min pattern) flown at the altitude-tiered FAA maximum holding airspeed (200/230/265 KIAS, TAS-corrected ~2% per 1,000 ft) — so a 1-minute hold renders at the ground distance that timing actually covers. An optional `Hold Protected Areas` layer draws TERPS-style protected airspace per hold (`build_hold_protected_area`): the racetrack swept by a protection disk growing with the omnidirectional wind allowance over pattern time, as convex primary + 2 NM secondary rings.'
               ],
               [
                 'everything else',

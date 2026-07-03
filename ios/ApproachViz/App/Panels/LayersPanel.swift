@@ -16,6 +16,13 @@ struct NativeLayersPanel: View {
                     )
                 )
                 LayerToggleRow(
+                    title: "Hold Protected Areas",
+                    isOn: Binding(
+                        get: { store.layerState.holdAreas },
+                        set: { store.send(.setLayerEnabled(.holdAreas, $0)) }
+                    )
+                )
+                LayerToggleRow(
                     title: "Airspace",
                     isOn: Binding(
                         get: { store.layerState.airspace },

@@ -242,6 +242,27 @@ pub fn build_approach_path_geometry(
 }
 
 #[uniffi::export]
+pub fn build_approach_hold_protected_area(
+    center_x: f64,
+    center_z: f64,
+    heading_deg: f64,
+    leg_length_nm: f64,
+    altitude_feet: f64,
+    turn_direction: String,
+    vertical_scale: f64,
+) -> approach_path::HoldProtectedArea {
+    approach_path::build_hold_protected_area(
+        center_x,
+        center_z,
+        heading_deg,
+        leg_length_nm,
+        altitude_feet,
+        &turn_direction,
+        vertical_scale,
+    )
+}
+
+#[uniffi::export]
 pub fn resolve_approach_hold_leg_length_nm(
     hold_distance_nm: Option<f64>,
     hold_time_minutes: Option<f64>,

@@ -80,6 +80,23 @@ pub(crate) const HOLD_IAS_MID_CEILING_FT: f64 = 14_000.0;
 pub(crate) const HOLD_TAS_FACTOR_PER_1000_FT: f64 = 0.02;
 pub(crate) const HOLD_STANDARD_TIME_LOW_MIN: f64 = 1.0;
 pub(crate) const HOLD_STANDARD_TIME_HIGH_MIN: f64 = 1.5;
+// Hold protected-area construction (`build_hold_protected_area`), following
+// the TERPS/PANS-OPS holding-template method in simplified form: the nominal
+// racetrack is swept by a protection disk that starts at a base fix/flight-
+// technical tolerance and grows with an omnidirectional wind allowance over
+// the elapsed pattern time (drift can act in any direction, hence a disk),
+// flown at the altitude's maximum holding TAS with turns at 25° bank capped
+// at 3°/s (standard-rate formula R = 1091·tan(bank)/TAS). The primary
+// boundary is the convex envelope of those disks; the secondary area adds a
+// fixed-width band. Entry-maneuver protection (the extra area templates add
+// on the entry side) is not modeled.
+pub(crate) const HOLD_TEMPLATE_BASE_BUFFER_NM: f64 = 2.0;
+pub(crate) const HOLD_TEMPLATE_WIND_BASE_KT: f64 = 47.0;
+pub(crate) const HOLD_TEMPLATE_WIND_PER_1000_FT_KT: f64 = 2.0;
+pub(crate) const HOLD_TEMPLATE_BANK_DEG: f64 = 25.0;
+pub(crate) const HOLD_TEMPLATE_MAX_TURN_RATE_DEG_PER_SEC: f64 = 3.0;
+pub(crate) const HOLD_SECONDARY_WIDTH_NM: f64 = 2.0;
+pub(crate) const HOLD_TEMPLATE_OUTLINE_STEPS: usize = 144;
 
 #[cfg(test)]
 mod tests;

@@ -13,6 +13,7 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
         let terrainData: TerrainWireframeData?
         let verticalScale: Double
         let approachEnabled: Bool
+        let holdAreasEnabled: Bool
         let airspaceEnabled: Bool
     }
 
@@ -70,6 +71,7 @@ final class ApproachMetalRenderer: NSObject, MTKViewDelegate {
             terrainData: terrainData,
             verticalScale: verticalScale,
             approachEnabled: layerState.approach,
+            holdAreasEnabled: layerState.holdAreas,
             airspaceEnabled: layerState.airspace
         )
         let staticSceneChanged = lastStaticSceneKey != staticSceneKey
@@ -181,7 +183,12 @@ private func buildRenderStaticScene(
             verticalScale: verticalScale,
             into: &scene
         )
-        appendHoldPatterns(sceneData: sceneData, verticalScale: verticalScale, into: &scene)
+        appendHoldPatterns(
+            sceneData: sceneData,
+            verticalScale: verticalScale,
+            showProtectedAreas: layerState.holdAreas,
+            into: &scene
+        )
         appendWaypoints(waypointPoints, into: &scene)
     }
     return scene
@@ -553,6 +560,7 @@ private func splitPointsAtAltitude(
 private func appendHoldPatterns(
     sceneData: NativeSceneData,
     verticalScale: Double,
+    showProtectedAreas: Bool,
     into scene: inout RenderScene
 ) {
     guard let approach = sceneData.currentApproach else { return }
@@ -609,6 +617,30 @@ private func appendHoldPatterns(
             color: holdColor,
             into: &scene.triangleVertices
         )
+        if showProtectedAreas {
+            // TERPS-style protected area from the shared engine: solid-ish
+            // primary ring, dimmer secondary ring, drawn as line loops.
+            let area = buildApproachHoldProtectedArea(
+                centerX: Double(center.x),
+                centerZ: Double(center.z),
+                headingDeg: normalizeHeadingDegrees(holdCourse + sceneData.airport.magneticVariation),
+                legLengthNm: holdLegLengthNm,
+                altitudeFeet: altitudeFeet,
+                turnDirection: String(leg.holdTurnDirection?.first ?? "R"),
+                verticalScale: verticalScale
+            )
+            let primaryColor = SIMD4<Float>(111.0 / 255.0, 123.0 / 255.0, 1.0, 0.55)
+            let secondaryColor = SIMD4<Float>(111.0 / 255.0, 123.0 / 255.0, 1.0, 0.28)
+            for (ring, ringColor) in [(area.primary, primaryColor), (area.secondary, secondaryColor)] {
+                let ringPoints = ring.map { SIMD3<Float>(Float($0.x), Float($0.y), Float($0.z)) }
+                for index in 1..<ringPoints.count {
+                    appendLine(ringPoints[index - 1], ringPoints[index], color: ringColor, into: &scene.lineVertices)
+                }
+                for point in ringPoints {
+                    scene.bounds.include(point)
+                }
+            }
+        }
         for point in holdPoints {
             scene.bounds.include(point)
             if leg.isMissedApproach {

@@ -14,6 +14,7 @@ interface LayerDef {
 
 const UNGROUPED_LAYERS: LayerDef[] = [
   { id: 'approach', label: 'Approach' },
+  { id: 'holdareas', label: 'Hold Protected Areas' },
   { id: 'airspace', label: 'Airspace' },
   { id: 'adsb', label: 'ADS-B Traffic' }
 ];

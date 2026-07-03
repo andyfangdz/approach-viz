@@ -235,7 +235,8 @@ export type LayerId =
   | 'probsevere'
   | 'echotops'
   | 'slice'
-  | 'guides';
+  | 'guides'
+  | 'holdareas';
 
 export interface LayerState {
   approach: boolean;
@@ -246,4 +247,5 @@ export interface LayerState {
   echotops: boolean;
   slice: boolean;
   guides: boolean;
+  holdareas: boolean;
 }

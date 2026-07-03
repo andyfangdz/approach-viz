@@ -34,6 +34,17 @@ pub fn resolve_hold_leg_length_nm(
         } else {
             HOLD_STANDARD_TIME_HIGH_MIN
         });
+    max_holding_tas_kt(altitude) * time_minutes / 60.0
+}
+
+/// FAA maximum holding airspeed for the altitude (AIM 5-3-8 tiers), converted
+/// from indicated to true airspeed with the standard ~2%-per-1,000-ft rule.
+pub(crate) fn max_holding_tas_kt(altitude_feet: f64) -> f64 {
+    let altitude = if altitude_feet.is_finite() {
+        altitude_feet.max(0.0)
+    } else {
+        0.0
+    };
     let max_ias_kt = if altitude <= HOLD_IAS_LOW_CEILING_FT {
         HOLD_MAX_IAS_LOW_KT
     } else if altitude <= HOLD_IAS_MID_CEILING_FT {
@@ -41,8 +52,126 @@ pub fn resolve_hold_leg_length_nm(
     } else {
         HOLD_MAX_IAS_HIGH_KT
     };
-    let tas_kt = max_ias_kt * (1.0 + HOLD_TAS_FACTOR_PER_1000_FT * altitude / 1000.0);
-    tas_kt * time_minutes / 60.0
+    max_ias_kt * (1.0 + HOLD_TAS_FACTOR_PER_1000_FT * altitude / 1000.0)
+}
+
+/// Build the TERPS-style protected area for a hold as closed primary and
+/// secondary boundary rings at the hold altitude. The nominal racetrack (same
+/// shape as `build_hold_geometry`: fix-anchored, inbound along `heading_deg`)
+/// is swept by a protection disk that starts at `HOLD_TEMPLATE_BASE_BUFFER_NM`
+/// when crossing the fix and grows with the omnidirectional wind allowance
+/// (`HOLD_TEMPLATE_WIND_BASE_KT` + `HOLD_TEMPLATE_WIND_PER_1000_FT_KT`·alt)
+/// over elapsed pattern time at the altitude's maximum holding TAS; turns use
+/// 25° bank capped at 3°/s. The primary ring is the convex envelope of those
+/// disks (via its support function); the secondary ring adds
+/// `HOLD_SECONDARY_WIDTH_NM`. Entry-maneuver protection is not modeled.
+pub fn build_hold_protected_area(
+    center_x: f64,
+    center_z: f64,
+    heading_deg: f64,
+    leg_length_nm: f64,
+    altitude_feet: f64,
+    turn_direction: &str,
+    vertical_scale: f64,
+) -> HoldProtectedArea {
+    let leg_length = if leg_length_nm.is_finite() {
+        leg_length_nm.max(0.5)
+    } else {
+        4.0
+    };
+    let altitude = if altitude_feet.is_finite() {
+        altitude_feet.max(0.0)
+    } else {
+        0.0
+    };
+    let tas_kt = max_holding_tas_kt(altitude);
+    let wind_kt = HOLD_TEMPLATE_WIND_BASE_KT + HOLD_TEMPLATE_WIND_PER_1000_FT_KT * altitude / 1000.0;
+    // Standard turn-performance formula: rate (deg/s) = 1091·tan(bank)/TAS,
+    // capped at the standard rate.
+    let turn_rate_deg_per_sec = (1091.0 * HOLD_TEMPLATE_BANK_DEG.to_radians().tan() / tas_kt)
+        .min(HOLD_TEMPLATE_MAX_TURN_RATE_DEG_PER_SEC);
+    let leg_time_hr = leg_length / tas_kt;
+    let turn_time_hr = (180.0 / turn_rate_deg_per_sec) / 3600.0;
+
+    // Nominal racetrack in the drawn shape's local frame (fix at the origin,
+    // inbound along `forward`), with cumulative time-from-fix per sample.
+    let heading_rad = heading_deg.to_radians();
+    let forward = Vec2::new(heading_rad.sin(), -heading_rad.cos());
+    let right = Vec2::new(heading_rad.cos(), heading_rad.sin());
+    let turn_sign = if turn_direction == "L" { -1.0 } else { 1.0 };
+    let radius = (leg_length / 8.0).max(0.6);
+    let offset = turn_sign * radius;
+    let world = |forward_offset: f64, right_offset: f64| {
+        Vec2::new(
+            center_x + forward.x * forward_offset + right.x * right_offset,
+            center_z + forward.y * forward_offset + right.y * right_offset,
+        )
+    };
+
+    let steps_per_segment = 16;
+    let mut samples: Vec<(Vec2, f64)> = Vec::with_capacity(4 * (steps_per_segment + 1));
+    let near_start = if turn_direction == "R" { -PI / 2.0 } else { PI / 2.0 };
+    let far_start = -near_start;
+    for step in 0..=steps_per_segment {
+        let t = step as f64 / steps_per_segment as f64;
+        // Near (fix-side) turn: fix to the outbound leg.
+        let angle = near_start + t * (-2.0 * near_start);
+        samples.push((
+            world(radius * angle.cos(), offset + radius * angle.sin()),
+            t * turn_time_hr,
+        ));
+        // Outbound leg.
+        samples.push((world(-t * leg_length, 2.0 * offset), turn_time_hr + t * leg_time_hr));
+        // Far (outbound-end) turn.
+        let angle = far_start + t * (-2.0 * far_start);
+        samples.push((
+            world(-leg_length - radius * angle.cos(), offset + radius * angle.sin()),
+            turn_time_hr + leg_time_hr + t * turn_time_hr,
+        ));
+        // Inbound leg back to the fix.
+        samples.push((
+            world(-leg_length + t * leg_length, 0.0),
+            2.0 * turn_time_hr + leg_time_hr + t * leg_time_hr,
+        ));
+    }
+
+    // Convex envelope of the protection disks via the support function: for
+    // each outline direction, the farthest disk in that direction contributes
+    // its tangent point.
+    let y = coords::alt_to_y(altitude, vertical_scale);
+    let mut primary = Vec::with_capacity(HOLD_TEMPLATE_OUTLINE_STEPS + 1);
+    let mut secondary = Vec::with_capacity(HOLD_TEMPLATE_OUTLINE_STEPS + 1);
+    for step in 0..HOLD_TEMPLATE_OUTLINE_STEPS {
+        let theta = step as f64 / HOLD_TEMPLATE_OUTLINE_STEPS as f64 * 2.0 * PI;
+        let direction = Vec2::new(theta.cos(), theta.sin());
+        let mut best: Option<(f64, Vec2, f64)> = None;
+        for (disk_center, time_hr) in &samples {
+            let protection = HOLD_TEMPLATE_BASE_BUFFER_NM + wind_kt * time_hr;
+            let support = disk_center.dot(direction) + protection;
+            if best.as_ref().is_none_or(|(current, _, _)| support > *current) {
+                best = Some((support, *disk_center, protection));
+            }
+        }
+        let (_, disk_center, protection) = best.unwrap();
+        primary.push(Point3 {
+            x: disk_center.x + direction.x * protection,
+            y,
+            z: disk_center.y + direction.y * protection,
+        });
+        secondary.push(Point3 {
+            x: disk_center.x + direction.x * (protection + HOLD_SECONDARY_WIDTH_NM),
+            y,
+            z: disk_center.y + direction.y * (protection + HOLD_SECONDARY_WIDTH_NM),
+        });
+    }
+    // Close the rings for straightforward polyline rendering.
+    if let Some(first) = primary.first().copied() {
+        primary.push(first);
+    }
+    if let Some(first) = secondary.first().copied() {
+        secondary.push(first);
+    }
+    HoldProtectedArea { primary, secondary }
 }
 
 pub fn build_hold_geometry(

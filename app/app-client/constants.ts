@@ -35,7 +35,8 @@ export const LAYER_IDS: LayerId[] = [
   'probsevere',
   'echotops',
   'slice',
-  'guides'
+  'guides',
+  'holdareas'
 ];
 
 export const DEFAULT_LAYER_STATE: LayerState = {
@@ -46,5 +47,6 @@ export const DEFAULT_LAYER_STATE: LayerState = {
   probsevere: true,
   echotops: false,
   slice: false,
-  guides: true
+  guides: true,
+  holdareas: false
 };

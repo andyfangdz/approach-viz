@@ -5,6 +5,7 @@ import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   approach_path_build_hold_points,
+  approach_path_build_hold_protected_area,
   approach_path_resolve_hold_leg_length_nm
 } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 import { formatHoldDistance } from './curves';
@@ -24,7 +25,8 @@ export function HoldPattern({
   refLon,
   magVar,
   color,
-  verticalScale
+  verticalScale,
+  showProtectedArea = false
 }: {
   leg: ApproachLeg;
   altitudeOverride: number;
@@ -34,6 +36,7 @@ export function HoldPattern({
   magVar: number;
   color: string;
   verticalScale: number;
+  showProtectedArea?: boolean;
 }) {
   const dpr = useThree((s) => s.viewport.dpr);
   const wp = resolveWaypoint(waypoints, leg.waypointId);
@@ -59,6 +62,10 @@ export function HoldPattern({
   }, [wp, refLat, refLon]);
 
   const [points, setPoints] = useState<[number, number, number][]>([]);
+  const [protectedArea, setProtectedArea] = useState<{
+    primary: [number, number, number][];
+    secondary: [number, number, number][];
+  } | null>(null);
   // Straight-leg length resolved by the shared Rust engine: a published
   // distance as-is, otherwise the published (or standard) holding time flown
   // at the altitude's maximum holding speed. Starts at the published distance
@@ -88,9 +95,33 @@ export function HoldPattern({
           turnDirection,
           verticalScale
         ) as { x: number; y: number; z: number }[];
+        // TERPS-style protected area (primary + secondary rings) from the
+        // shared engine, built only while the layer is enabled.
+        const area = showProtectedArea
+          ? (approach_path_build_hold_protected_area(
+              center.x,
+              center.z,
+              heading,
+              legLengthNm,
+              altitude,
+              turnDirection,
+              verticalScale
+            ) as {
+              primary: { x: number; y: number; z: number }[];
+              secondary: { x: number; y: number; z: number }[];
+            })
+          : null;
         if (cancelled) return;
         setHoldDistance(legLengthNm);
         setPoints(result.map((point) => [point.x, point.y, point.z]));
+        setProtectedArea(
+          area
+            ? {
+                primary: area.primary.map((point) => [point.x, point.y, point.z]),
+                secondary: area.secondary.map((point) => [point.x, point.y, point.z])
+              }
+            : null
+        );
       })
       .catch((error) => {
         if (cancelled) return;
@@ -107,7 +138,8 @@ export function HoldPattern({
     publishedDistance,
     publishedTimeMinutes,
     turnDirection,
-    verticalScale
+    verticalScale,
+    showProtectedArea
   ]);
   const holdLengthLabel =
     publishedDistance === undefined && publishedTimeMinutes !== undefined
@@ -134,6 +166,27 @@ export function HoldPattern({
   return (
     <group>
       <Line points={points} color={color} lineWidth={2 * dpr} dashed dashSize={0.4} gapSize={0.2} />
+      {showProtectedArea && protectedArea && (
+        <>
+          <Line
+            points={protectedArea.primary}
+            color={color}
+            lineWidth={1.5 * dpr}
+            transparent
+            opacity={0.55}
+          />
+          <Line
+            points={protectedArea.secondary}
+            color={color}
+            lineWidth={1 * dpr}
+            transparent
+            opacity={0.3}
+            dashed
+            dashSize={0.6}
+            gapSize={0.35}
+          />
+        </>
+      )}
       <Html
         position={labelPosition}
         center
