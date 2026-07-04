@@ -230,6 +230,7 @@ export interface OptionsPanelProps {
 export type LayerId =
   | 'approach'
   | 'airspace'
+  | 'obstacles'
   | 'adsb'
   | 'mrms'
   | 'probsevere'
@@ -241,6 +242,7 @@ export type LayerId =
 export interface LayerState {
   approach: boolean;
   airspace: boolean;
+  obstacles: boolean;
   adsb: boolean;
   mrms: boolean;
   probsevere: boolean;

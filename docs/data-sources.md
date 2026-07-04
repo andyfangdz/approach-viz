@@ -13,6 +13,13 @@ External data feeds and their ingestion paths.
 - Source: `drnic/faa-airspace-data` GitHub repository (`class_b`, `class_c`, `class_d` GeoJSON).
 - Downloaded at `download-data` time and loaded into SQLite for scene-data assembly.
 
+## Published Obstacles (FAA Digital Obstacle File)
+
+- Source: FAA daily Digital Obstacle File `https://aeronav.faa.gov/Obst_Data/DAILY_DOF_DAT.ZIP` (fixed-width `DOF.DAT`).
+- Downloaded at `download-data` time (header + record-count validated) and parsed by `lib/dof/parser.ts`, which throws on malformed coordinates/heights instead of fabricating values; records without a published AMSL height are skipped with a logged count (they cannot be placed vertically without inventing a ground elevation).
+- `build-db` loads obstacles at or above 200 ft AGL (the FAA charting threshold — lower obstacles are generally not charted, and including them would roughly triple the bundled DB size) into an `obstacles` table plus an `obstacle_rtree` spatial index; the DOF currency date and loaded row count are stored in `metadata`.
+- Scene payloads include obstacles within 30 NM of the selected airport (`OBSTACLE_RADIUS_NM`), capped at the 2,500 tallest by AMSL (`MAX_SCENE_OBSTACLES`; the densest metro areas carry ~1,400).
+
 ## Approach Minimums (MDA/DA)
 
 - Source: `ammaraskar/faa-instrument-approach-db` GitHub release asset `approaches.json`.

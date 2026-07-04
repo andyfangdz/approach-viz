@@ -86,6 +86,12 @@ export function InfoPanel({
             <span>ProbSevere</span>
           </div>
         )}
+        {layers.obstacles && (
+          <div className="legend-item">
+            <div className="legend-color obstacle" />
+            <span>Obstacles</span>
+          </div>
+        )}
         {layers.mrms && layers.echotops && (
           <div className="legend-item">
             <div className="legend-color nexrad-echo-top" />

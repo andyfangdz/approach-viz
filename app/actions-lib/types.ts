@@ -41,6 +41,18 @@ export interface MinimaRow {
   cycle: string;
 }
 
+export interface ObstacleRow {
+  oas_number: string;
+  obstacle_type: string;
+  lat: number;
+  lon: number;
+  agl_feet: number;
+  amsl_feet: number;
+  lighting: string;
+  quantity: number;
+  verified: number;
+}
+
 export interface AirspaceRow {
   class: string;
   name: string;

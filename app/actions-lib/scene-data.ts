@@ -16,6 +16,7 @@ import {
   loadAirportExternalApproaches
 } from './approaches';
 import { loadAirspaceForAirport, loadRunwayMap, rowToAirport, selectAirport } from './airports';
+import { loadObstaclesForAirport } from './obstacles';
 import type { AirportRow, ApproachRow, MinimaRow, WaypointRow } from './types';
 
 let _stmts: {
@@ -83,6 +84,7 @@ function emptySceneData(): SceneData {
     nearbyAirports: [],
     elevationAirports: [],
     airspace: [],
+    obstacles: [],
     minimumsSummary: null,
     approachPlate: null,
     missedApproachClimbRequirement: null
@@ -222,6 +224,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     nearbyAirports,
     elevationAirports,
     airspace: loadAirspaceForAirport(airport),
+    obstacles: loadObstaclesForAirport(airport),
     minimumsSummary: deriveMinimumsSummary(
       minimaRows,
       selectedApproachOption,

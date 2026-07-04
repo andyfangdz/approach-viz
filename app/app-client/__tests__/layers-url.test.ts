@@ -34,6 +34,12 @@ test('parseLayersParam turns on a default-off layer (mrms) with +', () => {
   assert.equal(result.mrms, true);
 });
 
+test('parseLayersParam turns on the default-off obstacles layer with +', () => {
+  const result = parseLayersParam('+obstacles');
+  assert.equal(result.obstacles, true);
+  assert.equal(result.airspace, true);
+});
+
 test('parseLayersParam handles multiple deltas', () => {
   const result = parseLayersParam('-airspace,+slice,+echotops');
   assert.equal(result.airspace, false);
@@ -77,6 +83,11 @@ test('serializeLayersParam serializes turned-on default-off layers with +', () =
 test('serializeLayersParam serializes turned-on default-off layer (mrms) with +', () => {
   const state: LayerState = { ...DEFAULT_LAYER_STATE, mrms: true };
   assert.equal(serializeLayersParam(state), '+mrms');
+});
+
+test('serializeLayersParam serializes the turned-on obstacles layer with +', () => {
+  const state: LayerState = { ...DEFAULT_LAYER_STATE, obstacles: true };
+  assert.equal(serializeLayersParam(state), '+obstacles');
 });
 
 test('serializeLayersParam serializes multiple deltas sorted by layer ID', () => {

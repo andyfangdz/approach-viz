@@ -9,6 +9,18 @@ export interface AirspaceFeature {
   coordinates: [number, number][][];
 }
 
+export interface ObstacleFeature {
+  oasNumber: string;
+  obstacleType: string;
+  lat: number;
+  lon: number;
+  aglFeet: number;
+  amslFeet: number;
+  lighted: boolean;
+  quantity: number;
+  verified: boolean;
+}
+
 export interface SerializedApproach {
   airportId: string;
   procedureId: string;
@@ -87,6 +99,7 @@ export interface SceneData {
   nearbyAirports: NearbyAirport[];
   elevationAirports: ElevationAirport[];
   airspace: AirspaceFeature[];
+  obstacles: ObstacleFeature[];
   minimumsSummary: MinimumsSummary | null;
   approachPlate: ApproachPlate | null;
   missedApproachClimbRequirement: MissedApproachClimbRequirement | null;

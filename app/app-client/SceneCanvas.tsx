@@ -17,6 +17,7 @@ import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
 import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
 import { LiveTrafficOverlay, type SceneAirport } from '@/app/scene/LiveTrafficOverlay';
 import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
+import { ObstacleOverlay } from '@/app/scene/ObstacleOverlay';
 import { ProbSevereOverlay } from '@/app/scene/ProbSevereOverlay';
 import {
   CAMERA_POSITION,
@@ -363,6 +364,7 @@ export const SceneCanvas = memo(function SceneCanvas({
 }: SceneCanvasProps) {
   const approachVisible = layers.approach;
   const airspaceVisible = layers.airspace;
+  const obstaclesVisible = layers.obstacles;
   const liveTrafficEnabled = layers.adsb;
   const nexradVolumeEnabled = layers.mrms;
   const probSevereEnabled = layers.probsevere;
@@ -531,6 +533,16 @@ export const SceneCanvas = memo(function SceneCanvas({
             refLon={airport.lon}
             verticalScale={verticalScale}
             airportElevationFeet={airport.elevation}
+          />
+        )}
+
+        {obstaclesVisible && sceneData.obstacles.length > 0 && (
+          <ObstacleOverlay
+            obstacles={sceneData.obstacles}
+            refLat={airport.lat}
+            refLon={airport.lon}
+            verticalScale={verticalScale}
+            applyEarthCurvatureCompensation={isTiledSurface}
           />
         )}
 

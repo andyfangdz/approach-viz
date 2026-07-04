@@ -30,6 +30,7 @@ export const ORBIT_TARGET: [number, number, number] = [0, 2, 0];
 export const LAYER_IDS: LayerId[] = [
   'approach',
   'airspace',
+  'obstacles',
   'adsb',
   'mrms',
   'probsevere',
@@ -42,6 +43,7 @@ export const LAYER_IDS: LayerId[] = [
 export const DEFAULT_LAYER_STATE: LayerState = {
   approach: true,
   airspace: true,
+  obstacles: false,
   adsb: true,
   mrms: false,
   probsevere: true,

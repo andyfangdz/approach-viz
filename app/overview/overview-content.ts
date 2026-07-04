@@ -301,7 +301,7 @@ export const SECTIONS: Section[] = [
         blocks: [
           {
             kind: 'p',
-            text: '`npm run download-data` fetches three sources: the **FAA CIFP** zip (`aeronav.faa.gov/Upload_313-d/cifp/CIFP_<cycle>.zip` → the fixed-width `FAACIFP18` file), the latest **approach-minimums release** (`approaches.json` from the `faa-instrument-approach-db` GitHub releases — minimums by category, plate filenames, VDA/TCH vertical profiles, missed-climb text; its release tag is the source of truth for the CIFP cycle), and **Class B/C/D airspace GeoJSON** pinned to a specific commit of `drnic/faa-airspace-data`, validated as parseable GeoJSON before install.'
+            text: '`npm run download-data` fetches four sources: the **FAA CIFP** zip (`aeronav.faa.gov/Upload_313-d/cifp/CIFP_<cycle>.zip` → the fixed-width `FAACIFP18` file), the latest **approach-minimums release** (`approaches.json` from the `faa-instrument-approach-db` GitHub releases — minimums by category, plate filenames, VDA/TCH vertical profiles, missed-climb text; its release tag is the source of truth for the CIFP cycle), **Class B/C/D airspace GeoJSON** pinned to a specific commit of `drnic/faa-airspace-data`, validated as parseable GeoJSON before install, and the **FAA daily Digital Obstacle File** (`DAILY_DOF_DAT.ZIP` → fixed-width `DOF.DAT`, header- and record-count-validated) for the published-obstacles layer.'
           },
           {
             kind: 'p',
@@ -349,6 +349,10 @@ export const SECTIONS: Section[] = [
               [
                 '`airport_rtree` (+map)',
                 'Spatial index for airports-within-radius (traffic altitude resolution)'
+              ],
+              [
+                '`obstacles` + `obstacle_rtree`',
+                'Digital Obstacle File records ≥200 ft AGL with an R-tree point index'
               ],
               ['`metadata`', 'CIFP + d-TPP cycles, generation timestamp, row counts']
             ]
