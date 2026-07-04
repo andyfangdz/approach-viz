@@ -93,11 +93,11 @@ export const selectStyles: StylesConfig<SelectOption, false> = {
   control: (base, state) => ({
     ...base,
     backgroundColor: '#1a1a2e',
-    borderColor: state.isFocused ? '#45e0c0' : '#2a2a44',
+    borderColor: state.isFocused ? 'var(--accent)' : 'var(--border)',
     minHeight: 36,
-    boxShadow: state.isFocused ? '0 0 0 3px rgba(69, 224, 192, 0.18)' : 'none',
+    boxShadow: state.isFocused ? '0 0 0 3px var(--accent-soft)' : 'none',
     ':hover': {
-      borderColor: '#45e0c0'
+      borderColor: 'var(--accent)'
     }
   }),
   valueContainer: (base) => ({
@@ -136,9 +136,9 @@ export const selectStyles: StylesConfig<SelectOption, false> = {
   option: (base, state) => ({
     ...base,
     backgroundColor: state.isSelected
-      ? 'rgba(69, 224, 192, 0.24)'
+      ? 'var(--accent-strong)'
       : state.isFocused
-        ? 'rgba(69, 224, 192, 0.16)'
+        ? 'var(--accent-soft)'
         : 'transparent',
     color: '#e8e8f0',
     fontFamily: "'JetBrains Mono', monospace",
@@ -153,7 +153,7 @@ export const selectStyles: StylesConfig<SelectOption, false> = {
     ...base,
     color: '#8888aa',
     ':hover': {
-      color: '#45e0c0'
+      color: 'var(--accent)'
     }
   }),
   clearIndicator: (base) => ({
