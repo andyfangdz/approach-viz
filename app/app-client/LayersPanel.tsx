@@ -16,6 +16,7 @@ const UNGROUPED_LAYERS: LayerDef[] = [
   { id: 'approach', label: 'Approach' },
   { id: 'holdareas', label: 'Hold Protected Areas' },
   { id: 'airspace', label: 'Airspace' },
+  { id: 'obstacles', label: 'Obstacles' },
   { id: 'adsb', label: 'ADS-B Traffic' }
 ];
 

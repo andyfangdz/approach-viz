@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { parseCIFP } from '../lib/cifp/parser';
+import { parseDOF } from '../lib/dof/parser';
 
 interface ApproachMinimumsDb {
   dtpp_cycle_number: string;
@@ -48,6 +49,7 @@ const DATA_DIR = path.join(process.cwd(), 'public', 'data');
 const CIFP_PATH = path.join(DATA_DIR, 'cifp', 'FAACIFP18');
 const APPROACH_DB_PATH = path.join(DATA_DIR, 'approach-db', 'approaches.json');
 const AIRSPACE_DIR = path.join(DATA_DIR, 'airspace');
+const DOF_PATH = path.join(DATA_DIR, 'obstacles', 'DOF.DAT');
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'approach-viz.sqlite');
 
@@ -99,6 +101,7 @@ function main() {
   ensureSourceFile(path.join(AIRSPACE_DIR, 'class_b.geojson'));
   ensureSourceFile(path.join(AIRSPACE_DIR, 'class_c.geojson'));
   ensureSourceFile(path.join(AIRSPACE_DIR, 'class_d.geojson'));
+  ensureSourceFile(DOF_PATH);
 
   fs.mkdirSync(DB_DIR, { recursive: true });
   if (fs.existsSync(DB_PATH)) {
@@ -183,6 +186,22 @@ function main() {
     );
 
     CREATE VIRTUAL TABLE airspace_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+
+    CREATE TABLE obstacles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      oas_number TEXT NOT NULL,
+      obstacle_type TEXT NOT NULL,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL,
+      agl_feet INTEGER NOT NULL,
+      amsl_feet INTEGER NOT NULL,
+      lighting TEXT NOT NULL,
+      marking TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      verified INTEGER NOT NULL
+    );
+
+    CREATE VIRTUAL TABLE obstacle_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
 
     CREATE TABLE airport_rtree_map (
       id INTEGER PRIMARY KEY,
@@ -313,6 +332,15 @@ function main() {
 
   insertMinimumsData();
 
+  const insertObstacle = db.prepare(`
+    INSERT INTO obstacles
+      (oas_number, obstacle_type, lat, lon, agl_feet, amsl_feet, lighting, marking, quantity, verified)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertObstacleRtree = db.prepare(
+    'INSERT INTO obstacle_rtree (id, min_lat, max_lat, min_lon, max_lon) VALUES (?, ?, ?, ?, ?)'
+  );
+
   const insertAirspaceData = db.transaction(() => {
     const classes: Array<{ file: string; classCode: string }> = [
       { file: 'class_b.geojson', classCode: 'B' },
@@ -348,6 +376,43 @@ function main() {
 
   insertAirspaceData();
 
+  // Published obstacles from the FAA Digital Obstacle File. The parser throws
+  // on malformed coordinates/heights; records without an AMSL height are
+  // skipped by the parser (counted below) because they cannot be placed
+  // vertically without fabricating a ground elevation.
+  const parsedDof = parseDOF(fs.readFileSync(DOF_PATH, 'latin1'));
+  let obstacleCount = 0;
+  const insertObstacleData = db.transaction(() => {
+    for (const obstacle of parsedDof.obstacles) {
+      const info = insertObstacle.run(
+        obstacle.oasNumber,
+        obstacle.obstacleType,
+        obstacle.lat,
+        obstacle.lon,
+        obstacle.aglFeet,
+        obstacle.amslFeet,
+        obstacle.lighting,
+        obstacle.marking,
+        obstacle.quantity,
+        obstacle.verified ? 1 : 0
+      );
+      insertObstacleRtree.run(
+        info.lastInsertRowid,
+        obstacle.lat,
+        obstacle.lat,
+        obstacle.lon,
+        obstacle.lon
+      );
+      obstacleCount++;
+    }
+  });
+  insertObstacleData();
+  if (parsedDof.skippedMissingAmslCount > 0) {
+    console.warn(
+      `⚠️  Skipped ${parsedDof.skippedMissingAmslCount} DOF records with no published AMSL height`
+    );
+  }
+
   // Build airport R-tree spatial index (replaces external kdbush binary)
   const insertAirportSpatial = db.transaction(() => {
     let idx = 1;
@@ -381,10 +446,15 @@ function main() {
     'approach_count',
     String(Array.from(parsed.approaches.values()).reduce((sum, rows) => sum + rows.length, 0))
   );
+  insertMetadata.run('dof_currency_date', parsedDof.currencyDate);
+  insertMetadata.run('obstacle_count', String(obstacleCount));
 
   db.close();
   console.log(`✅ SQLite DB built at ${DB_PATH}`);
   console.log(`✅ Airport spatial R-tree built (${airportSpatialCount} airports)`);
+  console.log(
+    `✅ Obstacles loaded (${obstacleCount} records, DOF currency ${parsedDof.currencyDate})`
+  );
 }
 
 main();

@@ -9,6 +9,25 @@ export interface AirspaceFeature {
   coordinates: [number, number][][];
 }
 
+export interface ObstacleFeature {
+  oasNumber: string;
+  obstacleType: string;
+  lat: number;
+  lon: number;
+  aglFeet: number;
+  amslFeet: number;
+  lighted: boolean;
+  quantity: number;
+  verified: boolean;
+}
+
+export interface ObstaclesPayload {
+  /** Capped at the server's MAX_SCENE_OBSTACLES, tallest by AMSL first. */
+  obstacles: ObstacleFeature[];
+  /** Uncapped match count for the requested radius/threshold. */
+  totalCount: number;
+}
+
 export interface SerializedApproach {
   airportId: string;
   procedureId: string;

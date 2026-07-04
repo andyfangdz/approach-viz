@@ -8,8 +8,9 @@ DATA_DIR="public/data"
 CIFP_DIR="$DATA_DIR/cifp"
 AIRSPACE_DIR="$DATA_DIR/airspace"
 APPROACH_DB_DIR="$DATA_DIR/approach-db"
+OBSTACLE_DIR="$DATA_DIR/obstacles"
 
-mkdir -p "$CIFP_DIR" "$AIRSPACE_DIR" "$APPROACH_DB_DIR"
+mkdir -p "$CIFP_DIR" "$AIRSPACE_DIR" "$APPROACH_DB_DIR" "$OBSTACLE_DIR"
 
 # ── Step 1: Download approach-db (source of truth for cycle) ─────────────────
 echo "Fetching FAA instrument approach database release..."
@@ -116,5 +117,29 @@ download_airspace() {
 download_airspace "B" "class_b.geo.json" "$AIRSPACE_DIR/class_b.geojson"
 download_airspace "C" "class_c.geo.json" "$AIRSPACE_DIR/class_c.geojson"
 download_airspace "D" "class_d.geo.json" "$AIRSPACE_DIR/class_d.geojson"
+
+# ── Step 4: Download FAA Digital Obstacle File (published obstacles) ─────────
+# Stage to a temp dir and validate before installing, so a bad download never
+# replaces a previously good DOF.DAT (same pattern as the airspace payloads).
+DOF_URL="https://aeronav.faa.gov/Obst_Data/DAILY_DOF_DAT.ZIP"
+echo "Fetching FAA Digital Obstacle File from $DOF_URL..."
+DOF_STAGE_DIR="$(mktemp -d)"
+trap 'rm -rf "$DOF_STAGE_DIR"' EXIT
+curl -fsSL "$DOF_URL" -o "$DOF_STAGE_DIR/dof.zip"
+unzip -o -j "$DOF_STAGE_DIR/dof.zip" "DOF.DAT" -d "$DOF_STAGE_DIR"
+
+# Validate the payload before accepting it: currency-date header present and a
+# plausible record count (the daily file carries ~650k obstacle records).
+if ! head -1 "$DOF_STAGE_DIR/DOF.DAT" | grep -q "CURRENCY DATE"; then
+  echo "❌ DOF.DAT is missing the CURRENCY DATE header"
+  exit 1
+fi
+DOF_LINE_COUNT="$(wc -l < "$DOF_STAGE_DIR/DOF.DAT" | tr -d ' ')"
+if [ "$DOF_LINE_COUNT" -lt 100000 ]; then
+  echo "❌ DOF.DAT is implausibly small ($DOF_LINE_COUNT lines)"
+  exit 1
+fi
+mv "$DOF_STAGE_DIR/DOF.DAT" "$OBSTACLE_DIR/DOF.DAT"
+echo "✅ Digital Obstacle File downloaded ($DOF_LINE_COUNT lines, $(head -1 "$OBSTACLE_DIR/DOF.DAT" | tr -s ' ' | sed 's/^ *//'))"
 
 echo "🎉 All data downloaded successfully (CIFP: $CIFP_CYCLE, d-TPP: $DTPP_CYCLE)"

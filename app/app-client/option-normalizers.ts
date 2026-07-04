@@ -15,7 +15,15 @@ import {
   MIN_NEXRAD_MIN_DBZ,
   MAX_NEXRAD_MIN_DBZ,
   MIN_NEXRAD_OPACITY,
-  MAX_NEXRAD_OPACITY
+  MAX_NEXRAD_OPACITY,
+  DEFAULT_OBSTACLE_RADIUS_NM,
+  MIN_OBSTACLE_RADIUS_NM,
+  MAX_OBSTACLE_RADIUS_NM,
+  OBSTACLE_RADIUS_STEP_NM,
+  DEFAULT_OBSTACLE_MIN_AGL_FEET,
+  MIN_OBSTACLE_MIN_AGL_FEET,
+  MAX_OBSTACLE_MIN_AGL_FEET,
+  OBSTACLE_MIN_AGL_STEP_FEET
 } from '@/app/app-client/constants';
 import type {
   CameraControlMode,
@@ -32,6 +40,18 @@ export function normalizeTerrainRadiusNm(radiusNm: number): number {
   if (!Number.isFinite(radiusNm)) return DEFAULT_TERRAIN_RADIUS_NM;
   const snapped = Math.round(radiusNm / TERRAIN_RADIUS_STEP_NM) * TERRAIN_RADIUS_STEP_NM;
   return clampValue(snapped, MIN_TERRAIN_RADIUS_NM, MAX_TERRAIN_RADIUS_NM);
+}
+
+export function normalizeObstacleRadiusNm(radiusNm: number): number {
+  if (!Number.isFinite(radiusNm)) return DEFAULT_OBSTACLE_RADIUS_NM;
+  const snapped = Math.round(radiusNm / OBSTACLE_RADIUS_STEP_NM) * OBSTACLE_RADIUS_STEP_NM;
+  return clampValue(snapped, MIN_OBSTACLE_RADIUS_NM, MAX_OBSTACLE_RADIUS_NM);
+}
+
+export function normalizeObstacleMinAglFeet(minAglFeet: number): number {
+  if (!Number.isFinite(minAglFeet)) return DEFAULT_OBSTACLE_MIN_AGL_FEET;
+  const snapped = Math.round(minAglFeet / OBSTACLE_MIN_AGL_STEP_FEET) * OBSTACLE_MIN_AGL_STEP_FEET;
+  return clampValue(snapped, MIN_OBSTACLE_MIN_AGL_FEET, MAX_OBSTACLE_MIN_AGL_FEET);
 }
 
 export function normalizeNexradMinDbz(dbz: number): number {

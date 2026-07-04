@@ -19,6 +19,17 @@ export const MAX_NEXRAD_OPACITY = 1;
 export const DEFAULT_NEXRAD_DECLUTTER_MODE = 'all';
 export const DEFAULT_NEXRAD_PHASE_MODE = 'surface';
 export const DEFAULT_CAMERA_CONTROL_MODE = 'orbit';
+export {
+  MIN_OBSTACLE_RADIUS_NM,
+  MAX_OBSTACLE_RADIUS_NM,
+  DEFAULT_OBSTACLE_RADIUS_NM,
+  MIN_OBSTACLE_MIN_AGL_FEET,
+  MAX_OBSTACLE_MIN_AGL_FEET,
+  DEFAULT_OBSTACLE_MIN_AGL_FEET
+} from '@/lib/obstacles/limits';
+export const OBSTACLE_RADIUS_STEP_NM = 5;
+export const OBSTACLE_MIN_AGL_STEP_FEET = 50;
+export const DEFAULT_SHOW_OBSTACLE_LABELS = true;
 export const DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG = 90;
 export const DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM = 80;
 export const MIN_NEXRAD_CROSS_SECTION_RANGE_NM = 30;
@@ -30,6 +41,7 @@ export const ORBIT_TARGET: [number, number, number] = [0, 2, 0];
 export const LAYER_IDS: LayerId[] = [
   'approach',
   'airspace',
+  'obstacles',
   'adsb',
   'mrms',
   'probsevere',
@@ -42,6 +54,7 @@ export const LAYER_IDS: LayerId[] = [
 export const DEFAULT_LAYER_STATE: LayerState = {
   approach: true,
   airspace: true,
+  obstacles: false,
   adsb: true,
   mrms: false,
   probsevere: true,

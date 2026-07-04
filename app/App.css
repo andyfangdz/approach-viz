@@ -851,6 +851,12 @@ textarea,
   box-shadow: 0 0 8px rgba(255, 182, 110, 0.6);
 }
 
+.legend-color.obstacle {
+  width: 20px;
+  background: linear-gradient(90deg, #2e3a55 0%, #ffb84d 55%, #ff6b6b 100%);
+  box-shadow: 0 0 8px rgba(255, 155, 90, 0.55);
+}
+
 .legend-color.airspace-b {
   background: rgba(0, 102, 255, 0.6);
 }
@@ -981,6 +987,27 @@ textarea,
   border-radius: 4px;
   background: rgba(26, 12, 4, 0.76);
   pointer-events: none;
+}
+
+.obstacle-label {
+  color: #ffd9a8;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px;
+  border: 1px solid rgba(255, 170, 89, 0.38);
+  border-radius: 4px;
+  background: rgba(26, 16, 4, 0.76);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* TPP convention: the plan view's highest obstacle gets a bolder, larger label. */
+.obstacle-label.obstacle-label-highest {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffe9c4;
+  border-color: rgba(255, 170, 89, 0.7);
 }
 
 .mrms-cross-section-panel {

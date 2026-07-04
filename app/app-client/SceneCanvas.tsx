@@ -17,6 +17,7 @@ import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
 import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
 import { LiveTrafficOverlay, type SceneAirport } from '@/app/scene/LiveTrafficOverlay';
 import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
+import { ObstacleOverlay } from '@/app/scene/ObstacleOverlay';
 import { ProbSevereOverlay } from '@/app/scene/ProbSevereOverlay';
 import {
   CAMERA_POSITION,
@@ -344,6 +345,9 @@ export const SceneCanvas = memo(function SceneCanvas({
   nexradPhaseMode,
   nexradCrossSectionHeadingDeg,
   nexradCrossSectionRangeNm,
+  obstacleRadiusNm,
+  obstacleMinAglFeet,
+  showObstacleLabels,
   surfaceMode,
   plateOverlayEnabled,
   chartType,
@@ -359,10 +363,12 @@ export const SceneCanvas = memo(function SceneCanvas({
   onSatelliteRuntimeError,
   onNexradDebugChange,
   onTrafficDebugChange,
-  onChartDebugChange
+  onChartDebugChange,
+  onObstacleStatsChange
 }: SceneCanvasProps) {
   const approachVisible = layers.approach;
   const airspaceVisible = layers.airspace;
+  const obstaclesVisible = layers.obstacles;
   const liveTrafficEnabled = layers.adsb;
   const nexradVolumeEnabled = layers.mrms;
   const probSevereEnabled = layers.probsevere;
@@ -531,6 +537,20 @@ export const SceneCanvas = memo(function SceneCanvas({
             refLon={airport.lon}
             verticalScale={verticalScale}
             airportElevationFeet={airport.elevation}
+          />
+        )}
+
+        {obstaclesVisible && (
+          <ObstacleOverlay
+            airportId={airport.id}
+            refLat={airport.lat}
+            refLon={airport.lon}
+            verticalScale={verticalScale}
+            radiusNm={obstacleRadiusNm}
+            minAglFeet={obstacleMinAglFeet}
+            showLabels={showObstacleLabels}
+            applyEarthCurvatureCompensation={isTiledSurface}
+            onStatsChange={onObstacleStatsChange}
           />
         )}
 
