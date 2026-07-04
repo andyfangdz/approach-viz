@@ -5,7 +5,8 @@ The `Obstacles` layer (web `obstacles`, default off) renders FAA Digital Obstacl
 ## Data contract
 
 - The overlay fetches on demand through the `loadObstaclesAction` server action whenever the layer is enabled or the airport/range/threshold changes — obstacles are not part of the base `SceneData` payload.
-- Query parameters come from the Options panel: `Obstacle Range` (5–80 NM, default 30) and `Obstacle Threshold` (minimum height, 0–2,000 ft AGL, default 200 ft — the FAA charting threshold). Values are normalized client-side and clamped again server-side.
+- Query parameters come from the Options panel: `Obstacle Range` (5–80 NM, default 30) and `Obstacle Threshold` (minimum height, 0–2,000 ft AGL, default 200 ft — the sectional charting threshold). Values are normalized client-side and clamped again server-side.
+- **Chart-significant obstacles bypass the threshold.** Following the FAA Chart User's Guide TPP plan-view rule ("any obstacle which penetrates a slope of 67:1 emanating from any point along the centerline of any runway shall be considered for charting"), the loader always includes obstacles whose height above the airport elevation exceeds `distance / 67` measured to the nearest runway centerline point (`lib/obstacles/plate-significance.ts`: reciprocal threshold pairs form centerline segments, unpaired ends count as points, and airports with no runway rows fall back to the airport reference point). This keeps controlling obstacles visible — e.g. the KSBS `8353±` tower, only 102 ft AGL but 1,471 ft above the field on a ridge 3.3 NM out. When the response cap applies, charting-surface penetrators are kept preferentially, then the tallest by AMSL.
 - `ObstaclesPayload` rows carry position, `aglFeet`, `amslFeet`, `lighted` (derived from the DOF lighting code — `N`/`U`/blank are unlit), quantity, and verification status, capped at the 2,500 tallest by AMSL with the uncapped `totalCount` alongside; the Options panel shows "Showing tallest X of Y" whenever the cap bites (no silent caps).
 
 ## Geometry
@@ -25,7 +26,8 @@ The `Obstacles` layer (web `obstacles`, default off) renders FAA Digital Obstacl
 
 ## Labels
 
-- The 12 tallest obstacles by AMSL get chart-style HTML labels: `<AMSL>′ (<AGL>′ AGL)` (`.obstacle-label`), floated just above the tip.
+- The 12 tallest obstacles by AMSL get chart-style HTML labels: `<AMSL>′ (<AGL>′ AGL)` (`.obstacle-label`), floated just above the tip. Unverified obstacles (DOF verification status `U`) get the TPP doubtful-accuracy `±` after the elevation.
+- The highest obstacle in range mirrors the TPP "bolder and larger symbol along with larger elevation font size" rule: a 2.4× tip glyph and a bolder, larger label (`.obstacle-label-highest`).
 - The `Show Obstacle Labels` toggle in the Options panel (default on) turns them off entirely.
 
 ## Legend / state

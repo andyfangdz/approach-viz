@@ -411,6 +411,9 @@ export function OptionsPanel({
           <span className="options-toggle-title">
             Obstacle Threshold ({localObstacleMinAgl}&#8242; AGL)
           </span>
+          <span className="options-toggle-note">
+            Chart-significant obstacles (FAA 67:1 surface) always shown
+          </span>
           {layers.obstacles && obstacleStats && !obstacleStats.loading && !obstacleStats.error && (
             <span className="options-toggle-note">
               {obstacleStats.shownCount < obstacleStats.totalCount

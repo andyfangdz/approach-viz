@@ -15,6 +15,9 @@ const FEET_PER_NM = 6076.12;
 // tip marker up for the high group instead.
 const HIGH_OBSTACLE_AGL_FEET = 1000;
 const HIGH_OBSTACLE_TIP_SCALE = 1.6;
+// TPP plan views depict the highest obstacle "with a bolder and larger symbol
+// along with larger elevation font size" (FAA Chart User's Guide).
+const HIGHEST_OBSTACLE_TIP_SCALE = 2.4;
 const LABEL_CLEARANCE_NM = 0.045;
 const MAX_LABEL_COUNT = 12;
 
@@ -84,6 +87,8 @@ interface RenderObstacle {
   topYNm: number;
   lighted: boolean;
   high: boolean;
+  highest: boolean;
+  verified: boolean;
   aglFeet: number;
   amslFeet: number;
   oasNumber: string;
@@ -107,7 +112,11 @@ function TipInstances({
     const quaternion = new THREE.Quaternion();
     const scale = new THREE.Vector3();
     items.forEach((obstacle, index) => {
-      const tipScale = obstacle.high ? HIGH_OBSTACLE_TIP_SCALE : 1;
+      const tipScale = obstacle.highest
+        ? HIGHEST_OBSTACLE_TIP_SCALE
+        : obstacle.high
+          ? HIGH_OBSTACLE_TIP_SCALE
+          : 1;
       position.set(obstacle.x, obstacle.topYNm, obstacle.z);
       scale.set(tipScale, tipScale, tipScale);
       matrix.compose(position, quaternion, scale);
@@ -199,6 +208,10 @@ export function ObstacleOverlay({
         topYNm,
         lighted: obstacle.lighted,
         high: obstacle.aglFeet >= HIGH_OBSTACLE_AGL_FEET,
+        // Payload is sorted tallest-AMSL first, so the first renderable entry
+        // is the plan view's "highest obstacle".
+        highest: next.length === 0,
+        verified: obstacle.verified,
         aglFeet: obstacle.aglFeet,
         amslFeet: obstacle.amslFeet,
         oasNumber: obstacle.oasNumber,
@@ -272,7 +285,9 @@ export function ObstacleOverlay({
         x: obstacle.x,
         yNm: obstacle.topYNm + LABEL_CLEARANCE_NM,
         z: obstacle.z,
-        text: `${obstacle.amslFeet}′ (${obstacle.aglFeet}′ AGL)`
+        highest: obstacle.highest,
+        // TPP convention: ± marks an unverified (doubtful accuracy) elevation.
+        text: `${obstacle.amslFeet}′${obstacle.verified ? '' : '±'} (${obstacle.aglFeet}′ AGL)`
       }));
   }, [renderObstacles, showLabels]);
 
@@ -307,7 +322,11 @@ export function ObstacleOverlay({
           distanceFactor={8}
           transform
         >
-          <div className="obstacle-label">{label.text}</div>
+          <div
+            className={label.highest ? 'obstacle-label obstacle-label-highest' : 'obstacle-label'}
+          >
+            {label.text}
+          </div>
         </Html>
       ))}
     </group>
