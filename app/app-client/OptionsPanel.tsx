@@ -11,7 +11,13 @@ import {
   MIN_NEXRAD_OPACITY,
   MAX_NEXRAD_OPACITY,
   MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
-  MAX_NEXRAD_CROSS_SECTION_RANGE_NM
+  MAX_NEXRAD_CROSS_SECTION_RANGE_NM,
+  MIN_OBSTACLE_RADIUS_NM,
+  MAX_OBSTACLE_RADIUS_NM,
+  OBSTACLE_RADIUS_STEP_NM,
+  MIN_OBSTACLE_MIN_AGL_FEET,
+  MAX_OBSTACLE_MIN_AGL_FEET,
+  OBSTACLE_MIN_AGL_STEP_FEET
 } from './constants';
 import type { CameraControlMode, NexradDeclutterMode, NexradPhaseMode } from './types';
 
@@ -114,7 +120,14 @@ export function OptionsPanel({
   trafficHistoryMinutes,
   onTrafficHistoryMinutesChange,
   retinaRendering,
-  onRetinaRenderingChange
+  onRetinaRenderingChange,
+  obstacleRadiusNm,
+  onObstacleRadiusNmChange,
+  obstacleMinAglFeet,
+  onObstacleMinAglFeetChange,
+  showObstacleLabels,
+  onShowObstacleLabelsChange,
+  obstacleStats
 }: OptionsPanelProps) {
   const [localVerticalScale, setLocalVerticalScale] = useDebouncedSlider(
     verticalScale,
@@ -143,6 +156,14 @@ export function OptionsPanel({
   const [localSliceRange, setLocalSliceRange] = useDebouncedSlider(
     nexradCrossSectionRangeNm,
     onNexradCrossSectionRangeNmChange
+  );
+  const [localObstacleRadius, setLocalObstacleRadius] = useDebouncedSlider(
+    obstacleRadiusNm,
+    onObstacleRadiusNmChange
+  );
+  const [localObstacleMinAgl, setLocalObstacleMinAgl] = useDebouncedSlider(
+    obstacleMinAglFeet,
+    onObstacleMinAglFeetChange
   );
 
   if (optionsCollapsed) {
@@ -361,6 +382,72 @@ export function OptionsPanel({
           disabled={!layers.adsb}
           onChange={(event) => onShowDepartedTrafficTrailsChange(event.target.checked)}
           aria-label="Show trails for departed traffic targets"
+        />
+      </label>
+
+      {/* Obstacles */}
+      <div className="layers-group-divider">
+        <span className="layers-group-label">Obstacles</span>
+      </div>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Obstacle Range ({localObstacleRadius} NM)</span>
+        </span>
+        <input
+          type="range"
+          min={MIN_OBSTACLE_RADIUS_NM}
+          max={MAX_OBSTACLE_RADIUS_NM}
+          step={OBSTACLE_RADIUS_STEP_NM}
+          value={localObstacleRadius}
+          disabled={!layers.obstacles}
+          onChange={(event) => setLocalObstacleRadius(Number(event.target.value))}
+          aria-label="Obstacle range nautical miles"
+        />
+      </label>
+
+      <label className="options-slider-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">
+            Obstacle Threshold ({localObstacleMinAgl}&#8242; AGL)
+          </span>
+          {layers.obstacles && obstacleStats && !obstacleStats.loading && !obstacleStats.error && (
+            <span className="options-toggle-note">
+              {obstacleStats.shownCount < obstacleStats.totalCount
+                ? `Showing tallest ${obstacleStats.shownCount.toLocaleString()} of ${obstacleStats.totalCount.toLocaleString()} obstacles`
+                : `${obstacleStats.totalCount.toLocaleString()} obstacles in range`}
+            </span>
+          )}
+          {layers.obstacles && obstacleStats?.loading && (
+            <span className="options-toggle-note">Loading obstacles...</span>
+          )}
+          {layers.obstacles && obstacleStats?.error && (
+            <span className="options-toggle-note">Obstacle load failed: {obstacleStats.error}</span>
+          )}
+        </span>
+        <input
+          type="range"
+          min={MIN_OBSTACLE_MIN_AGL_FEET}
+          max={MAX_OBSTACLE_MIN_AGL_FEET}
+          step={OBSTACLE_MIN_AGL_STEP_FEET}
+          value={localObstacleMinAgl}
+          disabled={!layers.obstacles}
+          onChange={(event) => setLocalObstacleMinAgl(Number(event.target.value))}
+          aria-label="Obstacle minimum height AGL feet"
+        />
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Show Obstacle Labels</span>
+          <span className="options-toggle-note">MSL (AGL) heights on the tallest obstacles</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={showObstacleLabels}
+          disabled={!layers.obstacles}
+          onChange={(event) => onShowObstacleLabelsChange(event.target.checked)}
+          aria-label="Show obstacle height labels"
         />
       </label>
 

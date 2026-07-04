@@ -50,9 +50,6 @@ const CIFP_PATH = path.join(DATA_DIR, 'cifp', 'FAACIFP18');
 const APPROACH_DB_PATH = path.join(DATA_DIR, 'approach-db', 'approaches.json');
 const AIRSPACE_DIR = path.join(DATA_DIR, 'airspace');
 const DOF_PATH = path.join(DATA_DIR, 'obstacles', 'DOF.DAT');
-// Obstacles below 200 ft AGL are generally not charted (FAA charting practice)
-// and would triple the bundled DB size; the DB keeps the charted subset.
-const OBSTACLE_MIN_AGL_FEET = 200;
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'approach-viz.sqlite');
 
@@ -387,7 +384,6 @@ function main() {
   let obstacleCount = 0;
   const insertObstacleData = db.transaction(() => {
     for (const obstacle of parsedDof.obstacles) {
-      if (obstacle.aglFeet < OBSTACLE_MIN_AGL_FEET) continue;
       const info = insertObstacle.run(
         obstacle.oasNumber,
         obstacle.obstacleType,
@@ -457,7 +453,7 @@ function main() {
   console.log(`✅ SQLite DB built at ${DB_PATH}`);
   console.log(`✅ Airport spatial R-tree built (${airportSpatialCount} airports)`);
   console.log(
-    `✅ Obstacles loaded (${obstacleCount} records ≥${OBSTACLE_MIN_AGL_FEET} ft AGL, DOF currency ${parsedDof.currencyDate})`
+    `✅ Obstacles loaded (${obstacleCount} records, DOF currency ${parsedDof.currencyDate})`
   );
 }
 

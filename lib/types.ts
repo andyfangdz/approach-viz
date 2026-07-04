@@ -21,6 +21,13 @@ export interface ObstacleFeature {
   verified: boolean;
 }
 
+export interface ObstaclesPayload {
+  /** Capped at the server's MAX_SCENE_OBSTACLES, tallest by AMSL first. */
+  obstacles: ObstacleFeature[];
+  /** Uncapped match count for the requested radius/threshold. */
+  totalCount: number;
+}
+
 export interface SerializedApproach {
   airportId: string;
   procedureId: string;
@@ -99,7 +106,6 @@ export interface SceneData {
   nearbyAirports: NearbyAirport[];
   elevationAirports: ElevationAirport[];
   airspace: AirspaceFeature[];
-  obstacles: ObstacleFeature[];
   minimumsSummary: MinimumsSummary | null;
   approachPlate: ApproachPlate | null;
   missedApproachClimbRequirement: MissedApproachClimbRequirement | null;

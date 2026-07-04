@@ -16,9 +16,9 @@ External data feeds and their ingestion paths.
 ## Published Obstacles (FAA Digital Obstacle File)
 
 - Source: FAA daily Digital Obstacle File `https://aeronav.faa.gov/Obst_Data/DAILY_DOF_DAT.ZIP` (fixed-width `DOF.DAT`).
-- Downloaded at `download-data` time (header + record-count validated) and parsed by `lib/dof/parser.ts`, which throws on malformed coordinates/heights instead of fabricating values; records without a published AMSL height are skipped with a logged count (they cannot be placed vertically without inventing a ground elevation).
-- `build-db` loads obstacles at or above 200 ft AGL (the FAA charting threshold — lower obstacles are generally not charted, and including them would roughly triple the bundled DB size) into an `obstacles` table plus an `obstacle_rtree` spatial index; the DOF currency date and loaded row count are stored in `metadata`.
-- Scene payloads include obstacles within 30 NM of the selected airport (`OBSTACLE_RADIUS_NM`), capped at the 2,500 tallest by AMSL (`MAX_SCENE_OBSTACLES`; the densest metro areas carry ~1,400).
+- Downloaded at `download-data` time (header + record-count validated) and parsed by `lib/dof/parser.ts`, which throws on malformed coordinates/heights instead of fabricating values (negative AMSL heights for below-sea-level records are supported); records without a published AMSL height are skipped with a logged count (they cannot be placed vertically without inventing a ground elevation).
+- `build-db` loads all parsed records (~647k) into an `obstacles` table plus an `obstacle_rtree` spatial index; the DOF currency date and loaded row count are stored in `metadata`.
+- Obstacles are fetched on demand (not in the base scene payload) through the `loadObstaclesAction` server action, parameterized by range (5–80 NM, default 30) and minimum height AGL (0–2,000 ft, default 200 ft — the FAA charting threshold). Responses are capped at the 2,500 tallest by AMSL (`MAX_SCENE_OBSTACLES`) and carry the uncapped `totalCount` so truncation is surfaced in the UI rather than silent.
 
 ## Approach Minimums (MDA/DA)
 

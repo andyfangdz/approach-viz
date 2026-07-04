@@ -13,7 +13,7 @@
     "test:routes": "node --import tsx --test app/api/traffic/adsbx/route.test.ts",
     "test:parser": "node --import tsx --test lib/cifp/parser.test.ts lib/dof/parser.test.ts",
     "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts app/scene/approach-path/geometry-rust.test.ts",
-    "test:layers": "node --import tsx --test app/app-client/__tests__/layers-url.test.ts",
+    "test:layers": "node --import tsx --test app/app-client/__tests__/layers-url.test.ts app/scene/obstacle-shapes.test.ts",
     "test:mrms": "node --import tsx --test app/scene/nexrad/nexrad.test.ts",
     "test:workers": "node --import tsx --test app/scene/shared/comlinked-worker-client.test.ts",
     "test:integration:runtime": "node --import tsx --test services/runtime-rs/runtime.integration.test.ts",

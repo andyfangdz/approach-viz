@@ -352,7 +352,7 @@ export const SECTIONS: Section[] = [
               ],
               [
                 '`obstacles` + `obstacle_rtree`',
-                'Digital Obstacle File records ≥200 ft AGL with an R-tree point index'
+                'All Digital Obstacle File records (~647k) with an R-tree point index'
               ],
               ['`metadata`', 'CIFP + d-TPP cycles, generation timestamp, row counts']
             ]

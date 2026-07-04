@@ -34,6 +34,8 @@ import {
   normalizeNexradCrossSectionRangeNm,
   normalizeNexradMinDbz,
   normalizeNexradOpacity,
+  normalizeObstacleMinAglFeet,
+  normalizeObstacleRadiusNm,
   normalizeTerrainRadiusNm,
   NEXRAD_DECLUTTER_MODES
 } from '@/app/app-client/option-normalizers';
@@ -45,6 +47,7 @@ import type {
   TrafficDebugState
 } from '@/app/app-client/types';
 import { CHART_DEBUG_INITIAL, type ChartDebugState } from '@/app/scene/ChartMapSurface';
+import type { ObstacleStats } from '@/app/scene/ObstacleOverlay';
 import type { AirportOption, SceneData } from '@/lib/types';
 
 interface AppClientProps {
@@ -166,6 +169,7 @@ export function AppClient({
   const [nexradDebug, setNexradDebug] = useState<NexradDebugState>(EMPTY_NEXRAD_DEBUG_STATE);
   const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
   const [chartDebug, setChartDebug] = useState<ChartDebugState>(CHART_DEBUG_INITIAL);
+  const [obstacleStats, setObstacleStats] = useState<ObstacleStats | null>(null);
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<RuntimeCapabilities>(
     EMPTY_RUNTIME_CAPABILITIES
   );
@@ -431,6 +435,9 @@ export function AppClient({
             nexradPhaseMode={options.nexradPhaseMode}
             nexradCrossSectionHeadingDeg={options.nexradCrossSectionHeadingDeg}
             nexradCrossSectionRangeNm={options.nexradCrossSectionRangeNm}
+            obstacleRadiusNm={options.obstacleRadiusNm}
+            obstacleMinAglFeet={options.obstacleMinAglFeet}
+            showObstacleLabels={options.showObstacleLabels}
             surfaceMode={surface.surfaceMode}
             plateOverlayEnabled={surface.plateOverlayEnabled}
             chartType={surface.chartType}
@@ -447,6 +454,7 @@ export function AppClient({
             onNexradDebugChange={setNexradDebug}
             onTrafficDebugChange={setTrafficDebug}
             onChartDebugChange={setChartDebug}
+            onObstacleStatsChange={setObstacleStats}
           />
         )}
 
@@ -579,6 +587,17 @@ export function AppClient({
           }
           retinaRendering={options.retinaRendering}
           onRetinaRenderingChange={options.setRetinaRendering}
+          obstacleRadiusNm={options.obstacleRadiusNm}
+          onObstacleRadiusNmChange={(radiusNm) =>
+            options.setObstacleRadiusNm(normalizeObstacleRadiusNm(radiusNm))
+          }
+          obstacleMinAglFeet={options.obstacleMinAglFeet}
+          onObstacleMinAglFeetChange={(minAglFeet) =>
+            options.setObstacleMinAglFeet(normalizeObstacleMinAglFeet(minAglFeet))
+          }
+          showObstacleLabels={options.showObstacleLabels}
+          onShowObstacleLabelsChange={options.setShowObstacleLabels}
+          obstacleStats={obstacleStats}
         />
 
         <HelpPanel errorMessage={activeErrorMessage} />

@@ -3,6 +3,7 @@ import type { Waypoint } from '@/lib/cifp/parser';
 import type { SelectOption } from '@/app/app-client-utils';
 import type { SceneData } from '@/lib/types';
 import type { ChartDebugState } from '@/app/scene/ChartMapSurface';
+import type { ObstacleStats } from '@/app/scene/ObstacleOverlay';
 
 export type SurfaceMode = 'terrain' | 'satellite' | 'map' | '3dmap';
 export type ChartType = 'vfr' | 'tac' | 'low' | 'high';
@@ -154,6 +155,9 @@ export interface SceneCanvasProps {
   nexradPhaseMode: NexradPhaseMode;
   nexradCrossSectionHeadingDeg: number;
   nexradCrossSectionRangeNm: number;
+  obstacleRadiusNm: number;
+  obstacleMinAglFeet: number;
+  showObstacleLabels: boolean;
   surfaceMode: SurfaceMode;
   plateOverlayEnabled: boolean;
   chartType: ChartType;
@@ -170,6 +174,7 @@ export interface SceneCanvasProps {
   onNexradDebugChange?: (debug: NexradDebugState) => void;
   onTrafficDebugChange?: (debug: TrafficDebugState) => void;
   onChartDebugChange?: (debug: ChartDebugState) => void;
+  onObstacleStatsChange?: (stats: ObstacleStats) => void;
 }
 
 export interface InfoPanelProps {
@@ -225,6 +230,13 @@ export interface OptionsPanelProps {
   onTrafficHistoryMinutesChange: (minutes: number) => void;
   retinaRendering: boolean;
   onRetinaRenderingChange: (enabled: boolean) => void;
+  obstacleRadiusNm: number;
+  onObstacleRadiusNmChange: (radiusNm: number) => void;
+  obstacleMinAglFeet: number;
+  onObstacleMinAglFeetChange: (minAglFeet: number) => void;
+  showObstacleLabels: boolean;
+  onShowObstacleLabelsChange: (enabled: boolean) => void;
+  obstacleStats: ObstacleStats | null;
 }
 
 export type LayerId =

@@ -21,6 +21,9 @@ import {
   DEFAULT_CAMERA_CONTROL_MODE,
   DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
+  DEFAULT_OBSTACLE_RADIUS_NM,
+  DEFAULT_OBSTACLE_MIN_AGL_FEET,
+  DEFAULT_SHOW_OBSTACLE_LABELS,
   MIN_TRAFFIC_HISTORY_MINUTES,
   MAX_TRAFFIC_HISTORY_MINUTES
 } from '@/app/app-client/constants';
@@ -33,6 +36,8 @@ import {
   normalizeNexradMinDbz,
   normalizeNexradOpacity,
   normalizeNexradPhaseMode,
+  normalizeObstacleMinAglFeet,
+  normalizeObstacleRadiusNm,
   normalizeTerrainRadiusNm
 } from '@/app/app-client/option-normalizers';
 import type {
@@ -62,6 +67,9 @@ interface PersistedOptionsState {
   nexradCrossSectionHeadingDeg?: number;
   nexradCrossSectionRangeNm?: number;
   retinaRendering?: boolean;
+  obstacleRadiusNm?: number;
+  obstacleMinAglFeet?: number;
+  showObstacleLabels?: boolean;
   layers?: LayerState;
   // Legacy fields kept for migration reading only
   liveTrafficEnabled?: boolean;
@@ -108,6 +116,11 @@ export function usePersistedOptions() {
     DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM
   );
   const [retinaRendering, setRetinaRendering] = useState(false);
+  const [obstacleRadiusNm, setObstacleRadiusNm] = useState<number>(DEFAULT_OBSTACLE_RADIUS_NM);
+  const [obstacleMinAglFeet, setObstacleMinAglFeet] = useState<number>(
+    DEFAULT_OBSTACLE_MIN_AGL_FEET
+  );
+  const [showObstacleLabels, setShowObstacleLabels] = useState(DEFAULT_SHOW_OBSTACLE_LABELS);
   const [didInitFromStorage, setDidInitFromStorage] = useState(false);
 
   const setLayerEnabled = (id: keyof LayerState, enabled: boolean) => {
@@ -183,6 +196,15 @@ export function usePersistedOptions() {
         if (typeof persisted.retinaRendering === 'boolean') {
           setRetinaRendering(persisted.retinaRendering);
         }
+        if (typeof persisted.obstacleRadiusNm === 'number') {
+          setObstacleRadiusNm(normalizeObstacleRadiusNm(persisted.obstacleRadiusNm));
+        }
+        if (typeof persisted.obstacleMinAglFeet === 'number') {
+          setObstacleMinAglFeet(normalizeObstacleMinAglFeet(persisted.obstacleMinAglFeet));
+        }
+        if (typeof persisted.showObstacleLabels === 'boolean') {
+          setShowObstacleLabels(persisted.showObstacleLabels);
+        }
         if (persisted.layers) {
           const restored = { ...DEFAULT_LAYER_STATE };
           for (const key of Object.keys(DEFAULT_LAYER_STATE) as (keyof LayerState)[]) {
@@ -256,6 +278,9 @@ export function usePersistedOptions() {
       nexradCrossSectionHeadingDeg,
       nexradCrossSectionRangeNm,
       retinaRendering,
+      obstacleRadiusNm,
+      obstacleMinAglFeet,
+      showObstacleLabels,
       layers
     };
     window.localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(persisted));
@@ -278,6 +303,9 @@ export function usePersistedOptions() {
     nexradCrossSectionHeadingDeg,
     nexradCrossSectionRangeNm,
     retinaRendering,
+    obstacleRadiusNm,
+    obstacleMinAglFeet,
+    showObstacleLabels,
     layers
   ]);
 
@@ -317,6 +345,12 @@ export function usePersistedOptions() {
     nexradCrossSectionRangeNm,
     setNexradCrossSectionRangeNm,
     retinaRendering,
-    setRetinaRendering
+    setRetinaRendering,
+    obstacleRadiusNm,
+    setObstacleRadiusNm,
+    obstacleMinAglFeet,
+    setObstacleMinAglFeet,
+    showObstacleLabels,
+    setShowObstacleLabels
   };
 }

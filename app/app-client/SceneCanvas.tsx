@@ -345,6 +345,9 @@ export const SceneCanvas = memo(function SceneCanvas({
   nexradPhaseMode,
   nexradCrossSectionHeadingDeg,
   nexradCrossSectionRangeNm,
+  obstacleRadiusNm,
+  obstacleMinAglFeet,
+  showObstacleLabels,
   surfaceMode,
   plateOverlayEnabled,
   chartType,
@@ -360,7 +363,8 @@ export const SceneCanvas = memo(function SceneCanvas({
   onSatelliteRuntimeError,
   onNexradDebugChange,
   onTrafficDebugChange,
-  onChartDebugChange
+  onChartDebugChange,
+  onObstacleStatsChange
 }: SceneCanvasProps) {
   const approachVisible = layers.approach;
   const airspaceVisible = layers.airspace;
@@ -536,13 +540,17 @@ export const SceneCanvas = memo(function SceneCanvas({
           />
         )}
 
-        {obstaclesVisible && sceneData.obstacles.length > 0 && (
+        {obstaclesVisible && (
           <ObstacleOverlay
-            obstacles={sceneData.obstacles}
+            airportId={airport.id}
             refLat={airport.lat}
             refLon={airport.lon}
             verticalScale={verticalScale}
+            radiusNm={obstacleRadiusNm}
+            minAglFeet={obstacleMinAglFeet}
+            showLabels={showObstacleLabels}
             applyEarthCurvatureCompensation={isTiledSurface}
+            onStatsChange={onObstacleStatsChange}
           />
         )}
 
