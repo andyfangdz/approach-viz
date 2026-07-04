@@ -93,11 +93,11 @@ export const selectStyles: StylesConfig<SelectOption, false> = {
   control: (base, state) => ({
     ...base,
     backgroundColor: '#1a1a2e',
-    borderColor: state.isFocused ? '#00ffcc' : '#2a2a44',
+    borderColor: state.isFocused ? 'var(--accent)' : 'var(--border)',
     minHeight: 36,
-    boxShadow: state.isFocused ? '0 0 0 3px rgba(0, 255, 204, 0.15)' : 'none',
+    boxShadow: state.isFocused ? '0 0 0 3px var(--accent-soft)' : 'none',
     ':hover': {
-      borderColor: '#00ffcc'
+      borderColor: 'var(--accent)'
     }
   }),
   valueContainer: (base) => ({
@@ -126,7 +126,7 @@ export const selectStyles: StylesConfig<SelectOption, false> = {
     ...base,
     backgroundColor: 'rgba(18, 18, 31, 0.98)',
     border: '1px solid #2a2a44',
-    borderRadius: 8,
+    borderRadius: 10,
     overflow: 'hidden'
   }),
   menuList: (base) => ({
@@ -136,9 +136,9 @@ export const selectStyles: StylesConfig<SelectOption, false> = {
   option: (base, state) => ({
     ...base,
     backgroundColor: state.isSelected
-      ? 'rgba(0, 255, 204, 0.24)'
+      ? 'var(--accent-strong)'
       : state.isFocused
-        ? 'rgba(0, 255, 204, 0.16)'
+        ? 'var(--accent-soft)'
         : 'transparent',
     color: '#e8e8f0',
     fontFamily: "'JetBrains Mono', monospace",
@@ -153,7 +153,7 @@ export const selectStyles: StylesConfig<SelectOption, false> = {
     ...base,
     color: '#8888aa',
     ':hover': {
-      color: '#00ffcc'
+      color: 'var(--accent)'
     }
   }),
   clearIndicator: (base) => ({

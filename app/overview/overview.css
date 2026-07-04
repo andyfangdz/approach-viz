@@ -13,7 +13,7 @@
   --ov-ink-faint: #5a5a7c;
   --ov-line: #23233c;
   --ov-line-strong: #34345a;
-  --ov-cyan: #00ffcc;
+  --ov-cyan: #45e0c0;
   --ov-gold: #ffb52e;
   --ov-magenta: #ff2ea6;
   --ov-blue: #6ea8ff;
@@ -30,8 +30,9 @@
   -webkit-user-select: text;
   user-select: text;
   background:
-    radial-gradient(1200px 600px at 75% -10%, rgba(0, 255, 204, 0.055), transparent 60%),
-    radial-gradient(900px 500px at 8% 30%, rgba(255, 46, 166, 0.035), transparent 65%), var(--ov-bg);
+    radial-gradient(1200px 600px at 75% -10%, rgba(69, 224, 192, 0.055), transparent 60%),
+    radial-gradient(900px 500px at 8% 30%, rgba(110, 168, 255, 0.035), transparent 65%),
+    var(--ov-bg);
   color: var(--ov-ink);
   font-family: var(--ov-font-b);
   font-size: 15.5px;
@@ -161,7 +162,7 @@
   content: '';
   flex: 1;
   height: 1px;
-  background: linear-gradient(90deg, rgba(0, 255, 204, 0.5), transparent);
+  background: linear-gradient(90deg, rgba(69, 224, 192, 0.5), transparent);
 }
 
 .ov-title {
@@ -172,6 +173,7 @@
   line-height: 0.94;
   letter-spacing: 0.005em;
   margin: 14px 0 18px;
+  text-wrap: balance;
 }
 
 .ov-title em {
@@ -184,6 +186,7 @@
   max-width: 62ch;
   color: var(--ov-ink-dim);
   font-size: 16.5px;
+  text-wrap: pretty;
 }
 
 .ov-lede strong {
@@ -303,6 +306,7 @@
   letter-spacing: 0.015em;
   line-height: 1;
   margin: 0;
+  text-wrap: balance;
 }
 
 .ov-section-tag {
@@ -366,6 +370,7 @@
   margin: 0 0 12px;
   max-width: 76ch;
   color: var(--ov-ink-dim);
+  text-wrap: pretty;
 }
 
 .ov-p strong {
@@ -409,8 +414,8 @@
   font-family: var(--ov-font-m);
   font-size: 0.82em;
   color: var(--ov-cyan);
-  background: rgba(0, 255, 204, 0.07);
-  border: 1px solid rgba(0, 255, 204, 0.14);
+  background: rgba(69, 224, 192, 0.07);
+  border: 1px solid rgba(69, 224, 192, 0.14);
   border-radius: 3px;
   padding: 0.5px 5px;
   white-space: nowrap;
@@ -472,8 +477,8 @@ a.ov-code-link code {
 }
 
 a.ov-code-link:hover code {
-  background: rgba(0, 255, 204, 0.16);
-  border-color: rgba(0, 255, 204, 0.55);
+  background: rgba(69, 224, 192, 0.16);
+  border-color: rgba(69, 224, 192, 0.55);
 }
 
 /* tables — comm-box style */
@@ -680,6 +685,7 @@ a.ov-code-link:hover code {
   font-size: 26px;
   color: var(--accent, var(--ov-cyan));
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .ov-stat-k {
@@ -696,7 +702,7 @@ a.ov-code-link:hover code {
 .ov-diagram {
   border: 1px solid var(--ov-line-strong);
   background:
-    radial-gradient(700px 320px at 50% 0%, rgba(0, 255, 204, 0.04), transparent 70%),
+    radial-gradient(700px 320px at 50% 0%, rgba(69, 224, 192, 0.04), transparent 70%),
     var(--ov-bg-raise);
   margin: 8px 0 20px;
   position: relative;
