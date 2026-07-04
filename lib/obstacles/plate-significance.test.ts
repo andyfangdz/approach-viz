@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildCenterlineGeometry,
+  declutterLocalHighest,
   distanceNmToCenterlines,
   penetratesChartingSurface
 } from './plate-significance';
@@ -55,6 +56,43 @@ test('distanceNmToCenterlines measures to the nearest point on a segment', () =>
   assert.ok(Math.abs(abeam - 6 * Math.cos((40.5163 * Math.PI) / 180)) < 0.05, `got ${abeam}`);
   const offEnd = distanceNmToCenterlines({ lat: 40.4, lon: -106.8661 }, geometry, AIRPORT);
   assert.ok(Math.abs(offEnd - 6) < 0.05, `got ${offEnd}`);
+});
+
+test('declutterLocalHighest collapses a ridge cluster to its tallest member', () => {
+  // KSBS ridge: 8353 with two shorter towers ~0.05 NM away — the plate charts
+  // only 8353±.
+  const extras = [
+    { lat: 40.4619, lon: -106.8498, amslFeet: 8353, id: 'tall' },
+    { lat: 40.4622, lon: -106.8506, amslFeet: 8330, id: 'mid' },
+    { lat: 40.4619, lon: -106.8501, amslFeet: 8325, id: 'short' }
+  ];
+  const kept = declutterLocalHighest(extras, [], 1, 40.5163);
+  assert.deepEqual(
+    kept.map((k) => k.id),
+    ['tall']
+  );
+});
+
+test('declutterLocalHighest keeps isolated penetrators', () => {
+  const extras = [
+    { lat: 40.46, lon: -106.85, amslFeet: 8353, id: 'a' },
+    { lat: 40.35, lon: -106.7, amslFeet: 10592, id: 'b' }
+  ];
+  const kept = declutterLocalHighest(extras, [], 1, 40.5163);
+  assert.deepEqual(kept.map((k) => k.id).sort(), ['a', 'b']);
+});
+
+test('declutterLocalHighest suppresses extras only near taller shown obstacles', () => {
+  const shownTaller = [{ lat: 40.46, lon: -106.85, amslFeet: 9000 }];
+  const shownShorter = [{ lat: 40.46, lon: -106.85, amslFeet: 8000 }];
+  const extras = [{ lat: 40.461, lon: -106.851, amslFeet: 8353, id: 'ridge' }];
+  // A taller already-shown obstacle nearby suppresses the extra...
+  assert.equal(declutterLocalHighest(extras, shownTaller, 1, 40.5163).length, 0);
+  // ...but a shorter one does not — the extra is the local high point.
+  assert.deepEqual(
+    declutterLocalHighest(extras, shownShorter, 1, 40.5163).map((k) => k.id),
+    ['ridge']
+  );
 });
 
 test('penetratesChartingSurface applies the FAA 67:1 slope', () => {

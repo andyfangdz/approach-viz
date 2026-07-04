@@ -4,6 +4,7 @@ import type { Airport } from '@/lib/cifp/parser';
 import { isLitLightingCode } from '@/lib/dof/parser';
 import {
   buildCenterlineGeometry,
+  declutterLocalHighest,
   distanceNmToCenterlines,
   penetratesChartingSurface
 } from '@/lib/obstacles/plate-significance';
@@ -15,7 +16,8 @@ import {
   MAX_OBSTACLE_RADIUS_NM,
   MAX_SCENE_OBSTACLES,
   MIN_OBSTACLE_MIN_AGL_FEET,
-  MIN_OBSTACLE_RADIUS_NM
+  MIN_OBSTACLE_RADIUS_NM,
+  OBSTACLE_CHART_DECLUTTER_RADIUS_NM
 } from './constants';
 import { loadRunwayMap } from './airports';
 import { latLonDistanceNm } from './geo';
@@ -53,6 +55,10 @@ function clamp(value: number, min: number, max: number, fallback: number): numbe
  * threshold — obstacles that penetrate the FAA TPP 67:1 charting surface from
  * the runway centerlines (the Chart User's Guide plan-view rule), so
  * chart-significant obstacles like a short tower on a ridge never disappear.
+ * Because the 67:1 rule only makes obstacles "considered for charting",
+ * below-threshold penetrators are decluttered TPP-style to the locally-highest
+ * obstacle within OBSTACLE_CHART_DECLUTTER_RADIUS_NM (high terrain otherwise
+ * sweeps in every rooftop on a ridge, far beyond what plates chart).
  * When the cap applies, charting-surface penetrators are kept preferentially,
  * then the tallest by AMSL; totalCount carries the uncapped match count so
  * truncation is never silent.
@@ -88,17 +94,41 @@ export function loadObstaclesForAirport(
   const runwayEnds = loadRunwayMap([airport.id]).get(airport.id) || [];
   const centerlines = buildCenterlineGeometry(runwayEnds, airport);
 
-  const included: Array<{ row: ObstacleRow; chartSignificant: boolean }> = [];
+  const thresholdPassing: Array<{ row: ObstacleRow; chartSignificant: boolean }> = [];
+  const belowThresholdPenetrators: Array<{
+    row: ObstacleRow;
+    lat: number;
+    lon: number;
+    amslFeet: number;
+  }> = [];
   for (const row of rows) {
     if (latLonDistanceNm(airport.lat, airport.lon, row.lat, row.lon) > clampedRadiusNm) continue;
-    const chartSignificant = penetratesChartingSurface(
-      row.amsl_feet,
-      airport.elevation,
-      distanceNmToCenterlines(row, centerlines, airport)
-    );
-    if (row.agl_feet < clampedMinAglFeet && !chartSignificant) continue;
-    included.push({ row, chartSignificant });
+    if (row.agl_feet >= clampedMinAglFeet) {
+      thresholdPassing.push({ row, chartSignificant: false });
+      continue;
+    }
+    if (
+      penetratesChartingSurface(
+        row.amsl_feet,
+        airport.elevation,
+        distanceNmToCenterlines(row, centerlines, airport)
+      )
+    ) {
+      belowThresholdPenetrators.push({ row, lat: row.lat, lon: row.lon, amslFeet: row.amsl_feet });
+    }
   }
+
+  const keptPenetrators = declutterLocalHighest(
+    belowThresholdPenetrators,
+    thresholdPassing.map(({ row }) => ({ lat: row.lat, lon: row.lon, amslFeet: row.amsl_feet })),
+    OBSTACLE_CHART_DECLUTTER_RADIUS_NM,
+    airport.lat
+  );
+
+  const included = [
+    ...thresholdPassing,
+    ...keptPenetrators.map(({ row }) => ({ row, chartSignificant: true }))
+  ];
 
   let capped = included;
   if (included.length > MAX_SCENE_OBSTACLES) {

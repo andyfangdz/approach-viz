@@ -143,3 +143,49 @@ export function penetratesChartingSurface(
   const surfaceHeightFeet = (distanceNmToCenterline * FEET_PER_NM) / CHARTING_SLOPE_RATIO;
   return heightAboveAirportFeet > surfaceHeightFeet;
 }
+
+export interface DeclutterPoint {
+  lat: number;
+  lon: number;
+  amslFeet: number;
+}
+
+/**
+ * TPP-style congested-area declutter for charting-surface penetrators that
+ * fall below the user's AGL threshold. The 67:1 rule only makes obstacles
+ * "considered for charting" — FAA cartographers then chart representative
+ * highest obstacles, not every rooftop on high ground. This keeps an extra
+ * only when nothing at least as tall (AMSL) is already shown within radiusNm:
+ * ridge clusters collapse to their locally-highest obstacle (KSBS charts
+ * 8353± but not its shorter same-ridge neighbors).
+ *
+ * `extras` are processed tallest-first; `alreadyShown` are the obstacles that
+ * pass the user threshold. Returns the kept extras.
+ */
+export function declutterLocalHighest<T extends DeclutterPoint>(
+  extras: T[],
+  alreadyShown: DeclutterPoint[],
+  radiusNm: number,
+  refLat: number
+): T[] {
+  const cosLat = Math.cos((refLat * Math.PI) / 180);
+  const kept: T[] = [];
+  const sorted = extras.slice().sort((a, b) => b.amslFeet - a.amslFeet);
+
+  const suppressedBy = (candidate: DeclutterPoint, shown: DeclutterPoint): boolean => {
+    if (shown.amslFeet < candidate.amslFeet) return false;
+    const dNm = Math.hypot(
+      (candidate.lat - shown.lat) * 60,
+      (candidate.lon - shown.lon) * 60 * cosLat
+    );
+    return dNm <= radiusNm;
+  };
+
+  for (const extra of sorted) {
+    if (alreadyShown.some((shown) => suppressedBy(extra, shown))) continue;
+    // Earlier-kept extras are all at least as tall (tallest-first order).
+    if (kept.some((shown) => suppressedBy(extra, shown))) continue;
+    kept.push(extra);
+  }
+  return kept;
+}
