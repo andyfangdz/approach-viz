@@ -35,7 +35,7 @@ export const SECTIONS: Section[] = [
     num: '01',
     title: 'Overall Architecture',
     tag: 'general briefing',
-    accent: '#00ffcc',
+    accent: '#45e0c0',
     intro:
       'ApproachViz renders FAA instrument approaches in 3D with terrain, airspace, live ADS-B traffic and volumetric MRMS weather. Everything hangs off two ideas: a **single shared Rust core** compiled for every platform, and **worker-first clients** that never do heavy compute on the UI thread.',
     subs: [
@@ -567,7 +567,7 @@ export const SECTIONS: Section[] = [
     num: '04',
     title: 'Frontend',
     tag: 'react three fiber · workers · wasm',
-    accent: '#00ffcc',
+    accent: '#45e0c0',
     intro:
       'The web client is a react-three-fiber scene fed exclusively by workers. The main thread composes React state and uploads GPU buffers; parsing, merging, decoding and geometry synthesis all happen off-thread, mostly inside the shared WASM core.',
     subs: [

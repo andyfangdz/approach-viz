@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { Approach } from '@/lib/cifp/parser';
 import { pickDefaultApproachForAirport } from '@/app/default-selections';
 import {
@@ -407,7 +407,10 @@ export function AppClient({
         onControlsHeightChange={setControlsOverlayHeight}
       />
 
-      <main className="main-content">
+      <main
+        className="main-content"
+        style={{ '--controls-overlay-offset': `${controlsOverlayHeight}px` } as CSSProperties}
+      >
         {(selection.loading || selection.isPending) && (
           <div className="loading">Loading approach data...</div>
         )}
@@ -458,11 +461,7 @@ export function AppClient({
           />
         )}
 
-        <div
-          className="faa-disclaimer"
-          role="note"
-          style={controlsOverlayHeight > 0 ? { top: controlsOverlayHeight + 10 } : undefined}
-        >
+        <div className="faa-disclaimer" role="note">
           Not official FAA data — Do not use for navigation
         </div>
 

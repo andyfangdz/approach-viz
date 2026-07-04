@@ -116,7 +116,7 @@ const NODES: SysNode[] = [
     y: 182,
     w: 212,
     h: 72,
-    color: '#00ffcc',
+    color: '#45e0c0',
     title: 'Next.js 16 App',
     sub: 'Vercel · SSR + API proxies',
     desc: 'App Router service: server actions read the SQLite bundle, API routes validate/clamp params and proxy the Rust runtime, FAA plates, ProbSevere and Datadog RUM.',
@@ -152,7 +152,7 @@ const NODES: SysNode[] = [
     y: 82,
     w: 196,
     h: 112,
-    color: '#00ffcc',
+    color: '#45e0c0',
     title: 'Web Client',
     sub: 'React Three Fiber · workers',
     desc: 'Worker-first browser client: Comlink-proxied workers run the WASM core off the main thread; react-three-fiber renders terrain, approaches, airspace, traffic and weather.',
@@ -179,7 +179,7 @@ const EDGES: SysEdge[] = [
   { from: 'src-mrms', to: 'svc-runtime', color: '#ff2ea6' },
   { from: 'src-adsb', to: 'svc-runtime', color: '#ffb52e' },
   { from: 'svc-runtime', to: 'svc-next', color: '#ffb52e' },
-  { from: 'svc-next', to: 'web', color: '#00ffcc' },
+  { from: 'svc-next', to: 'web', color: '#45e0c0' },
   { from: 'svc-runtime', to: 'native', color: '#ffb52e' },
   { from: 'core', to: 'web', color: '#ffb52e' },
   { from: 'core', to: 'native', color: '#ffb52e' },
@@ -213,7 +213,7 @@ export function SystemMap() {
   const litNodeIds = focus ? new Set([focus, ...litEdges.flatMap((e) => [e.from, e.to])]) : null;
 
   return (
-    <div className="ov-diagram" style={{ '--accent': '#00ffcc' } as CSSProperties}>
+    <div className="ov-diagram" style={{ '--accent': '#45e0c0' } as CSSProperties}>
       <div className="ov-diagram-bar">
         <span>FIG 1 — SYSTEM MAP</span>
         <span className="ov-diagram-hint">
@@ -513,7 +513,7 @@ export function MrmsPipelineDiagram() {
 }
 
 export function PlateProjectionDiagram() {
-  const C = '#00ffcc';
+  const C = '#45e0c0';
   const B = '#6ea8ff';
   return (
     <div className="ov-diagram">
@@ -642,7 +642,7 @@ export function PlateProjectionDiagram() {
 }
 
 export function WorkerTopologyDiagram() {
-  const C = '#00ffcc';
+  const C = '#45e0c0';
   const G = '#ffb52e';
   return (
     <div className="ov-diagram">

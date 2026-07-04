@@ -10,10 +10,18 @@
   --bg-tertiary: #1a1a2e;
   --text-primary: #e8e8f0;
   --text-secondary: #8888aa;
-  --accent-cyan: #00ffcc;
-  --accent-magenta: #ff00aa;
-  --accent-gold: #ffaa00;
+  /* Single UI accent: same hue family as the old #00ffcc but desaturated so it
+     harmonizes with the navy neutrals. Scene/legend data colors are separate. */
+  --accent: #45e0c0;
+  --accent-deep: #279b83;
+  --accent-soft: rgba(69, 224, 192, 0.12);
+  --accent-strong: rgba(69, 224, 192, 0.22);
   --border: #2a2a44;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-float: 0 12px 28px rgba(4, 6, 16, 0.5), inset 0 1px 0 rgba(232, 232, 240, 0.05);
   --floating-control-bottom: 24px;
 }
 
@@ -76,8 +84,8 @@ header {
 .logo-icon {
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
-  border-radius: 8px;
+  background: linear-gradient(160deg, var(--accent), var(--accent-deep));
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -93,7 +101,7 @@ header {
 }
 
 .logo-text span {
-  color: var(--accent-cyan);
+  color: var(--accent);
 }
 
 .controls {
@@ -109,7 +117,7 @@ header {
   background: rgba(18, 18, 31, 0.92);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   z-index: 240;
 }
 
@@ -131,7 +139,7 @@ header {
 .surface-toggle {
   display: inline-flex;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -153,7 +161,7 @@ header {
 }
 
 .surface-toggle-button.active {
-  background: rgba(0, 255, 204, 0.18);
+  background: var(--accent-strong);
   color: var(--text-primary);
 }
 
@@ -168,7 +176,7 @@ header {
 }
 
 .plate-overlay-label input[type='checkbox'] {
-  accent-color: rgba(0, 255, 204, 0.7);
+  accent-color: var(--accent);
 }
 
 .library-select {
@@ -181,7 +189,7 @@ header {
   border: 1px solid var(--border);
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   padding: 7px 10px;
@@ -192,8 +200,8 @@ header {
 }
 
 .panel-toggle:hover {
-  border-color: var(--accent-cyan);
-  background: rgba(0, 255, 204, 0.12);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .panel-toggle.small {
@@ -271,7 +279,7 @@ textarea,
   width: 16px;
   height: 16px;
   border: 2px solid var(--border);
-  border-top-color: var(--accent-cyan);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -282,13 +290,13 @@ textarea,
   color: var(--text-secondary);
   padding: 16px 24px;
   background: rgba(18, 18, 31, 0.9);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
 }
 
 .mrms-loading-indicator {
   position: absolute;
-  top: 16px;
+  top: calc(16px + var(--controls-overlay-offset, 0px));
   right: 24px;
   display: inline-flex;
   align-items: center;
@@ -300,14 +308,14 @@ textarea,
   background: rgba(18, 18, 31, 0.92);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   z-index: 24;
   pointer-events: none;
 }
 
 .faa-disclaimer {
   position: absolute;
-  top: 16px;
+  top: calc(16px + var(--controls-overlay-offset, 0px));
   left: 24px;
   padding: 7px 11px;
   font-size: 11px;
@@ -316,7 +324,7 @@ textarea,
   background: rgba(18, 18, 31, 0.82);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   z-index: 24;
   pointer-events: none;
   -webkit-user-select: none;
@@ -329,7 +337,7 @@ textarea,
   width: 12px;
   height: 12px;
   border: 2px solid rgba(42, 42, 68, 0.95);
-  border-top-color: var(--accent-cyan);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -357,11 +365,13 @@ textarea,
   }
 }
 
-/* Collapsed FAB button */
-.info-panel-fab {
+/* Collapsed FAB buttons: shared chrome, per-button placement */
+.info-panel-fab,
+.options-panel-fab,
+.layers-panel-fab,
+.recenter-fab,
+.debug-panel-fab {
   position: absolute;
-  bottom: var(--floating-control-bottom);
-  left: 24px;
   width: 40px;
   height: 40px;
   display: flex;
@@ -370,132 +380,58 @@ textarea,
   background: rgba(18, 18, 31, 0.9);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   cursor: pointer;
   z-index: 10;
   transition:
     border-color 0.2s,
     color 0.2s,
-    background 0.2s;
+    background 0.2s,
+    transform 0.15s ease;
 }
 
-.info-panel-fab:hover {
-  border-color: var(--accent-cyan);
+.info-panel-fab:hover,
+.options-panel-fab:hover,
+.layers-panel-fab:hover,
+.recenter-fab:hover,
+.debug-panel-fab:hover {
+  border-color: var(--accent);
   color: var(--text-primary);
-  background: rgba(0, 255, 204, 0.08);
+  background: var(--accent-soft);
+}
+
+.info-panel-fab:active,
+.options-panel-fab:active,
+.layers-panel-fab:active,
+.recenter-fab:active,
+.debug-panel-fab:active {
+  transform: scale(0.96);
+}
+
+.info-panel-fab {
+  bottom: var(--floating-control-bottom);
+  left: 24px;
 }
 
 .options-panel-fab {
-  position: absolute;
   bottom: var(--floating-control-bottom);
   right: 24px;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(18, 18, 31, 0.9);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  z-index: 10;
-  transition:
-    border-color 0.2s,
-    color 0.2s,
-    background 0.2s;
-}
-
-.options-panel-fab:hover {
-  border-color: var(--accent-cyan);
-  color: var(--text-primary);
-  background: rgba(0, 255, 204, 0.08);
 }
 
 .debug-panel-fab {
-  position: absolute;
-  top: 60px;
+  top: calc(16px + var(--controls-overlay-offset, 0px));
   right: 24px;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(18, 18, 31, 0.9);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  z-index: 10;
-  transition:
-    border-color 0.2s,
-    color 0.2s,
-    background 0.2s;
-}
-
-.debug-panel-fab:hover {
-  border-color: var(--accent-cyan);
-  color: var(--text-primary);
-  background: rgba(0, 255, 204, 0.08);
 }
 
 .layers-panel-fab {
-  position: absolute;
   bottom: calc(var(--floating-control-bottom) + 48px);
   right: 24px;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(18, 18, 31, 0.9);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  z-index: 10;
-  transition:
-    border-color 0.2s,
-    color 0.2s,
-    background 0.2s;
-}
-
-.layers-panel-fab:hover {
-  border-color: var(--accent-cyan);
-  color: var(--text-primary);
-  background: rgba(0, 255, 204, 0.08);
 }
 
 .recenter-fab {
-  position: absolute;
   right: 24px;
   bottom: calc(var(--floating-control-bottom) + 96px);
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(18, 18, 31, 0.9);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  z-index: 10;
-  transition:
-    border-color 0.2s,
-    color 0.2s,
-    background 0.2s;
-}
-
-.recenter-fab:hover {
-  border-color: var(--accent-cyan);
-  color: var(--text-primary);
-  background: rgba(0, 255, 204, 0.08);
 }
 
 /* Expanded panel */
@@ -506,7 +442,7 @@ textarea,
   background: rgba(18, 18, 31, 0.9);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 16px 20px;
   min-width: 300px;
   z-index: 10;
@@ -524,7 +460,7 @@ textarea,
   background: rgba(18, 18, 31, 0.9);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 10px 14px;
   min-width: 0;
   max-height: calc(100vh - 200px);
@@ -540,7 +476,7 @@ textarea,
   background: rgba(18, 18, 31, 0.9);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 10px 14px;
   min-width: 0;
   z-index: 11;
@@ -563,15 +499,15 @@ textarea,
 .debug-panel {
   position: absolute;
   right: 24px;
-  top: 60px;
+  top: calc(16px + var(--controls-overlay-offset, 0px));
   width: min(350px, calc(100vw - 48px));
-  max-height: calc(100vh - 180px);
+  max-height: calc(100vh - 180px - var(--controls-overlay-offset, 0px));
   overflow-y: auto;
   overscroll-behavior: contain;
   background: rgba(18, 18, 31, 0.92);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 10px 14px;
   z-index: 20;
 }
@@ -650,7 +586,7 @@ textarea,
 }
 
 .debug-row span:last-child {
-  color: var(--accent-cyan);
+  color: var(--accent);
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -728,7 +664,7 @@ textarea,
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   transition:
     color 0.15s,
@@ -898,7 +834,7 @@ textarea,
 }
 
 .minimums-value {
-  color: var(--accent-cyan);
+  color: var(--accent);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
 }
@@ -938,7 +874,7 @@ textarea,
 .options-toggle-row input[type='checkbox'] {
   width: 14px;
   height: 14px;
-  accent-color: var(--accent-cyan);
+  accent-color: var(--accent);
 }
 
 .options-slider-row {
@@ -951,14 +887,14 @@ textarea,
 
 .options-slider-row input[type='range'] {
   width: 100%;
-  accent-color: var(--accent-cyan);
+  accent-color: var(--accent);
 }
 
 .options-inline-select {
   border: 1px solid var(--border);
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   padding: 5px 7px;
@@ -972,7 +908,7 @@ textarea,
   line-height: 1;
   padding: 2px 4px;
   border: 1px solid rgba(124, 188, 255, 0.35);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: rgba(8, 14, 28, 0.72);
   pointer-events: none;
 }
@@ -984,7 +920,7 @@ textarea,
   line-height: 1;
   padding: 2px 4px;
   border: 1px solid rgba(255, 170, 89, 0.38);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: rgba(26, 12, 4, 0.76);
   pointer-events: none;
 }
@@ -996,7 +932,7 @@ textarea,
   line-height: 1;
   padding: 2px 4px;
   border: 1px solid rgba(255, 170, 89, 0.38);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: rgba(26, 16, 4, 0.76);
   pointer-events: none;
   white-space: nowrap;
@@ -1017,7 +953,7 @@ textarea,
   bottom: 12px;
   width: min(460px, calc(100vw - 28px));
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   border: 1px solid rgba(111, 165, 220, 0.38);
   background: rgba(10, 16, 30, 0.88);
   backdrop-filter: blur(6px);
@@ -1040,7 +976,7 @@ textarea,
   width: 100%;
   height: 112px;
   display: block;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(120, 165, 210, 0.35);
   background: rgba(8, 11, 22, 0.65);
   image-rendering: pixelated;
@@ -1056,7 +992,7 @@ textarea,
 
 .mrms-cross-section-y-axis {
   position: relative;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(120, 165, 210, 0.3);
   background: rgba(8, 11, 22, 0.42);
   min-height: 112px;
@@ -1100,7 +1036,7 @@ textarea,
   background: rgba(18, 18, 31, 0.9);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 16px 20px;
   z-index: 10;
 }
@@ -1117,7 +1053,7 @@ textarea,
   font-size: 11px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 2px 6px;
   margin: 0 2px;
 }
@@ -1125,6 +1061,61 @@ textarea,
 /* Canvas fills the main-content container */
 .main-content canvas {
   display: block;
+}
+
+/* ---------- shared surface + interaction polish ---------- */
+
+/* Floating glass surfaces share one elevation treatment: a navy-tinted drop
+   shadow plus a 1px inner top highlight so panels read as lit from above. */
+.controls,
+.info-panel,
+.options-panel,
+.layers-panel,
+.debug-panel,
+.help-panel,
+.info-panel-fab,
+.options-panel-fab,
+.layers-panel-fab,
+.recenter-fab,
+.debug-panel-fab {
+  box-shadow: var(--shadow-float);
+}
+
+/* Pressed feedback on flat buttons (FABs handle their own scale). */
+.panel-toggle:active,
+.surface-toggle-button:active,
+.info-panel-close:active {
+  transform: translateY(1px);
+}
+
+/* Keyboard focus must be visible on every interactive control. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Thin, border-toned scrollbars inside scrolling panels. */
+.options-panel,
+.debug-panel,
+.debug-procedure-body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-toggle,
+  .surface-toggle-button,
+  .info-panel-fab,
+  .options-panel-fab,
+  .layers-panel-fab,
+  .recenter-fab,
+  .debug-panel-fab {
+    transition: none;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1185,26 +1176,26 @@ textarea,
 
   .mrms-loading-indicator {
     right: 12px;
-    top: 12px;
+    top: calc(12px + var(--controls-overlay-offset, 0px));
   }
 
   .faa-disclaimer {
     left: 12px;
-    top: 12px;
+    top: calc(12px + var(--controls-overlay-offset, 0px));
     font-size: 10px;
   }
 
   .debug-panel-fab {
     right: 12px;
-    top: 54px;
+    top: calc(12px + var(--controls-overlay-offset, 0px));
   }
 
   .debug-panel {
     right: 12px;
     left: 12px;
     width: auto;
-    top: 54px;
-    max-height: calc(100vh - 240px);
+    top: calc(12px + var(--controls-overlay-offset, 0px));
+    max-height: calc(100vh - 240px - var(--controls-overlay-offset, 0px));
   }
 
   .info-panel {
