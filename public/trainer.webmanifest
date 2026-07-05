@@ -1,0 +1,29 @@
+{
+  "name": "ApproachViz Trainer",
+  "short_name": "Approach Trainer",
+  "description": "Offline, mobile-first instrument approach trainer built on FAA CIFP data.",
+  "start_url": "/trainer",
+  "scope": "/trainer",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a14",
+  "theme_color": "#0a0a14",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
