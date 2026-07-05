@@ -8,7 +8,7 @@
 import { clientsClaim } from 'workbox-core';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { registerRoute } from 'workbox-routing';
-import { CacheFirst } from 'workbox-strategies';
+import { CacheFirst, NetworkFirst, StaleWhileRevalidate } from 'workbox-strategies';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -19,6 +19,12 @@ declare const self: ServiceWorkerGlobalScope;
 const SW_VERSION = 'v1';
 const ELEVATION_TILES_CACHE = `approach-viz-elevation-tiles-${SW_VERSION}`;
 const CHART_TILES_CACHE = `approach-viz-chart-tiles-${SW_VERSION}`;
+// App-shell / offline-trainer caches. Runtime-cached on first visit so the
+// mobile trainer keeps working offline (approach data + rendered plates + the
+// static Next assets, WASM engine, and pdf.js worker all persist).
+const APP_SHELL_CACHE = `approach-viz-app-shell-${SW_VERSION}`;
+const STATIC_ASSETS_CACHE = `approach-viz-static-${SW_VERSION}`;
+const TRAINER_API_CACHE = `approach-viz-trainer-api-${SW_VERSION}`;
 const PLATE_CACHE_PREFIX = 'approach-viz-faa-plates-cycle-';
 const GOOGLE_TILES_CACHE_PREFIX = 'approach-viz-google-3dtiles-';
 const ELEVATION_TILES_CACHE_PREFIX = 'approach-viz-elevation-tiles-';
@@ -83,6 +89,55 @@ registerRoute(
         purgeOnQuotaError: true
       })
     ]
+  })
+);
+
+// Next.js build output: content-hashed and immutable → CacheFirst.
+registerRoute(
+  ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/_next/static/'),
+  new CacheFirst({
+    cacheName: STATIC_ASSETS_CACHE,
+    plugins: [new ExpirationPlugin({ maxEntries: 400, purgeOnQuotaError: true })]
+  })
+);
+
+// Shared WASM engine + pdf.js worker/assets served from the app origin.
+registerRoute(
+  ({ url, sameOrigin }) =>
+    sameOrigin &&
+    (url.pathname.endsWith('.wasm') ||
+      url.pathname.startsWith('/approach_viz_core') ||
+      /pdf\.worker.*\.mjs$/.test(url.pathname)),
+  new CacheFirst({
+    cacheName: STATIC_ASSETS_CACHE,
+    plugins: [new ExpirationPlugin({ maxEntries: 60, purgeOnQuotaError: true })]
+  })
+);
+
+// Trainer data API (airport catalog + per-approach payload). StaleWhileRevalidate
+// keeps the offline trainer usable while refreshing in the background online.
+registerRoute(
+  ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/api/trainer/'),
+  new StaleWhileRevalidate({
+    cacheName: TRAINER_API_CACHE,
+    plugins: [
+      new ExpirationPlugin({
+        maxEntries: 500,
+        maxAgeSeconds: 60 * 60 * 24 * 60,
+        purgeOnQuotaError: true
+      })
+    ]
+  })
+);
+
+// Page navigations (e.g. /trainer): NetworkFirst so a fresh shell is preferred
+// online, and the last-seen shell is served offline.
+registerRoute(
+  ({ request, sameOrigin }) => sameOrigin && request.mode === 'navigate',
+  new NetworkFirst({
+    cacheName: APP_SHELL_CACHE,
+    networkTimeoutSeconds: 4,
+    plugins: [new ExpirationPlugin({ maxEntries: 40, purgeOnQuotaError: true })]
   })
 );
 
