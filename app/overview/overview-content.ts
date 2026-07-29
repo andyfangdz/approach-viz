@@ -399,7 +399,7 @@ export const SECTIONS: Section[] = [
               [
                 '`/api/faa-plate`',
                 'aeronav.faa.gov d-TPP',
-                'cycle + filename regex-validated; `max-age=43200` + SWR caching'
+                'cycle + filename regex-validated; `max-age=43200` + SWR caching; content-hash `ETag` with `304` on `If-None-Match`'
               ],
               [
                 '`/api/datadog/rum/*`',

@@ -33,6 +33,7 @@
 ## FAA Plate PDF Access
 
 - FAA plate PDF fetching is routed through same-origin proxy `app/api/faa-plate/route.ts` to avoid browser CORS issues.
+- The proxy buffers the upstream PDF to emit a content-derived strong `ETag` (`"sha256-<hex>"`) plus `Content-Length`, and returns `304 Not Modified` for a matching `If-None-Match` (RFC 9110 weak comparison, including `W/` prefixes and `*`).
 
 ## Live ADS-B Traffic Access
 
