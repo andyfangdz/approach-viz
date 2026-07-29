@@ -34,6 +34,7 @@
 
 - FAA plate PDF fetching is routed through same-origin proxy `app/api/faa-plate/route.ts` to avoid browser CORS issues.
 - The proxy buffers the upstream PDF to emit a content-derived strong `ETag` (`"sha256-<hex>"`) plus `Content-Length`, and returns `304 Not Modified` for a matching `If-None-Match` (RFC 9110 weak comparison, including `W/` prefixes and `*`).
+- That buffered read is bounded so a stalled or pathological upstream cannot hold the route open or exhaust memory: a single 15s `AbortSignal.timeout` spans connect and body read, and the body streams through a byte-counting reader that aborts past 16 MB. Timeouts surface as `504`, oversize/failed reads as `502`, non-`ok` upstream responses as `404`.
 
 ## Live ADS-B Traffic Access
 

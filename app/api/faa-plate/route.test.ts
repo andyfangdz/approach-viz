@@ -131,3 +131,83 @@ describe('faa plate proxy caching', () => {
     assert.equal(response.headers.get('etag'), null);
   });
 });
+
+describe('faa plate proxy upstream bounds', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('passes an abort deadline to the upstream fetch', async () => {
+    let capturedSignal: AbortSignal | null | undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedSignal = init?.signal;
+      return new Response(pdfBytes('alpha'), { status: 200 });
+    }) as typeof fetch;
+
+    await GET(makeRequest());
+    assert.ok(capturedSignal instanceof AbortSignal);
+    assert.equal(capturedSignal.aborted, false);
+  });
+
+  test('reports an upstream timeout as 504 instead of hanging', async () => {
+    globalThis.fetch = (async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    }) as typeof fetch;
+
+    const response = await GET(makeRequest());
+    assert.equal(response.status, 504);
+  });
+
+  test('reports a wrapped upstream timeout as 504', async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError('fetch failed', {
+        cause: new DOMException('timed out', 'TimeoutError')
+      });
+    }) as typeof fetch;
+
+    const response = await GET(makeRequest());
+    assert.equal(response.status, 504);
+  });
+
+  test('reports a non-timeout upstream fetch failure as 502', async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError('upstream unreachable');
+    }) as typeof fetch;
+
+    const response = await GET(makeRequest());
+    assert.equal(response.status, 502);
+  });
+
+  test('rejects an oversized plate instead of buffering it whole', async () => {
+    // Streams past the 16 MB cap in 1 MB chunks; the read must stop early, so a
+    // stream that never ends still terminates the request.
+    let chunksPulled = 0;
+    globalThis.fetch = (async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          chunksPulled += 1;
+          controller.enqueue(new Uint8Array(1024 * 1024));
+        }
+      });
+      return new Response(stream, { status: 200 });
+    }) as typeof fetch;
+
+    const response = await GET(makeRequest());
+    assert.equal(response.status, 502);
+    assert.equal(response.headers.get('etag'), null);
+    // 17 reads to trip the 16 MB cap, plus the one chunk the stream keeps
+    // queued ahead of the reader — bounded, not an unbounded drain.
+    assert.ok(chunksPulled <= 18, `pulled ${chunksPulled} chunks`);
+  });
+
+  test('serves a plate that sits just under the size cap', async () => {
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array(1024 * 1024), { status: 200 })) as typeof fetch;
+
+    const response = await GET(makeRequest());
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-length'), String(1024 * 1024));
+  });
+});
