@@ -221,6 +221,13 @@ export function readPhaseModeFromSearch(search: string): 'thermo' | 'surface' | 
   return null;
 }
 
+export function readSurfaceMosaicDrapeFromSearch(search: string): 'flat' | 'terrain' | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('mosaicBase');
+  if (value === 'flat' || value === 'terrain') return value;
+  return null;
+}
+
 export function readDeclutterModeFromSearch(search: string): 'all' | 'low' | 'mid' | 'high' | null {
   const params = new URLSearchParams(search);
   const value = params.get('declutter');

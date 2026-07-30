@@ -224,6 +224,7 @@ export function decode_and_prepare_echo_top(data, apply_earth_curvature, ref_lat
  *       space is resolved here in Rust; JS never pairs
  *       `declutterIndices`/`validIndices` with payload columns)
  *   `crossSection` — CrossSectionData | null
+ *   `composite` — ground composite-reflectivity raster | null
  *   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
  *
  * This eliminates all intermediate JS<->WASM boundary crossings for the
@@ -241,12 +242,13 @@ export function decode_and_prepare_echo_top(data, apply_earth_curvature, ref_lat
  * @param {number} slice_perp_z
  * @param {number} normalized_range
  * @param {number} half_width_nm
+ * @param {boolean} include_composite
  * @returns {any}
  */
-export function decode_and_prepare_mrms(data, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm) {
+export function decode_and_prepare_mrms(data, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm, include_composite) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_and_prepare_mrms(ptr0, len0, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm);
+    const ret = wasm.decode_and_prepare_mrms(ptr0, len0, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm, include_composite);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -465,6 +467,10 @@ function __wbg_get_imports() {
             const ret = new Int8Array(getArrayI8FromWasm0(arg0, arg1));
             return ret;
         },
+        __wbg_new_from_slice_d4b7f69587b09a51: function(arg0, arg1) {
+            const ret = new Int16Array(getArrayI16FromWasm0(arg0, arg1));
+            return ret;
+        },
         __wbg_new_from_slice_d7e202fdbee3c396: function(arg0, arg1) {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return ret;
@@ -617,6 +623,11 @@ function getArrayF64FromWasm0(ptr, len) {
     return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 
+function getArrayI16FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getInt16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
+}
+
 function getArrayI8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getInt8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
@@ -654,6 +665,14 @@ function getFloat64ArrayMemory0() {
         cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
     }
     return cachedFloat64ArrayMemory0;
+}
+
+let cachedInt16ArrayMemory0 = null;
+function getInt16ArrayMemory0() {
+    if (cachedInt16ArrayMemory0 === null || cachedInt16ArrayMemory0.byteLength === 0) {
+        cachedInt16ArrayMemory0 = new Int16Array(wasm.memory.buffer);
+    }
+    return cachedInt16ArrayMemory0;
 }
 
 let cachedInt8ArrayMemory0 = null;
@@ -791,6 +810,7 @@ function __wbg_finalize_init(instance, module) {
     cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
     cachedFloat64ArrayMemory0 = null;
+    cachedInt16ArrayMemory0 = null;
     cachedInt8ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;

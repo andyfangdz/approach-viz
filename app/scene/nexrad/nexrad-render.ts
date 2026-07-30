@@ -2,8 +2,6 @@ import * as THREE from 'three';
 import type { NexradDeclutterMode } from '@/app/app-client/types';
 import type { DbzColorBand, EchoTopSoA, NexradRenderVolumeData } from './nexrad-types';
 import {
-  NEXRAD_COLOR_GAIN,
-  MIN_VISIBLE_LUMINANCE,
   PHASE_MIXED,
   PHASE_SNOW,
   DECLUTTER_LOW_MAX_FEET,
@@ -14,66 +12,21 @@ import {
   SNOW_DBZ_COLOR_BANDS,
   ALTITUDE_SCALE
 } from './nexrad-types';
+import {
+  DBZ_BAND_STEP,
+  DBZ_LUT_MAX_INDEX,
+  applyVisibilityGain,
+  dbzToBandHex,
+  dbzToLutIndex
+} from './nexrad-colors';
 
-function dbzToBandHex(dbz: number, bands: DbzColorBand[]): number {
-  if (!Number.isFinite(dbz)) return bands[bands.length - 1].hex;
-  for (const band of bands) {
-    if (dbz >= band.minDbz) {
-      return band.hex;
-    }
-  }
-  return bands[bands.length - 1].hex;
-}
-
-function hexChannel(hex: number, shift: number): number {
-  return (hex >> shift) & 0xff;
-}
-
-function applyVisibilityGain(hex: number): number {
-  const red = hexChannel(hex, 16);
-  const green = hexChannel(hex, 8);
-  const blue = hexChannel(hex, 0);
-
-  // Preserve hue while preventing bright bins from clipping to white.
-  const peakChannel = Math.max(red, green, blue, 1);
-  const safeGainScale = Math.min(NEXRAD_COLOR_GAIN, 255 / peakChannel);
-  const boostedRed = THREE.MathUtils.clamp(Math.round(red * safeGainScale), 0, 255);
-  const boostedGreen = THREE.MathUtils.clamp(Math.round(green * safeGainScale), 0, 255);
-  const boostedBlue = THREE.MathUtils.clamp(Math.round(blue * safeGainScale), 0, 255);
-
-  const luminance = 0.2126 * boostedRed + 0.7152 * boostedGreen + 0.0722 * boostedBlue;
-  if (luminance <= 0) {
-    return (boostedRed << 16) | (boostedGreen << 8) | boostedBlue;
-  }
-
-  if (luminance >= MIN_VISIBLE_LUMINANCE) {
-    return (boostedRed << 16) | (boostedGreen << 8) | boostedBlue;
-  }
-
-  const luminanceBoostScale = MIN_VISIBLE_LUMINANCE / luminance;
-  const liftedRed = THREE.MathUtils.clamp(Math.round(boostedRed * luminanceBoostScale), 0, 255);
-  const liftedGreen = THREE.MathUtils.clamp(Math.round(boostedGreen * luminanceBoostScale), 0, 255);
-  const liftedBlue = THREE.MathUtils.clamp(Math.round(boostedBlue * luminanceBoostScale), 0, 255);
-  return (liftedRed << 16) | (liftedGreen << 8) | liftedBlue;
-}
-
-export function dbzToHex(dbz: number, phaseCode: number): number {
-  const bands =
-    phaseCode === PHASE_SNOW
-      ? SNOW_DBZ_COLOR_BANDS
-      : phaseCode === PHASE_MIXED
-        ? MIXED_DBZ_COLOR_BANDS
-        : RAIN_DBZ_COLOR_BANDS;
-  return applyVisibilityGain(dbzToBandHex(dbz, bands));
-}
+export { dbzToHex } from './nexrad-colors';
 
 // Per-voxel instance colors used to go through `THREE.Color.setHex` +
 // `InstancedMesh.setColorAt`, which re-runs the visibility-gain math and an
 // sRGB→linear conversion for every voxel on every upload. The band tables are
 // static, so the final working-color-space RGB triples are precomputed once
 // per phase into flat LUTs indexed by `floor(dbz / 5)`.
-const DBZ_BAND_STEP = 5;
-const DBZ_LUT_MAX_INDEX = 19; // covers 0..95+ dBZ in 5-dBZ bands
 
 interface PhaseColorLut {
   r: Float32Array;
@@ -123,13 +76,6 @@ function getPhaseColorLuts(): PhaseColorLuts {
     };
   }
   return phaseColorLuts;
-}
-
-function dbzToLutIndex(dbz: number): number {
-  // Matches dbzToBandHex semantics: NaN and below-lowest-band values resolve
-  // to the lowest band color (LUT index 0); >= 95 clamps to the top band.
-  if (!Number.isFinite(dbz)) return 0;
-  return Math.min(DBZ_LUT_MAX_INDEX, Math.max(0, Math.floor(dbz / DBZ_BAND_STEP)));
 }
 
 /** Map dBZ intensity to per-instance alpha so low-intensity echoes are

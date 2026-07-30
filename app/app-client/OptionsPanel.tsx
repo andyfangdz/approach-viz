@@ -19,7 +19,12 @@ import {
   MAX_OBSTACLE_MIN_AGL_FEET,
   OBSTACLE_MIN_AGL_STEP_FEET
 } from './constants';
-import type { CameraControlMode, NexradDeclutterMode, NexradPhaseMode } from './types';
+import type {
+  CameraControlMode,
+  NexradDeclutterMode,
+  NexradPhaseMode,
+  NexradSurfaceMosaicDrape
+} from './types';
 
 const SLIDER_DEBOUNCE_MS = 150;
 
@@ -75,6 +80,11 @@ const PHASE_MODE_LABELS: Record<NexradPhaseMode, string> = {
   surface: 'Surface Precip Type'
 };
 
+const SURFACE_MOSAIC_DRAPE_LABELS: Record<NexradSurfaceMosaicDrape, string> = {
+  flat: 'Flat (field elevation)',
+  terrain: 'Drape over terrain'
+};
+
 const CAMERA_CONTROL_MODE_LABELS: Record<CameraControlMode, string> = {
   orbit: 'OrbitControls',
   arcball: 'ArcballControls',
@@ -104,6 +114,8 @@ export function OptionsPanel({
   nexradDeclutterMode,
   onNexradDeclutterModeChange,
   nexradPhaseMode,
+  nexradSurfaceMosaicDrape,
+  onNexradSurfaceMosaicDrapeChange,
   onNexradPhaseModeChange,
   nexradCrossSectionHeadingDeg,
   onNexradCrossSectionHeadingDegChange,
@@ -473,6 +485,30 @@ export function OptionsPanel({
           {(Object.keys(PHASE_MODE_LABELS) as NexradPhaseMode[]).map((mode) => (
             <option key={mode} value={mode}>
               {PHASE_MODE_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Surface Mosaic Base</span>
+          <span className="options-toggle-note">
+            Terrain follows sampled relief; flat pins the mosaic to field elevation.
+          </span>
+        </span>
+        <select
+          className="options-inline-select"
+          value={nexradSurfaceMosaicDrape}
+          disabled={!layers.mosaic}
+          onChange={(event) =>
+            onNexradSurfaceMosaicDrapeChange(event.target.value as NexradSurfaceMosaicDrape)
+          }
+          aria-label="Surface mosaic base surface"
+        >
+          {(Object.keys(SURFACE_MOSAIC_DRAPE_LABELS) as NexradSurfaceMosaicDrape[]).map((mode) => (
+            <option key={mode} value={mode}>
+              {SURFACE_MOSAIC_DRAPE_LABELS[mode]}
             </option>
           ))}
         </select>

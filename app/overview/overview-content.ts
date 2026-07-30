@@ -828,11 +828,11 @@ export const SECTIONS: Section[] = [
         id: 'weather-render',
         num: '4.10',
         title: 'MRMS weather rendering',
-        tag: 'voxels · echo tops · slice',
+        tag: 'voxels · mosaic · echo tops · slice',
         blocks: [
           {
             kind: 'p',
-            text: 'The weather overlay polls the volume every **120 s** (10 s retry), gated on `mrms || echotops`; failures are tracked per payload so one feed going down never blanks the other, and the last good scan stays on screen. The worker feeds the binary through `decode_and_prepare_mrms` — decode, threshold filter, curvature correction, declutter, phase selection, cross-section and the render join all inside one WASM call — and returns metadata plus flat render columns. **Option-only changes (threshold, phase mode, declutter, slice) re-run prepare on the cached binary** with a 100 ms debounce; no network involved.'
+            text: 'The weather overlay polls the volume every **120 s** (10 s retry), gated on `mrms || mosaic || echotops`; failures are tracked per payload so one feed going down never blanks the other, and the last good scan stays on screen. The worker feeds the binary through `decode_and_prepare_mrms` — decode, threshold filter, curvature correction, declutter, phase selection, cross-section and the render join all inside one WASM call — and returns metadata plus flat render columns. **Option-only changes (threshold, phase mode, declutter, slice) re-run prepare on the cached binary** with a 100 ms debounce; no network involved.'
           },
           {
             kind: 'p',
@@ -849,7 +849,8 @@ export const SECTIONS: Section[] = [
             kind: 'list',
             items: [
               '**Echo tops:** AVET cells render as flat instanced tiles at the 18 dBZ (`#72f1ff`), 30 dBZ (`#ffc44a`) and 50 dBZ (`#ff5a63`) top altitudes (render orders 85–87); 60 dBZ feeds the debug readout.',
-              '**Altitude guides** (default on): square reference rings every 5,000 ft, sized from the Rust-computed weather extents, with kft HTML labels.',
+              '**Surface mosaic** (default off): ground composite reflectivity — the column max over every level — rasterized in Rust onto the source grid, colored in the worker with the same band tables, and drawn as a `DataTexture` on a local-NM grid mesh (render order 70). No extra request: it rides the volume poll. Honors threshold and phase mode, ignores declutter (it is a plan view of the whole column). Its base surface is selectable: flat at field elevation, or draped over Terrarium elevation sampled per vertex from a coarse z8 raster covering the full weather radius.',
+              '**Altitude guides** (default on): square reference rings every 5,000 ft, sized from the Rust-computed weather extents, with kft HTML labels, closed into a box by corner posts from the surface to the top ring.',
               '**Vertical slice:** a 120×56-bin cross-section along a user heading (30–140 NM range) built in Rust, drawn as an in-scene translucent plane plus a heatmap HUD panel with altitude ticks and an echo-tops envelope.',
               '**Phase modes:** surface precip type (default, one phase per column from PrecipFlag) or thermodynamic (per-voxel, dual-pol-corrected with staleness downweighting).'
             ]
@@ -859,6 +860,7 @@ export const SECTIONS: Section[] = [
             paths: [
               'app/scene/NexradVolumeOverlay.tsx',
               'app/scene/nexrad/nexrad-render.ts',
+              'app/scene/nexrad/NexradSurfaceMosaic.tsx',
               'app/scene/nexrad/NexradCrossSection.tsx'
             ]
           }

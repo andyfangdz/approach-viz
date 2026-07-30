@@ -85,12 +85,13 @@ export function decode_and_prepare_echo_top(data: Uint8Array, apply_earth_curvat
  *       space is resolved here in Rust; JS never pairs
  *       `declutterIndices`/`validIndices` with payload columns)
  *   `crossSection` — CrossSectionData | null
+ *   `composite` — ground composite-reflectivity raster | null
  *   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
  *
  * This eliminates all intermediate JS<->WASM boundary crossings for the
  * `poll-and-prepare` hot path.
  */
-export function decode_and_prepare_mrms(data: Uint8Array, min_dbz_tenths: number, phase_mode: number, declutter_mode: number, apply_earth_curvature: boolean, ref_lat: number, include_cross_section: boolean, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number): any;
+export function decode_and_prepare_mrms(data: Uint8Array, min_dbz_tenths: number, phase_mode: number, declutter_mode: number, apply_earth_curvature: boolean, ref_lat: number, include_cross_section: boolean, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number, include_composite: boolean): any;
 
 /**
  * Scale an altitude in feet to scene Y units.
@@ -132,7 +133,7 @@ export interface InitOutput {
     readonly approach_path_resolve_altitudes: (a: any) => [number, number, number];
     readonly approach_path_resolve_hold_leg_length_nm: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
+    readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number, number];
     readonly wasm_alt_to_y: (a: number, b: number) => number;
     readonly wasm_earth_curvature_drop_nm: (a: number, b: number, c: number) => number;
     readonly wasm_geocentric_radius_nm: (a: number) => number;

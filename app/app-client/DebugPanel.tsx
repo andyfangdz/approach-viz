@@ -504,6 +504,19 @@ export function DebugPanel({
               <span>{nexradDebug.phaseMode || 'n/a'}</span>
             </div>
             <div className="debug-row">
+              <span>Mosaic Base</span>
+              <span>{nexradDebug.surfaceMosaicDrape ?? 'n/a'}</span>
+            </div>
+            <div className="debug-row">
+              <span>Mosaic Cells</span>
+              <span>
+                {nexradDebug.surfaceMosaicCellCount}
+                {nexradDebug.surfaceMosaicMaxDbz === null
+                  ? ''
+                  : ` (max ${nexradDebug.surfaceMosaicMaxDbz.toFixed(0)} dBZ)`}
+              </span>
+            </div>
+            <div className="debug-row">
               <span>EchoTop Cells</span>
               <span>{nexradDebug.echoTopCellCount}</span>
             </div>

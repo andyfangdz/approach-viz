@@ -4,6 +4,7 @@ import type {
   NexradVolumePayload,
   NexradLayerSummary,
   NexradRenderVolumeData,
+  NexradCompositeSurface,
   EchoTopSoA,
   CrossSectionData
 } from './nexrad-types';
@@ -14,6 +15,7 @@ import {
   PHASE_MIXED,
   PHASE_SNOW
 } from './nexrad-types';
+import { buildCompositeRgba } from './nexrad-composite';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   decode_and_prepare_mrms,
@@ -39,6 +41,7 @@ export interface NexradPollAndPrepareOptions {
   crossSectionHalfWidthNm: number;
   sliceAxis: { x: number; z: number };
   slicePerpAxis: { x: number; z: number };
+  includeSurfaceMosaic: boolean;
 }
 
 export interface NexradVolumePrepareOptions {
@@ -52,6 +55,7 @@ export interface NexradVolumePrepareOptions {
   crossSectionHalfWidthNm: number;
   sliceAxis: { x: number; z: number };
   slicePerpAxis: { x: number; z: number };
+  includeSurfaceMosaic: boolean;
 }
 
 export interface PollAndPrepareTimings {
@@ -86,6 +90,7 @@ export interface NexradPollAndPrepareResult {
   volumePayload: NexradVolumePayload | null;
   renderVolume: NexradRenderVolumeData;
   crossSectionData: CrossSectionData | null;
+  compositeSurface: NexradCompositeSurface | null;
   /** Per-payload phase tally (debug panel), computed off main thread. */
   phaseCounts: NexradPhaseCounts | null;
   echoTop18: EchoTopSoA;
@@ -98,6 +103,7 @@ export interface NexradPollAndPrepareResult {
 export interface NexradRePrepareResult {
   renderVolume: NexradRenderVolumeData;
   crossSectionData: CrossSectionData | null;
+  compositeSurface: NexradCompositeSurface | null;
   timings: { volumePrepareMs: number | null } | null;
 }
 
@@ -152,10 +158,55 @@ interface WasmVolumePayload {
   phaseCode: Uint8Array;
 }
 
+/** Structural contract of the Rust `build_composite_surface` output. */
+interface WasmCompositeSurface {
+  width: number;
+  height: number;
+  originXNm: number;
+  originZNm: number;
+  cellSizeXNm: number;
+  cellSizeZNm: number;
+  dbzTenths: Int16Array;
+  phaseCode: Uint8Array;
+  filledCellCount: number;
+  maxDbzTenths: number;
+}
+
 interface WasmDecodeAndPrepareMrmsResult {
   renderVolume: NexradRenderVolumeData;
   crossSection: CrossSectionData | null;
+  composite: WasmCompositeSurface | null;
   volumePayload: WasmVolumePayload;
+}
+
+/** Color the column-max grid into RGBA texels here in the worker so the main
+ *  thread only uploads a finished buffer into the ground-mosaic texture. */
+function colorCompositeSurface(
+  composite: WasmCompositeSurface | null
+): NexradCompositeSurface | null {
+  if (!composite) return null;
+  return {
+    width: composite.width,
+    height: composite.height,
+    originXNm: composite.originXNm,
+    originZNm: composite.originZNm,
+    cellSizeXNm: composite.cellSizeXNm,
+    cellSizeZNm: composite.cellSizeZNm,
+    rgba: buildCompositeRgba(
+      composite.dbzTenths,
+      composite.phaseCode,
+      composite.width,
+      composite.height
+    ),
+    filledCellCount: composite.filledCellCount,
+    maxDbz: composite.maxDbzTenths / 10
+  };
+}
+
+/** Collect transferable ArrayBuffers from the composite mosaic (if present). */
+function compositeTransferables(composite: NexradCompositeSurface | null): ArrayBuffer[] {
+  if (!composite) return [];
+  return [composite.rgba.buffer as ArrayBuffer];
 }
 
 /** Structural contract of the wasm-bindgen `decode_and_prepare_echo_top` result. */
@@ -295,6 +346,7 @@ export class NexradWorkerApi {
     let volumePayload: NexradVolumePayload | null = null;
     let renderVolume: NexradRenderVolumeData = EMPTY_RENDER_VOLUME;
     let crossSectionData: CrossSectionData | null = null;
+    let compositeSurface: NexradCompositeSurface | null = null;
     let phaseCounts: NexradPhaseCounts | null = null;
 
     if (options.includeVolume) {
@@ -321,7 +373,8 @@ export class NexradWorkerApi {
         options.slicePerpAxis.x,
         options.slicePerpAxis.z,
         options.normalizedCrossSectionRange,
-        options.crossSectionHalfWidthNm
+        options.crossSectionHalfWidthNm,
+        options.includeSurfaceMosaic
       ) as WasmDecodeAndPrepareMrmsResult;
 
       // Flat render-ready columns — the dual-index join already ran in Rust.
@@ -329,6 +382,9 @@ export class NexradWorkerApi {
 
       // Cross-section (null if not requested or empty volume)
       crossSectionData = result.crossSection;
+
+      // Ground mosaic (null if not requested or nothing meets the threshold)
+      compositeSurface = colorCompositeSurface(result.composite);
 
       // Build NexradVolumePayload metadata from WASM fields
       const vp = result.volumePayload;
@@ -437,6 +493,7 @@ export class NexradWorkerApi {
       volumePayload,
       renderVolume,
       crossSectionData,
+      compositeSurface,
       phaseCounts,
       echoTop18,
       echoTop30,
@@ -448,6 +505,7 @@ export class NexradWorkerApi {
     const transferList: ArrayBuffer[] = [
       ...renderVolumeTransferables(renderVolume),
       ...crossSectionTransferables(crossSectionData),
+      ...compositeTransferables(compositeSurface),
       ...echoTopSoATransferables(echoTop18, echoTop30, echoTop50)
     ];
 
@@ -476,23 +534,27 @@ export class NexradWorkerApi {
       options.slicePerpAxis.x,
       options.slicePerpAxis.z,
       options.normalizedCrossSectionRange,
-      options.crossSectionHalfWidthNm
+      options.crossSectionHalfWidthNm,
+      options.includeSurfaceMosaic
     ) as WasmDecodeAndPrepareMrmsResult;
 
     const renderVolume: NexradRenderVolumeData = result.renderVolume;
     const crossSectionData: CrossSectionData | null = result.crossSection;
+    const compositeSurface = colorCompositeSurface(result.composite);
 
     const prepareMs = roundMs(performance.now() - prepareStartedAt);
 
     const rePrepareResult: NexradRePrepareResult = {
       renderVolume,
       crossSectionData,
+      compositeSurface,
       timings: { volumePrepareMs: prepareMs }
     };
 
     const transferList: ArrayBuffer[] = [
       ...renderVolumeTransferables(renderVolume),
-      ...crossSectionTransferables(crossSectionData)
+      ...crossSectionTransferables(crossSectionData),
+      ...compositeTransferables(compositeSurface)
     ];
 
     return Comlink.transfer(rePrepareResult, transferList);

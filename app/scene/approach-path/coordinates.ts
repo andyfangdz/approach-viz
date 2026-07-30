@@ -24,22 +24,45 @@ function geocentricRadiusNm(latitudeDeg: number): number {
   return radiusMeters * METERS_TO_NM;
 }
 
-export function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number) {
+/** Tangent-plane scales at the reference latitude, shared by the local-frame
+ *  forward and inverse projections so they stay exact inverses. */
+function tangentPlaneScales(refLat: number) {
   const phi = refLat * DEG_TO_RAD;
   const sinPhi = Math.sin(phi);
   const cosPhi = Math.cos(phi);
   const denom = Math.sqrt(1 - WGS84_E2 * sinPhi * sinPhi);
   const primeVerticalMeters = WGS84_SEMI_MAJOR_METERS / denom;
   const meridionalMeters = (WGS84_SEMI_MAJOR_METERS * (1 - WGS84_E2)) / (denom * denom * denom);
+  return {
+    cosPhi,
+    eastNmPerLonRad: primeVerticalMeters * cosPhi * METERS_TO_NM,
+    northNmPerLatRad: meridionalMeters * METERS_TO_NM
+  };
+}
+
+export function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number) {
+  const { eastNmPerLonRad, northNmPerLatRad } = tangentPlaneScales(refLat);
 
   const dLatRad = (lat - refLat) * DEG_TO_RAD;
   const dLonRad = (lon - refLon) * DEG_TO_RAD;
-  const eastNm = dLonRad * primeVerticalMeters * cosPhi * METERS_TO_NM;
-  const northNm = dLatRad * meridionalMeters * METERS_TO_NM;
+  const eastNm = dLonRad * eastNmPerLonRad;
+  const northNm = dLatRad * northNmPerLatRad;
 
   const x = eastNm;
   const z = -northNm;
   return { x, z };
+}
+
+/** Inverse of `latLonToLocal`. Used to look up per-position ground data (for
+ *  example terrain elevation) at local-frame scene coordinates. */
+export function localToLatLon(x: number, z: number, refLat: number, refLon: number) {
+  const { eastNmPerLonRad, northNmPerLatRad } = tangentPlaneScales(refLat);
+
+  // Degenerate only at the poles, where a tangent-plane frame is meaningless.
+  const safeEastScale = Math.abs(eastNmPerLonRad) < 1e-9 ? 1e-9 : eastNmPerLonRad;
+  const lon = refLon + x / safeEastScale / DEG_TO_RAD;
+  const lat = refLat + -z / northNmPerLatRad / DEG_TO_RAD;
+  return { lat, lon };
 }
 
 export function altToY(altFeet: number, verticalScale: number): number {

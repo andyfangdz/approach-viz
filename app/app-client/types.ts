@@ -9,6 +9,9 @@ export type SurfaceMode = 'terrain' | 'satellite' | 'map' | '3dmap';
 export type ChartType = 'vfr' | 'tac' | 'low' | 'high';
 export type NexradDeclutterMode = 'all' | 'low' | 'mid' | 'high';
 export type NexradPhaseMode = 'thermo' | 'surface';
+/** Base surface the ground mosaic is draped on: pinned to field elevation, or
+ *  following sampled terrain relief. */
+export type NexradSurfaceMosaicDrape = 'flat' | 'terrain';
 export type CameraControlMode = 'orbit' | 'arcball' | 'map';
 
 export interface NexradTimingDebugState {
@@ -52,6 +55,9 @@ export interface NexradDebugState {
     mixed: number;
     snow: number;
   };
+  surfaceMosaicCellCount: number;
+  surfaceMosaicMaxDbz: number | null;
+  surfaceMosaicDrape: string | null;
   echoTopCellCount: number;
   echoTopMax18Feet: number | null;
   echoTopMax30Feet: number | null;
@@ -153,6 +159,7 @@ export interface SceneCanvasProps {
   nexradOpacity: number;
   nexradDeclutterMode: NexradDeclutterMode;
   nexradPhaseMode: NexradPhaseMode;
+  nexradSurfaceMosaicDrape: NexradSurfaceMosaicDrape;
   nexradCrossSectionHeadingDeg: number;
   nexradCrossSectionRangeNm: number;
   obstacleRadiusNm: number;
@@ -214,6 +221,8 @@ export interface OptionsPanelProps {
   onNexradDeclutterModeChange: (mode: NexradDeclutterMode) => void;
   nexradPhaseMode: NexradPhaseMode;
   onNexradPhaseModeChange: (mode: NexradPhaseMode) => void;
+  nexradSurfaceMosaicDrape: NexradSurfaceMosaicDrape;
+  onNexradSurfaceMosaicDrapeChange: (mode: NexradSurfaceMosaicDrape) => void;
   nexradCrossSectionHeadingDeg: number;
   onNexradCrossSectionHeadingDegChange: (headingDeg: number) => void;
   nexradCrossSectionRangeNm: number;
@@ -245,6 +254,7 @@ export type LayerId =
   | 'obstacles'
   | 'adsb'
   | 'mrms'
+  | 'mosaic'
   | 'probsevere'
   | 'echotops'
   | 'slice'
@@ -257,6 +267,7 @@ export interface LayerState {
   obstacles: boolean;
   adsb: boolean;
   mrms: boolean;
+  mosaic: boolean;
   probsevere: boolean;
   echotops: boolean;
   slice: boolean;

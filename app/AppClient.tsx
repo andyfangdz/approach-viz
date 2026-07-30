@@ -88,6 +88,9 @@ const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
     mixed: 0,
     snow: 0
   },
+  surfaceMosaicCellCount: 0,
+  surfaceMosaicMaxDbz: null,
+  surfaceMosaicDrape: null,
   echoTopCellCount: 0,
   echoTopMax18Feet: null,
   echoTopMax30Feet: null,
@@ -195,6 +198,7 @@ export function AppClient({
     chartType: surface.chartType,
     layers: options.layers,
     nexradPhaseMode: options.nexradPhaseMode,
+    nexradSurfaceMosaicDrape: options.nexradSurfaceMosaicDrape,
     nexradDeclutterMode: options.nexradDeclutterMode,
     trafficHistoryMinutes: options.trafficHistoryMinutes,
     showTrafficCallsigns: options.showTrafficCallsigns
@@ -219,6 +223,7 @@ export function AppClient({
 
   const nexradVolumeEnabled = options.layers.mrms;
   const nexradShowEchoTops = options.layers.echotops;
+  const nexradShowSurfaceMosaic = options.layers.mosaic;
 
   const airport = sceneData.airport;
   const menuPortalTarget = typeof document === 'undefined' ? undefined : document.body;
@@ -284,7 +289,7 @@ export function AppClient({
   const hasApproachPlate = Boolean(sceneData.approachPlate);
   const activeErrorMessage = selection.errorMessage || surface.surfaceErrorMessage;
   const showMrmsLoadingIndicator =
-    (nexradVolumeEnabled || nexradShowEchoTops) && nexradDebug.loading;
+    (nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) && nexradDebug.loading;
   const missedApproachStartAltitudeFeet =
     sceneData.minimumsSummary?.da?.altitude ??
     sceneData.minimumsSummary?.mda?.altitude ??
@@ -436,6 +441,7 @@ export function AppClient({
             nexradOpacity={options.nexradOpacity}
             nexradDeclutterMode={options.nexradDeclutterMode}
             nexradPhaseMode={options.nexradPhaseMode}
+            nexradSurfaceMosaicDrape={options.nexradSurfaceMosaicDrape}
             nexradCrossSectionHeadingDeg={options.nexradCrossSectionHeadingDeg}
             nexradCrossSectionRangeNm={options.nexradCrossSectionRangeNm}
             obstacleRadiusNm={options.obstacleRadiusNm}
@@ -555,6 +561,8 @@ export function AppClient({
           onNexradDeclutterModeChange={options.setNexradDeclutterMode}
           nexradPhaseMode={options.nexradPhaseMode}
           onNexradPhaseModeChange={options.setNexradPhaseMode}
+          nexradSurfaceMosaicDrape={options.nexradSurfaceMosaicDrape}
+          onNexradSurfaceMosaicDrapeChange={options.setNexradSurfaceMosaicDrape}
           nexradCrossSectionHeadingDeg={options.nexradCrossSectionHeadingDeg}
           onNexradCrossSectionHeadingDegChange={(headingDeg) =>
             options.setNexradCrossSectionHeadingDeg(

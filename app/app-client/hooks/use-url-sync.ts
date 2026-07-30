@@ -5,6 +5,7 @@ import { serializeLayersParam } from '@/app/app-client-utils';
 import {
   DEFAULT_NEXRAD_DECLUTTER_MODE,
   DEFAULT_NEXRAD_PHASE_MODE,
+  DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE,
   DEFAULT_TRAFFIC_HISTORY_MINUTES
 } from '@/app/app-client/constants';
 import { SELECTION_STORAGE_KEY } from './use-scene-selection';
@@ -13,6 +14,7 @@ import type {
   LayerState,
   NexradDeclutterMode,
   NexradPhaseMode,
+  NexradSurfaceMosaicDrape,
   SurfaceMode
 } from '@/app/app-client/types';
 
@@ -25,6 +27,7 @@ interface UseUrlSyncParams {
   chartType: ChartType;
   layers: LayerState;
   nexradPhaseMode: NexradPhaseMode;
+  nexradSurfaceMosaicDrape: NexradSurfaceMosaicDrape;
   nexradDeclutterMode: NexradDeclutterMode;
   trafficHistoryMinutes: number;
   showTrafficCallsigns: boolean;
@@ -44,6 +47,7 @@ export function useUrlSync({
   chartType,
   layers,
   nexradPhaseMode,
+  nexradSurfaceMosaicDrape,
   nexradDeclutterMode,
   trafficHistoryMinutes,
   showTrafficCallsigns
@@ -74,6 +78,11 @@ export function useUrlSync({
       params.set('phaseMode', nexradPhaseMode);
     } else {
       params.delete('phaseMode');
+    }
+    if (nexradSurfaceMosaicDrape !== DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE) {
+      params.set('mosaicBase', nexradSurfaceMosaicDrape);
+    } else {
+      params.delete('mosaicBase');
     }
     if (nexradDeclutterMode !== DEFAULT_NEXRAD_DECLUTTER_MODE) {
       params.set('declutter', nexradDeclutterMode);
@@ -112,6 +121,7 @@ export function useUrlSync({
     chartType,
     layers,
     nexradPhaseMode,
+    nexradSurfaceMosaicDrape,
     nexradDeclutterMode,
     trafficHistoryMinutes,
     showTrafficCallsigns

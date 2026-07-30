@@ -775,6 +775,19 @@ textarea,
   box-shadow: 0 0 8px rgba(199, 146, 255, 0.55);
 }
 
+.legend-color.nexrad-mosaic {
+  width: 20px;
+  background: linear-gradient(
+    90deg,
+    #49ff64 0%,
+    #ffd700 30%,
+    #ff5a00 55%,
+    #e90000 75%,
+    #d500f5 100%
+  );
+  box-shadow: 0 0 8px rgba(255, 154, 110, 0.55);
+}
+
 .legend-color.nexrad-echo-top {
   width: 20px;
   background: linear-gradient(90deg, #72f1ff 0%, #ffc44a 52%, #ff5a63 100%);

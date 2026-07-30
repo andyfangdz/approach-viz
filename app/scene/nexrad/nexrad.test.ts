@@ -7,7 +7,8 @@ import {
   extractPhaseDebugHeaderValues
 } from './nexrad-decode';
 import { applyVoxelInstances, dbzToHex } from './nexrad-render';
-import { PHASE_MIXED, PHASE_SNOW, type NexradRenderVolumeData } from './nexrad-types';
+import { PHASE_MIXED, PHASE_RAIN, PHASE_SNOW, type NexradRenderVolumeData } from './nexrad-types';
+import { COMPOSITE_EMPTY_DBZ_TENTHS, buildCompositeRgba, compositeAlpha } from './nexrad-composite';
 
 test('buildNexradRequestUrl returns local API path when MRMS_BINARY_BASE_URL is unset', () => {
   const params = new URLSearchParams({ lat: '40', lon: '-90', range: '100' });
@@ -104,4 +105,51 @@ test('applyVoxelInstances writes flat render columns into matrices and colors', 
   assert.ok(Math.abs(colors[3] - expectMixed.r) < 1e-6);
   assert.ok(Math.abs(colors[4] - expectMixed.g) < 1e-6);
   assert.ok(Math.abs(colors[5] - expectMixed.b) < 1e-6);
+});
+
+test('buildCompositeRgba colors filled cells and leaves empty cells transparent', () => {
+  // 3x2 grid: row 0 has 45 dBZ rain, 5 dBZ rain, empty; row 1 is all empty.
+  const dbzTenths = new Int16Array([
+    450,
+    50,
+    COMPOSITE_EMPTY_DBZ_TENTHS,
+    COMPOSITE_EMPTY_DBZ_TENTHS,
+    COMPOSITE_EMPTY_DBZ_TENTHS,
+    COMPOSITE_EMPTY_DBZ_TENTHS
+  ]);
+  const phaseCode = new Uint8Array([PHASE_RAIN, PHASE_RAIN, PHASE_RAIN, PHASE_RAIN, 0, 0]);
+  const rgba = buildCompositeRgba(dbzTenths, phaseCode, 3, 2);
+
+  assert.strictEqual(rgba.length, 6 * 4);
+  // Filled cells take the rain band color and the dBZ-driven alpha ramp.
+  const strongHex = dbzToHex(45, PHASE_RAIN);
+  assert.strictEqual(rgba[0], (strongHex >> 16) & 0xff);
+  assert.strictEqual(rgba[1], (strongHex >> 8) & 0xff);
+  assert.strictEqual(rgba[2], strongHex & 0xff);
+  assert.strictEqual(rgba[3], Math.round(compositeAlpha(45) * 255));
+  assert.strictEqual(rgba[7], Math.round(compositeAlpha(5) * 255));
+  // Stronger returns are more opaque than weak ones.
+  assert.ok(rgba[3] > rgba[7]);
+
+  // Empty cells stay fully transparent...
+  assert.strictEqual(rgba[11], 0);
+  assert.strictEqual(rgba[15], 0);
+  // ...but an empty cell adjacent to a filled one borrows its RGB so linear
+  // filtering does not fringe the echo edge toward black.
+  const weakHex = dbzToHex(5, PHASE_RAIN);
+  assert.strictEqual(rgba[8], (weakHex >> 16) & 0xff);
+  assert.strictEqual(rgba[9], (weakHex >> 8) & 0xff);
+  assert.strictEqual(rgba[10], weakHex & 0xff);
+  // The far corner cell (row 1, col 2) touches only empty cells.
+  assert.deepStrictEqual(Array.from(rgba.slice(20, 24)), [0, 0, 0, 0]);
+});
+
+test('buildCompositeRgba rejects a grid whose dimensions disagree with its columns', () => {
+  const dbzTenths = new Int16Array([100, 200]);
+  const phaseCode = new Uint8Array([PHASE_RAIN, PHASE_RAIN]);
+  assert.throws(() => buildCompositeRgba(dbzTenths, phaseCode, 3, 2), /3x2 but carries 2 cells/);
+  assert.throws(
+    () => buildCompositeRgba(dbzTenths, new Uint8Array([PHASE_RAIN]), 2, 1),
+    /columns disagree/
+  );
 });

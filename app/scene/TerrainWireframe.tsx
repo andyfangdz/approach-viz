@@ -1,13 +1,23 @@
 import { memo, useEffect, useState } from 'react';
 import * as THREE from 'three';
+import type { ElevationRaster } from './terrain/terrarium';
+import {
+  TERRARIUM_TILE_SIZE as TILE_SIZE,
+  decodeTerrariumElevationMeters,
+  latToTileY,
+  latToTileYFloat,
+  loadTerrariumTile,
+  lonToTileX,
+  tileColumnCount,
+  wrappedTileColumnOffset,
+  wrappedTileColumnSpan
+} from './terrain/terrarium';
 
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 
-const TILE_SIZE = 256;
 const TILE_ZOOM = 10;
 const TERRAIN_RADIUS_NM = 50;
 const GRID_SEGMENTS = 140;
-const TILE_BASE_URL = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium';
 
 interface TerrainWireframeProps {
   refLat: number;
@@ -20,52 +30,22 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function lonToTileX(lon: number, zoom: number): number {
-  const n = 2 ** zoom;
-  return Math.floor(((lon + 180) / 360) * n);
-}
-
-function latToTileY(lat: number, zoom: number): number {
-  const n = 2 ** zoom;
-  const latRad = (lat * Math.PI) / 180;
-  const mercator = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
-  return Math.floor((1 - mercator / Math.PI) * 0.5 * n);
-}
-
-function lonToTileXFloat(lon: number, zoom: number): number {
-  const n = 2 ** zoom;
-  return ((lon + 180) / 360) * n;
-}
-
-function latToTileYFloat(lat: number, zoom: number): number {
-  const n = 2 ** zoom;
-  const latRad = (lat * Math.PI) / 180;
-  const mercator = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
-  return (1 - mercator / Math.PI) * 0.5 * n;
-}
-
 function altitudeFeetToBaseY(altFeet: number): number {
   return altFeet * ALTITUDE_SCALE;
 }
 
-function decodeTerrariumElevationMeters(r: number, g: number, b: number): number {
-  return r * 256 + g + b / 256 - 32768;
-}
-
-async function loadTile(z: number, x: number, y: number): Promise<ImageBitmap | null> {
-  const url = `${TILE_BASE_URL}/${z}/${x}/${y}.png`;
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    return await createImageBitmap(blob);
-  } catch {
-    return null;
-  }
-}
-
-function buildTerrainGeometry(
-  imageData: ImageData,
+/**
+ * Build the terrain mesh over a lat/lon window.
+ *
+ * `minLon`/`maxLon` are deliberately *unwrapped* (`refLon ± lonRadius`), so a
+ * window straddling ±180° keeps interpolating past 180 rather than jumping to
+ * -180. Vertex `x` is therefore a continuous signed offset from the reference
+ * point, which is what a local tangent-plane frame requires — wrapping it
+ * would fold the mesh back on itself. Only the *tile column* lookup wraps,
+ * because tile x is cyclic in `[0, 2^zoom)`.
+ */
+export function buildTerrainGeometry(
+  imageData: ElevationRaster,
   refLat: number,
   refLon: number,
   minLat: number,
@@ -91,8 +71,7 @@ function buildTerrainGeometry(
     for (let col = 0; col <= GRID_SEGMENTS; col += 1) {
       const u = col / GRID_SEGMENTS;
       const lon = minLon + u * (maxLon - minLon);
-      const tileX = lonToTileXFloat(lon, TILE_ZOOM);
-      const px = clamp((tileX - minTileX) * TILE_SIZE, 0, width - 1);
+      const px = clamp(wrappedTileColumnOffset(lon, TILE_ZOOM, minTileX) * TILE_SIZE, 0, width - 1);
 
       const sampleX = Math.floor(px);
       const sampleY = Math.floor(py);
@@ -165,13 +144,14 @@ export const TerrainWireframe = memo(function TerrainWireframe({
       const maxTileX = lonToTileX(maxLon, TILE_ZOOM);
       const minTileY = latToTileY(maxLat, TILE_ZOOM);
       const maxTileY = latToTileY(minLat, TILE_ZOOM);
-      const tilesWide = maxTileX - minTileX + 1;
+      const tilesWide = wrappedTileColumnSpan(minTileX, maxTileX, TILE_ZOOM);
       const tilesHigh = maxTileY - minTileY + 1;
+      const columnCount = tileColumnCount(TILE_ZOOM);
 
       const tilePromises: Array<Promise<ImageBitmap | null>> = [];
       for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
-        for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
-          tilePromises.push(loadTile(TILE_ZOOM, tileX, tileY));
+        for (let col = 0; col < tilesWide; col += 1) {
+          tilePromises.push(loadTerrariumTile(TILE_ZOOM, (minTileX + col) % columnCount, tileY));
         }
       }
 

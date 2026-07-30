@@ -22,6 +22,7 @@ const UNGROUPED_LAYERS: LayerDef[] = [
 
 const WEATHER_LAYERS: LayerDef[] = [
   { id: 'mrms', label: 'MRMS 3D Precip' },
+  { id: 'mosaic', label: 'Surface Mosaic' },
   { id: 'probsevere', label: 'ProbSevere' },
   { id: 'echotops', label: 'Echo Tops' },
   { id: 'slice', label: 'Vertical Slice' },
