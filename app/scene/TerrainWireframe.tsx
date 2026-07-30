@@ -7,7 +7,9 @@ import {
   latToTileYFloat,
   loadTerrariumTile,
   lonToTileX,
-  lonToTileXFloat
+  tileColumnCount,
+  wrappedTileColumnOffset,
+  wrappedTileColumnSpan
 } from './terrain/terrarium';
 
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
@@ -58,8 +60,7 @@ function buildTerrainGeometry(
     for (let col = 0; col <= GRID_SEGMENTS; col += 1) {
       const u = col / GRID_SEGMENTS;
       const lon = minLon + u * (maxLon - minLon);
-      const tileX = lonToTileXFloat(lon, TILE_ZOOM);
-      const px = clamp((tileX - minTileX) * TILE_SIZE, 0, width - 1);
+      const px = clamp(wrappedTileColumnOffset(lon, TILE_ZOOM, minTileX) * TILE_SIZE, 0, width - 1);
 
       const sampleX = Math.floor(px);
       const sampleY = Math.floor(py);
@@ -132,13 +133,14 @@ export const TerrainWireframe = memo(function TerrainWireframe({
       const maxTileX = lonToTileX(maxLon, TILE_ZOOM);
       const minTileY = latToTileY(maxLat, TILE_ZOOM);
       const maxTileY = latToTileY(minLat, TILE_ZOOM);
-      const tilesWide = maxTileX - minTileX + 1;
+      const tilesWide = wrappedTileColumnSpan(minTileX, maxTileX, TILE_ZOOM);
       const tilesHigh = maxTileY - minTileY + 1;
+      const columnCount = tileColumnCount(TILE_ZOOM);
 
       const tilePromises: Array<Promise<ImageBitmap | null>> = [];
       for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
-        for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
-          tilePromises.push(loadTerrariumTile(TILE_ZOOM, tileX, tileY));
+        for (let col = 0; col < tilesWide; col += 1) {
+          tilePromises.push(loadTerrariumTile(TILE_ZOOM, (minTileX + col) % columnCount, tileY));
         }
       }
 

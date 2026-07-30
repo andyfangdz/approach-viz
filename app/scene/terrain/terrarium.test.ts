@@ -5,7 +5,11 @@ import {
   createElevationSampler,
   decodeTerrariumElevationMeters,
   latToTileYFloat,
-  lonToTileXFloat
+  lonToTileX,
+  lonToTileXFloat,
+  tileColumnCount,
+  wrappedTileColumnOffset,
+  wrappedTileColumnSpan
 } from './terrarium';
 import { latLonToLocal, localToLatLon } from '../approach-path/coordinates';
 
@@ -147,4 +151,83 @@ test('createElevationSampler clamps sample positions to the loaded raster', () =
     assert.ok(Number.isFinite(value), `sample at ${x},${z} should be finite`);
     assert.notStrictEqual(value, -1);
   }
+});
+
+test('lonToTileXFloat wraps past the antimeridian instead of clamping', () => {
+  const zoom = 8;
+  const n = tileColumnCount(zoom);
+
+  // Every longitude, in range or not, lands in a valid column [0, 2^zoom).
+  for (const lon of [-540, -181, -180, -0.1, 0, 179.9, 180, 182.82, 541]) {
+    const col = lonToTileXFloat(lon, zoom);
+    assert.ok(col >= 0 && col < n, `lon ${lon} -> column ${col} outside [0, ${n})`);
+  }
+
+  // 182.82°E is the same meridian as -177.18°, not the clamped 180° edge.
+  assert.ok(
+    Math.abs(lonToTileXFloat(182.82, zoom) - lonToTileXFloat(-177.18, zoom)) < 1e-9,
+    'longitudes past +180 should alias onto their negative equivalents'
+  );
+  assert.ok(Math.abs(lonToTileXFloat(-182.82, zoom) - lonToTileXFloat(177.18, zoom)) < 1e-9);
+  // ±180 are the same meridian and must not produce the out-of-range column n.
+  assert.strictEqual(lonToTileX(180, zoom), lonToTileX(-180, zoom));
+  assert.ok(lonToTileX(180, zoom) < n);
+});
+
+test('wrappedTileColumnSpan counts eastward across the antimeridian', () => {
+  const zoom = 8;
+  const n = tileColumnCount(zoom);
+  // Ordinary range: plain inclusive count.
+  assert.strictEqual(wrappedTileColumnSpan(10, 14, zoom), 5);
+  assert.strictEqual(wrappedTileColumnSpan(10, 10, zoom), 1);
+  // Wrapped range 254 -> 1 is four columns (254, 255, 0, 1), not a world sweep.
+  assert.strictEqual(wrappedTileColumnSpan(n - 2, 1, zoom), 4);
+});
+
+test('elevation sampling is continuous across the antimeridian', () => {
+  // Reference point 0.4° west of the dateline, so a ~40 NM sample to the east
+  // lands on the far side of ±180.
+  const refLat = 52.9;
+  const refLon = 179.6;
+  const zoom = 8;
+  const n = tileColumnCount(zoom);
+
+  const minLon = 176.0;
+  const minTileX = lonToTileX(minLon, zoom);
+  const maxTileX = lonToTileX(-176.0, zoom);
+  const tilesWide = wrappedTileColumnSpan(minTileX, maxTileX, zoom);
+  // The wrapped range stays small — the whole point of wrapping rather than
+  // clamping or sweeping the globe.
+  assert.ok(tilesWide <= 8, `wrapped span should stay local, got ${tilesWide}`);
+
+  const raster = rampRaster(tilesWide, 3, 0, 5);
+  const sampler = createElevationSampler({
+    raster,
+    zoom,
+    minTileX,
+    minTileY: Math.floor(latToTileYFloat(refLat, zoom)) - 1,
+    refLat,
+    refLon,
+    fallbackFeet: -1
+  });
+
+  // Walking east across the dateline must give a monotonic, gap-free ramp:
+  // if the column offset wrapped incorrectly, values would jump or flatten.
+  let previous = -Infinity;
+  for (let xNm = -20; xNm <= 40; xNm += 5) {
+    const value = sampler.sampleFeet(xNm, 0);
+    assert.ok(Number.isFinite(value), `sample at ${xNm} NM should be finite`);
+    assert.notStrictEqual(value, -1, `sample at ${xNm} NM should not fall back`);
+    assert.ok(value > previous, `ramp should increase eastward at ${xNm} NM`);
+    previous = value;
+  }
+  assert.strictEqual(sampler.fallbackRatio(), 0);
+
+  // The wrapped offset agrees with the raw column index modulo the world width.
+  const offset = wrappedTileColumnOffset(-179.8, zoom, minTileX);
+  assert.ok(offset >= 0 && offset < n);
+  assert.ok(
+    offset > wrappedTileColumnOffset(179.8, zoom, minTileX),
+    'east of the dateline is further east'
+  );
 });

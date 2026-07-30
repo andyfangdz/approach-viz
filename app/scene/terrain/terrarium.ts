@@ -20,9 +20,33 @@ function clamp(value: number, min: number, max: number): number {
 /** Web Mercator is undefined at the poles; this is the standard cutoff. */
 const MERCATOR_MAX_LAT = 85.05112878;
 
+export function tileColumnCount(zoom: number): number {
+  return 2 ** zoom;
+}
+
 export function lonToTileXFloat(lon: number, zoom: number): number {
-  const n = 2 ** zoom;
-  return ((clamp(lon, -180, 180) + 180) / 360) * n;
+  if (!Number.isFinite(lon)) return 0;
+  // Longitude wraps rather than clamps: a radius reaching past ±180° continues
+  // onto the far side of the antimeridian. Clamping instead would pin those
+  // samples to the dateline and, at the east edge, produce the out-of-range
+  // column `x = 2^zoom`.
+  const wrappedLon = lon - 360 * Math.floor((lon + 180) / 360);
+  return ((wrappedLon + 180) / 360) * tileColumnCount(zoom);
+}
+
+/** Tile columns from `minTileX` through `maxTileX` inclusive, walking east and
+ *  wrapping across the antimeridian. */
+export function wrappedTileColumnSpan(minTileX: number, maxTileX: number, zoom: number): number {
+  const n = tileColumnCount(zoom);
+  return ((((maxTileX - minTileX) % n) + n) % n) + 1;
+}
+
+/** Fractional column offset of `lon` east of `minTileX`, wrapping across the
+ *  antimeridian so a raster straddling ±180° indexes continuously. */
+export function wrappedTileColumnOffset(lon: number, zoom: number, minTileX: number): number {
+  const n = tileColumnCount(zoom);
+  const offset = lonToTileXFloat(lon, zoom) - minTileX;
+  return ((offset % n) + n) % n;
 }
 
 export function latToTileYFloat(lat: number, zoom: number): number {
@@ -112,7 +136,11 @@ export function createElevationSampler(params: ElevationSamplerParams): Elevatio
     sampleFeet(xNm: number, zNm: number): number {
       sampleCount += 1;
       const { lat, lon } = localToLatLon(xNm, zNm, refLat, refLon);
-      const fx = clamp((lonToTileXFloat(lon, zoom) - minTileX) * TERRARIUM_TILE_SIZE, 0, width - 1);
+      const fx = clamp(
+        wrappedTileColumnOffset(lon, zoom, minTileX) * TERRARIUM_TILE_SIZE,
+        0,
+        width - 1
+      );
       const fy = clamp(
         (latToTileYFloat(lat, zoom) - minTileY) * TERRARIUM_TILE_SIZE,
         0,
@@ -178,13 +206,14 @@ export async function loadElevationSampler(
   const maxTileX = lonToTileX(maxLon, zoom);
   const minTileY = latToTileY(maxLat, zoom);
   const maxTileY = latToTileY(minLat, zoom);
-  const tilesWide = maxTileX - minTileX + 1;
+  const tilesWide = wrappedTileColumnSpan(minTileX, maxTileX, zoom);
   const tilesHigh = maxTileY - minTileY + 1;
+  const columnCount = tileColumnCount(zoom);
 
   const tilePromises: Array<Promise<ImageBitmap | null>> = [];
   for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
-    for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
-      tilePromises.push(loadTerrariumTile(zoom, tileX, tileY));
+    for (let col = 0; col < tilesWide; col += 1) {
+      tilePromises.push(loadTerrariumTile(zoom, (minTileX + col) % columnCount, tileY));
     }
   }
   const tiles = await Promise.all(tilePromises);
