@@ -90,6 +90,7 @@ const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
   },
   surfaceMosaicCellCount: 0,
   surfaceMosaicMaxDbz: null,
+  surfaceMosaicDrape: null,
   echoTopCellCount: 0,
   echoTopMax18Feet: null,
   echoTopMax30Feet: null,
@@ -197,6 +198,7 @@ export function AppClient({
     chartType: surface.chartType,
     layers: options.layers,
     nexradPhaseMode: options.nexradPhaseMode,
+    nexradSurfaceMosaicDrape: options.nexradSurfaceMosaicDrape,
     nexradDeclutterMode: options.nexradDeclutterMode,
     trafficHistoryMinutes: options.trafficHistoryMinutes,
     showTrafficCallsigns: options.showTrafficCallsigns
@@ -439,6 +441,7 @@ export function AppClient({
             nexradOpacity={options.nexradOpacity}
             nexradDeclutterMode={options.nexradDeclutterMode}
             nexradPhaseMode={options.nexradPhaseMode}
+            nexradSurfaceMosaicDrape={options.nexradSurfaceMosaicDrape}
             nexradCrossSectionHeadingDeg={options.nexradCrossSectionHeadingDeg}
             nexradCrossSectionRangeNm={options.nexradCrossSectionRangeNm}
             obstacleRadiusNm={options.obstacleRadiusNm}
@@ -558,6 +561,8 @@ export function AppClient({
           onNexradDeclutterModeChange={options.setNexradDeclutterMode}
           nexradPhaseMode={options.nexradPhaseMode}
           onNexradPhaseModeChange={options.setNexradPhaseMode}
+          nexradSurfaceMosaicDrape={options.nexradSurfaceMosaicDrape}
+          onNexradSurfaceMosaicDrapeChange={options.setNexradSurfaceMosaicDrape}
           nexradCrossSectionHeadingDeg={options.nexradCrossSectionHeadingDeg}
           onNexradCrossSectionHeadingDegChange={(headingDeg) =>
             options.setNexradCrossSectionHeadingDeg(

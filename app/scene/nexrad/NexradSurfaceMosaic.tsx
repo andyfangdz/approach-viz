@@ -1,40 +1,129 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
+import type { NexradSurfaceMosaicDrape } from '@/app/app-client/types';
 import { earthCurvatureDropNm } from '../approach-path/coordinates';
+import { loadElevationSampler, type ElevationSampler } from '../terrain/terrarium';
 import type { NexradCompositeSurface } from './nexrad-types';
 import { feetToNm } from './nexrad-render';
 
-/** Clearance above field elevation so the mosaic does not z-fight a plate or
- *  a sea-level-clamped tiled surface. Negligible at mosaic scale. */
+/** Clearance above the base surface so the mosaic does not z-fight a plate, a
+ *  sea-level-clamped tiled surface, or the terrain wireframe. */
 const MOSAIC_LIFT_FEET = 200;
-/** Segment count per axis when the mosaic has to follow a curved tiled
- *  surface. A flat surface needs a single quad. */
+/** Segment count per axis when the mosaic only has to follow earth curvature.
+ *  A flat mosaic on a flat surface needs a single quad. */
 const CURVED_MOSAIC_SEGMENTS = 64;
+/** Target segment size when draping over terrain. The mosaic spans up to
+ *  240 NM, so this trades exact relief for a mesh that rebuilds every poll
+ *  without stalling a frame. */
+const DRAPE_SEGMENT_TARGET_NM = 1;
+const MIN_DRAPE_SEGMENTS = 32;
+const MAX_DRAPE_SEGMENTS = 256;
+/**
+ * Zoom for the drape's elevation raster. z8 is ~0.25 NM per pixel — finer than
+ * the mosaic's own ~0.5 NM cells — while covering the full 120 NM weather
+ * range in ~25 tiles. The z10 grid the terrain wireframe uses would need
+ * several hundred tiles over the same area.
+ */
+const DRAPE_ELEVATION_ZOOM = 8;
+
+export type MosaicDrapeStatus = 'flat' | 'terrain' | 'terrain-loading' | 'terrain-unavailable';
 
 interface NexradSurfaceMosaicProps {
   composite: NexradCompositeSurface;
+  drapeMode: NexradSurfaceMosaicDrape;
+  /** Weather request radius; the drape raster covers this, not the echo
+   *  bounding box, so a moving storm reuses one tile fetch. */
+  maxRangeNm: number;
   surfaceElevationFeet: number;
   opacity: number;
   applyEarthCurvatureCompensation: boolean;
   refLat: number;
+  refLon: number;
+  onDrapeStatusChange?: (status: MosaicDrapeStatus) => void;
 }
 
 /**
  * Ground composite-reflectivity mosaic: the column max over every MRMS level,
- * draped just above field elevation so the 3D volume reads as sitting on a
- * weather surface rather than floating in empty space.
+ * draped just above the surface so the 3D volume reads as sitting on a weather
+ * surface rather than floating in empty space.
+ *
+ * `drapeMode` picks the base surface: `flat` pins the whole sheet to field
+ * elevation, `terrain` samples Terrarium elevation per vertex so the mosaic
+ * follows real relief.
  *
  * Rendered as an explicit grid in the local NM frame (no rotated plane), so
  * texture row 0 lands on the `-z` edge exactly as the Rust raster orders it,
- * and every vertex can carry its own earth-curvature drop.
+ * and every vertex can carry its own elevation and earth-curvature drop.
  */
 export function NexradSurfaceMosaic({
   composite,
+  drapeMode,
+  maxRangeNm,
   surfaceElevationFeet,
   opacity,
   applyEarthCurvatureCompensation,
-  refLat
+  refLat,
+  refLon,
+  onDrapeStatusChange
 }: NexradSurfaceMosaicProps) {
+  const [elevation, setElevation] = useState<ElevationSampler | null>(null);
+  const [elevationFailed, setElevationFailed] = useState(false);
+
+  const wantsDrape = drapeMode === 'terrain';
+
+  useEffect(() => {
+    if (!wantsDrape) {
+      setElevation(null);
+      setElevationFailed(false);
+      return;
+    }
+
+    let cancelled = false;
+    setElevation(null);
+    setElevationFailed(false);
+
+    loadElevationSampler({
+      refLat,
+      refLon,
+      radiusNm: maxRangeNm,
+      zoom: DRAPE_ELEVATION_ZOOM,
+      fallbackFeet: surfaceElevationFeet
+    })
+      .then((sampler) => {
+        if (cancelled) return;
+        if (!sampler) {
+          // Every tile failed. Say so rather than drawing a flat sheet that
+          // would be indistinguishable from real terrain that happens to be
+          // level.
+          console.warn('[MRMS mosaic] terrain elevation tiles unavailable; drawing flat.');
+          setElevationFailed(true);
+          return;
+        }
+        setElevation(() => sampler);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn('[MRMS mosaic] terrain elevation load failed; drawing flat:', error);
+        setElevationFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [wantsDrape, refLat, refLon, maxRangeNm, surfaceElevationFeet]);
+
+  const drapeStatus: MosaicDrapeStatus = !wantsDrape
+    ? 'flat'
+    : elevation
+      ? 'terrain'
+      : elevationFailed
+        ? 'terrain-unavailable'
+        : 'terrain-loading';
+
+  useEffect(() => {
+    onDrapeStatusChange?.(drapeStatus);
+  }, [onDrapeStatusChange, drapeStatus]);
+
   const texture = useMemo(() => {
     const nextTexture = new THREE.DataTexture(
       composite.rgba,
@@ -62,8 +151,21 @@ export function NexradSurfaceMosaic({
     const widthNm = composite.width * composite.cellSizeXNm;
     const depthNm = composite.height * composite.cellSizeZNm;
     const baseYNm = feetToNm(surfaceElevationFeet + MOSAIC_LIFT_FEET);
-    const segmentsX = applyEarthCurvatureCompensation ? CURVED_MOSAIC_SEGMENTS : 1;
-    const segmentsZ = applyEarthCurvatureCompensation ? CURVED_MOSAIC_SEGMENTS : 1;
+
+    let segmentsX = 1;
+    let segmentsZ = 1;
+    if (elevation) {
+      const clampSegments = (spanNm: number) =>
+        Math.max(
+          MIN_DRAPE_SEGMENTS,
+          Math.min(MAX_DRAPE_SEGMENTS, Math.ceil(spanNm / DRAPE_SEGMENT_TARGET_NM))
+        );
+      segmentsX = clampSegments(widthNm);
+      segmentsZ = clampSegments(depthNm);
+    } else if (applyEarthCurvatureCompensation) {
+      segmentsX = CURVED_MOSAIC_SEGMENTS;
+      segmentsZ = CURVED_MOSAIC_SEGMENTS;
+    }
 
     const vertexCount = (segmentsX + 1) * (segmentsZ + 1);
     const positions = new Float32Array(vertexCount * 3);
@@ -75,10 +177,13 @@ export function NexradSurfaceMosaic({
         const u = i / segmentsX;
         const x = composite.originXNm + u * widthNm;
         const vertex = j * (segmentsX + 1) + i;
+        const groundYNm = elevation
+          ? feetToNm(elevation.sampleFeet(x, z) + MOSAIC_LIFT_FEET)
+          : baseYNm;
         positions[vertex * 3] = x;
         positions[vertex * 3 + 1] = applyEarthCurvatureCompensation
-          ? baseYNm - earthCurvatureDropNm(x, z, refLat)
-          : baseYNm;
+          ? groundYNm - earthCurvatureDropNm(x, z, refLat)
+          : groundYNm;
         positions[vertex * 3 + 2] = z;
         uvs[vertex * 2] = u;
         uvs[vertex * 2 + 1] = v;
@@ -107,7 +212,7 @@ export function NexradSurfaceMosaic({
     nextGeometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     nextGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
     return nextGeometry;
-  }, [composite, surfaceElevationFeet, applyEarthCurvatureCompensation, refLat]);
+  }, [composite, surfaceElevationFeet, applyEarthCurvatureCompensation, refLat, elevation]);
 
   useEffect(() => () => geometry.dispose(), [geometry]);
 

@@ -1,7 +1,8 @@
 import type {
   NexradDebugState,
   NexradDeclutterMode,
-  NexradPhaseMode
+  NexradPhaseMode,
+  NexradSurfaceMosaicDrape
 } from '@/app/app-client/types';
 
 export const FEET_PER_NM = 6076.12;
@@ -62,6 +63,8 @@ export interface NexradVolumeOverlayProps {
   phaseMode?: NexradPhaseMode;
   showEchoTops?: boolean;
   showSurfaceMosaic?: boolean;
+  /** Base surface for the ground mosaic: field elevation or sampled terrain. */
+  surfaceMosaicDrape?: NexradSurfaceMosaicDrape;
   /** Field elevation the ground mosaic is draped at (absolute MSL frame). */
   surfaceElevationFeet?: number;
   showAltitudeGuides?: boolean;

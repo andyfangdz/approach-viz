@@ -5,6 +5,7 @@ import {
   parseLayersParam,
   readDeclutterModeFromSearch,
   readPhaseModeFromSearch,
+  readSurfaceMosaicDrapeFromSearch,
   readShowCallsignsFromSearch,
   readTrafficHistoryMinutesFromSearch,
   DEFAULT_LAYER_STATE
@@ -18,6 +19,7 @@ import {
   DEFAULT_NEXRAD_OPACITY,
   DEFAULT_NEXRAD_DECLUTTER_MODE,
   DEFAULT_NEXRAD_PHASE_MODE,
+  DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE,
   DEFAULT_CAMERA_CONTROL_MODE,
   DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
@@ -36,6 +38,7 @@ import {
   normalizeNexradMinDbz,
   normalizeNexradOpacity,
   normalizeNexradPhaseMode,
+  normalizeNexradSurfaceMosaicDrape,
   normalizeObstacleMinAglFeet,
   normalizeObstacleRadiusNm,
   normalizeTerrainRadiusNm
@@ -44,7 +47,8 @@ import type {
   CameraControlMode,
   LayerState,
   NexradDeclutterMode,
-  NexradPhaseMode
+  NexradPhaseMode,
+  NexradSurfaceMosaicDrape
 } from '@/app/app-client/types';
 
 const OPTIONS_STORAGE_KEY = 'approach-viz:options:v1';
@@ -63,6 +67,7 @@ interface PersistedOptionsState {
   nexradOpacity?: number;
   nexradDeclutterMode?: NexradDeclutterMode;
   nexradPhaseMode?: NexradPhaseMode;
+  nexradSurfaceMosaicDrape?: NexradSurfaceMosaicDrape;
   cameraControlMode?: CameraControlMode;
   nexradCrossSectionHeadingDeg?: number;
   nexradCrossSectionRangeNm?: number;
@@ -104,6 +109,8 @@ export function usePersistedOptions() {
   const [nexradDeclutterMode, setNexradDeclutterMode] = useState<NexradDeclutterMode>(
     DEFAULT_NEXRAD_DECLUTTER_MODE
   );
+  const [nexradSurfaceMosaicDrape, setNexradSurfaceMosaicDrape] =
+    useState<NexradSurfaceMosaicDrape>(DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE);
   const [nexradPhaseMode, setNexradPhaseMode] =
     useState<NexradPhaseMode>(DEFAULT_NEXRAD_PHASE_MODE);
   const [cameraControlMode, setCameraControlMode] = useState<CameraControlMode>(
@@ -177,6 +184,11 @@ export function usePersistedOptions() {
         if (persisted.nexradDeclutterMode) {
           setNexradDeclutterMode(normalizeNexradDeclutterMode(persisted.nexradDeclutterMode));
         }
+        if (persisted.nexradSurfaceMosaicDrape) {
+          setNexradSurfaceMosaicDrape(
+            normalizeNexradSurfaceMosaicDrape(persisted.nexradSurfaceMosaicDrape)
+          );
+        }
         if (persisted.nexradPhaseMode) {
           setNexradPhaseMode(normalizeNexradPhaseMode(persisted.nexradPhaseMode));
         }
@@ -243,6 +255,10 @@ export function usePersistedOptions() {
     if (phaseModeFromUrl) {
       setNexradPhaseMode(normalizeNexradPhaseMode(phaseModeFromUrl));
     }
+    const mosaicDrapeFromUrl = readSurfaceMosaicDrapeFromSearch(window.location.search);
+    if (mosaicDrapeFromUrl) {
+      setNexradSurfaceMosaicDrape(normalizeNexradSurfaceMosaicDrape(mosaicDrapeFromUrl));
+    }
     const declutterFromUrl = readDeclutterModeFromSearch(window.location.search);
     if (declutterFromUrl) {
       setNexradDeclutterMode(normalizeNexradDeclutterMode(declutterFromUrl));
@@ -274,6 +290,7 @@ export function usePersistedOptions() {
       nexradOpacity,
       nexradDeclutterMode,
       nexradPhaseMode,
+      nexradSurfaceMosaicDrape,
       cameraControlMode,
       nexradCrossSectionHeadingDeg,
       nexradCrossSectionRangeNm,
@@ -299,6 +316,7 @@ export function usePersistedOptions() {
     nexradOpacity,
     nexradDeclutterMode,
     nexradPhaseMode,
+    nexradSurfaceMosaicDrape,
     cameraControlMode,
     nexradCrossSectionHeadingDeg,
     nexradCrossSectionRangeNm,
@@ -338,6 +356,8 @@ export function usePersistedOptions() {
     setNexradDeclutterMode,
     nexradPhaseMode,
     setNexradPhaseMode,
+    nexradSurfaceMosaicDrape,
+    setNexradSurfaceMosaicDrape,
     cameraControlMode,
     setCameraControlMode,
     nexradCrossSectionHeadingDeg,

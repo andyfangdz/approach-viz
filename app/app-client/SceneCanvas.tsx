@@ -343,6 +343,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   nexradOpacity,
   nexradDeclutterMode,
   nexradPhaseMode,
+  nexradSurfaceMosaicDrape,
   nexradCrossSectionHeadingDeg,
   nexradCrossSectionRangeNm,
   obstacleRadiusNm,
@@ -586,6 +587,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             phaseMode={nexradPhaseMode}
             showEchoTops={nexradShowEchoTops}
             showSurfaceMosaic={nexradShowSurfaceMosaic}
+            surfaceMosaicDrape={nexradSurfaceMosaicDrape}
             surfaceElevationFeet={airport.elevation}
             showAltitudeGuides={nexradShowAltitudeGuides}
             showCrossSection={nexradCrossSectionEnabled}

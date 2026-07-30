@@ -1,13 +1,20 @@
 import { memo, useEffect, useState } from 'react';
 import * as THREE from 'three';
+import {
+  TERRARIUM_TILE_SIZE as TILE_SIZE,
+  decodeTerrariumElevationMeters,
+  latToTileY,
+  latToTileYFloat,
+  loadTerrariumTile,
+  lonToTileX,
+  lonToTileXFloat
+} from './terrain/terrarium';
 
 const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 
-const TILE_SIZE = 256;
 const TILE_ZOOM = 10;
 const TERRAIN_RADIUS_NM = 50;
 const GRID_SEGMENTS = 140;
-const TILE_BASE_URL = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium';
 
 interface TerrainWireframeProps {
   refLat: number;
@@ -20,48 +27,8 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function lonToTileX(lon: number, zoom: number): number {
-  const n = 2 ** zoom;
-  return Math.floor(((lon + 180) / 360) * n);
-}
-
-function latToTileY(lat: number, zoom: number): number {
-  const n = 2 ** zoom;
-  const latRad = (lat * Math.PI) / 180;
-  const mercator = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
-  return Math.floor((1 - mercator / Math.PI) * 0.5 * n);
-}
-
-function lonToTileXFloat(lon: number, zoom: number): number {
-  const n = 2 ** zoom;
-  return ((lon + 180) / 360) * n;
-}
-
-function latToTileYFloat(lat: number, zoom: number): number {
-  const n = 2 ** zoom;
-  const latRad = (lat * Math.PI) / 180;
-  const mercator = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
-  return (1 - mercator / Math.PI) * 0.5 * n;
-}
-
 function altitudeFeetToBaseY(altFeet: number): number {
   return altFeet * ALTITUDE_SCALE;
-}
-
-function decodeTerrariumElevationMeters(r: number, g: number, b: number): number {
-  return r * 256 + g + b / 256 - 32768;
-}
-
-async function loadTile(z: number, x: number, y: number): Promise<ImageBitmap | null> {
-  const url = `${TILE_BASE_URL}/${z}/${x}/${y}.png`;
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    return await createImageBitmap(blob);
-  } catch {
-    return null;
-  }
 }
 
 function buildTerrainGeometry(
@@ -171,7 +138,7 @@ export const TerrainWireframe = memo(function TerrainWireframe({
       const tilePromises: Array<Promise<ImageBitmap | null>> = [];
       for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
         for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
-          tilePromises.push(loadTile(TILE_ZOOM, tileX, tileY));
+          tilePromises.push(loadTerrariumTile(TILE_ZOOM, tileX, tileY));
         }
       }
 

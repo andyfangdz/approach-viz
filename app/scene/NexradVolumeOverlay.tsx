@@ -39,7 +39,7 @@ import {
   feetLabel
 } from './nexrad/nexrad-render';
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
-import { NexradSurfaceMosaic } from './nexrad/NexradSurfaceMosaic';
+import { NexradSurfaceMosaic, type MosaicDrapeStatus } from './nexrad/NexradSurfaceMosaic';
 
 const MIN_INSTANCE_CAPACITY = 1;
 const EMPTY_PHASE_COUNTS = { rain: 0, mixed: 0, snow: 0 };
@@ -125,6 +125,7 @@ export function NexradVolumeOverlay({
   phaseMode = 'thermo',
   showEchoTops = true,
   showSurfaceMosaic = false,
+  surfaceMosaicDrape = 'flat',
   surfaceElevationFeet = 0,
   showAltitudeGuides = true,
   showCrossSection = false,
@@ -190,6 +191,7 @@ export function NexradVolumeOverlay({
   const [volumeData, setVolumeData] = useState<NexradRenderVolumeData>(EMPTY_RENDER_VOLUME);
   const [crossSectionData, setCrossSectionData] = useState<CrossSectionData | null>(null);
   const [compositeSurface, setCompositeSurface] = useState<NexradCompositeSurface | null>(null);
+  const [mosaicDrapeStatus, setMosaicDrapeStatus] = useState<MosaicDrapeStatus | null>(null);
   const [echoTop18, setEchoTop18] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop30, setEchoTop30] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop50, setEchoTop50] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
@@ -690,6 +692,7 @@ export function NexradVolumeOverlay({
     phaseCounts,
     surfaceMosaicCellCount: compositeSurface?.filledCellCount ?? 0,
     surfaceMosaicMaxDbz: compositeSurface?.maxDbz ?? null,
+    surfaceMosaicDrape: mosaicDrapeStatus,
     echoTopCellCount:
       echoTopPayload?.sourceCellCount ??
       echoTopPayload?.cellCount ??
@@ -743,6 +746,7 @@ export function NexradVolumeOverlay({
         phaseCounts: { rain: 0, mixed: 0, snow: 0 },
         surfaceMosaicCellCount: 0,
         surfaceMosaicMaxDbz: null,
+        surfaceMosaicDrape: null,
         echoTopCellCount: 0,
         echoTopMax18Feet: null,
         echoTopMax30Feet: null,
@@ -906,10 +910,14 @@ export function NexradVolumeOverlay({
       {hasSurfaceMosaic && compositeSurface && (
         <NexradSurfaceMosaic
           composite={compositeSurface}
+          drapeMode={surfaceMosaicDrape}
+          maxRangeNm={maxRangeNm}
           surfaceElevationFeet={surfaceElevationFeet}
           opacity={opacity}
           applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
           refLat={refLat}
+          refLon={refLon}
+          onDrapeStatusChange={setMosaicDrapeStatus}
         />
       )}
       {showVolume && (
