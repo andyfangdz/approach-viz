@@ -12,6 +12,7 @@ import {
   wrappedTileColumnSpan
 } from './terrarium';
 import { latLonToLocal, localToLatLon } from '../approach-path/coordinates';
+import { buildTerrainGeometry } from '../TerrainWireframe';
 
 const METERS_TO_FEET = 3.28084;
 
@@ -230,4 +231,58 @@ test('elevation sampling is continuous across the antimeridian', () => {
     offset > wrappedTileColumnOffset(179.8, zoom, minTileX),
     'east of the dateline is further east'
   );
+});
+
+test('terrain mesh vertices stay continuous across the antimeridian', () => {
+  // A 50 NM radius around 179.5°E straddles the dateline. Tile *columns* must
+  // wrap (they are cyclic); local scene coordinates must NOT — they are a
+  // tangent plane, and wrapping vertex x would fold the mesh back on itself.
+  const refLat = 52.9;
+  const refLon = 179.5;
+  const radiusNm = 50;
+  const zoom = 10;
+  const latRadius = radiusNm / 60;
+  const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos((refLat * Math.PI) / 180)));
+  const minLon = refLon - lonRadius;
+  const maxLon = refLon + lonRadius;
+  const minTileX = lonToTileX(minLon, zoom);
+  const minTileY = Math.floor(latToTileYFloat(refLat + latRadius, zoom));
+
+  const tilesWide = wrappedTileColumnSpan(minTileX, lonToTileX(maxLon, zoom), zoom);
+  const geometry = buildTerrainGeometry(
+    rampRaster(tilesWide, 3, 500, 1),
+    refLat,
+    refLon,
+    refLat - latRadius,
+    refLat + latRadius,
+    minLon,
+    maxLon,
+    minTileX,
+    minTileY
+  );
+
+  const positions = geometry.getAttribute('position').array as ArrayLike<number>;
+  const pointsPerAxis = Math.round(Math.sqrt(positions.length / 3));
+  const rowStart = 0;
+  let previousX = -Infinity;
+  for (let col = 0; col < pointsPerAxis; col += 1) {
+    const x = positions[(rowStart * pointsPerAxis + col) * 3];
+    const y = positions[(rowStart * pointsPerAxis + col) * 3 + 1];
+    assert.ok(Number.isFinite(x) && Number.isFinite(y), `vertex ${col} must be finite`);
+    assert.ok(x > previousX, `vertex x must increase eastward across the dateline (col ${col})`);
+    previousX = x;
+  }
+
+  // The mesh spans the requested diameter — no wrap-induced stretch or collapse.
+  const westX = positions[0];
+  const eastX = positions[(pointsPerAxis - 1) * 3];
+  const cosRef = Math.cos((refLat * Math.PI) / 180);
+  assert.ok(Math.abs(westX + lonRadius * 60 * cosRef) < 1e-3, `west edge ${westX}`);
+  assert.ok(Math.abs(eastX - lonRadius * 60 * cosRef) < 1e-3, `east edge ${eastX}`);
+  assert.ok(
+    Math.abs(eastX - westX - 2 * radiusNm) < 1e-3,
+    `mesh should span ${2 * radiusNm} NM, got ${eastX - westX}`
+  );
+
+  geometry.dispose();
 });

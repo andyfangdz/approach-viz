@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import * as THREE from 'three';
+import type { ElevationRaster } from './terrain/terrarium';
 import {
   TERRARIUM_TILE_SIZE as TILE_SIZE,
   decodeTerrariumElevationMeters,
@@ -33,8 +34,18 @@ function altitudeFeetToBaseY(altFeet: number): number {
   return altFeet * ALTITUDE_SCALE;
 }
 
-function buildTerrainGeometry(
-  imageData: ImageData,
+/**
+ * Build the terrain mesh over a lat/lon window.
+ *
+ * `minLon`/`maxLon` are deliberately *unwrapped* (`refLon ± lonRadius`), so a
+ * window straddling ±180° keeps interpolating past 180 rather than jumping to
+ * -180. Vertex `x` is therefore a continuous signed offset from the reference
+ * point, which is what a local tangent-plane frame requires — wrapping it
+ * would fold the mesh back on itself. Only the *tile column* lookup wraps,
+ * because tile x is cyclic in `[0, 2^zoom)`.
+ */
+export function buildTerrainGeometry(
+  imageData: ElevationRaster,
   refLat: number,
   refLon: number,
   minLat: number,
