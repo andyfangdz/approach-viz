@@ -52,6 +52,8 @@ export interface NexradDebugState {
     mixed: number;
     snow: number;
   };
+  surfaceMosaicCellCount: number;
+  surfaceMosaicMaxDbz: number | null;
   echoTopCellCount: number;
   echoTopMax18Feet: number | null;
   echoTopMax30Feet: number | null;
@@ -245,6 +247,7 @@ export type LayerId =
   | 'obstacles'
   | 'adsb'
   | 'mrms'
+  | 'mosaic'
   | 'probsevere'
   | 'echotops'
   | 'slice'
@@ -257,6 +260,7 @@ export interface LayerState {
   obstacles: boolean;
   adsb: boolean;
   mrms: boolean;
+  mosaic: boolean;
   probsevere: boolean;
   echotops: boolean;
   slice: boolean;

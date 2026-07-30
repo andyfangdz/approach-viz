@@ -8,7 +8,7 @@ export const approach_path_build_hold_protected_area: (a: number, b: number, c: 
 export const approach_path_resolve_altitudes: (a: any) => [number, number, number];
 export const approach_path_resolve_hold_leg_length_nm: (a: number, b: number, c: number, d: number, e: number) => number;
 export const decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
-export const decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
+export const decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number, number];
 export const wasm_alt_to_y: (a: number, b: number) => number;
 export const wasm_earth_curvature_drop_nm: (a: number, b: number, c: number) => number;
 export const wasm_geocentric_radius_nm: (a: number) => number;

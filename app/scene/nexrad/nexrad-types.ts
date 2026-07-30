@@ -61,6 +61,9 @@ export interface NexradVolumeOverlayProps {
   declutterMode?: NexradDeclutterMode;
   phaseMode?: NexradPhaseMode;
   showEchoTops?: boolean;
+  showSurfaceMosaic?: boolean;
+  /** Field elevation the ground mosaic is draped at (absolute MSL frame). */
+  surfaceElevationFeet?: number;
   showAltitudeGuides?: boolean;
   showCrossSection?: boolean;
   crossSectionHeadingDeg?: number;
@@ -282,6 +285,25 @@ export interface NexradRenderVolumeData {
   maxAbsXNm: number;
   maxAbsZNm: number;
   maxCorrectedTopFeet: number;
+}
+
+/**
+ * Ground composite-reflectivity mosaic: the column max over every MRMS level,
+ * rasterized on the source grid by Rust `build_composite_surface` and colored
+ * into `rgba` by the worker. Row-major with `x` varying fastest; row 0 is the
+ * `-z` edge. Positions are unscaled local-frame NM.
+ */
+export interface NexradCompositeSurface {
+  width: number;
+  height: number;
+  originXNm: number;
+  originZNm: number;
+  cellSizeXNm: number;
+  cellSizeZNm: number;
+  /** Non-premultiplied sRGB RGBA texels, `width * height * 4` bytes. */
+  rgba: Uint8Array;
+  filledCellCount: number;
+  maxDbz: number;
 }
 
 const EMPTY_U8 = new Uint8Array(0);

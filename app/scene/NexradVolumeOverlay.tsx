@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { NexradDebugState, NexradTimingDebugState } from '@/app/app-client/types';
 import type {
   CrossSectionData,
+  NexradCompositeSurface,
   NexradRenderVolumeData,
   NexradVolumeOverlayProps,
   NexradVolumePayload,
@@ -38,6 +39,7 @@ import {
   feetLabel
 } from './nexrad/nexrad-render';
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
+import { NexradSurfaceMosaic } from './nexrad/NexradSurfaceMosaic';
 
 const MIN_INSTANCE_CAPACITY = 1;
 const EMPTY_PHASE_COUNTS = { rain: 0, mixed: 0, snow: 0 };
@@ -122,6 +124,8 @@ export function NexradVolumeOverlay({
   declutterMode = 'all',
   phaseMode = 'thermo',
   showEchoTops = true,
+  showSurfaceMosaic = false,
+  surfaceElevationFeet = 0,
   showAltitudeGuides = true,
   showCrossSection = false,
   crossSectionHeadingDeg = 90,
@@ -148,6 +152,8 @@ export function NexradVolumeOverlay({
   showVolumeRef.current = showVolume;
   const showEchoTopsRef = useRef(showEchoTops);
   showEchoTopsRef.current = showEchoTops;
+  const showSurfaceMosaicRef = useRef(showSurfaceMosaic);
+  showSurfaceMosaicRef.current = showSurfaceMosaic;
   const showCrossSectionRef = useRef(showCrossSection);
   showCrossSectionRef.current = showCrossSection;
   const minDbzRef = useRef(minDbz);
@@ -183,6 +189,7 @@ export function NexradVolumeOverlay({
   slicePerpAxisRef.current = slicePerpAxis;
   const [volumeData, setVolumeData] = useState<NexradRenderVolumeData>(EMPTY_RENDER_VOLUME);
   const [crossSectionData, setCrossSectionData] = useState<CrossSectionData | null>(null);
+  const [compositeSurface, setCompositeSurface] = useState<NexradCompositeSurface | null>(null);
   const [echoTop18, setEchoTop18] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop30, setEchoTop30] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop50, setEchoTop50] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
@@ -363,6 +370,7 @@ export function NexradVolumeOverlay({
       setEchoTopPayload(null);
       setVolumeData(EMPTY_RENDER_VOLUME);
       setCrossSectionData(null);
+      setCompositeSurface(null);
       setEchoTop18(EMPTY_ECHO_TOP_SOA);
       setEchoTop30(EMPTY_ECHO_TOP_SOA);
       setEchoTop50(EMPTY_ECHO_TOP_SOA);
@@ -378,6 +386,7 @@ export function NexradVolumeOverlay({
     setEchoTopPayload(null);
     setVolumeData(EMPTY_RENDER_VOLUME);
     setCrossSectionData(null);
+    setCompositeSurface(null);
     setEchoTop18(EMPTY_ECHO_TOP_SOA);
     setEchoTop30(EMPTY_ECHO_TOP_SOA);
     setEchoTop50(EMPTY_ECHO_TOP_SOA);
@@ -409,7 +418,8 @@ export function NexradVolumeOverlay({
       if (!cancelled) {
         setIsLoading(true);
       }
-      const shouldFetchVolume = showVolumeRef.current || showCrossSectionRef.current;
+      const shouldFetchVolume =
+        showVolumeRef.current || showCrossSectionRef.current || showSurfaceMosaicRef.current;
       const shouldFetchEchoTops = showEchoTopsRef.current;
       const volumeParams = new URLSearchParams();
       volumeParams.set('lat', refLat.toFixed(6));
@@ -440,7 +450,8 @@ export function NexradVolumeOverlay({
           normalizedCrossSectionRange: normalizedCrossSectionRangeRef.current,
           crossSectionHalfWidthNm: crossSectionHalfWidthNmRef.current,
           sliceAxis: sliceAxisRef.current,
-          slicePerpAxis: slicePerpAxisRef.current
+          slicePerpAxis: slicePerpAxisRef.current,
+          includeSurfaceMosaic: showSurfaceMosaicRef.current
         });
         volumeFetchMs = shouldFetchVolume ? (result.timings?.volumeFetchMs ?? null) : null;
         volumeDecodeMs = shouldFetchVolume ? (result.timings?.volumeDecodeMs ?? null) : null;
@@ -485,13 +496,15 @@ export function NexradVolumeOverlay({
               });
               setVolumeData(result.renderVolume);
               setCrossSectionData(result.crossSectionData);
+              setCompositeSurface(result.compositeSurface);
               setPhaseCounts(result.phaseCounts ?? EMPTY_PHASE_COUNTS);
               skipNextRePrepareRef.current = true;
             }
-          } else if (!showVolumeRef.current && !showCrossSectionRef.current) {
+          } else if (!shouldFetchVolume) {
             setPayload(null);
             setVolumeData(EMPTY_RENDER_VOLUME);
             setCrossSectionData(null);
+            setCompositeSurface(null);
             setPhaseCounts(EMPTY_PHASE_COUNTS);
           }
 
@@ -601,11 +614,13 @@ export function NexradVolumeOverlay({
           normalizedCrossSectionRange,
           crossSectionHalfWidthNm,
           sliceAxis,
-          slicePerpAxis
+          slicePerpAxis,
+          includeSurfaceMosaic: showSurfaceMosaic
         });
         if (cancelled) return;
         setVolumeData(result.renderVolume);
         setCrossSectionData(result.crossSectionData);
+        setCompositeSurface(result.compositeSurface);
         if (result.timings?.volumePrepareMs != null) {
           patchTimings({ volumePrepareMs: result.timings.volumePrepareMs });
         }
@@ -629,6 +644,7 @@ export function NexradVolumeOverlay({
     declutterMode,
     applyEarthCurvatureCompensation,
     showCrossSection,
+    showSurfaceMosaic,
     normalizedCrossSectionRange,
     crossSectionHalfWidthNm,
     sliceAxis,
@@ -641,10 +657,10 @@ export function NexradVolumeOverlay({
   useEffect(() => {
     if (!enabled) return;
     const needEchoTops = showEchoTops && !echoTopPayloadRef.current;
-    const needVolume = (showVolume || showCrossSection) && !payloadRef.current;
+    const needVolume = (showVolume || showCrossSection || showSurfaceMosaic) && !payloadRef.current;
     if (!needEchoTops && !needVolume) return;
     pollNowRef.current?.();
-  }, [enabled, showEchoTops, showVolume, showCrossSection]);
+  }, [enabled, showEchoTops, showVolume, showCrossSection, showSurfaceMosaic]);
 
   const debugState: NexradDebugState = {
     offloadMode: getNexradWorkerRuntimeMode(),
@@ -672,6 +688,8 @@ export function NexradVolumeOverlay({
     precipFlagTimestamp: payload?.precipFlagTimestamp ?? null,
     freezingLevelTimestamp: payload?.freezingLevelTimestamp ?? null,
     phaseCounts,
+    surfaceMosaicCellCount: compositeSurface?.filledCellCount ?? 0,
+    surfaceMosaicMaxDbz: compositeSurface?.maxDbz ?? null,
     echoTopCellCount:
       echoTopPayload?.sourceCellCount ??
       echoTopPayload?.cellCount ??
@@ -723,6 +741,8 @@ export function NexradVolumeOverlay({
         precipFlagTimestamp: null,
         freezingLevelTimestamp: null,
         phaseCounts: { rain: 0, mixed: 0, snow: 0 },
+        surfaceMosaicCellCount: 0,
+        surfaceMosaicMaxDbz: null,
         echoTopCellCount: 0,
         echoTopMax18Feet: null,
         echoTopMax30Feet: null,
@@ -831,14 +851,26 @@ export function NexradVolumeOverlay({
     );
     const vertices: number[] = [];
     const labels: Array<{ feet: number; yNm: number; extentNm: number }> = [];
+    const e = extentNm;
     for (let feet = ALTITUDE_GUIDE_STEP_FEET; feet <= maxFeet; feet += ALTITUDE_GUIDE_STEP_FEET) {
       const yNm = feetToNm(feet);
-      const e = extentNm;
       vertices.push(-e, yNm, -e, e, yNm, -e);
       vertices.push(e, yNm, -e, e, yNm, e);
       vertices.push(e, yNm, e, -e, yNm, e);
       vertices.push(-e, yNm, e, -e, yNm, -e);
       labels.push({ feet, yNm, extentNm: e });
+    }
+    // Corner posts from the ground up to the top ring close the rings into a
+    // reference box, so ring spacing reads as altitude rather than as stacked
+    // unrelated rectangles.
+    const topYNm = feetToNm(maxFeet);
+    for (const [cornerX, cornerZ] of [
+      [-e, -e],
+      [e, -e],
+      [e, e],
+      [-e, e]
+    ]) {
+      vertices.push(cornerX, 0, cornerZ, cornerX, topYNm, cornerZ);
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
@@ -859,7 +891,9 @@ export function NexradVolumeOverlay({
   const hasEchoTops =
     showEchoTops && (echoTop18.count > 0 || echoTop30.count > 0 || echoTop50.count > 0);
   const hasCrossSection = showCrossSection && crossSectionData !== null;
-  if (!hasVolume && !hasEchoTops && !hasCrossSection) {
+  const hasSurfaceMosaic =
+    showSurfaceMosaic && compositeSurface !== null && compositeSurface.filledCellCount > 0;
+  if (!hasVolume && !hasEchoTops && !hasCrossSection && !hasSurfaceMosaic) {
     return null;
   }
 
@@ -869,6 +903,15 @@ export function NexradVolumeOverlay({
 
   return (
     <group scale={[1, verticalScale, 1]}>
+      {hasSurfaceMosaic && compositeSurface && (
+        <NexradSurfaceMosaic
+          composite={compositeSurface}
+          surfaceElevationFeet={surfaceElevationFeet}
+          opacity={opacity}
+          applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
+          refLat={refLat}
+        />
+      )}
       {showVolume && (
         <instancedMesh
           key={`mrms-base-${instanceCapacity}`}

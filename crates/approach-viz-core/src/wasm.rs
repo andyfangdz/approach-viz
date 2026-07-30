@@ -27,6 +27,7 @@ fn js_err<E: std::fmt::Display>(context: &str, error: E) -> JsValue {
 ///       space is resolved here in Rust; JS never pairs
 ///       `declutterIndices`/`validIndices` with payload columns)
 ///   `crossSection` — CrossSectionData | null
+///   `composite` — ground composite-reflectivity raster | null
 ///   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
 ///
 /// This eliminates all intermediate JS<->WASM boundary crossings for the
@@ -48,6 +49,8 @@ pub fn decode_and_prepare_mrms(
     slice_perp_z: f64,
     normalized_range: f64,
     half_width_nm: f64,
+    // ground composite-reflectivity raster (pass include_composite=false to skip)
+    include_composite: bool,
 ) -> Result<JsValue, JsValue> {
     // 1. Verify FB root — no decode/copy
     let fb = flatbuffers::root::<crate::generated::MrmsVolume>(data)
@@ -131,6 +134,39 @@ pub fn decode_and_prepare_mrms(
             set_prop(&cs_obj, "topEnvelopeFeet", &js_sys::Float32Array::from(&cs.top_envelope_feet[..]).into())?;
             set_prop(&cs_obj, "maxTopFeet", &JsValue::from(cs.max_top_feet))?;
             set_prop(&root, "crossSection", &cs_obj.into())?;
+        }
+    }
+
+    // -- ground composite reflectivity (column max over every level) --
+    let composite = if include_composite {
+        crate::mrms_render::build_composite_surface(
+            &vol_view,
+            fb.footprint_x_milli() as f32 / 1000.0,
+            fb.footprint_y_milli() as f32 / 1000.0,
+            min_dbz_tenths,
+            pm,
+        )
+        .map_err(|e| JsValue::from_str(&e))?
+    } else {
+        None
+    };
+    match &composite {
+        None => {
+            set_prop(&root, "composite", &JsValue::NULL)?;
+        }
+        Some(surface) => {
+            let obj = js_sys::Object::new();
+            set_prop(&obj, "width", &JsValue::from(surface.width))?;
+            set_prop(&obj, "height", &JsValue::from(surface.height))?;
+            set_prop(&obj, "originXNm", &JsValue::from(surface.origin_x_nm))?;
+            set_prop(&obj, "originZNm", &JsValue::from(surface.origin_z_nm))?;
+            set_prop(&obj, "cellSizeXNm", &JsValue::from(surface.cell_size_x_nm))?;
+            set_prop(&obj, "cellSizeZNm", &JsValue::from(surface.cell_size_z_nm))?;
+            set_prop(&obj, "dbzTenths", &js_sys::Int16Array::from(&surface.dbz_tenths[..]).into())?;
+            set_prop(&obj, "phaseCode", &js_sys::Uint8Array::from(&surface.phase_code[..]).into())?;
+            set_prop(&obj, "filledCellCount", &JsValue::from(surface.filled_cell_count))?;
+            set_prop(&obj, "maxDbzTenths", &JsValue::from(surface.max_dbz_tenths))?;
+            set_prop(&root, "composite", &obj.into())?;
         }
     }
 

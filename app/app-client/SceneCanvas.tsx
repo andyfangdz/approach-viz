@@ -373,6 +373,7 @@ export const SceneCanvas = memo(function SceneCanvas({
   const nexradVolumeEnabled = layers.mrms;
   const probSevereEnabled = layers.probsevere;
   const nexradShowEchoTops = layers.echotops;
+  const nexradShowSurfaceMosaic = layers.mosaic;
   const nexradShowAltitudeGuides = layers.guides;
   const nexradCrossSectionEnabled = layers.slice;
   const controlsRef = useRef<RecenterControlsApi | null>(null);
@@ -572,18 +573,20 @@ export const SceneCanvas = memo(function SceneCanvas({
           </SceneErrorBoundary>
         )}
 
-        {(nexradVolumeEnabled || nexradShowEchoTops) && (
+        {(nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) && (
           <NexradVolumeOverlay
             refLat={airport.lat}
             refLon={airport.lon}
             verticalScale={verticalScale}
             minDbz={nexradMinDbz}
-            enabled={nexradVolumeEnabled || nexradShowEchoTops}
+            enabled={nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic}
             showVolume={nexradVolumeEnabled}
             opacity={nexradOpacity}
             declutterMode={nexradDeclutterMode}
             phaseMode={nexradPhaseMode}
             showEchoTops={nexradShowEchoTops}
+            showSurfaceMosaic={nexradShowSurfaceMosaic}
+            surfaceElevationFeet={airport.elevation}
             showAltitudeGuides={nexradShowAltitudeGuides}
             showCrossSection={nexradCrossSectionEnabled}
             crossSectionHeadingDeg={nexradCrossSectionHeadingDeg}

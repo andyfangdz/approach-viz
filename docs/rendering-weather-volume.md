@@ -41,9 +41,22 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 - Supported modes: `All`, `Low`, `Mid`, `High`.
 - Declutter mode can also be cycled with the `V` key when focus is not in a form field.
 
+## Surface Mosaic (Ground Composite Reflectivity)
+
+- Optional ground layer (`Surface Mosaic`, layer id `mosaic`, default off) that drapes composite reflectivity beneath the 3D volume, so storms read as standing on a weather surface instead of floating in empty space.
+- Composite reflectivity is the **column maximum over every MRMS level**, computed from the volume payload already in flight — no additional product, request, or endpoint. Enabling the mosaic alone still fetches the volume (the layer rides the same poll gate as the 3D volume and the cross-section).
+- Independent of declutter selection on purpose: declutter hides altitude bands in the 3D volume, while the mosaic is a plan view of the whole column. The dBZ threshold and phase mode **do** apply, so mosaic and volume always agree on what counts as an echo and how it is colored.
+- Built by `crates/approach-viz-core/src/mrms_render.rs::build_composite_surface`, which reconstructs source-grid indices from brick centers. The runtime projects a regular lat/lon grid through constant per-degree scales, so `x_nm / footprintXNm` is a grid column index up to a constant offset that cancels once every brick is measured against the same minimum; a non-positive footprint or an implausible raster size fails loudly instead of rendering a skewed mosaic.
+- The raster is trimmed to the echo bounding box (not the full request window), is row-major with `x` varying fastest, and row 0 is the `-z` edge.
+- The worker colors the raster into RGBA with the same phase-aware dBZ band tables the voxels use (`nexrad-colors.ts`, shared with `nexrad-render.ts`), applies a dBZ-driven alpha ramp (0.5 at the threshold to 1.0 at 45 dBZ), and transfers the finished buffer to the main thread. Empty cells adjacent to filled ones inherit their neighbor's RGB with alpha still zero, so the mosaic's linear filtering does not fringe echo edges toward black.
+- Rendered as an explicit grid mesh in the local NM frame (no rotated plane) draped 200 ft above field elevation, with per-vertex earth-curvature drop in satellite/3D map modes so it stays registered to curved tiled surfaces. Terrain relief is not sampled, so the mosaic can clip through terrain in mountainous areas.
+- Filled-cell count and mosaic max dBZ are reported in the runtime debug panel.
+- Not yet drawn by the native iOS/macOS renderer.
+
 ## Altitude Guides
 
 - Optional 5,000-ft horizontal bands with labels to provide altitude reference in the volume.
+- Corner posts run from the surface to the top ring, closing the rings into a reference box so ring spacing reads as altitude rather than as stacked unrelated rectangles.
 
 ## Vertical Cross-Section
 

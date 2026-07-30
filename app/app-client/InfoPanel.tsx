@@ -80,6 +80,12 @@ export function InfoPanel({
             <span>MRMS 3D Precip</span>
           </div>
         )}
+        {layers.mosaic && (
+          <div className="legend-item">
+            <div className="legend-color nexrad-mosaic" />
+            <span>Surface Mosaic</span>
+          </div>
+        )}
         {layers.probsevere && (
           <div className="legend-item">
             <div className="legend-color probsevere" />
