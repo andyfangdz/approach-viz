@@ -228,6 +228,13 @@ export function readSurfaceMosaicDrapeFromSearch(search: string): 'flat' | 'terr
   return null;
 }
 
+export function readSurfaceMosaicProductFromSearch(search: string): 'composite' | 'base' | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('mosaicProduct');
+  if (value === 'composite' || value === 'base') return value;
+  return null;
+}
+
 export function readDeclutterModeFromSearch(search: string): 'all' | 'low' | 'mid' | 'high' | null {
   const params = new URLSearchParams(search);
   const value = params.get('declutter');

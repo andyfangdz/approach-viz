@@ -1,4 +1,9 @@
-import type { LayerState, LayerId, NexradSurfaceMosaicDrape } from './types';
+import type {
+  LayerState,
+  LayerId,
+  NexradSurfaceMosaicDrape,
+  NexradSurfaceMosaicProduct
+} from './types';
 
 export const DEFAULT_VERTICAL_SCALE = 3;
 export const DEFAULT_TERRAIN_RADIUS_NM = 50;
@@ -18,7 +23,8 @@ export const MIN_NEXRAD_OPACITY = 0.05;
 export const MAX_NEXRAD_OPACITY = 1;
 export const DEFAULT_NEXRAD_DECLUTTER_MODE = 'all';
 export const DEFAULT_NEXRAD_PHASE_MODE = 'surface';
-export const DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE: NexradSurfaceMosaicDrape = 'flat';
+export const DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE: NexradSurfaceMosaicDrape = 'terrain';
+export const DEFAULT_NEXRAD_SURFACE_MOSAIC_PRODUCT: NexradSurfaceMosaicProduct = 'composite';
 export const DEFAULT_CAMERA_CONTROL_MODE = 'orbit';
 export {
   MIN_OBSTACLE_RADIUS_NM,

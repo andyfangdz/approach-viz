@@ -23,7 +23,8 @@ import type {
   CameraControlMode,
   NexradDeclutterMode,
   NexradPhaseMode,
-  NexradSurfaceMosaicDrape
+  NexradSurfaceMosaicDrape,
+  NexradSurfaceMosaicProduct
 } from './types';
 
 const SLIDER_DEBOUNCE_MS = 150;
@@ -80,6 +81,11 @@ const PHASE_MODE_LABELS: Record<NexradPhaseMode, string> = {
   surface: 'Surface Precip Type'
 };
 
+const SURFACE_MOSAIC_PRODUCT_LABELS: Record<NexradSurfaceMosaicProduct, string> = {
+  composite: 'Composite (column max)',
+  base: 'Base (lowest echo)'
+};
+
 const SURFACE_MOSAIC_DRAPE_LABELS: Record<NexradSurfaceMosaicDrape, string> = {
   flat: 'Flat (field elevation)',
   terrain: 'Drape over terrain'
@@ -116,6 +122,8 @@ export function OptionsPanel({
   nexradPhaseMode,
   nexradSurfaceMosaicDrape,
   onNexradSurfaceMosaicDrapeChange,
+  nexradSurfaceMosaicProduct,
+  onNexradSurfaceMosaicProductChange,
   onNexradPhaseModeChange,
   nexradCrossSectionHeadingDeg,
   onNexradCrossSectionHeadingDegChange,
@@ -487,6 +495,32 @@ export function OptionsPanel({
               {PHASE_MODE_LABELS[mode]}
             </option>
           ))}
+        </select>
+      </label>
+
+      <label className="options-toggle-row">
+        <span className="options-toggle-copy">
+          <span className="options-toggle-title">Surface Mosaic Product</span>
+          <span className="options-toggle-note">
+            Composite is the strongest echo anywhere in the column; base is the lowest.
+          </span>
+        </span>
+        <select
+          className="options-inline-select"
+          value={nexradSurfaceMosaicProduct}
+          disabled={!layers.mosaic}
+          onChange={(event) =>
+            onNexradSurfaceMosaicProductChange(event.target.value as NexradSurfaceMosaicProduct)
+          }
+          aria-label="Surface mosaic reflectivity product"
+        >
+          {(Object.keys(SURFACE_MOSAIC_PRODUCT_LABELS) as NexradSurfaceMosaicProduct[]).map(
+            (mode) => (
+              <option key={mode} value={mode}>
+                {SURFACE_MOSAIC_PRODUCT_LABELS[mode]}
+              </option>
+            )
+          )}
         </select>
       </label>
 
