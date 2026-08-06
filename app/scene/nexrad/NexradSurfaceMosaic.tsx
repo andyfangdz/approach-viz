@@ -6,9 +6,18 @@ import { loadElevationSampler, type ElevationSampler } from '../terrain/terrariu
 import type { NexradCompositeSurface } from './nexrad-types';
 import { feetToNm } from './nexrad-render';
 
-/** Clearance above the base surface so the mosaic does not z-fight a plate, a
- *  sea-level-clamped tiled surface, or the terrain wireframe. */
+/** Clearance above the base surface so the mosaic does not z-fight a plate or
+ *  the terrain wireframe, whose elevations come from the same Terrarium
+ *  raster the drape samples. */
 const MOSAIC_LIFT_FEET = 200;
+/**
+ * Clearance in satellite / 3D map modes. There the ground is Google's
+ * photorealistic 3D tiles — third-party geometry at sub-meter detail — while
+ * the drape samples Terrarium at ~0.25 NM, which smooths ridges and fills
+ * valleys. The two disagree by a few hundred feet in steep terrain, so the
+ * mosaic needs more headroom to stay above the surface it is draped on.
+ */
+const TILED_MOSAIC_LIFT_FEET = 500;
 /** Segment count per axis when the mosaic only has to follow earth curvature.
  *  A flat mosaic on a flat surface needs a single quad. */
 const CURVED_MOSAIC_SEGMENTS = 64;
@@ -150,7 +159,8 @@ export function NexradSurfaceMosaic({
   const geometry = useMemo(() => {
     const widthNm = composite.width * composite.cellSizeXNm;
     const depthNm = composite.height * composite.cellSizeZNm;
-    const baseYNm = feetToNm(surfaceElevationFeet + MOSAIC_LIFT_FEET);
+    const liftFeet = applyEarthCurvatureCompensation ? TILED_MOSAIC_LIFT_FEET : MOSAIC_LIFT_FEET;
+    const baseYNm = feetToNm(surfaceElevationFeet + liftFeet);
 
     let segmentsX = 1;
     let segmentsZ = 1;
@@ -177,9 +187,7 @@ export function NexradSurfaceMosaic({
         const u = i / segmentsX;
         const x = composite.originXNm + u * widthNm;
         const vertex = j * (segmentsX + 1) + i;
-        const groundYNm = elevation
-          ? feetToNm(elevation.sampleFeet(x, z) + MOSAIC_LIFT_FEET)
-          : baseYNm;
+        const groundYNm = elevation ? feetToNm(elevation.sampleFeet(x, z) + liftFeet) : baseYNm;
         positions[vertex * 3] = x;
         positions[vertex * 3 + 1] = applyEarthCurvatureCompensation
           ? groundYNm - earthCurvatureDropNm(x, z, refLat)
@@ -227,6 +235,14 @@ export function NexradSurfaceMosaic({
         side={THREE.DoubleSide}
         toneMapped={false}
         fog={false}
+        // The mosaic is a decal on the ground: wherever it lands within depth
+        // precision of the surface it is draped on, the depth test alternates
+        // per fragment and speckles. A negative polygon offset biases it
+        // toward the camera in window depth, which handles the slope-dependent
+        // case that a fixed altitude lift cannot.
+        polygonOffset
+        polygonOffsetFactor={-2}
+        polygonOffsetUnits={-4}
       />
     </mesh>
   );

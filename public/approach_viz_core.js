@@ -224,7 +224,7 @@ export function decode_and_prepare_echo_top(data, apply_earth_curvature, ref_lat
  *       space is resolved here in Rust; JS never pairs
  *       `declutterIndices`/`validIndices` with payload columns)
  *   `crossSection` — CrossSectionData | null
- *   `composite` — ground composite-reflectivity raster | null
+ *   `composite` — ground reflectivity raster (composite or base) | null
  *   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
  *
  * This eliminates all intermediate JS<->WASM boundary crossings for the
@@ -243,12 +243,13 @@ export function decode_and_prepare_echo_top(data, apply_earth_curvature, ref_lat
  * @param {number} normalized_range
  * @param {number} half_width_nm
  * @param {boolean} include_composite
+ * @param {number} mosaic_product
  * @returns {any}
  */
-export function decode_and_prepare_mrms(data, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm, include_composite) {
+export function decode_and_prepare_mrms(data, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm, include_composite, mosaic_product) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_and_prepare_mrms(ptr0, len0, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm, include_composite);
+    const ret = wasm.decode_and_prepare_mrms(ptr0, len0, min_dbz_tenths, phase_mode, declutter_mode, apply_earth_curvature, ref_lat, include_cross_section, slice_axis_x, slice_axis_z, slice_perp_x, slice_perp_z, normalized_range, half_width_nm, include_composite, mosaic_product);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }

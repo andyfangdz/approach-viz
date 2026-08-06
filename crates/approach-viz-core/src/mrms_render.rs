@@ -92,8 +92,24 @@ pub const COMPOSITE_EMPTY_DBZ_TENTHS: i16 = i16::MIN;
 /// grid-index reconstruction below broke — not that the storm got big.
 const MAX_COMPOSITE_AXIS_CELLS: usize = 4096;
 
-/// Ground-level composite reflectivity raster: the column maximum over every
-/// MRMS level, on the source grid, for draping under the 3D volume.
+/// Which vertical reduction the ground mosaic applies to each column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MosaicProduct {
+    /// Column maximum over every level — standard composite reflectivity.
+    /// Shows the strongest echo anywhere in the column, including aloft.
+    Composite,
+    /// Lowest-altitude echo in each column — the analogue of base
+    /// reflectivity, and closer to what actually reaches the surface.
+    ///
+    /// MRMS levels are altitude-based (0.50 km MSL and up), so in high terrain
+    /// the lowest levels are underground and simply absent. This takes the
+    /// lowest level that *has* data rather than a fixed level index, which is
+    /// what a hybrid-scan base product does.
+    Base,
+}
+
+/// Ground-level reflectivity raster reduced from the 3D volume, on the source
+/// grid, for draping under the 3D volume.
 ///
 /// The raster is row-major with `x` (east) varying fastest. Cell `(col, row)`
 /// spans `origin_x_nm + col * cell_size_x_nm` to the next cell edge, and the
@@ -108,10 +124,10 @@ pub struct MrmsCompositeSurface {
     pub origin_z_nm: f32,
     pub cell_size_x_nm: f32,
     pub cell_size_z_nm: f32,
-    /// Column-max dBZ tenths per cell, or [`COMPOSITE_EMPTY_DBZ_TENTHS`].
+    /// Reduced dBZ tenths per cell, or [`COMPOSITE_EMPTY_DBZ_TENTHS`].
     pub dbz_tenths: Vec<i16>,
-    /// Phase of the voxel that supplied each cell's column max; rain in
-    /// empty cells (never sampled, because alpha is zero there).
+    /// Phase of the voxel that won each cell; rain in empty cells (never
+    /// sampled, because alpha is zero there).
     pub phase_code: Vec<u8>,
     pub filled_cell_count: u32,
     pub max_dbz_tenths: i16,
@@ -138,18 +154,22 @@ fn brick_cell_span(
     (col_start, col_start + span_x, row_start, row_start + span_y)
 }
 
-/// Build the ground composite-reflectivity raster by taking the column max
-/// over every level of the decoded volume.
+/// Build the ground reflectivity raster by reducing each column of the
+/// decoded volume with `product`.
 ///
 /// Independent of declutter selection on purpose: declutter hides altitude
 /// bands in the 3D volume, while the surface mosaic is a plan view of the
 /// whole column. Returns `Ok(None)` when no voxel reaches `min_dbz_tenths`.
+///
+/// The raster footprint does not depend on `product`: a column with any
+/// qualifying echo has both a composite and a base value.
 pub fn build_composite_surface(
     volume: &impl VolumeSource,
     footprint_base_x_nm: f32,
     footprint_base_y_nm: f32,
     min_dbz_tenths: i16,
     phase_mode: PhaseMode,
+    product: MosaicProduct,
 ) -> Result<Option<MrmsCompositeSurface>, String> {
     let footprint_x_nm = f64::from(footprint_base_x_nm);
     let footprint_y_nm = f64::from(footprint_base_y_nm);
@@ -194,10 +214,16 @@ pub fn build_composite_surface(
     let width = width as usize;
     let height = height as usize;
 
-    let mut dbz_tenths = vec![COMPOSITE_EMPTY_DBZ_TENTHS; width * height];
-    let mut phase_code = vec![PHASE_RAIN; width * height];
+    let cell_count = width * height;
+    let mut dbz_tenths = vec![COMPOSITE_EMPTY_DBZ_TENTHS; cell_count];
+    let mut phase_code = vec![PHASE_RAIN; cell_count];
+    // Base mode needs the altitude that currently owns each cell; composite
+    // mode compares on dBZ alone and never allocates this.
+    let mut selected_bottom_feet: Vec<u16> = match product {
+        MosaicProduct::Base => vec![u16::MAX; cell_count],
+        MosaicProduct::Composite => Vec::new(),
+    };
     let mut filled_cell_count: u32 = 0;
-    let mut max_dbz_tenths = COMPOSITE_EMPTY_DBZ_TENTHS;
 
     for i in 0..voxel_count {
         let voxel_dbz = volume.dbz_tenths(i);
@@ -214,7 +240,7 @@ pub fn build_composite_surface(
             PhaseMode::Surface => volume.surface_phase(i),
             PhaseMode::Altitude => volume.phase(i),
         };
-        max_dbz_tenths = max_dbz_tenths.max(voxel_dbz);
+        let voxel_bottom = volume.bottom_feet(i);
 
         for row in row0.max(0)..(row0 + span_y).min(height as i64) {
             let row_offset = row as usize * width;
@@ -222,14 +248,38 @@ pub fn build_composite_surface(
                 let cell = row_offset + col as usize;
                 if dbz_tenths[cell] == COMPOSITE_EMPTY_DBZ_TENTHS {
                     filled_cell_count += 1;
-                } else if dbz_tenths[cell] >= voxel_dbz {
-                    continue;
+                } else {
+                    let keep_existing = match product {
+                        MosaicProduct::Composite => dbz_tenths[cell] >= voxel_dbz,
+                        MosaicProduct::Base => {
+                            let owner_bottom = selected_bottom_feet[cell];
+                            voxel_bottom > owner_bottom
+                                // Same level: fall back to the stronger return.
+                                || (voxel_bottom == owner_bottom && dbz_tenths[cell] >= voxel_dbz)
+                        }
+                    };
+                    if keep_existing {
+                        continue;
+                    }
                 }
                 dbz_tenths[cell] = voxel_dbz;
                 phase_code[cell] = voxel_phase;
+                if product == MosaicProduct::Base {
+                    selected_bottom_feet[cell] = voxel_bottom;
+                }
             }
         }
     }
+
+    // Taken over the finished raster rather than over qualifying voxels, so it
+    // reports what the mosaic actually shows — base mode discards stronger
+    // echoes aloft.
+    let max_dbz_tenths = dbz_tenths
+        .iter()
+        .copied()
+        .filter(|value| *value != COMPOSITE_EMPTY_DBZ_TENTHS)
+        .max()
+        .unwrap_or(COMPOSITE_EMPTY_DBZ_TENTHS);
 
     Ok(Some(MrmsCompositeSurface {
         width: width as u32,
@@ -382,9 +432,16 @@ mod tests {
     #[test]
     fn composite_takes_column_max_over_the_reconstructed_grid() {
         let volume = composite_volume();
-        let surface = build_composite_surface(&volume, 0.5, 0.6, 50, PhaseMode::Altitude)
-            .expect("composite build should succeed")
-            .expect("composite should be present");
+        let surface = build_composite_surface(
+            &volume,
+            0.5,
+            0.6,
+            50,
+            PhaseMode::Altitude,
+            MosaicProduct::Composite,
+        )
+        .expect("composite build should succeed")
+        .expect("composite should be present");
 
         assert_eq!((surface.width, surface.height), (3, 2));
         // Cell (0,0) resolves to D (40 dBZ) rather than A (20 dBZ) beneath it.
@@ -414,9 +471,16 @@ mod tests {
     fn composite_threshold_shrinks_the_raster_to_qualifying_cells() {
         let volume = composite_volume();
         // 15 dBZ drops brick C, which is the only occupant of row 1.
-        let surface = build_composite_surface(&volume, 0.5, 0.6, 150, PhaseMode::Altitude)
-            .expect("composite build should succeed")
-            .expect("composite should be present");
+        let surface = build_composite_surface(
+            &volume,
+            0.5,
+            0.6,
+            150,
+            PhaseMode::Altitude,
+            MosaicProduct::Composite,
+        )
+        .expect("composite build should succeed")
+        .expect("composite should be present");
 
         assert_eq!((surface.width, surface.height), (3, 1));
         assert_eq!(surface.dbz_tenths, vec![400, 350, 350]);
@@ -426,9 +490,16 @@ mod tests {
     #[test]
     fn composite_surface_phase_mode_uses_the_surface_column() {
         let volume = composite_volume();
-        let surface = build_composite_surface(&volume, 0.5, 0.6, 50, PhaseMode::Surface)
-            .expect("composite build should succeed")
-            .expect("composite should be present");
+        let surface = build_composite_surface(
+            &volume,
+            0.5,
+            0.6,
+            50,
+            PhaseMode::Surface,
+            MosaicProduct::Composite,
+        )
+        .expect("composite build should succeed")
+        .expect("composite should be present");
 
         assert_eq!(
             surface.phase_code,
@@ -444,18 +515,102 @@ mod tests {
     }
 
     #[test]
+    fn base_product_takes_the_lowest_echo_in_each_column() {
+        let volume = composite_volume();
+        let surface = build_composite_surface(
+            &volume,
+            0.5,
+            0.6,
+            50,
+            PhaseMode::Altitude,
+            MosaicProduct::Base,
+        )
+        .expect("base build should succeed")
+        .expect("base raster should be present");
+
+        // Cell (0,0) has A at 1-3 kft (20 dBZ rain) under D at 9-11 kft
+        // (40 dBZ snow). Base takes the low one; composite took D.
+        assert_eq!(surface.dbz_tenths, vec![200, 350, 350, 100, 100, 100]);
+        assert_eq!(
+            surface.phase_code,
+            vec![
+                PHASE_RAIN,
+                PHASE_SNOW,
+                PHASE_SNOW,
+                PHASE_MIXED,
+                PHASE_MIXED,
+                PHASE_MIXED
+            ]
+        );
+        // The raster footprint is product-independent.
+        assert_eq!((surface.width, surface.height), (3, 2));
+        assert_eq!(surface.filled_cell_count, 6);
+        // Reported max reflects what is drawn, not the 40 dBZ echo aloft.
+        assert_eq!(surface.max_dbz_tenths, 350);
+    }
+
+    #[test]
+    fn base_and_composite_agree_where_a_column_has_one_level() {
+        let volume = composite_volume();
+        let composite = build_composite_surface(
+            &volume,
+            0.5,
+            0.6,
+            50,
+            PhaseMode::Altitude,
+            MosaicProduct::Composite,
+        )
+        .expect("composite build should succeed")
+        .expect("composite raster should be present");
+        let base = build_composite_surface(
+            &volume,
+            0.5,
+            0.6,
+            50,
+            PhaseMode::Altitude,
+            MosaicProduct::Base,
+        )
+        .expect("base build should succeed")
+        .expect("base raster should be present");
+
+        // Only cell (0,0) is stacked, so every other cell must match exactly.
+        assert_eq!(composite.dbz_tenths[1..], base.dbz_tenths[1..]);
+        assert_eq!(composite.phase_code[1..], base.phase_code[1..]);
+        assert_ne!(composite.dbz_tenths[0], base.dbz_tenths[0]);
+        // Same geometry either way, so the drape mesh is unaffected.
+        assert_eq!(
+            (composite.width, composite.height, composite.origin_x_nm),
+            (base.width, base.height, base.origin_x_nm)
+        );
+    }
+
+    #[test]
     fn composite_is_absent_when_nothing_reaches_the_threshold() {
         let volume = composite_volume();
-        let surface = build_composite_surface(&volume, 0.5, 0.6, 1_000, PhaseMode::Altitude)
-            .expect("composite build should succeed");
+        let surface = build_composite_surface(
+            &volume,
+            0.5,
+            0.6,
+            1_000,
+            PhaseMode::Altitude,
+            MosaicProduct::Composite,
+        )
+        .expect("composite build should succeed");
         assert!(surface.is_none());
     }
 
     #[test]
     fn composite_rejects_a_non_positive_footprint() {
         let volume = composite_volume();
-        let error = build_composite_surface(&volume, 0.0, 0.6, 50, PhaseMode::Altitude)
-            .expect_err("a zero footprint must fail loudly");
+        let error = build_composite_surface(
+            &volume,
+            0.0,
+            0.6,
+            50,
+            PhaseMode::Altitude,
+            MosaicProduct::Composite,
+        )
+        .expect_err("a zero footprint must fail loudly");
         assert!(error.contains("positive grid footprints"), "{error}");
     }
 

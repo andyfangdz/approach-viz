@@ -5,6 +5,7 @@ import {
   DEFAULT_NEXRAD_DECLUTTER_MODE,
   DEFAULT_NEXRAD_PHASE_MODE,
   DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE,
+  DEFAULT_NEXRAD_SURFACE_MOSAIC_PRODUCT,
   DEFAULT_CAMERA_CONTROL_MODE,
   DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
@@ -30,7 +31,8 @@ import type {
   CameraControlMode,
   NexradDeclutterMode,
   NexradPhaseMode,
-  NexradSurfaceMosaicDrape
+  NexradSurfaceMosaicDrape,
+  NexradSurfaceMosaicProduct
 } from '@/app/app-client/types';
 
 export function clampValue(value: number, min: number, max: number, fallback = min): number {
@@ -96,6 +98,14 @@ export function normalizeNexradSurfaceMosaicDrape(mode: unknown): NexradSurfaceM
   return NEXRAD_SURFACE_MOSAIC_DRAPES.includes(mode as NexradSurfaceMosaicDrape)
     ? (mode as NexradSurfaceMosaicDrape)
     : DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE;
+}
+
+export const NEXRAD_SURFACE_MOSAIC_PRODUCTS: NexradSurfaceMosaicProduct[] = ['composite', 'base'];
+
+export function normalizeNexradSurfaceMosaicProduct(mode: unknown): NexradSurfaceMosaicProduct {
+  return NEXRAD_SURFACE_MOSAIC_PRODUCTS.includes(mode as NexradSurfaceMosaicProduct)
+    ? (mode as NexradSurfaceMosaicProduct)
+    : DEFAULT_NEXRAD_SURFACE_MOSAIC_PRODUCT;
 }
 
 export const CAMERA_CONTROL_MODES: CameraControlMode[] = ['orbit', 'arcball', 'map'];

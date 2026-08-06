@@ -22,7 +22,11 @@ import {
   decode_and_prepare_echo_top
 } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
-import type { NexradPhaseMode, NexradDeclutterMode } from '../../app-client/types';
+import type {
+  NexradPhaseMode,
+  NexradDeclutterMode,
+  NexradSurfaceMosaicProduct
+} from '../../app-client/types';
 
 // --- Types exported from worker (moved from nexrad-worker-types.ts) ---
 
@@ -42,6 +46,7 @@ export interface NexradPollAndPrepareOptions {
   sliceAxis: { x: number; z: number };
   slicePerpAxis: { x: number; z: number };
   includeSurfaceMosaic: boolean;
+  surfaceMosaicProduct: NexradSurfaceMosaicProduct;
 }
 
 export interface NexradVolumePrepareOptions {
@@ -56,6 +61,7 @@ export interface NexradVolumePrepareOptions {
   sliceAxis: { x: number; z: number };
   slicePerpAxis: { x: number; z: number };
   includeSurfaceMosaic: boolean;
+  surfaceMosaicProduct: NexradSurfaceMosaicProduct;
 }
 
 export interface PollAndPrepareTimings {
@@ -275,6 +281,10 @@ function tallyPhaseCounts(phaseCode: Uint8Array, voxelCount: number): NexradPhas
   return counts;
 }
 
+function encodeSurfaceMosaicProduct(mode: NexradSurfaceMosaicProduct): number {
+  return mode === 'base' ? 1 : 0;
+}
+
 function encodePhaseMode(mode: NexradPhaseMode): number {
   return mode === 'surface' ? 1 : 0;
 }
@@ -374,7 +384,8 @@ export class NexradWorkerApi {
         options.slicePerpAxis.z,
         options.normalizedCrossSectionRange,
         options.crossSectionHalfWidthNm,
-        options.includeSurfaceMosaic
+        options.includeSurfaceMosaic,
+        encodeSurfaceMosaicProduct(options.surfaceMosaicProduct)
       ) as WasmDecodeAndPrepareMrmsResult;
 
       // Flat render-ready columns — the dual-index join already ran in Rust.
@@ -535,7 +546,8 @@ export class NexradWorkerApi {
       options.slicePerpAxis.z,
       options.normalizedCrossSectionRange,
       options.crossSectionHalfWidthNm,
-      options.includeSurfaceMosaic
+      options.includeSurfaceMosaic,
+      encodeSurfaceMosaicProduct(options.surfaceMosaicProduct)
     ) as WasmDecodeAndPrepareMrmsResult;
 
     const renderVolume: NexradRenderVolumeData = result.renderVolume;

@@ -125,7 +125,8 @@ export function NexradVolumeOverlay({
   phaseMode = 'thermo',
   showEchoTops = true,
   showSurfaceMosaic = false,
-  surfaceMosaicDrape = 'flat',
+  surfaceMosaicDrape = 'terrain',
+  surfaceMosaicProduct = 'composite',
   surfaceElevationFeet = 0,
   showAltitudeGuides = true,
   showCrossSection = false,
@@ -155,6 +156,8 @@ export function NexradVolumeOverlay({
   showEchoTopsRef.current = showEchoTops;
   const showSurfaceMosaicRef = useRef(showSurfaceMosaic);
   showSurfaceMosaicRef.current = showSurfaceMosaic;
+  const surfaceMosaicProductRef = useRef(surfaceMosaicProduct);
+  surfaceMosaicProductRef.current = surfaceMosaicProduct;
   const showCrossSectionRef = useRef(showCrossSection);
   showCrossSectionRef.current = showCrossSection;
   const minDbzRef = useRef(minDbz);
@@ -453,7 +456,8 @@ export function NexradVolumeOverlay({
           crossSectionHalfWidthNm: crossSectionHalfWidthNmRef.current,
           sliceAxis: sliceAxisRef.current,
           slicePerpAxis: slicePerpAxisRef.current,
-          includeSurfaceMosaic: showSurfaceMosaicRef.current
+          includeSurfaceMosaic: showSurfaceMosaicRef.current,
+          surfaceMosaicProduct: surfaceMosaicProductRef.current
         });
         volumeFetchMs = shouldFetchVolume ? (result.timings?.volumeFetchMs ?? null) : null;
         volumeDecodeMs = shouldFetchVolume ? (result.timings?.volumeDecodeMs ?? null) : null;
@@ -617,7 +621,8 @@ export function NexradVolumeOverlay({
           crossSectionHalfWidthNm,
           sliceAxis,
           slicePerpAxis,
-          includeSurfaceMosaic: showSurfaceMosaic
+          includeSurfaceMosaic: showSurfaceMosaic,
+          surfaceMosaicProduct
         });
         if (cancelled) return;
         setVolumeData(result.renderVolume);
@@ -647,6 +652,7 @@ export function NexradVolumeOverlay({
     applyEarthCurvatureCompensation,
     showCrossSection,
     showSurfaceMosaic,
+    surfaceMosaicProduct,
     normalizedCrossSectionRange,
     crossSectionHalfWidthNm,
     sliceAxis,

@@ -27,7 +27,7 @@ fn js_err<E: std::fmt::Display>(context: &str, error: E) -> JsValue {
 ///       space is resolved here in Rust; JS never pairs
 ///       `declutterIndices`/`validIndices` with payload columns)
 ///   `crossSection` — CrossSectionData | null
-///   `composite` — ground composite-reflectivity raster | null
+///   `composite` — ground reflectivity raster (composite or base) | null
 ///   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
 ///
 /// This eliminates all intermediate JS<->WASM boundary crossings for the
@@ -49,8 +49,10 @@ pub fn decode_and_prepare_mrms(
     slice_perp_z: f64,
     normalized_range: f64,
     half_width_nm: f64,
-    // ground composite-reflectivity raster (pass include_composite=false to skip)
+    // ground reflectivity raster (pass include_composite=false to skip)
     include_composite: bool,
+    // 0 = composite (column max), 1 = base (lowest echo)
+    mosaic_product: u8,
 ) -> Result<JsValue, JsValue> {
     // 1. Verify FB root — no decode/copy
     let fb = flatbuffers::root::<crate::generated::MrmsVolume>(data)
@@ -137,14 +139,19 @@ pub fn decode_and_prepare_mrms(
         }
     }
 
-    // -- ground composite reflectivity (column max over every level) --
+    // -- ground reflectivity raster (column max, or lowest echo) --
     let composite = if include_composite {
+        let mosaic = match mosaic_product {
+            1 => crate::mrms_render::MosaicProduct::Base,
+            _ => crate::mrms_render::MosaicProduct::Composite,
+        };
         crate::mrms_render::build_composite_surface(
             &vol_view,
             fb.footprint_x_milli() as f32 / 1000.0,
             fb.footprint_y_milli() as f32 / 1000.0,
             min_dbz_tenths,
             pm,
+            mosaic,
         )
         .map_err(|e| JsValue::from_str(&e))?
     } else {

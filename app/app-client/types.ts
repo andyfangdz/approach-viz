@@ -12,6 +12,9 @@ export type NexradPhaseMode = 'thermo' | 'surface';
 /** Base surface the ground mosaic is draped on: pinned to field elevation, or
  *  following sampled terrain relief. */
 export type NexradSurfaceMosaicDrape = 'flat' | 'terrain';
+/** Vertical reduction the ground mosaic applies to each column: the column
+ *  maximum (composite reflectivity) or the lowest echo (base reflectivity). */
+export type NexradSurfaceMosaicProduct = 'composite' | 'base';
 export type CameraControlMode = 'orbit' | 'arcball' | 'map';
 
 export interface NexradTimingDebugState {
@@ -160,6 +163,7 @@ export interface SceneCanvasProps {
   nexradDeclutterMode: NexradDeclutterMode;
   nexradPhaseMode: NexradPhaseMode;
   nexradSurfaceMosaicDrape: NexradSurfaceMosaicDrape;
+  nexradSurfaceMosaicProduct: NexradSurfaceMosaicProduct;
   nexradCrossSectionHeadingDeg: number;
   nexradCrossSectionRangeNm: number;
   obstacleRadiusNm: number;
@@ -223,6 +227,8 @@ export interface OptionsPanelProps {
   onNexradPhaseModeChange: (mode: NexradPhaseMode) => void;
   nexradSurfaceMosaicDrape: NexradSurfaceMosaicDrape;
   onNexradSurfaceMosaicDrapeChange: (mode: NexradSurfaceMosaicDrape) => void;
+  nexradSurfaceMosaicProduct: NexradSurfaceMosaicProduct;
+  onNexradSurfaceMosaicProductChange: (mode: NexradSurfaceMosaicProduct) => void;
   nexradCrossSectionHeadingDeg: number;
   onNexradCrossSectionHeadingDegChange: (headingDeg: number) => void;
   nexradCrossSectionRangeNm: number;
