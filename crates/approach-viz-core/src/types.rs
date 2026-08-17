@@ -21,11 +21,10 @@ pub const PHASE_SNOW: u8 = 2;
 // Rendering constants
 // ---------------------------------------------------------------------------
 
-pub const FEET_PER_NM: f64 = 6076.12;
-pub const ALTITUDE_SCALE: f64 = 1.0 / FEET_PER_NM;
+pub use crate::coords::{ALTITUDE_SCALE, FEET_PER_NM};
 
 // ---------------------------------------------------------------------------
-// MRMS preprocess constants (match app/scene/nexrad/nexrad-types.ts)
+// MRMS preprocess constants (Rust prepare pass)
 // ---------------------------------------------------------------------------
 
 pub const DECLUTTER_LOW_MAX_FEET: f64 = 10_000.0;

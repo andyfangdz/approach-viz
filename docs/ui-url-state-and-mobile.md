@@ -6,9 +6,9 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 - Airport selection is encoded in the URL path: `/<AIRPORT>` or `/<AIRPORT>/<PROCEDURE_ID>`.
 - For `/<AIRPORT>` without a procedure, if that airport appears in `DEFAULT_SELECTIONS`, one matching default approach from `DEFAULT_SELECTIONS` is applied. Explicit `/<AIRPORT>/<PROCEDURE_ID>` is always preserved.
-- Surface mode is a query parameter: `?surface=terrain`, `?surface=plate`, `?surface=3dplate`, or `?surface=satellite`.
+- Surface mode is a query parameter: `?surface=terrain`, `?surface=satellite`, `?surface=map`, or `?surface=3dmap`. FAA plates are an overlay (`?plate=on`), not a surface mode. Legacy `?surface=plate` / `?surface=3dplate` migrate to terrain+plate and satellite+plate.
 - Layer visibility is a query parameter: `?layers=-mrms,+echotops` (delta-from-defaults format). `+layerId` turns a default-off layer on; `-layerId` turns a default-on layer off. Omitting `?layers=` means use all defaults. URL layer state takes precedence over localStorage on page load.
-- MRMS phase detection mode is a query parameter: `?phaseMode=surface`. Default (`thermo`) is omitted from URL. Values: `thermo` (thermodynamic per-altitude), `surface` (surface precip type for entire column).
+- MRMS phase detection mode is a query parameter: `?phaseMode=thermo`. Default (`surface`) is omitted from URL. Values: `thermo` (thermodynamic per-altitude), `surface` (surface precip type for entire column).
 - MRMS declutter mode is a query parameter: `?declutter=low`. Default (`all`) is omitted from URL. Values: `all`, `low`, `mid`, `high`.
 - ADS-B traffic history duration is a query parameter: `?historyMin=10`. Default (`3`) is omitted from URL. Values: integer 1–30.
 - ADS-B callsign label visibility is a query parameter: `?callsigns=1`. Default (`0` / off) is omitted from URL. Values: `0`, `1`.
@@ -18,16 +18,19 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 Eight independent layer toggles control visibility of major scene overlays. The layers panel opens from a stacked-layers FAB between the gear and recenter buttons (bottom-right). It is mutually exclusive with the options panel — opening one closes the other.
 
-| Group         | Layer ID     | Label           | Default |
-| ------------- | ------------ | --------------- | ------- |
-| _(ungrouped)_ | `approach`   | Approach        | on      |
-| _(ungrouped)_ | `airspace`   | Airspace        | on      |
-| _(ungrouped)_ | `adsb`       | ADS-B Traffic   | on      |
-| Weather       | `mrms`       | MRMS 3D Precip  | off     |
-| Weather       | `probsevere` | ProbSevere      | on      |
-| Weather       | `echotops`   | Echo Tops       | off     |
-| Weather       | `slice`      | Vertical Slice  | off     |
-| Weather       | `guides`     | Altitude Guides | on      |
+| Group         | Layer ID     | Label                | Default |
+| ------------- | ------------ | -------------------- | ------- |
+| _(ungrouped)_ | `approach`   | Approach             | on      |
+| _(ungrouped)_ | `holdareas`  | Hold Protected Areas | off     |
+| _(ungrouped)_ | `airspace`   | Airspace             | on      |
+| _(ungrouped)_ | `adsb`       | ADS-B Traffic        | on      |
+| _(ungrouped)_ | `obstacles`  | Obstacles            | off     |
+| Weather       | `mrms`       | MRMS 3D Precip       | off     |
+| Weather       | `mosaic`     | Surface Mosaic       | off     |
+| Weather       | `probsevere` | ProbSevere           | on      |
+| Weather       | `echotops`   | Echo Tops            | off     |
+| Weather       | `slice`      | Vertical Slice       | off     |
+| Weather       | `guides`     | Altitude Guides      | on      |
 
 Layer state is persisted to both `localStorage` and the `?layers=` URL query parameter.
 

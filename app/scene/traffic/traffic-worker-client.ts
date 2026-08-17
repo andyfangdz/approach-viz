@@ -1,4 +1,3 @@
-import * as Comlink from 'comlink';
 import { ComlinkedWorkerClient } from '../shared/comlinked-worker-client';
 import type {
   TrafficWorkerApi,
@@ -45,14 +44,7 @@ export interface TrafficProcessResult {
   trackCount: number;
   historyPointCount: number;
   renderHash: number | null;
-  operation:
-    | 'reset'
-    | 'ingest'
-    | 'ingest-binary'
-    | 'ingest-runtime'
-    | 'recompute'
-    | 'prune-error'
-    | null;
+  operation: 'reset' | 'ingest' | 'ingest-runtime' | 'recompute' | 'prune-error' | null;
   workerTransport: 'transfer' | null;
   workerRoundTripMs: number | null;
   workerProcessingMs: number | null;
@@ -78,25 +70,6 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
 
   reset(options: TrafficProcessOptions): Promise<TrafficProcessResult> {
     return this.wrapResult(() => this.proxy.reset(options), 'reset');
-  }
-
-  ingestBinary(
-    payloadBuffer: ArrayBuffer,
-    historyPayloadBuffer: ArrayBuffer | undefined,
-    options: TrafficProcessOptions
-  ): Promise<TrafficProcessResult> {
-    return this.wrapResult(
-      () =>
-        this.proxy.ingestBinary(
-          Comlink.transfer(payloadBuffer, [payloadBuffer]),
-          historyPayloadBuffer
-            ? Comlink.transfer(historyPayloadBuffer, [historyPayloadBuffer])
-            : undefined,
-          options
-        ),
-      'ingest-binary',
-      'binary'
-    );
   }
 
   ingestRuntime(

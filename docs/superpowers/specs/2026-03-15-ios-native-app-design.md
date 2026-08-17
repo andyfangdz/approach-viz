@@ -1,5 +1,7 @@
 # iOS Native App — Design Spec
 
+> **Historical.** This spec describes the original SwiftUI + RealityKit MVP. RealityKit was removed; the shipped native apps are SwiftUI + MetalKit. Current behavior lives in [`docs/rendering-ios-native-mvp.md`](../../rendering-ios-native-mvp.md) and `AGENTS.md`.
+
 ## Context
 
 approach-viz is a 3D visualization of FAA instrument approaches, currently a Next.js web app using react-three-fiber/Three.js for rendering. The web app has inherent limitations: WebGL vs Metal performance, web worker overhead, touch gesture friction, and no native platform integration. This spec describes a native iOS rewrite targeting performance and platform feel, starting with a focused MVP.

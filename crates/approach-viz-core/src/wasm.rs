@@ -361,7 +361,8 @@ impl WasmTrafficState {
         };
 
         // History still needs owned Vecs for sort/dedup — collect from FB accessors.
-        let backfill_history = collect_fb_history(&fb, backfill_fb.as_ref())?;
+        let backfill_history = crate::traffic_merge::collect_fb_history(&fb, backfill_fb.as_ref())
+            .map_err(|error| JsValue::from_str(&error))?;
 
         // Collect tracked hexes directly from FB string vector (zero-copy &str).
         let mut tracked_set = std::collections::HashSet::new();
@@ -532,46 +533,6 @@ impl WasmTrafficState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Coordinate Helpers
-// ---------------------------------------------------------------------------
-
-/// Convert (lat, lon) to local scene coordinates relative to a reference point.
-///
-/// Returns a Float64Array of `[x, z]` where x = east (NM), z = -north (NM).
-#[wasm_bindgen]
-pub fn wasm_lat_lon_to_local(lat: f64, lon: f64, ref_lat: f64, ref_lon: f64) -> Box<[f64]> {
-    let (x, z) = crate::coords::lat_lon_to_local(lat, lon, ref_lat, ref_lon);
-    Box::new([x, z])
-}
-
-/// Scale an altitude in feet to scene Y units.
-#[wasm_bindgen]
-pub fn wasm_alt_to_y(alt_feet: f64, vertical_scale: f64) -> f64 {
-    crate::coords::alt_to_y(alt_feet, vertical_scale)
-}
-
-/// Approximate earth-curvature sag at a horizontal range, in nautical miles.
-#[wasm_bindgen]
-pub fn wasm_earth_curvature_drop_nm(x_nm: f64, z_nm: f64, ref_lat: f64) -> f64 {
-    crate::coords::earth_curvature_drop_nm(x_nm, z_nm, ref_lat)
-}
-
-/// WGS84 geocentric radius at the given latitude, in nautical miles.
-#[wasm_bindgen]
-pub fn wasm_geocentric_radius_nm(latitude_deg: f64) -> f64 {
-    crate::coords::geocentric_radius_nm(latitude_deg)
-}
-
-/// Projection scale factors at a given latitude, in NM per degree.
-///
-/// Returns a Float64Array of `[east_nm_per_lon_deg, north_nm_per_lat_deg]`.
-#[wasm_bindgen]
-pub fn wasm_projection_scales(lat_deg: f64) -> Box<[f64]> {
-    let (east, north) = crate::coords::projection_scales_nm_per_degree(lat_deg);
-    Box::new([east, north])
-}
-
 #[wasm_bindgen]
 pub fn approach_path_resolve_altitudes(params: JsValue) -> Result<JsValue, JsValue> {
     let params: crate::approach_path::ResolveApproachAltitudesParams =
@@ -658,69 +619,6 @@ pub fn approach_path_build_hold_points(
 /// Set a property on a JS object using `Reflect::set`.
 fn set_prop(obj: &js_sys::Object, key: &str, value: &JsValue) -> Result<(), JsValue> {
     js_sys::Reflect::set(obj, &JsValue::from_str(key), value)?;
-    Ok(())
-}
-
-
-/// Collect history groups from one or two FB payloads into owned BackfillHistory
-/// vectors. History points need owned Vecs for sort/dedup in merge, but we read
-/// the data directly from FB accessors (no intermediate DecodedTrafficPayload).
-fn collect_fb_history(
-    primary: &crate::generated::TrafficPayload<'_>,
-    backfill: Option<&crate::generated::TrafficPayload<'_>>,
-) -> Result<Vec<crate::traffic_merge::BackfillHistory>, JsValue> {
-    let mut result: Vec<crate::traffic_merge::BackfillHistory> = Vec::new();
-    collect_fb_history_from_payload(primary, &mut result)?;
-    if let Some(bp) = backfill {
-        collect_fb_history_from_payload(bp, &mut result)?;
-    }
-    Ok(result)
-}
-
-fn collect_fb_history_from_payload(
-    fb: &crate::generated::TrafficPayload<'_>,
-    out: &mut Vec<crate::traffic_merge::BackfillHistory>,
-) -> Result<(), JsValue> {
-    let hg_count = fb.history_group_count() as usize;
-    if hg_count == 0 {
-        return Ok(());
-    }
-    let total_hp = fb.history_point_count();
-    let hg_hex = fb.hg_hex();
-    let hg_start = fb.hg_point_start();
-    let hg_cnt = fb.hg_point_count();
-    let hp_ts = fb.hp_timestamp_ms();
-    let hp_lat = fb.hp_lat();
-    let hp_lon = fb.hp_lon();
-    let hp_alt = fb.hp_altitude_feet();
-
-    for i in 0..hg_count {
-        let hex = hg_hex.as_ref().map(|v| v.get(i)).unwrap_or("");
-        let ps = hg_start.as_ref().map(|v| v.get(i)).unwrap_or(0);
-        let pc = hg_cnt.as_ref().map(|v| v.get(i)).unwrap_or(0);
-
-        if ps as u64 + pc as u64 > total_hp as u64 {
-            return Err(JsValue::from_str(&format!(
-                "AVTR history overflow: start={ps}, count={pc}, total={total_hp}"
-            )));
-        }
-
-        let mut points = Vec::with_capacity(pc as usize);
-        for j in 0..pc as usize {
-            let idx = ps as usize + j;
-            points.push(crate::traffic_merge::TrafficHistoryPoint {
-                lat: hp_lat.as_ref().map(|v| v.get(idx)).unwrap_or(0.0) as f64,
-                lon: hp_lon.as_ref().map(|v| v.get(idx)).unwrap_or(0.0) as f64,
-                altitude_feet: hp_alt.as_ref().map(|v| v.get(idx)).unwrap_or(0.0) as f64,
-                timestamp_ms: hp_ts.as_ref().map(|v| v.get(idx)).unwrap_or(0),
-            });
-        }
-
-        out.push(crate::traffic_merge::BackfillHistory {
-            hex: hex.to_owned(),
-            points,
-        });
-    }
     Ok(())
 }
 

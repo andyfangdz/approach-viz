@@ -1,11 +1,8 @@
 import * as THREE from 'three';
-import type { NexradDeclutterMode } from '@/app/app-client/types';
 import type { DbzColorBand, EchoTopSoA, NexradRenderVolumeData } from './nexrad-types';
 import {
   PHASE_MIXED,
   PHASE_SNOW,
-  DECLUTTER_LOW_MAX_FEET,
-  DECLUTTER_MID_MAX_FEET,
   MIN_VOXEL_HEIGHT_NM,
   RAIN_DBZ_COLOR_BANDS,
   MIXED_DBZ_COLOR_BANDS,
@@ -179,23 +176,6 @@ export function applyVoxelInstances(
 
 export function feetToNm(feet: number): number {
   return feet * ALTITUDE_SCALE;
-}
-
-export function keepVoxelForDeclutter(
-  mode: NexradDeclutterMode,
-  bottomFeet: number,
-  topFeet: number
-): boolean {
-  if (mode === 'all') return true;
-  const centerFeet = (bottomFeet + topFeet) * 0.5;
-  if (mode === 'low') return centerFeet <= DECLUTTER_LOW_MAX_FEET;
-  if (mode === 'mid') {
-    return centerFeet > DECLUTTER_LOW_MAX_FEET && centerFeet <= DECLUTTER_MID_MAX_FEET;
-  }
-  if (mode === 'high') {
-    return centerFeet > DECLUTTER_MID_MAX_FEET;
-  }
-  return true;
 }
 
 export function applyConstantColorInstances(mesh: THREE.InstancedMesh | null, soa: EchoTopSoA) {

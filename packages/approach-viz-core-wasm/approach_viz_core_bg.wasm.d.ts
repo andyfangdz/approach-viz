@@ -9,11 +9,6 @@ export const approach_path_resolve_altitudes: (a: any) => [number, number, numbe
 export const approach_path_resolve_hold_leg_length_nm: (a: number, b: number, c: number, d: number, e: number) => number;
 export const decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
-export const wasm_alt_to_y: (a: number, b: number) => number;
-export const wasm_earth_curvature_drop_nm: (a: number, b: number, c: number) => number;
-export const wasm_geocentric_radius_nm: (a: number) => number;
-export const wasm_lat_lon_to_local: (a: number, b: number, c: number, d: number) => [number, number];
-export const wasm_projection_scales: (a: number) => [number, number];
 export const wasmtrafficstate_build_render_tracks: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
 export const wasmtrafficstate_merge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
 export const wasmtrafficstate_new: () => number;
@@ -26,5 +21,4 @@ export const __wbindgen_exn_store: (a: number) => void;
 export const __externref_table_alloc: () => number;
 export const __wbindgen_externrefs: WebAssembly.Table;
 export const __externref_table_dealloc: (a: number) => void;
-export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_start: () => void;

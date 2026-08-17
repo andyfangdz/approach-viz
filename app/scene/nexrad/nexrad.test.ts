@@ -24,6 +24,18 @@ test('buildEchoTopRequestUrl returns local API path when MRMS_BINARY_BASE_URL is
   assert.ok(url.includes('lat=40'));
 });
 
+test('direct binary base URLs use the canonical /v1/weather/* routes', () => {
+  const params = new URLSearchParams({ lat: '40', lon: '-90' });
+  assert.equal(
+    buildNexradRequestUrl(params, 'https://runtime.example'),
+    'https://runtime.example/v1/weather/volume?lat=40&lon=-90'
+  );
+  assert.equal(
+    buildEchoTopRequestUrl(params, 'https://runtime.example/'),
+    'https://runtime.example/v1/weather/echo-tops?lat=40&lon=-90'
+  );
+});
+
 test('extractPhaseDebugHeaderValues parses numeric and string headers', () => {
   const headers = new Headers({
     'x-av-phase-mode': 'thermo',

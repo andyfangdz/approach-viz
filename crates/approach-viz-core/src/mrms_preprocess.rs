@@ -434,7 +434,7 @@ pub fn prepare_volume(
     }
 }
 
-/// Declutter filter matching `keepVoxelForDeclutter` in TS.
+/// Declutter filter matching the web client's All/Low/Mid/High bands.
 fn keep_voxel_for_declutter(mode: DeclutterMode, bottom_feet: f64, top_feet: f64) -> bool {
     match mode {
         DeclutterMode::All => true,
@@ -628,25 +628,6 @@ pub fn prepare_echo_top_surfaces(
         footprint_x_nm: input.footprint_x_nm(),
         footprint_y_nm: input.footprint_y_nm(),
     }
-}
-
-// ---------------------------------------------------------------------------
-// 4. Echo-top summary metadata
-// ---------------------------------------------------------------------------
-
-/// Summary metadata from an echo-top payload (passed through to JS).
-#[derive(Debug, Clone)]
-pub struct EchoTopSummary {
-    pub source_cell_count: u32,
-    pub max_top18_feet: Option<f32>,
-    pub max_top30_feet: Option<f32>,
-    pub max_top50_feet: Option<f32>,
-    pub max_top60_feet: Option<f32>,
-    pub top18_timestamp: Option<String>,
-    pub top30_timestamp: Option<String>,
-    pub top50_timestamp: Option<String>,
-    pub top60_timestamp: Option<String>,
-    pub error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import type { ApproachPlate } from '@/lib/types';
 import type { ChartType } from '@/app/app-client/types';
 import { buildChartTexture } from '@/app/scene/ChartMapSurface';
+import { latLonToLocal } from './approach-path/coordinates';
 
 const METERS_TO_NM = 1 / 1852;
 const FEET_TO_METERS = 0.3048;
@@ -24,10 +25,6 @@ const SEA_LEVEL_Y = 0;
 const EARTH_RADIUS_NM = 3440.065;
 const SATELLITE_TILES_ERROR_TARGET = 12;
 const PLATE_RENDER_SCALE = 4;
-const DEG_TO_RAD = Math.PI / 180;
-const WGS84_SEMI_MAJOR_METERS = 6378137;
-const WGS84_FLATTENING = 1 / 298.257223563;
-const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 const PDF_WORKER_SRC = new URL(
   'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
   import.meta.url
@@ -196,26 +193,6 @@ function fitBilinearModel(
 
 function evaluateBilinear(coeff: [number, number, number, number], u: number, v: number): number {
   return coeff[0] + coeff[1] * u + coeff[2] * v + coeff[3] * u * v;
-}
-
-function latLonToLocal(
-  lat: number,
-  lon: number,
-  refLat: number,
-  refLon: number
-): { x: number; z: number } {
-  const phi = refLat * DEG_TO_RAD;
-  const sinPhi = Math.sin(phi);
-  const cosPhi = Math.cos(phi);
-  const denom = Math.sqrt(1 - WGS84_E2 * sinPhi * sinPhi);
-  const primeVerticalMeters = WGS84_SEMI_MAJOR_METERS / denom;
-  const meridionalMeters = (WGS84_SEMI_MAJOR_METERS * (1 - WGS84_E2)) / (denom * denom * denom);
-
-  const dLatRad = (lat - refLat) * DEG_TO_RAD;
-  const dLonRad = (lon - refLon) * DEG_TO_RAD;
-  const x = (dLonRad * primeVerticalMeters * cosPhi) / 1852;
-  const z = (-dLatRad * meridionalMeters) / 1852;
-  return { x, z };
 }
 
 function solveHomography(

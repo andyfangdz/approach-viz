@@ -6,7 +6,6 @@ import type { ChartType, LayerId, LayerState, SurfaceMode } from '@/app/app-clie
 
 export { DEFAULT_LAYER_STATE };
 
-const MAX_PICKER_RESULTS = 80;
 const MOBILE_BREAKPOINT_PX = 900;
 
 export interface SelectOption {
@@ -15,20 +14,6 @@ export interface SelectOption {
   searchText: string;
   source: 'cifp' | 'external';
   externalApproachName?: string;
-}
-
-function normalizeQuery(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-export function filterOptions(options: SelectOption[], query: string): SelectOption[] {
-  const normalized = normalizeQuery(query);
-  if (!normalized) {
-    return options.slice(0, MAX_PICKER_RESULTS);
-  }
-  return options
-    .filter((option) => option.searchText.includes(normalized))
-    .slice(0, MAX_PICKER_RESULTS);
 }
 
 export function isMobileViewport(): boolean {
