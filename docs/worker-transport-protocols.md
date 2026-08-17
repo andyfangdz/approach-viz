@@ -52,7 +52,7 @@ All workers use `Comlink.transfer()` to zero-copy transfer typed arrays (`ArrayB
 
 - Client: `app/scene/traffic/traffic-worker-client.ts`
 - Worker: `app/scene/traffic/traffic.worker.ts`
-- Binary payload decode: handled by WASM (`crates/approach-viz-core/src/traffic_codec.rs`)
+- Binary payload decode: handled by WASM (`FbAircraftView` + `collect_fb_history` in `crates/approach-viz-core/src/traffic_merge.rs`)
 
 ### Operations
 
@@ -89,7 +89,7 @@ Singleton management: module-level `sharedClient` with `activePollPromise` guard
 
 ### Operations
 
-- `resolveAltitudes(params)` — invokes the shared Rust WASM engine for altitude resolution
+- `resolveAltitudes(params)` — invokes the shared Rust WASM engine for altitude resolution, then `compose_approach_scene` for FAF-append / MAP-extension / hold listing
 - `buildPathGeometry(params)` — invokes the shared Rust WASM engine for path geometry and transfers `pointsFlat.buffer`
 
 The worker also uses the same Rust engine for hold geometry via direct WASM calls from `HoldPattern.tsx`, so there is no separate TypeScript geometry implementation left in the web app.

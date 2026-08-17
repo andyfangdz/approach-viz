@@ -161,6 +161,56 @@ pub struct BuildPathGeometryParams {
     pub show_turn_constraint_labels: bool,
 }
 
+pub const APPROACH_SCENE_SEGMENT_TRANSITION: &str = "transition";
+pub const APPROACH_SCENE_SEGMENT_FINAL: &str = "final";
+pub const APPROACH_SCENE_SEGMENT_MISSED: &str = "missed";
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "wasm", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "ios", derive(uniffi::Record))]
+pub struct ComposeApproachSceneParams {
+    pub final_legs: Vec<ApproachPathLeg>,
+    pub transition_entries: Vec<TransitionLegs>,
+    pub missed_legs: Vec<ApproachPathLeg>,
+    pub waypoints: Vec<ApproachWaypoint>,
+    pub final_altitudes: Vec<f64>,
+    pub transition_altitudes: Vec<TransitionAltitudeResult>,
+    pub missed_altitudes: Vec<f64>,
+    pub missed_path_altitudes: Vec<f64>,
+    pub airport_elevation: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "wasm", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "ios", derive(uniffi::Record))]
+pub struct ComposedPathSegment {
+    /// `"transition"` | `"final"` | `"missed"`.
+    pub kind: String,
+    pub name: Option<String>,
+    pub legs: Vec<ApproachPathLeg>,
+    pub resolved_altitudes: Vec<f64>,
+    pub show_turn_constraint_labels: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "wasm", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "ios", derive(uniffi::Record))]
+pub struct ComposedHoldLeg {
+    pub leg: ApproachPathLeg,
+    pub altitude_feet: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "wasm", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "ios", derive(uniffi::Record))]
+pub struct ComposedApproachScene {
+    pub segments: Vec<ComposedPathSegment>,
+    pub hold_legs: Vec<ComposedHoldLeg>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Vec2 {

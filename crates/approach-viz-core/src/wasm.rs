@@ -544,6 +544,16 @@ pub fn approach_path_resolve_altitudes(params: JsValue) -> Result<JsValue, JsVal
 }
 
 #[wasm_bindgen]
+pub fn approach_path_compose_scene(params: JsValue) -> Result<JsValue, JsValue> {
+    let params: crate::approach_path::ComposeApproachSceneParams =
+        serde_wasm_bindgen::from_value(params)
+            .map_err(|error| js_err("failed to decode approach scene compose params", error))?;
+    let result = crate::approach_path::compose_approach_scene(params);
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|error| js_err("failed to encode composed approach scene", error))
+}
+
+#[wasm_bindgen]
 pub fn approach_path_build_geometry(params: JsValue) -> Result<JsValue, JsValue> {
     let params: crate::approach_path::BuildPathGeometryParams =
         serde_wasm_bindgen::from_value(params)

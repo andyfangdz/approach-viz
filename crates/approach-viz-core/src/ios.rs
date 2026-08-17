@@ -197,6 +197,13 @@ pub fn resolve_approach_altitudes(
 }
 
 #[uniffi::export]
+pub fn compose_approach_scene(
+    params: approach_path::ComposeApproachSceneParams,
+) -> approach_path::ComposedApproachScene {
+    approach_path::compose_approach_scene(params)
+}
+
+#[uniffi::export]
 pub fn build_approach_path_geometry(
     params: approach_path::BuildPathGeometryParams,
 ) -> approach_path::PathGeometryResult {

@@ -6,6 +6,7 @@ import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import {
   approach_path_build_geometry,
   approach_path_build_hold_protected_area,
+  approach_path_compose_scene,
   approach_path_resolve_altitudes,
   approach_path_resolve_hold_leg_length_nm,
   initSync
@@ -564,4 +565,62 @@ test('rust wasm hold protected area returns closed primary and secondary rings',
   const maxPrimary = Math.max(...area.primary.map((p) => Math.hypot(p.x, p.z)));
   const maxSecondary = Math.max(...area.secondary.map((p) => Math.hypot(p.x, p.z)));
   assert.ok(maxSecondary > maxPrimary + 1.5);
+});
+
+test('rust wasm compose_approach_scene appends roll-out join and extends final through MAP', () => {
+  const inbound = makeLeg({
+    sequence: 20,
+    waypointId: 'FAF',
+    pathTerminator: 'CF',
+    course: 90,
+    altitude: 2000,
+    isMissedApproach: true
+  });
+  const ci = makeLeg({
+    sequence: 10,
+    waypointId: 'IF',
+    pathTerminator: 'CI',
+    altitude: 3000
+  });
+  const map = makeLeg({
+    sequence: 30,
+    waypointId: 'MAP',
+    pathTerminator: 'CF',
+    course: 90,
+    altitude: 0,
+    isMissedApproach: true
+  });
+  const scene = approach_path_compose_scene({
+    finalLegs: [inbound],
+    transitionEntries: [{ name: 'FLACK', legs: [ci] }],
+    missedLegs: [map],
+    waypoints: [localWaypoint('MAP', 1, 0)],
+    finalAltitudes: [2100],
+    transitionAltitudes: [{ name: 'FLACK', altitudes: [3100] }],
+    missedAltitudes: [0],
+    missedPathAltitudes: [800],
+    airportElevation: 100
+  }) as {
+    segments: Array<{
+      kind: string;
+      name?: string | null;
+      legs: ApproachLeg[];
+      resolvedAltitudes: number[];
+      showTurnConstraintLabels: boolean;
+    }>;
+    holdLegs: unknown[];
+  };
+  const transition = scene.segments.find((segment) => segment.kind === 'transition');
+  assert.ok(transition);
+  assert.equal(transition?.name, 'FLACK');
+  assert.equal(transition?.legs.length, 2);
+  assert.equal(transition?.legs[1]?.waypointId, 'FAF');
+  assert.equal(transition?.legs[1]?.isMissedApproach, false);
+  assert.deepEqual(transition?.resolvedAltitudes, [3100, 2000]);
+  const final = scene.segments.find((segment) => segment.kind === 'final');
+  assert.equal(final?.legs.length, 2);
+  assert.equal(final?.legs[1]?.waypointId, 'MAP');
+  const missed = scene.segments.find((segment) => segment.kind === 'missed');
+  assert.equal(missed?.showTurnConstraintLabels, true);
+  assert.deepEqual(missed?.resolvedAltitudes, [800]);
 });

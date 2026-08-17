@@ -1,15 +1,18 @@
-//! Shared approach-path engine: altitude resolution, path geometry assembly,
-//! and hold-pattern generation. Consumed by web (WASM) and iOS (UniFFI).
+//! Shared approach-path engine: altitude resolution, scene composition,
+//! path geometry assembly, and hold-pattern generation. Consumed by web
+//! (WASM) and iOS (UniFFI).
 
 use std::f64::consts::PI;
 
 mod altitudes;
+mod compose;
 mod geometry;
 mod holds;
 mod support;
 mod types;
 
 pub use altitudes::*;
+pub use compose::*;
 pub use geometry::*;
 pub use holds::*;
 pub use types::*;

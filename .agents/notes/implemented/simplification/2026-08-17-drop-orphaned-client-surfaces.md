@@ -19,10 +19,6 @@ Delete the unused constants, helpers, worker method, and coordinate binding expo
 
 ## Alternatives considered
 
-**Delete the owned FlatBuffers decode path in the same change.** `decode_mrms_fb` / `decode_echo_top_fb` / `decode_traffic_fb` still have no production callers, but tests build `DecodedMrmsVolume` by hand. Folding that surface needs a dedicated fixture rewrite; it is tracked separately.
-
-**Rewrite approach scene composition into Rust now.** Web `ApproachPath.tsx` and iOS `ApproachPathGeometry.swift` still duplicate FAF-append / MAP-extension. That is real duplication, but it is load-bearing geometry and needs plate-visual-check coverage, not a drive-by delete.
-
 **Leave README/plans untouched.** Agents still treated the RealityKit superpowers plan as current (`REQUIRED: execute this plan`). Doc drift was cheaper to fix than another mistaken native rewrite.
 
 ## Consequences

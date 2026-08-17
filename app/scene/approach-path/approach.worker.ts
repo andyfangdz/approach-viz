@@ -5,6 +5,7 @@ import type { TurnConstraintLabel, VerticalLineData } from './types';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   approach_path_build_geometry,
+  approach_path_compose_scene,
   approach_path_resolve_altitudes
 } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 
@@ -20,11 +21,24 @@ export interface ResolveAltitudesParams {
   missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
 }
 
+export interface ComposedPathSegment {
+  kind: string;
+  name?: string | null;
+  legs: ApproachLeg[];
+  resolvedAltitudes: number[];
+  showTurnConstraintLabels: boolean;
+}
+
+export interface ComposedApproachScene {
+  segments: ComposedPathSegment[];
+}
+
 export interface AltitudeResult {
   finalAltitudes: number[];
   transitionAltitudes: [string, number[]][];
   missedAltitudes: number[];
   missedPathAltitudes: number[];
+  composed: ComposedApproachScene;
 }
 
 export interface BuildPathGeometryParams {
@@ -66,6 +80,17 @@ export class ApproachWorkerApi {
       missedAltitudes: number[];
       missedPathAltitudes: number[];
     };
+    const composed = approach_path_compose_scene({
+      finalLegs: params.finalLegs,
+      transitionEntries: params.transitionEntries.map(([name, legs]) => ({ name, legs })),
+      missedLegs: params.missedLegs,
+      waypoints: params.waypoints.map(([, waypoint]) => waypoint),
+      finalAltitudes: result.finalAltitudes,
+      transitionAltitudes: result.transitionAltitudes,
+      missedAltitudes: result.missedAltitudes,
+      missedPathAltitudes: result.missedPathAltitudes,
+      airportElevation: params.airportElevation
+    }) as ComposedApproachScene;
     return {
       finalAltitudes: result.finalAltitudes,
       transitionAltitudes: result.transitionAltitudes.map(({ name, altitudes }) => [
@@ -73,7 +98,8 @@ export class ApproachWorkerApi {
         altitudes
       ]),
       missedAltitudes: result.missedAltitudes,
-      missedPathAltitudes: result.missedPathAltitudes
+      missedPathAltitudes: result.missedPathAltitudes,
+      composed
     };
   }
 

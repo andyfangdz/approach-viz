@@ -174,6 +174,18 @@ export function approach_path_build_hold_protected_area(center_x, center_z, head
  * @param {any} params
  * @returns {any}
  */
+export function approach_path_compose_scene(params) {
+    const ret = wasm.approach_path_compose_scene(params);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * @param {any} params
+ * @returns {any}
+ */
 export function approach_path_resolve_altitudes(params) {
     const ret = wasm.approach_path_resolve_altitudes(params);
     if (ret[2]) {

@@ -11,13 +11,12 @@
  *                                      and a ready-to-run overlay command
  *
  * The generated test resolves altitudes through the shared engine and composes
- * segments exactly the way the scene does (see `app/scene/ApproachPath.tsx`):
+ * segments via `compose_approach_scene` (the same function web and iOS call):
  * the final path extends through the first missed-approach fix when it
  * resolves, transitions ending in `CI`/`VI`/`AF`/`RF` get the final's first
  * course-carrying leg appended (consumed by the engine's roll-out/lead-turn
  * handling), and hold legs (`HM`/`HF`/`HA`) are dumped as separate hold
- * segments via `build_hold_geometry`. Keep this composition in sync with
- * `ApproachPath.tsx` when scene composition changes.
+ * segments via `build_hold_geometry`.
  *
  * Usage (from the repo root):
  *   npx tsx .agents/skills/approach-plate-visual-check/scripts/extract_geometry.ts KACK:S24 KDDC:I14
@@ -341,6 +340,21 @@ fn dump_plate_geometry() {
             missed_approach_start_altitude_feet: None,
             missed_approach_climb_requirement: None,
         });
+        let composed = compose_approach_scene(ComposeApproachSceneParams {
+            final_legs: p.final_legs.clone(),
+            transition_entries: p
+                .transitions
+                .iter()
+                .map(|(name, legs)| TransitionLegs { name: name.clone(), legs: legs.clone() })
+                .collect(),
+            missed_legs: p.missed_legs.clone(),
+            waypoints: p.waypoints.clone(),
+            final_altitudes: resolved.final_altitudes.clone(),
+            transition_altitudes: resolved.transition_altitudes.clone(),
+            missed_altitudes: resolved.missed_altitudes.clone(),
+            missed_path_altitudes: resolved.missed_path_altitudes.clone(),
+            airport_elevation: p.elevation,
+        });
         let wp_map = waypoint_map(&p.waypoints);
         let mut file =
             std::fs::File::create(format!("{out_dir}/plate_geometry_{}.txt", p.key)).unwrap();
@@ -355,58 +369,22 @@ fn dump_plate_geometry() {
             writeln!(file, "FIX {short} {x:.4} {z:.4}").unwrap();
         }
 
-        // Final path: finalLegs + the first missed leg when that fix resolves
-        // (ApproachPath.tsx finalPathLegs). The appended leg keeps the resolved
-        // missed altitude (it is the same leg object in the web's altitude map).
-        let mut final_legs = p.final_legs.clone();
-        let mut final_alts = resolved.final_altitudes.clone();
-        if let Some(map_leg) = p.missed_legs.first() {
-            if resolve_waypoint(&wp_map, &map_leg.waypoint_id).is_some() {
-                final_legs.push(map_leg.clone());
-                final_alts.push(resolved.missed_altitudes.first().copied().unwrap_or(0.0));
-            }
-        }
-        if !final_legs.is_empty() {
+        let mut ordered: Vec<&ComposedPathSegment> = Vec::new();
+        ordered.extend(composed.segments.iter().filter(|s| s.kind == APPROACH_SCENE_SEGMENT_FINAL));
+        ordered.extend(composed.segments.iter().filter(|s| s.kind == APPROACH_SCENE_SEGMENT_TRANSITION));
+        ordered.extend(composed.segments.iter().filter(|s| s.kind == APPROACH_SCENE_SEGMENT_MISSED));
+        for segment in ordered {
+            let label = match segment.kind.as_str() {
+                APPROACH_SCENE_SEGMENT_FINAL => "final".to_string(),
+                APPROACH_SCENE_SEGMENT_MISSED => "missed".to_string(),
+                APPROACH_SCENE_SEGMENT_TRANSITION => format!(
+                    "transition:{}",
+                    segment.name.as_deref().unwrap_or("").replace(' ', "_")
+                ),
+                other => other.to_string(),
+            };
             dump_plate_seg(
-                &mut file, "final", final_legs, final_alts, p.waypoints.clone(),
-                p.elevation, p.ref_lat, p.ref_lon, p.mag_var,
-            );
-        }
-
-        // Transitions: append the final's first course-carrying leg to CI/VI/AF/RF
-        // enders (ApproachPath.tsx renderTransitions). The appended copy is NOT in
-        // the web's resolved-altitude map, so it falls back to leg.altitude ?? 0.
-        let inbound = p
-            .final_legs
-            .iter()
-            .find(|l| l.course.map(|c| c.is_finite()).unwrap_or(false))
-            .cloned();
-        for (t, (name, legs)) in p.transitions.iter().enumerate() {
-            let mut legs = legs.clone();
-            let mut alts = resolved
-                .transition_altitudes
-                .get(t)
-                .map(|r| r.altitudes.clone())
-                .unwrap_or_default();
-            let last_pt = legs.last().map(|l| l.path_terminator.clone()).unwrap_or_default();
-            if matches!(last_pt.as_str(), "CI" | "VI" | "AF" | "RF") {
-                if let Some(inbound) = &inbound {
-                    let mut join = inbound.clone();
-                    join.is_missed_approach = false;
-                    alts.push(join.altitude.unwrap_or(0.0));
-                    legs.push(join);
-                }
-            }
-            let label = format!("transition:{}", name.replace(' ', "_"));
-            dump_plate_seg(
-                &mut file, &label, legs, alts, p.waypoints.clone(),
-                p.elevation, p.ref_lat, p.ref_lon, p.mag_var,
-            );
-        }
-
-        if !p.missed_legs.is_empty() {
-            dump_plate_seg(
-                &mut file, "missed", p.missed_legs.clone(), resolved.missed_path_altitudes.clone(),
+                &mut file, &label, segment.legs.clone(), segment.resolved_altitudes.clone(),
                 p.waypoints.clone(), p.elevation, p.ref_lat, p.ref_lon, p.mag_var,
             );
         }
@@ -414,29 +392,10 @@ fn dump_plate_geometry() {
         // Holds (HoldPattern.tsx): heading = mag course + mag_var, leg length
         // via the shared resolver (published distance, else published/standard
         // time at the altitude's max holding speed), right turns by default,
-        // altitude from the resolved map.
-        let mut hold_sources: Vec<(f64, &ApproachPathLeg)> = Vec::new();
-        for (i, leg) in p.final_legs.iter().enumerate() {
-            let alt = resolved.final_altitudes.get(i).copied().or(leg.altitude).unwrap_or(p.elevation);
-            hold_sources.push((alt, leg));
-        }
-        for (t, (_, legs)) in p.transitions.iter().enumerate() {
-            for (i, leg) in legs.iter().enumerate() {
-                let alt = resolved
-                    .transition_altitudes
-                    .get(t)
-                    .and_then(|r| r.altitudes.get(i))
-                    .copied()
-                    .or(leg.altitude)
-                    .unwrap_or(p.elevation);
-                hold_sources.push((alt, leg));
-            }
-        }
-        for (i, leg) in p.missed_legs.iter().enumerate() {
-            let alt = resolved.missed_altitudes.get(i).copied().or(leg.altitude).unwrap_or(p.elevation);
-            hold_sources.push((alt, leg));
-        }
-        for (altitude, leg) in hold_sources {
+        // altitude from the composed hold list.
+        for hold in &composed.hold_legs {
+            let leg = &hold.leg;
+            let altitude = hold.altitude_feet;
             if !matches!(leg.path_terminator.as_str(), "HM" | "HF" | "HA") {
                 continue;
             }

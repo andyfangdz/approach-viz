@@ -77,7 +77,7 @@ export function PathTube({
 }: {
   legs: ApproachLeg[];
   waypoints: Map<string, Waypoint>;
-  resolvedAltitudes: Map<ApproachLeg, number>;
+  resolvedAltitudes: number[];
   initialAltitudeFeet: number;
   verticalScale: number;
   refLat: number;
@@ -97,13 +97,10 @@ export function PathTube({
 
   useEffect(() => {
     let cancelled = false;
-    const resolvedAltitudesByLeg = legs.map(
-      (leg) => resolvedAltitudes.get(leg) ?? leg.altitude ?? 0
-    );
     void buildPathGeometryWithWorker({
       legs,
       waypoints: Array.from(waypoints.entries()),
-      resolvedAltitudes: resolvedAltitudesByLeg,
+      resolvedAltitudes,
       initialAltitudeFeet,
       verticalScale,
       refLat,
