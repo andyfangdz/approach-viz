@@ -20,7 +20,7 @@
 
 ## Scene and Geometry Boundaries
 
-- `app/scene/ApproachPath.tsx` is an orchestration layer and resolves altitude profiles through a worker-backed compute path (`app/scene/approach-path/approach.worker.ts`), which is a thin WASM adapter over the shared Rust engine in `crates/approach-viz-core/src/approach_path.rs` (including `compose_approach_scene` for FAF-append / MAP-extension); worker failures surface explicitly instead of falling back to synchronous compute. When the selected approach or airport changes, it clears composed segments and resolved altitudes at the start of the worker request so the previous procedure is not rendered against the new reference frame.
+- `app/scene/ApproachPath.tsx` is an orchestration layer and resolves altitude profiles through a worker-backed compute path (`app/scene/approach-path/approach.worker.ts`), which is a thin WASM adapter over the shared Rust engine in `crates/approach-viz-core/src/approach_path.rs` (including `compose_approach_scene` for FAF-append / MAP-extension); worker failures surface explicitly instead of falling back to synchronous compute. When the selected approach or airport changes, composed worker state is keyed to that selection and reset during render so the previous procedure is not painted against the new reference frame.
 - Geometry/altitude/math/marker primitives are split into `app/scene/approach-path/*`.
 - `app/scene/approach-path/PathTube.tsx` builds path geometry through the same approach worker pipeline and surfaces worker failures instead of local synchronous geometry fallback.
 - `app/scene/approach-path/PathTube.tsx` receives geometry points from worker as a transferable flat `Float32Array` buffer (`pointsFlat`) to reduce worker->main thread clone overhead.

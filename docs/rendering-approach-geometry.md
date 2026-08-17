@@ -1,6 +1,6 @@
 # Rendering Approach Geometry
 
-- Scene composition (`compose_approach_scene`) owns FAF/localizer roll-out append onto `CI`/`VI`/`AF`/`RF` transitions, final-through-first-missed-fix when that MAP waypoint resolves (no extra altitude `> 0` gate), and hold listing from the original procedure legs. Web (`ApproachPath.tsx`) and native (`ApproachPathGeometry.swift`) plus the plate-visual-check dump are thin adapters; they do not reimplement that policy. The web overlay clears previous composed segments and resolved altitudes as soon as a new worker request starts, so a selection change never draws the old procedure in the new airport frame while the replacement result is in flight.
+- Scene composition (`compose_approach_scene`) owns FAF/localizer roll-out append onto `CI`/`VI`/`AF`/`RF` transitions, final-through-first-missed-fix when that MAP waypoint resolves (no extra altitude `> 0` gate), and hold listing from the original procedure legs. Web (`ApproachPath.tsx`) and native (`ApproachPathGeometry.swift`) plus the plate-visual-check dump are thin adapters; they do not reimplement that policy. The web overlay keys composed worker state to the selected airport and procedure and resets that state during render (React discards the mismatched commit), so a selection change never paints the previous procedure in the new airport frame.
 
 ## Final Approach Vertical Profile
 

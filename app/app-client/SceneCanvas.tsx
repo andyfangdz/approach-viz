@@ -522,6 +522,7 @@ export const SceneCanvas = memo(function SceneCanvas({
 
         {approachVisible && contextApproach && (
           <ApproachPath
+            key={`${airport.id}:${contextApproach.procedureId}`}
             approach={contextApproach}
             waypoints={waypoints}
             airport={airport}

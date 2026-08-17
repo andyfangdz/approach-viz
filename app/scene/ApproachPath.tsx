@@ -25,6 +25,14 @@ interface ApproachPathProps {
   showHoldProtectedAreas?: boolean;
 }
 
+type ComposedPathSegment = {
+  kind: string;
+  name?: string | null;
+  legs: ApproachLeg[];
+  resolvedAltitudes: number[];
+  showTurnConstraintLabels: boolean;
+};
+
 export const ApproachPath = memo(function ApproachPath({
   approach,
   waypoints,
@@ -48,24 +56,33 @@ export const ApproachPath = memo(function ApproachPath({
     return legs;
   }, [approach]);
 
-  const [resolvedAltitudes, setResolvedAltitudes] = useState<Map<ApproachLeg, number>>(new Map());
-  const [pathSegments, setPathSegments] = useState<
-    Array<{
-      kind: string;
-      name?: string | null;
-      legs: ApproachLeg[];
-      resolvedAltitudes: number[];
-      showTurnConstraintLabels: boolean;
-    }>
-  >([]);
+  const compositionKey = `${airport.id}:${approach.procedureId}`;
+  const [composed, setComposed] = useState<{
+    key: string;
+    altitudes: Map<ApproachLeg, number>;
+    segments: ComposedPathSegment[];
+  }>(() => ({
+    key: compositionKey,
+    altitudes: new Map(),
+    segments: []
+  }));
+
+  // Reset during render so React discards the mismatched commit. An effect-only
+  // clear would still paint one frame of the previous procedure at the new
+  // airport/waypoint frame.
+  if (composed.key !== compositionKey) {
+    setComposed({
+      key: compositionKey,
+      altitudes: new Map(),
+      segments: []
+    });
+  }
+
+  const resolvedAltitudes = composed.key === compositionKey ? composed.altitudes : new Map();
+  const pathSegments = composed.key === compositionKey ? composed.segments : [];
 
   useEffect(() => {
     let cancelled = false;
-    // Drop the previous procedure immediately. Composed segments carry legs from
-    // the last worker result; leaving them in place would draw the old path at
-    // the new airport/waypoint frame until the replacement result arrives.
-    setResolvedAltitudes(new Map());
-    setPathSegments([]);
     const transitionEntries = Array.from(approach.transitions.entries());
 
     void resolveApproachAltitudesWithWorker({
@@ -95,14 +112,20 @@ export const ApproachPath = memo(function ApproachPath({
         for (let i = 0; i < approach.missedLegs.length; i += 1) {
           nextResolved.set(approach.missedLegs[i], resolved.missedAltitudes[i] ?? 0);
         }
-        setResolvedAltitudes(nextResolved);
-        setPathSegments(resolved.composed.segments);
+        setComposed({
+          key: compositionKey,
+          altitudes: nextResolved,
+          segments: resolved.composed.segments
+        });
       })
       .catch((error) => {
         if (cancelled) return;
         console.error('Approach altitude worker failed.', error);
-        setResolvedAltitudes(new Map());
-        setPathSegments([]);
+        setComposed({
+          key: compositionKey,
+          altitudes: new Map(),
+          segments: []
+        });
       });
 
     return () => {
@@ -117,7 +140,8 @@ export const ApproachPath = memo(function ApproachPath({
     refLon,
     airport.elevation,
     missedApproachStartAltitudeFeet,
-    missedApproachClimbRequirement
+    missedApproachClimbRequirement,
+    compositionKey
   ]);
 
   const uniqueWaypoints = useMemo(
