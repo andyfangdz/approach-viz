@@ -120,29 +120,23 @@ export const SECTIONS: Section[] = [
             rows: [
               [
                 '`approach_path/`',
-                'Altitude resolution, path geometry, holds — split into types / altitudes / geometry / holds / support'
+                'Altitude resolution, path geometry, scene composition, holds — split into types / altitudes / geometry / holds / compose / support'
               ],
               [
                 '`coords`',
                 'WGS84 tangent-plane projection, geocentric radius, earth-curvature drop, alt→scene-Y'
               ],
               [
-                '`mrms_wire_codec`',
-                'AVMR v5 FlatBuffers decode with strict length validation (`FbVolumeView` zero-copy reader)'
-              ],
-              [
                 '`mrms_preprocess`',
-                'Threshold filter, curvature correction, declutter layering, cross-section binning, prepared-volume assembly'
+                'Zero-copy AVMR/AVET views (`FbVolumeView` / `FbEchoTopView`), threshold filter, curvature correction, declutter layering, cross-section binning, prepared-volume assembly'
               ],
               [
                 '`mrms_render`',
                 'The dual-index-space join: prepared indices × payload columns → flat render-ready voxel arrays'
               ],
-              ['`echo_top_wire_codec`', 'AVET v3 decode — per-cell 18/30/50/60 dBZ top altitudes'],
-              ['`traffic_codec`', 'AVTR v4 decode; NaN sentinels → `Option<f32>`'],
               [
                 '`traffic_merge`',
-                'Track merge/dedup, history compression, FNV-1a render hash for change detection'
+                'AVTR zero-copy aircraft/history views, track merge/dedup, history compression, FNV-1a render hash for change detection'
               ],
               ['`wasm` / `ios`', 'Feature-gated FFI surfaces for wasm-bindgen and UniFFI'],
               ['`generated`', 'FlatBuffers codegen from `schemas/*.fbs`']
@@ -157,7 +151,7 @@ export const SECTIONS: Section[] = [
         blocks: [
           {
             kind: 'p',
-            text: 'The engine takes parsed CIFP legs plus waypoints and returns everything a renderer needs: resolved altitudes per leg (`resolve_approach_altitudes`), sampled 3D path points with vertical guide lines and turn-constraint labels (`build_path_geometry`), and standalone racetrack hold geometry. Missed-approach climbs default to 200 ft/NM unless the plate publishes an explicit gradient. Every ARINC 424 path terminator in the FAA data gets an explicit treatment, and joins between legs are always radius-constrained arcs rather than hard corners:'
+            text: 'The engine takes parsed CIFP legs plus waypoints and returns everything a renderer needs: resolved altitudes per leg (`resolve_approach_altitudes`), the composed path segments plus hold list (`compose_approach_scene`), sampled 3D path points with vertical guide lines and turn-constraint labels (`build_path_geometry`), and standalone racetrack hold geometry. Missed-approach climbs default to 200 ft/NM unless the plate publishes an explicit gradient. Every ARINC 424 path terminator in the FAA data gets an explicit treatment, and joins between legs are always radius-constrained arcs rather than hard corners:'
           },
           {
             kind: 'table',
@@ -653,7 +647,7 @@ export const SECTIONS: Section[] = [
               "**Vertical profile:** the final descent uses the plate's published VDA/TCH from `approaches.json`, falling back to FAF→MAP interpolation when a runway-anchored glidepath would force an immediate climb.",
               '**Missed approach:** starts at the MAP using the selected minimums (Cat A preferred), climbs at the published gradient when the plate text parses, otherwise 200 ft/NM; `CA` legs without a fix synthesize climb stubs.',
               '**Holds:** generated in Rust as separate racetrack overlays (dashed prisms) with annotations, never mixed into the main path stream.',
-              "**Course-supplying legs:** the scene composition (web `ApproachPath.tsx` + iOS `ApproachPathGeometry.swift`) appends the final approach's first course-carrying fix leg (the FAF/localizer leg) to transitions ending in `CI`/`VI` or `AF`/`RF` so the engine knows the inbound course — the appended leg is consumed by the teardrop roll-out or DME-arc lead turn, not drawn as a separate inbound segment.",
+              "**Course-supplying legs:** `compose_approach_scene` appends the final approach's first course-carrying fix leg (the FAF/localizer leg) to transitions ending in `CI`/`VI` or `AF`/`RF` so the engine knows the inbound course — the appended leg is consumed by the teardrop roll-out or DME-arc lead turn, not drawn as a separate inbound segment. Web and native clients are thin adapters over that export.",
               '**Constraint furniture:** vertical guide lines and turn-constraint labels come straight from the Rust `verticalLines` / `turnConstraintLabels` outputs; waypoints render as markers with declutter-stable labels.'
             ]
           },

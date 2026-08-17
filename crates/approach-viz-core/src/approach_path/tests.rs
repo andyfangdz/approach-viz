@@ -790,6 +790,195 @@ fn hold_protected_area_mirrors_with_turn_direction() {
     assert!((west(&right.primary) + east(&left.primary)).abs() < 1e-9);
 }
 
+fn compose_leg(
+    sequence: i32,
+    waypoint_id: &str,
+    path_terminator: &str,
+    course: Option<f64>,
+    altitude: Option<f64>,
+    is_missed_approach: bool,
+) -> ApproachPathLeg {
+    make_leg(ApproachPathLeg {
+        sequence,
+        waypoint_id: waypoint_id.into(),
+        waypoint_name: waypoint_id.into(),
+        path_terminator: path_terminator.into(),
+        altitude,
+        altitude_constraint: None,
+        course,
+        distance: None,
+        hold_course: None,
+        hold_distance: None,
+        turn_direction: None,
+        hold_turn_direction: None,
+        rf_center_waypoint_id: None,
+        rf_turn_direction: None,
+        vertical_angle_deg: None,
+        rnp_service_levels: None,
+        is_final_approach_fix: false,
+        is_initial_fix: false,
+        is_final_fix: false,
+        is_missed_approach,
+    })
+}
+
+fn compose_params(
+    final_legs: Vec<ApproachPathLeg>,
+    transition_entries: Vec<TransitionLegs>,
+    missed_legs: Vec<ApproachPathLeg>,
+    waypoints: Vec<ApproachWaypoint>,
+    final_altitudes: Vec<f64>,
+    transition_altitudes: Vec<TransitionAltitudeResult>,
+    missed_altitudes: Vec<f64>,
+    missed_path_altitudes: Vec<f64>,
+) -> ComposeApproachSceneParams {
+    ComposeApproachSceneParams {
+        final_legs,
+        transition_entries,
+        missed_legs,
+        waypoints,
+        final_altitudes,
+        transition_altitudes,
+        missed_altitudes,
+        missed_path_altitudes,
+        airport_elevation: 100.0,
+    }
+}
+
+#[test]
+fn compose_appends_roll_out_join_and_clears_missed_flag() {
+    let inbound = compose_leg(20, "FAF", "CF", Some(90.0), Some(2000.0), true);
+    let ci = compose_leg(10, "IF", "CI", None, Some(3000.0), false);
+    let scene = compose_approach_scene(compose_params(
+        vec![inbound.clone()],
+        vec![TransitionLegs {
+            name: "FLACK".into(),
+            legs: vec![ci.clone()],
+        }],
+        vec![],
+        vec![],
+        vec![2100.0],
+        vec![TransitionAltitudeResult {
+            name: "FLACK".into(),
+            altitudes: vec![3100.0],
+        }],
+        vec![],
+        vec![],
+    ));
+    let transition = scene
+        .segments
+        .iter()
+        .find(|segment| segment.kind == APPROACH_SCENE_SEGMENT_TRANSITION)
+        .expect("transition segment");
+    assert_eq!(transition.name.as_deref(), Some("FLACK"));
+    assert_eq!(transition.legs.len(), 2);
+    assert_eq!(transition.legs[1].waypoint_id, "FAF");
+    assert!(!transition.legs[1].is_missed_approach);
+    assert_eq!(transition.resolved_altitudes, vec![3100.0, 2000.0]);
+}
+
+#[test]
+fn compose_skips_roll_out_join_without_inbound_course() {
+    let final_leg = compose_leg(20, "FAF", "CF", None, Some(2000.0), false);
+    let af = compose_leg(10, "ARC", "AF", None, Some(3000.0), false);
+    let scene = compose_approach_scene(compose_params(
+        vec![final_leg],
+        vec![TransitionLegs {
+            name: "POKPE".into(),
+            legs: vec![af],
+        }],
+        vec![],
+        vec![],
+        vec![2000.0],
+        vec![TransitionAltitudeResult {
+            name: "POKPE".into(),
+            altitudes: vec![3000.0],
+        }],
+        vec![],
+        vec![],
+    ));
+    let transition = scene
+        .segments
+        .iter()
+        .find(|segment| segment.kind == APPROACH_SCENE_SEGMENT_TRANSITION)
+        .expect("transition segment");
+    assert_eq!(transition.legs.len(), 1);
+    assert_eq!(transition.legs[0].path_terminator, "AF");
+}
+
+#[test]
+fn compose_extends_final_through_resolved_map_without_altitude_gate() {
+    let ref_lat = 40.0;
+    let ref_lon = -100.0;
+    let final_leg = compose_leg(10, "FAF", "CF", Some(90.0), Some(1500.0), false);
+    let map_leg = compose_leg(30, "MAP", "CF", Some(90.0), Some(0.0), true);
+    let scene = compose_approach_scene(compose_params(
+        vec![final_leg],
+        vec![],
+        vec![map_leg],
+        vec![local_waypoint("MAP", 1.0, 0.0, ref_lat, ref_lon)],
+        vec![1600.0],
+        vec![],
+        vec![0.0],
+        vec![800.0],
+    ));
+    let final_segment = scene
+        .segments
+        .iter()
+        .find(|segment| segment.kind == APPROACH_SCENE_SEGMENT_FINAL)
+        .expect("final segment");
+    assert_eq!(final_segment.legs.len(), 2);
+    assert_eq!(final_segment.legs[1].waypoint_id, "MAP");
+    assert_eq!(final_segment.resolved_altitudes, vec![1600.0, 0.0]);
+    let missed = scene
+        .segments
+        .iter()
+        .find(|segment| segment.kind == APPROACH_SCENE_SEGMENT_MISSED)
+        .expect("missed segment");
+    assert!(missed.show_turn_constraint_labels);
+    assert_eq!(missed.resolved_altitudes, vec![800.0]);
+}
+
+#[test]
+fn compose_skips_map_extension_when_waypoint_is_unresolved() {
+    let final_leg = compose_leg(10, "FAF", "CF", Some(90.0), Some(1500.0), false);
+    let map_leg = compose_leg(30, "MAP", "CF", Some(90.0), Some(700.0), true);
+    let scene = compose_approach_scene(compose_params(
+        vec![final_leg],
+        vec![],
+        vec![map_leg],
+        vec![],
+        vec![1600.0],
+        vec![],
+        vec![700.0],
+        vec![800.0],
+    ));
+    let final_segment = scene
+        .segments
+        .iter()
+        .find(|segment| segment.kind == APPROACH_SCENE_SEGMENT_FINAL)
+        .expect("final segment");
+    assert_eq!(final_segment.legs.len(), 1);
+}
+
+#[test]
+fn compose_lists_holds_from_original_legs() {
+    let hold = compose_leg(40, "HOLD", "HM", Some(180.0), Some(4000.0), false);
+    let final_leg = compose_leg(10, "FAF", "CF", Some(90.0), Some(1500.0), false);
+    let scene = compose_approach_scene(compose_params(
+        vec![final_leg, hold.clone()],
+        vec![],
+        vec![],
+        vec![],
+        vec![1600.0, 4100.0],
+        vec![],
+        vec![],
+        vec![],
+    ));
+    assert_eq!(scene.hold_legs.len(), 1);
+    assert_eq!(scene.hold_legs[0].leg.waypoint_id, "HOLD");
+    assert_eq!(scene.hold_legs[0].altitude_feet, 4100.0);
+}
 
 fn heading_deg_to_rad(heading: f64) -> f64 {
     heading.to_radians()

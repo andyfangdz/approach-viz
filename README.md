@@ -7,7 +7,7 @@
 - Next.js 16 (App Router) + React + TypeScript
 - SwiftUI + MetalKit native iOS app scaffold under `ios/`
 - Composable Architecture + Swift Async Algorithms + Swift Collections on the native iOS side
-- GRDB.swift + Nuke + SwiftUI Introspect + FloatingPanel on the native iOS side
+- GRDB.swift + Nuke + SwiftUI Introspect on the native iOS/macOS side
 - react-three-fiber (3D scene)
 - SQLite (build-time approach/airspace/minimums data)
 - UniFFI bridge from `crates/approach-viz-core` into Swift
@@ -89,17 +89,16 @@ Open `http://localhost:3000`.
 
 ## Native iOS App
 
-The repository now includes a native iOS rewrite foundation in [`ios/`](ios/) built with SwiftUI + MetalKit.
+The repository now includes a native iOS rewrite foundation in [`ios/`](ios/) built with SwiftUI + MetalKit, plus a native macOS target that reuses the same shell and renderer.
 
-- Airport sidebar and approach list load from the same bundled `approach-viz.sqlite`
-- MetalKit detail view renders a dark-mode Terrarium-backed terrain wireframe/fill, Class B/C/D airspace volumes, runway geometry, waypoint point sprites with label overlays, sampled transition/final/missed path segments, separate hold overlays/annotations, and a live ADS-B traffic layer with current markers plus departed-history trails
-- Native path/vertical-profile data is enriched from bundled external approach reference JSON (`public/data/approach-db/approaches.json`) so matched minimums, VDA, and parsed missed-climb requirements can influence the rendered procedure
-- Web and iOS now share one Rust approach-path implementation from `crates/approach-viz-core/src/approach_path.rs` for altitude resolution, path geometry, and hold geometry, and they also share the Rust traffic merge/render engine from `crates/approach-viz-core/src/traffic_merge.rs`; the web app calls both through WASM and the iOS app calls both through UniFFI
-- Native shell state is now driven by a TCA root reducer (`ios/ApproachViz/App/AppFeature.swift`) instead of the old `ObservableObject` view model, with async traffic polling driven by `AsyncAlgorithms`, selector preview sets managed with `OrderedCollections`, and UIKit text-input behavior tweaked through `SwiftUIIntrospect`
+- The scene is edge-to-edge Metal with an in-scene header chip and FAB-driven SwiftUI selector/layers/options/debug panels (no airport sidebar, no FloatingPanel)
+- Bundled `approach-viz.sqlite` plus `public/data/approach-db/approaches.json` feed airport/approach selection and vertical-profile extras (minimums, VDA, parsed missed-climb)
+- Metal rendering covers Terrarium terrain, Class B/C/D airspace, runways, waypoints, shared-Rust approach/hold geometry, live ADS-B traffic, and optional MRMS weather (volume, echo tops, vertical slice, altitude guides)
+- Web and native share one Rust approach-path engine and one traffic merge/render engine from `crates/approach-viz-core`; web calls them through WASM and iOS/macOS through UniFFI
+- Native shell state is driven by a TCA root reducer (`ios/ApproachViz/App/AppFeature.swift`)
 - `npm run build:ios` regenerates the bridge xcframework and Xcode project via XcodeGen; simulator builds are `arm64`-only
-- The iOS app now uses `GRDB.swift` for the bundled read-only SQLite layer, `Nuke` for Terrarium terrain tile loading, `FloatingPanel` for FAB-driven control panels, and `SnapshotTesting` for iOS UI regression coverage
 
-Current limitation: the native app foundation still does not include weather, chart/plate overlays, or full web feature parity. The current MetalKit pass now includes dashed hold overlays, scene-fit orbit framing, corrected left/right orbit drag, two-finger pan, display-max frame-rate requests, and shared-Rust live-plus-history traffic, but camera/framing, labels, runway prominence, and some procedure-shape edge cases still differ from production. The old RealityKit renderer has been removed.
+Current limitation: camera/framing parity with the web renderer is still incomplete, and the native apps do not yet draw the web-only surface mosaic or published-obstacles layers. The old RealityKit renderer has been removed.
 
 ## Features
 
@@ -111,7 +110,7 @@ This tool helps with instrument-procedure study and briefing practice by turning
 - Understand curved legs (`RF`) and DME arcs (`AF`) with turn direction and center-fix context
 - Study vertical profile behavior (FAF to MAP, then missed climb) with selected minimums
 - See missed-approach turn geometry, including `CA` climb-then-turn sequences and curved course-to-fix joins
-- Compare four surface modes (Terrain, FAA Plate, 3D Plate, Satellite) to build terrain and obstacle awareness
+- Compare four surface modes (Terrain, Satellite, Map, 3D Map) plus an independent FAA plate overlay to build terrain and obstacle awareness
 - Overlay live ADS-B traffic and MRMS volumetric precipitation for real-time situational context
 - Review no-geometry and minima/plate-only procedures with explicit status so data gaps are obvious
 
@@ -122,11 +121,13 @@ Training note: this app is for education and familiarization, not for real-world
 | Mode                  | Description                                                                        |
 | --------------------- | ---------------------------------------------------------------------------------- |
 | **Terrain** (default) | Wireframe terrain grid from Terrarium elevation tiles (adjustable 20–80 NM radius) |
-| **FAA Plate**         | Geolocated FAA approach plate rendered at airport elevation                        |
-| **3D Plate**          | FAA plate texture projected onto Google Photorealistic 3D Tiles terrain            |
 | **Satellite**         | Google Earth Photorealistic 3D Tiles with EGM96 geoid correction                   |
+| **Map**               | FAA chart tiles (VFR Sectional, TAC, IFR Low, IFR High) on a flat local-NM plane   |
+| **3D Map**            | The same FAA chart tiles projected onto Google Photorealistic 3D Tiles             |
 
-Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
+FAA approach plates are an overlay (`?plate=on`), not a surface mode. Legacy URLs `?surface=plate` and `?surface=3dplate` migrate to terrain+plate and satellite+plate.
+
+Satellite and 3D Map modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 
 ### Live ADS-B Traffic
 
@@ -145,7 +146,7 @@ Satellite and 3D Plate modes require `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 - Direct echo-top caps (`18/30/50/60 dBZ`) from MRMS `EchoTop_*` products (can render without 3D volume)
 - 5,000-ft altitude guide bands for altitude reference
 - Vertical cross-section plane/panel with altitude Y-axis and echo-top maxima
-- Server-side merged-brick binary payloads (v3) reduce draw count without dropping weather coverage
+- Server-side merged-brick binary payloads (AVMR v5) reduce draw count without dropping weather coverage
 - Soft-edge dual-pass shading keeps the merged volume visually smooth (aurora-like)
 - Resilient polling: retains last good payload on transient errors, clears on airport change
 - Powered by a Rust runtime service (`services/runtime-rs`) with compact binary wire format
@@ -156,7 +157,7 @@ All settings persist to `localStorage`:
 
 - **Vertical Scale** — 1.0–15.0× (step 0.5×)
 - **Terrain Radius** — 20–80 NM (step 5, default 50)
-- **Flatten Bathymetry** — clamp 3D Tiles seabed (Satellite / 3D Plate modes)
+- **Flatten Bathymetry** — clamp 3D Tiles seabed (Satellite / 3D Map modes)
 - **Use Parsed Climb Gradient** — toggle between published FAA missed-climb requirements and standard gradient
 - **Live ADS-B Traffic** — toggle overlay (on by default)
 - **Hide Ground Traffic** / **Show Traffic Callsigns** / **Traffic History** (1–30 min)
@@ -233,7 +234,7 @@ The Rust runtime service (`services/runtime-rs`) handles both MRMS weather and A
 | --------------------------- | ------------------------------------------------------------- |
 | `GET /healthz`              | Health check                                                  |
 | `GET /v1/meta`              | Readiness + scan stats                                        |
-| `GET /v1/weather/volume`    | Binary voxel payload (`application/vnd.approach-viz.mrms.v4`) |
+| `GET /v1/weather/volume`    | Binary voxel payload (`application/vnd.approach-viz.mrms.v5`) |
 | `GET /v1/weather/echo-tops` | Echo-top cells (`EchoTop_18/30/50/60`), JSON or AVET binary   |
 | `GET /v1/traffic/adsbx`     | JSON aircraft + optional trail backfill                       |
 

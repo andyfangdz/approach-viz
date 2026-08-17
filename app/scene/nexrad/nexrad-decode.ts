@@ -12,20 +12,26 @@ export interface PhaseDebugHeaderValues {
   freezingLevelTimestamp: string | null;
 }
 
-export function buildNexradRequestUrl(params: URLSearchParams): string {
-  if (!MRMS_BINARY_BASE_URL) {
+export function buildNexradRequestUrl(
+  params: URLSearchParams,
+  binaryBaseUrl = MRMS_BINARY_BASE_URL
+): string {
+  if (!binaryBaseUrl) {
     return `/api/weather/nexrad?${params.toString()}`;
   }
-  const baseUrl = MRMS_BINARY_BASE_URL.replace(/\/$/, '');
-  return `${baseUrl}/v1/volume?${params.toString()}`;
+  const baseUrl = binaryBaseUrl.replace(/\/$/, '');
+  return `${baseUrl}/v1/weather/volume?${params.toString()}`;
 }
 
-export function buildEchoTopRequestUrl(params: URLSearchParams): string {
-  if (!MRMS_BINARY_BASE_URL) {
+export function buildEchoTopRequestUrl(
+  params: URLSearchParams,
+  binaryBaseUrl = MRMS_BINARY_BASE_URL
+): string {
+  if (!binaryBaseUrl) {
     return `/api/weather/nexrad/echo-tops?${params.toString()}`;
   }
-  const baseUrl = MRMS_BINARY_BASE_URL.replace(/\/$/, '');
-  return `${baseUrl}/v1/echo-tops?${params.toString()}`;
+  const baseUrl = binaryBaseUrl.replace(/\/$/, '');
+  return `${baseUrl}/v1/weather/echo-tops?${params.toString()}`;
 }
 
 function parseNumberHeader(headers: Headers, name: string): number | null {

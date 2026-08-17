@@ -5,15 +5,11 @@
 
 import { memo, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
+import { ALTITUDE_SCALE } from './approach-path/constants';
+import { latLonToLocal } from './approach-path/coordinates';
 
-const ALTITUDE_SCALE = 1 / 6076.12;
-const DEG_TO_RAD = Math.PI / 180;
-const METERS_TO_NM = 1 / 1852;
 const SEA_LEVEL_FEET = 0;
 const SEA_LEVEL_BOTTOM_CAP_HIDE_THRESHOLD_FEET = 100;
-const WGS84_SEMI_MAJOR_METERS = 6378137;
-const WGS84_FLATTENING = 1 / 298.257223563;
-const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 
 const COLORS: Record<string, number> = {
   B: 0x0066ff,
@@ -36,21 +32,6 @@ interface AirspaceVolumesProps {
   refLon: number;
   verticalScale: number;
   airportElevationFeet: number;
-}
-
-function latLonToLocal(lat: number, lon: number, refLat: number, refLon: number) {
-  const phi = refLat * DEG_TO_RAD;
-  const sinPhi = Math.sin(phi);
-  const cosPhi = Math.cos(phi);
-  const denom = Math.sqrt(1 - WGS84_E2 * sinPhi * sinPhi);
-  const primeVerticalMeters = WGS84_SEMI_MAJOR_METERS / denom;
-  const meridionalMeters = (WGS84_SEMI_MAJOR_METERS * (1 - WGS84_E2)) / (denom * denom * denom);
-
-  const dLatRad = (lat - refLat) * DEG_TO_RAD;
-  const dLonRad = (lon - refLon) * DEG_TO_RAD;
-  const x = dLonRad * primeVerticalMeters * cosPhi * METERS_TO_NM;
-  const z = -(dLatRad * meridionalMeters * METERS_TO_NM);
-  return { x, z };
 }
 
 function altToBaseY(altFeet: number): number {

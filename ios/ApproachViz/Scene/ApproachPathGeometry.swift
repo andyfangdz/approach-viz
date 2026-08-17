@@ -39,118 +39,84 @@ enum ApproachPathGeometry {
             return []
         }
 
-        guard let altitudeData = resolveSharedApproachAltitudeData(sceneData: sceneData) else {
-            return []
-        }
+        let sharedWaypoints = sharedApproachWaypoints(sceneData: sceneData)
         let missedApproachStartAltitudeFeet =
             sceneData.minimumsSummary?.da?.altitude ??
             sceneData.minimumsSummary?.mda?.altitude
+        let altitudeResult = resolveApproachAltitudes(
+            params: ResolveApproachAltitudesParams(
+                finalLegs: approach.finalLegs.map(bridgeLeg),
+                transitionEntries: approach.transitions.map { transition in
+                    TransitionLegs(name: transition.name, legs: transition.legs.map(bridgeLeg))
+                },
+                missedLegs: approach.missedLegs.map(bridgeLeg),
+                waypoints: sharedWaypoints,
+                refLat: sceneData.airport.lat,
+                refLon: sceneData.airport.lon,
+                airportElevation: sceneData.airport.elevation,
+                missedApproachStartAltitudeFeet: missedApproachStartAltitudeFeet,
+                missedApproachClimbRequirement: bridgeMissedApproachClimbRequirement(
+                    sceneData.missedApproachClimbRequirement
+                )
+            )
+        )
+        let composed = composeApproachScene(
+            params: ComposeApproachSceneParams(
+                finalLegs: approach.finalLegs.map(bridgeLeg),
+                transitionEntries: approach.transitions.map { transition in
+                    TransitionLegs(name: transition.name, legs: transition.legs.map(bridgeLeg))
+                },
+                missedLegs: approach.missedLegs.map(bridgeLeg),
+                waypoints: sharedWaypoints,
+                finalAltitudes: altitudeResult.finalAltitudes,
+                transitionAltitudes: altitudeResult.transitionAltitudes,
+                missedAltitudes: altitudeResult.missedAltitudes,
+                missedPathAltitudes: altitudeResult.missedPathAltitudes,
+                airportElevation: sceneData.airport.elevation
+            )
+        )
 
-        // Append the final approach's first course-carrying fix leg (the
-        // FAF/localizer leg) to transitions that need a downstream course to roll
-        // out onto:
-        //   - A no-fix course-reversal intercept (`CI`/`VI`, e.g. the KDDC I14
-        //     FLACK teardrop) so the shared engine renders the reversal as a
-        //     single smooth arc that rolls out tangent onto the final approach
-        //     course at an interior point.
-        //   - A DME arc (`AF`/`RF`, e.g. the KDDC I14 POKPE/EARPP 14 DME arcs) so
-        //     the engine rolls the arc out onto the inbound course with a lead
-        //     turn near the fix instead of cornering sharply at it.
-        // Either way the appended leg is consumed by the engine and the inbound
-        // course itself is drawn by the segment that owns it.
-        let rollOutTerminators: Set<String> = ["CI", "VI", "AF", "RF"]
-        let courseReversalJoinLeg = approach.finalLegs.first { ($0.course?.isFinite ?? false) }
-        let transitionPolylines = approach.transitions.compactMap { transition -> ApproachPolyline? in
-            var transitionLegs = transition.legs
-            if let lastLeg = transitionLegs.last,
-               rollOutTerminators.contains(lastLeg.pathTerminator),
-               let courseReversalJoinLeg {
-                transitionLegs.append(courseReversalJoinLeg)
+        return composed.segments.compactMap { segment -> ApproachPolyline? in
+            let kind: ApproachPolylineKind
+            let color: SIMD4<Float>
+            let dashedBelowAltitudeFeet: Double?
+            let dashedBelowLabel: String?
+            switch segment.kind {
+            case "transition":
+                kind = .transition
+                color = SIMD4(1.0, 0.67, 0.0, 1.0)
+                dashedBelowAltitudeFeet = nil
+                dashedBelowLabel = nil
+            case "final":
+                kind = .final
+                color = SIMD4(0.0, 1.0, 0.53, 1.0)
+                dashedBelowAltitudeFeet = missedApproachStartAltitudeFeet
+                dashedBelowLabel = sceneData.minimumsSummary?.da != nil ? "DA" : (sceneData.minimumsSummary?.mda != nil ? "MDA" : nil)
+            case "missed":
+                kind = .missed
+                color = SIMD4(1.0, 0.27, 0.27, 1.0)
+                dashedBelowAltitudeFeet = nil
+                dashedBelowLabel = nil
+            default:
+                return nil
             }
             return polyline(
-                for: transitionLegs,
-                resolvedAltitudes: altitudeValues(
-                    for: transitionLegs,
-                    altitudesBySequence: altitudeData.transitionAltitudesByName[transition.name] ?? [:]
-                ),
+                for: segment.legs,
+                resolvedAltitudes: segment.resolvedAltitudes,
                 sceneData: sceneData,
-                sharedWaypoints: altitudeData.sharedWaypoints,
+                sharedWaypoints: sharedWaypoints,
                 verticalScale: verticalScale,
-                color: SIMD4(1.0, 0.67, 0.0, 1.0),
-                dashedBelowAltitudeFeet: nil,
-                dashedBelowLabel: nil,
-                showTurnConstraintLabels: false,
-                kind: .transition
+                color: color,
+                dashedBelowAltitudeFeet: dashedBelowAltitudeFeet,
+                dashedBelowLabel: dashedBelowLabel,
+                showTurnConstraintLabels: segment.showTurnConstraintLabels,
+                kind: kind
             )
         }
-
-        let finalDisplay = finalDisplayLegs(
-            finalLegs: approach.finalLegs,
-            missedLegs: approach.missedLegs,
-            sharedWaypointIDs: Set(altitudeData.sharedWaypoints.map(\.id)),
-            finalAltitudes: altitudeValues(
-                for: approach.finalLegs,
-                altitudesBySequence: altitudeData.finalAltitudesBySequence
-            ),
-            missedAltitudes: altitudeValues(
-                for: approach.missedLegs,
-                altitudesBySequence: altitudeData.missedAltitudesBySequence
-            )
-        )
-
-        let finalPolyline = polyline(
-            for: finalDisplay.legs,
-            resolvedAltitudes: finalDisplay.altitudes,
-            sceneData: sceneData,
-            sharedWaypoints: altitudeData.sharedWaypoints,
-            verticalScale: verticalScale,
-            color: SIMD4(0.0, 1.0, 0.53, 1.0),
-            dashedBelowAltitudeFeet: missedApproachStartAltitudeFeet,
-            dashedBelowLabel: sceneData.minimumsSummary?.da != nil ? "DA" : (sceneData.minimumsSummary?.mda != nil ? "MDA" : nil),
-            showTurnConstraintLabels: false,
-            kind: .final
-        )
-
-        let missedPolyline = polyline(
-            for: approach.missedLegs,
-            resolvedAltitudes: altitudeValues(
-                for: approach.missedLegs,
-                altitudesBySequence: altitudeData.missedPathAltitudesBySequence
-            ),
-            sceneData: sceneData,
-            sharedWaypoints: altitudeData.sharedWaypoints,
-            verticalScale: verticalScale,
-            color: SIMD4(1.0, 0.27, 0.27, 1.0),
-            dashedBelowAltitudeFeet: nil,
-            dashedBelowLabel: nil,
-            showTurnConstraintLabels: true,
-            kind: .missed
-        )
-
-        return transitionPolylines + [finalPolyline, missedPolyline].compactMap { $0 }
-    }
-    private static func finalDisplayLegs(
-        finalLegs: [ApproachLeg],
-        missedLegs: [ApproachLeg],
-        sharedWaypointIDs: Set<String>,
-        finalAltitudes: [Double],
-        missedAltitudes: [Double]
-    ) -> (legs: [ApproachLeg], altitudes: [Double]) {
-        guard let mapLeg = missedLegs.first else {
-            return (finalLegs, finalAltitudes)
-        }
-        let resolvedWaypointID = mapLeg.waypointId.split(separator: "_").last.map(String.init) ?? mapLeg.waypointId
-        guard sharedWaypointIDs.contains(mapLeg.waypointId) || sharedWaypointIDs.contains(resolvedWaypointID) else {
-            return (finalLegs, finalAltitudes)
-        }
-        guard let mapAltitude = missedAltitudes.first, mapAltitude.isFinite, mapAltitude > 0 else {
-            return (finalLegs, finalAltitudes)
-        }
-        return (finalLegs + [mapLeg], finalAltitudes + [mapAltitude])
     }
 
     private static func polyline(
-        for legs: [ApproachLeg],
+        for legs: [ApproachPathLeg],
         resolvedAltitudes: [Double],
         sceneData: NativeSceneData,
         sharedWaypoints: [ApproachWaypoint],
@@ -167,7 +133,7 @@ enum ApproachPathGeometry {
 
         let geometry = buildApproachPathGeometry(
             params: BuildPathGeometryParams(
-                legs: legs.map(bridgeLeg),
+                legs: legs,
                 waypoints: sharedWaypoints,
                 resolvedAltitudes: resolvedAltitudes,
                 initialAltitudeFeet: sceneData.airport.elevation,
@@ -250,10 +216,6 @@ func resolveSharedApproachAltitudeData(sceneData: NativeSceneData) -> SharedAppr
 
 private func altitudeMap(for legs: [ApproachLeg], altitudes: [Double]) -> [Int: Double] {
     Dictionary(uniqueKeysWithValues: zip(legs, altitudes).map { ($0.sequence, $1) })
-}
-
-private func altitudeValues(for legs: [ApproachLeg], altitudesBySequence: [Int: Double]) -> [Double] {
-    legs.map { altitudesBySequence[$0.sequence] ?? $0.altitude ?? 0 }
 }
 
 private func sharedApproachWaypoints(sceneData: NativeSceneData) -> [ApproachWaypoint] {

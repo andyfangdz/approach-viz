@@ -71,8 +71,8 @@ External data feeds and their ingestion paths.
 - Phase resolution is thermodynamic-first and incorporates `PrecipFlag_00.00`, `Model_0degC_Height_00.50`, `Model_WetBulbTemp_00.50`, `Model_SurfaceTemp_00.50`, `BrightBandTopHeight_00.00`, `BrightBandBottomHeight_00.00`, and `RadarQualityIndex_00.00`; dual-pol (`Zdr`/`RhoHV`) acts as a weighted correction layer rather than a hard first-pass classifier.
 - Dual-pol fields are fetched for the same timestamp and altitude slice as reflectivity when available. When dual-pol is sparse/lagging beyond 5 minutes ingest switches to latest available dual-pol timestamps, flags fallback in debug telemetry, and down-weights stale corrections to prevent cycle-mismatch artifacts.
 - Retry scheduling favors the earliest due pending timestamp so delayed-complete cycles are still evaluated even while newer precip events continue arriving.
-- Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v4`) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`); merged-brick span records reduce client draw load.
-- Echo-top responses default to JSON, and also support AVET binary (`application/vnd.approach-viz.echo-tops.v2`) via `Accept` content negotiation.
+- Query responses are served as compact binary payloads (`application/vnd.approach-viz.mrms.v5`) containing pre-filtered voxel subsets around request origin (`lat/lon/minDbz/maxRangeNm`); merged-brick span records reduce client draw load.
+- Echo-top responses default to JSON, and also support AVET binary (`application/vnd.approach-viz.echo-tops.v3`) via `Accept` content negotiation.
 - The Next.js routes `app/api/weather/nexrad/route.ts` and `app/api/weather/nexrad/echo-tops/route.ts` proxy to the Rust runtime endpoints; the app's MRMS worker decodes binary reflectivity and binary AVET echo-top payloads directly.
 - Snapshot storage is bounded to `5 GB` (oldest scans pruned first) to fit the OCI host disk budget.
 

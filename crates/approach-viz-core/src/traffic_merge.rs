@@ -8,11 +8,10 @@
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
-use crate::coords::{alt_to_y, earth_curvature_drop_nm, lat_lon_to_local};
+use crate::coords::{FEET_PER_NM, alt_to_y, earth_curvature_drop_nm, lat_lon_to_local};
 use crate::generated::TrafficPayload;
 
 const DEG_TO_RAD: f64 = PI / 180.0;
-const FEET_PER_NM: f64 = 6076.12;
 
 const MIN_SAMPLE_DISTANCE_NM: f64 = 0.03;
 const MIN_SAMPLE_ALTITUDE_DELTA_FEET: f64 = 100.0;
@@ -72,7 +71,8 @@ pub struct TrafficTrack {
     pub history: Vec<TrafficHistoryPoint>,
 }
 
-/// Input aircraft for merge (from decoded payload).
+/// Input aircraft for merge tests. Production ingest uses `FbAircraftView`.
+#[cfg(test)]
 pub struct MergeAircraft {
     pub hex: String,
     pub lat: f64,
@@ -102,8 +102,8 @@ pub struct SceneAirport {
 // AircraftSource trait — abstracts indexed aircraft access for merge()
 // ---------------------------------------------------------------------------
 
-/// Indexed access to aircraft fields. Implemented for `&[MergeAircraft]` (JSON
-/// path) and `FbAircraftView` (binary FlatBuffers zero-copy path).
+/// Indexed access to aircraft fields. Implemented for `FbAircraftView`
+/// (binary FlatBuffers zero-copy path) and the test-only `MergeAircraft` fixture.
 pub trait AircraftSource {
     fn len(&self) -> usize;
     fn hex(&self, i: usize) -> &str;
@@ -116,6 +116,7 @@ pub trait AircraftSource {
     fn flight(&self, i: usize) -> Option<&str>;
 }
 
+#[cfg(test)]
 impl AircraftSource for [MergeAircraft] {
     #[inline]
     fn len(&self) -> usize {
@@ -218,19 +219,37 @@ impl AircraftSource for FbAircraftView<'_> {
     }
     #[inline]
     fn altitude_feet(&self, i: usize) -> Option<f64> {
-        nan_f32_to_option_f64(self.ac_altitude_feet.as_ref().map(|v| v.get(i)).unwrap_or(f32::NAN))
+        nan_f32_to_option_f64(
+            self.ac_altitude_feet
+                .as_ref()
+                .map(|v| v.get(i))
+                .unwrap_or(f32::NAN),
+        )
     }
     #[inline]
     fn is_on_ground(&self, i: usize) -> bool {
-        self.ac_flags.as_ref().map(|v| v.get(i) & 1 != 0).unwrap_or(false)
+        self.ac_flags
+            .as_ref()
+            .map(|v| v.get(i) & 1 != 0)
+            .unwrap_or(false)
     }
     #[inline]
     fn ground_speed_kt(&self, i: usize) -> Option<f64> {
-        nan_f32_to_option_f64(self.ac_ground_speed_kt.as_ref().map(|v| v.get(i)).unwrap_or(f32::NAN))
+        nan_f32_to_option_f64(
+            self.ac_ground_speed_kt
+                .as_ref()
+                .map(|v| v.get(i))
+                .unwrap_or(f32::NAN),
+        )
     }
     #[inline]
     fn track_deg(&self, i: usize) -> Option<f64> {
-        nan_f32_to_option_f64(self.ac_track_deg.as_ref().map(|v| v.get(i)).unwrap_or(f32::NAN))
+        nan_f32_to_option_f64(
+            self.ac_track_deg
+                .as_ref()
+                .map(|v| v.get(i))
+                .unwrap_or(f32::NAN),
+        )
     }
     #[inline]
     fn flight(&self, i: usize) -> Option<&str> {
@@ -486,9 +505,7 @@ impl TrafficState {
                     Some(alt) => (last.altitude_feet - alt).abs(),
                     None => 0.0,
                 };
-                if dist >= MIN_SAMPLE_DISTANCE_NM
-                    || alt_delta >= MIN_SAMPLE_ALTITUDE_DELTA_FEET
-                {
+                if dist >= MIN_SAMPLE_DISTANCE_NM || alt_delta >= MIN_SAMPLE_ALTITUDE_DELTA_FEET {
                     history.push(current_point);
                 } else {
                     // Update timestamp of last point to keep it fresh.
@@ -560,12 +577,7 @@ impl TrafficState {
     }
 
     /// Recompute — trim histories, remove ground tracks if flagged, refresh timestamps.
-    pub fn recompute(
-        &mut self,
-        now_ms: i64,
-        history_minutes: f64,
-        hide_ground: bool,
-    ) {
+    pub fn recompute(&mut self, now_ms: i64, history_minutes: f64, hide_ground: bool) {
         let cutoff_ms = now_ms - (history_minutes * 60_000.0) as i64;
         self.tracks.retain(|_hex, track| {
             if hide_ground && track.is_on_ground {
@@ -609,8 +621,7 @@ impl TrafficState {
             .unwrap_or(0);
 
         for track in self.tracks.values() {
-            let is_present =
-                track.last_update_ms + STALE_GRACE_MS >= global_latest;
+            let is_present = track.last_update_ms + STALE_GRACE_MS >= global_latest;
 
             if !show_departed_trails && !is_present {
                 continue;
@@ -700,6 +711,93 @@ fn resolve_altitude(
     }
 }
 
+/// Collect history groups from one or two AVTR FlatBuffers payloads.
+///
+/// History points need owned `Vec`s for sort/dedup in merge; this reads the
+/// columns directly from FB accessors.
+#[cfg(any(feature = "wasm", feature = "ios", test))]
+pub(crate) fn collect_fb_history(
+    primary: &TrafficPayload<'_>,
+    backfill: Option<&TrafficPayload<'_>>,
+) -> Result<Vec<BackfillHistory>, String> {
+    let mut result = Vec::new();
+    collect_fb_history_from_payload(primary, &mut result)?;
+    if let Some(payload) = backfill {
+        collect_fb_history_from_payload(payload, &mut result)?;
+    }
+    Ok(result)
+}
+
+#[cfg(any(feature = "wasm", feature = "ios", test))]
+fn collect_fb_history_from_payload(
+    payload: &TrafficPayload<'_>,
+    out: &mut Vec<BackfillHistory>,
+) -> Result<(), String> {
+    let group_count = payload.history_group_count() as usize;
+    if group_count == 0 {
+        return Ok(());
+    }
+
+    let total_points = payload.history_point_count();
+    let group_hex = payload.hg_hex();
+    let group_start = payload.hg_point_start();
+    let group_count_vec = payload.hg_point_count();
+    let point_timestamp = payload.hp_timestamp_ms();
+    let point_lat = payload.hp_lat();
+    let point_lon = payload.hp_lon();
+    let point_altitude = payload.hp_altitude_feet();
+
+    for index in 0..group_count {
+        let hex = group_hex
+            .as_ref()
+            .map(|value| value.get(index))
+            .unwrap_or("");
+        let point_start = group_start
+            .as_ref()
+            .map(|value| value.get(index))
+            .unwrap_or(0);
+        let point_count = group_count_vec
+            .as_ref()
+            .map(|value| value.get(index))
+            .unwrap_or(0);
+
+        if point_start as u64 + point_count as u64 > total_points as u64 {
+            return Err(format!(
+                "AVTR history overflow: start={point_start}, count={point_count}, total={total_points}"
+            ));
+        }
+
+        let mut points = Vec::with_capacity(point_count as usize);
+        for point_index in 0..point_count as usize {
+            let absolute_index = point_start as usize + point_index;
+            points.push(TrafficHistoryPoint {
+                lat: point_lat
+                    .as_ref()
+                    .map(|value| value.get(absolute_index))
+                    .unwrap_or(0.0) as f64,
+                lon: point_lon
+                    .as_ref()
+                    .map(|value| value.get(absolute_index))
+                    .unwrap_or(0.0) as f64,
+                altitude_feet: point_altitude
+                    .as_ref()
+                    .map(|value| value.get(absolute_index))
+                    .unwrap_or(0.0) as f64,
+                timestamp_ms: point_timestamp
+                    .as_ref()
+                    .map(|value| value.get(absolute_index))
+                    .unwrap_or(0),
+            });
+        }
+
+        out.push(BackfillHistory {
+            hex: hex.to_owned(),
+            points,
+        });
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -760,11 +858,14 @@ mod tests {
     fn merge_single_aircraft() {
         let mut state = TrafficState::new();
         let ac = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac].as_slice(), 1_000_000, 5.0, false, &[]);
         assert_eq!(state.track_count(), 1);
         let track = state.tracks.get("abc123").unwrap();
         assert_eq!(track.hex, "abc123");
-        assert!(!track.history.is_empty(), "should have at least one history point");
+        assert!(
+            !track.history.is_empty(),
+            "should have at least one history point"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -774,11 +875,11 @@ mod tests {
     fn merge_updates_existing() {
         let mut state = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(), 1_000_000, 5.0, false, &[]);
 
         // Move far enough to create new history point.
         let ac2 = make_aircraft("abc123", 40.1, -74.0, Some(5500.0));
-        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(), 1_010_000, 5.0, false, &[]);
 
         assert_eq!(state.track_count(), 1);
         let track = state.tracks.get("abc123").unwrap();
@@ -796,11 +897,11 @@ mod tests {
     fn merge_adds_history_point() {
         let mut state = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(), 1_000_000, 5.0, false, &[]);
 
         // Move > 0.03 NM (~0.0005 deg at lat 40).
         let ac2 = make_aircraft("abc123", 40.01, -74.0, Some(5000.0));
-        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(), 1_010_000, 5.0, false, &[]);
 
         let track = state.tracks.get("abc123").unwrap();
         assert!(
@@ -817,13 +918,13 @@ mod tests {
     fn merge_skips_close_point() {
         let mut state = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(), 1_000_000, 5.0, false, &[]);
 
         let initial_len = state.tracks.get("abc123").unwrap().history.len();
 
         // Tiny move: < 0.03 NM and < 100ft altitude delta.
         let ac2 = make_aircraft("abc123", 40.000001, -74.0, Some(5010.0));
-        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(), 1_010_000, 5.0, false, &[]);
 
         let final_len = state.tracks.get("abc123").unwrap().history.len();
         assert_eq!(
@@ -839,13 +940,13 @@ mod tests {
     fn merge_altitude_delta_adds_point() {
         let mut state = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(), 1_000_000, 5.0, false, &[]);
 
         let initial_len = state.tracks.get("abc123").unwrap().history.len();
 
         // Same position but 200ft altitude change (>= 100ft threshold).
         let ac2 = make_aircraft("abc123", 40.0, -74.0, Some(5200.0));
-        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(), 1_010_000, 5.0, false, &[]);
 
         let final_len = state.tracks.get("abc123").unwrap().history.len();
         assert_eq!(
@@ -864,12 +965,12 @@ mod tests {
 
         // Insert with early timestamp.
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac1].as_slice(),100_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(), 100_000, 5.0, false, &[]);
 
         // Now advance time so the first point is beyond the 5-minute cutoff.
         // cutoff = 600_000 - 300_000 = 300_000
         let ac2 = make_aircraft("abc123", 40.01, -74.0, Some(5000.0));
-        state.merge([ac2].as_slice(),600_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(), 600_000, 5.0, false, &[]);
 
         let track = state.tracks.get("abc123").unwrap();
         for point in &track.history {
@@ -890,13 +991,13 @@ mod tests {
 
         // Insert track at t=100_000.
         let ac1 = make_aircraft("stale", 40.0, -74.0, Some(5000.0));
-        state.merge([ac1].as_slice(),100_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(), 100_000, 5.0, false, &[]);
 
         // Much later, merge a *different* aircraft. "stale" should be pruned
         // because last_update_ms(100_000) + STALE_GRACE_MS(20_000) = 120_000 < 1_000_000
         // and history will be trimmed (cutoff = 1_000_000 - 300_000 = 700_000, point at 100_000 < 700_000).
         let ac2 = make_aircraft("fresh", 40.0, -74.0, Some(5000.0));
-        state.merge([ac2].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(), 1_000_000, 5.0, false, &[]);
 
         assert!(
             state.tracks.get("stale").is_none(),
@@ -938,7 +1039,7 @@ mod tests {
         }];
 
         let ac = make_aircraft("abc123", 40.01, -74.0, Some(5000.0));
-        state.merge([ac].as_slice(),600_000, 5.0, false, &backfill);
+        state.merge([ac].as_slice(), 600_000, 5.0, false, &backfill);
 
         let track = state.tracks.get("abc123").unwrap();
         // Check dedup: timestamp 510_000 should appear only once.
@@ -947,10 +1048,7 @@ mod tests {
             .iter()
             .filter(|p| p.timestamp_ms == 510_000)
             .count();
-        assert_eq!(
-            count_510, 1,
-            "duplicate timestamps should be deduplicated"
-        );
+        assert_eq!(count_510, 1, "duplicate timestamps should be deduplicated");
         // History should be sorted.
         for w in track.history.windows(2) {
             assert!(
@@ -967,7 +1065,7 @@ mod tests {
     fn merge_hide_ground() {
         let mut state = TrafficState::new();
         let ac = make_ground_aircraft("gnd1", 40.0, -74.0);
-        state.merge([ac].as_slice(),1_000_000, 5.0, true, &[]);
+        state.merge([ac].as_slice(), 1_000_000, 5.0, true, &[]);
         assert_eq!(
             state.track_count(),
             0,
@@ -984,11 +1082,11 @@ mod tests {
 
         // Insert at t=100_000 with a far-off position to create history.
         let ac = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac].as_slice(),100_000, 60.0, false, &[]);
+        state.merge([ac].as_slice(), 100_000, 60.0, false, &[]);
 
         // Add another point at t=200_000.
         let ac2 = make_aircraft("abc123", 40.01, -74.0, Some(5100.0));
-        state.merge([ac2].as_slice(),200_000, 60.0, false, &[]);
+        state.merge([ac2].as_slice(), 200_000, 60.0, false, &[]);
 
         // Prune with history_minutes=1.0, now=500_000.
         // cutoff = 500_000 - 60_000 = 440_000.
@@ -1010,11 +1108,11 @@ mod tests {
 
         // Insert a ground track.
         let ac_gnd = make_ground_aircraft("gnd1", 40.0, -74.0);
-        state.merge([ac_gnd].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac_gnd].as_slice(), 1_000_000, 5.0, false, &[]);
 
         // Insert an airborne track.
         let ac_air = make_aircraft("air1", 40.01, -74.0, Some(5000.0));
-        state.merge([ac_air].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac_air].as_slice(), 1_000_000, 5.0, false, &[]);
 
         assert_eq!(state.track_count(), 2);
 
@@ -1039,16 +1137,8 @@ mod tests {
         let ref_lon = -74.0;
         let p = to_scene_point(40.0, -74.0, 1000.0, ref_lat, ref_lon, 1.0, false);
         // At ref point, x and z should be ~0.
-        assert!(
-            p[0].abs() < 1e-4,
-            "x at ref should be ~0, got {}",
-            p[0]
-        );
-        assert!(
-            p[2].abs() < 1e-4,
-            "z at ref should be ~0, got {}",
-            p[2]
-        );
+        assert!(p[0].abs() < 1e-4, "x at ref should be ~0, got {}", p[0]);
+        assert!(p[2].abs() < 1e-4, "z at ref should be ~0, got {}", p[2]);
         // y = alt_to_y(1000, 1.0) = 1000 / 6076.12 ≈ 0.1646
         assert!(
             (p[1] - 0.1646).abs() < 0.001,
@@ -1083,7 +1173,7 @@ mod tests {
     fn render_hash_deterministic() {
         let mut state = TrafficState::new();
         let ac = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac].as_slice(), 1_000_000, 5.0, false, &[]);
 
         let airports = default_airports();
         let (_, hash1) = state.build_render_tracks(40.0, -74.0, &airports, 1.0, false, true);
@@ -1100,15 +1190,18 @@ mod tests {
 
         let mut state1 = TrafficState::new();
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state1.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
+        state1.merge([ac1].as_slice(), 1_000_000, 5.0, false, &[]);
         let (_, hash1) = state1.build_render_tracks(40.0, -74.0, &airports, 1.0, false, true);
 
         let mut state2 = TrafficState::new();
         let ac2 = make_aircraft("abc123", 41.0, -73.0, Some(8000.0));
-        state2.merge([ac2].as_slice(),1_000_000, 5.0, false, &[]);
+        state2.merge([ac2].as_slice(), 1_000_000, 5.0, false, &[]);
         let (_, hash2) = state2.build_render_tracks(40.0, -74.0, &airports, 1.0, false, true);
 
-        assert_ne!(hash1, hash2, "different positions should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "different positions should produce different hashes"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1120,10 +1213,10 @@ mod tests {
 
         // Insert and then move to create history.
         let ac1 = make_aircraft("abc123", 40.0, -74.0, Some(5000.0));
-        state.merge([ac1].as_slice(),1_000_000, 5.0, false, &[]);
+        state.merge([ac1].as_slice(), 1_000_000, 5.0, false, &[]);
 
         let ac2 = make_aircraft("abc123", 40.01, -74.0, Some(5100.0));
-        state.merge([ac2].as_slice(),1_010_000, 5.0, false, &[]);
+        state.merge([ac2].as_slice(), 1_010_000, 5.0, false, &[]);
 
         let airports = default_airports();
         let (render_tracks, hash) =
@@ -1171,5 +1264,222 @@ mod tests {
         assert_eq!(h1, h2, "same string should produce same hash");
         let h3 = fnv_hash_str(FNV_OFFSET, "world");
         assert_ne!(h1, h3, "different strings should produce different hashes");
+    }
+
+    // -----------------------------------------------------------------------
+    // FbAircraftView / collect_fb_history round-trips
+    // -----------------------------------------------------------------------
+
+    struct TestAircraft {
+        hex: String,
+        flight: Option<String>,
+        lat: f32,
+        lon: f32,
+        altitude_feet: Option<f32>,
+        ground_speed_kt: Option<f32>,
+        track_deg: Option<f32>,
+        last_seen_seconds: Option<f32>,
+        is_on_ground: bool,
+    }
+
+    struct TestHistoryPoint {
+        lat: f32,
+        lon: f32,
+        altitude_feet: f32,
+        timestamp_ms: i64,
+    }
+
+    struct TestHistoryGroup {
+        hex: String,
+        points: Vec<TestHistoryPoint>,
+    }
+
+    fn build_traffic_payload(
+        aircraft: &[TestAircraft],
+        history_groups: &[TestHistoryGroup],
+        fetched_at_ms: i64,
+        source: Option<&str>,
+        error: Option<&str>,
+    ) -> Vec<u8> {
+        use crate::generated::{TrafficPayload, TrafficPayloadArgs};
+
+        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(512);
+
+        let source_str = source.map(|s| builder.create_string(s));
+        let error_str = error.map(|s| builder.create_string(s));
+
+        let mut ac_hex_offsets = Vec::new();
+        let mut ac_flight_offsets = Vec::new();
+        let mut ac_lats = Vec::new();
+        let mut ac_lons = Vec::new();
+        let mut ac_altitudes = Vec::new();
+        let mut ac_speeds = Vec::new();
+        let mut ac_tracks = Vec::new();
+        let mut ac_last_seen_v = Vec::new();
+        let mut ac_flags_v = Vec::new();
+
+        for ac in aircraft {
+            ac_hex_offsets.push(builder.create_string(&ac.hex));
+            ac_flight_offsets.push(builder.create_string(ac.flight.as_deref().unwrap_or("")));
+            ac_lats.push(ac.lat);
+            ac_lons.push(ac.lon);
+            ac_altitudes.push(ac.altitude_feet.unwrap_or(f32::NAN));
+            ac_speeds.push(ac.ground_speed_kt.unwrap_or(f32::NAN));
+            ac_tracks.push(ac.track_deg.unwrap_or(f32::NAN));
+            ac_last_seen_v.push(ac.last_seen_seconds.unwrap_or(f32::NAN));
+            ac_flags_v.push(if ac.is_on_ground { 1u16 } else { 0u16 });
+        }
+
+        let ac_hex_vec = builder.create_vector(&ac_hex_offsets);
+        let ac_flight_vec = builder.create_vector(&ac_flight_offsets);
+        let ac_lat_vec = builder.create_vector(&ac_lats);
+        let ac_lon_vec = builder.create_vector(&ac_lons);
+        let ac_altitude_vec = builder.create_vector(&ac_altitudes);
+        let ac_speed_vec = builder.create_vector(&ac_speeds);
+        let ac_track_vec = builder.create_vector(&ac_tracks);
+        let ac_last_seen_vec = builder.create_vector(&ac_last_seen_v);
+        let ac_flags_vec = builder.create_vector(&ac_flags_v);
+
+        let mut hg_hex_offsets = Vec::new();
+        let mut hg_starts = Vec::new();
+        let mut hg_counts = Vec::new();
+        let mut hp_ts = Vec::new();
+        let mut hp_lats = Vec::new();
+        let mut hp_lons = Vec::new();
+        let mut hp_alts = Vec::new();
+        let mut point_offset = 0u32;
+
+        for hg in history_groups {
+            hg_hex_offsets.push(builder.create_string(&hg.hex));
+            hg_starts.push(point_offset);
+            hg_counts.push(hg.points.len() as u32);
+            point_offset += hg.points.len() as u32;
+            for p in &hg.points {
+                hp_ts.push(p.timestamp_ms);
+                hp_lats.push(p.lat);
+                hp_lons.push(p.lon);
+                hp_alts.push(p.altitude_feet);
+            }
+        }
+
+        let hg_hex_vec = builder.create_vector(&hg_hex_offsets);
+        let hg_start_vec = builder.create_vector(&hg_starts);
+        let hg_count_vec = builder.create_vector(&hg_counts);
+        let hp_ts_vec = builder.create_vector(&hp_ts);
+        let hp_lat_vec = builder.create_vector(&hp_lats);
+        let hp_lon_vec = builder.create_vector(&hp_lons);
+        let hp_alt_vec = builder.create_vector(&hp_alts);
+
+        let mut flags = 0u32;
+        if error.is_some() {
+            flags |= 1;
+        }
+
+        let tp = TrafficPayload::create(
+            &mut builder,
+            &TrafficPayloadArgs {
+                flags,
+                fetched_at_ms,
+                source: source_str,
+                error: error_str,
+                aircraft_count: aircraft.len() as u32,
+                ac_hex: Some(ac_hex_vec),
+                ac_flight: Some(ac_flight_vec),
+                ac_lat: Some(ac_lat_vec),
+                ac_lon: Some(ac_lon_vec),
+                ac_altitude_feet: Some(ac_altitude_vec),
+                ac_ground_speed_kt: Some(ac_speed_vec),
+                ac_track_deg: Some(ac_track_vec),
+                ac_last_seen_seconds: Some(ac_last_seen_vec),
+                ac_flags: Some(ac_flags_vec),
+                history_group_count: history_groups.len() as u32,
+                hg_hex: Some(hg_hex_vec),
+                hg_point_start: Some(hg_start_vec),
+                hg_point_count: Some(hg_count_vec),
+                history_point_count: point_offset,
+                hp_timestamp_ms: Some(hp_ts_vec),
+                hp_lat: Some(hp_lat_vec),
+                hp_lon: Some(hp_lon_vec),
+                hp_altitude_feet: Some(hp_alt_vec),
+            },
+        );
+        builder.finish(tp, Some("AVTR"));
+        builder.finished_data().to_vec()
+    }
+
+    #[test]
+    fn fb_aircraft_view_empty_payload() {
+        let data = build_traffic_payload(&[], &[], 1_700_000_000_000, None, None);
+        let fb = flatbuffers::root::<crate::generated::TrafficPayload>(&data).unwrap();
+        let view = FbAircraftView::new(&fb);
+        assert_eq!(view.len(), 0);
+        assert_eq!(fb.fetched_at_ms(), 1_700_000_000_000);
+        assert!(fb.source().is_none());
+        assert!(fb.error().is_none());
+    }
+
+    #[test]
+    fn fb_aircraft_view_reads_columns_and_nan_sentinels() {
+        let ac = TestAircraft {
+            hex: "a1b2c3".into(),
+            flight: Some("UAL123".into()),
+            lat: 33.9425,
+            lon: -118.4081,
+            altitude_feet: None,
+            ground_speed_kt: Some(450.0),
+            track_deg: Some(270.0),
+            last_seen_seconds: Some(2.5),
+            is_on_ground: true,
+        };
+        let data =
+            build_traffic_payload(&[ac], &[], 1_700_000_000_000, Some("adsb-exchange"), None);
+        let fb = flatbuffers::root::<crate::generated::TrafficPayload>(&data).unwrap();
+        let view = FbAircraftView::new(&fb);
+        assert_eq!(view.len(), 1);
+        assert_eq!(view.hex(0), "a1b2c3");
+        assert_eq!(view.flight(0), Some("UAL123"));
+        assert!((view.lat(0) - 33.9425).abs() < 1e-4);
+        assert!((view.lon(0) - (-118.4081)).abs() < 1e-4);
+        assert_eq!(view.altitude_feet(0), None);
+        assert_eq!(view.ground_speed_kt(0), Some(450.0));
+        assert_eq!(view.track_deg(0), Some(270.0));
+        assert!(view.is_on_ground(0));
+        assert_eq!(fb.source(), Some("adsb-exchange"));
+    }
+
+    #[test]
+    fn collect_fb_history_reads_groups() {
+        let hg = TestHistoryGroup {
+            hex: "abc123".into(),
+            points: vec![
+                TestHistoryPoint {
+                    lat: 34.0,
+                    lon: -118.0,
+                    altitude_feet: 5000.0,
+                    timestamp_ms: 1_700_000_000_000,
+                },
+                TestHistoryPoint {
+                    lat: 34.1,
+                    lon: -118.1,
+                    altitude_feet: 5500.0,
+                    timestamp_ms: 1_700_000_001_000,
+                },
+            ],
+        };
+        let data = build_traffic_payload(&[], &[hg], 1_700_000_000_000, None, None);
+        let fb = flatbuffers::root::<crate::generated::TrafficPayload>(&data).unwrap();
+        let groups = collect_fb_history(&fb, None).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].hex, "abc123");
+        assert_eq!(groups[0].points.len(), 2);
+        assert!((groups[0].points[0].lat - 34.0).abs() < 1e-6);
+        assert_eq!(groups[0].points[0].timestamp_ms, 1_700_000_000_000);
+        assert!((groups[0].points[1].lat - 34.1).abs() < 1e-4);
+    }
+
+    #[test]
+    fn fb_traffic_payload_rejects_invalid_buffer() {
+        let data = vec![0xFFu8; 4];
+        assert!(flatbuffers::root::<crate::generated::TrafficPayload>(&data).is_err());
     }
 }

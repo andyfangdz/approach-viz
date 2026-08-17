@@ -84,7 +84,7 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 
 ## Transport and Polling
 
-- MRMS polling is worker-initiated (`poll-and-prepare`): the worker fetches volume/echo-top endpoints directly (proxy or direct configured URL), decodes compact binary payloads (`application/vnd.approach-viz.mrms.v4`), and runs prepare steps in the same request cycle.
+- MRMS polling is worker-initiated (`poll-and-prepare`): the worker fetches volume/echo-top endpoints directly (proxy or direct configured URL), decodes compact binary payloads (`application/vnd.approach-viz.mrms.v5`), and runs prepare steps in the same request cycle.
 - Worker startup/communication failures surface as explicit overlay/debug errors (no synchronous in-thread fallback).
 - The WASM `decode_and_prepare_mrms` call joins the prepare-pass outputs with payload columns inside Rust (`crates/approach-viz-core/src/mrms_render.rs::build_render_volume`) and returns flat render-ready per-voxel columns (`centerXNm`/`centerYNm`/`centerZNm`, `sizeXNm`/`sizeYNm`/`sizeZNm`, `dbz`, `phaseCode`) plus altitude-guide extents (`maxAbsXNm`/`maxAbsZNm`/`maxCorrectedTopFeet`) — the same engine path the native iOS/macOS app consumes through UniFFI.
 - The poll response moves those flat render columns to the main thread as Comlink transferables (zero-copy), alongside volume metadata for the debug panel, the optional cross-section grid, and prepared echo-top surfaces + summary metadata for caps/debug readouts.
@@ -92,7 +92,7 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 - Poll/prepare worker requests remain bounded by worker-client timeouts, with explicit failure surfacing in debug telemetry.
 - Volume preprocessing and echo-top shaping remain off-main-thread: threshold filtering, phase-mode selection, curvature compensation, declutter selection, the render-column join, cap surface shaping, and vertical cross-section binning.
 - App responses include cross-origin isolation headers (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` by default) so browser features needed for `SharedArrayBuffer`/`Atomics` are available across Safari and Chromium; this can be disabled with `DISABLE_CROSS_ORIGIN_ISOLATION=1`, and `CROSS_ORIGIN_EMBEDDER_POLICY=credentialless` is available when deployments need broader third-party compatibility.
-- v3 transport merges contiguous same-phase / similar-dBZ cells into larger brick records server-side, reducing client instance count while preserving full coverage.
+- Server-side brick merging combines contiguous same-phase / similar-dBZ cells into larger records, reducing client instance count while preserving full coverage.
 - Wire format details: [`docs/mrms-rust-pipeline.md`](mrms-rust-pipeline.md).
 - Polling cadence: ~120 seconds.
 - Polling keeps rendering the last successful payload when the API returns a transient error, avoiding abrupt disappear/reappear flicker.

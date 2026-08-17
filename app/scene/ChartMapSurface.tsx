@@ -7,8 +7,9 @@ import { useThree } from '@react-three/fiber';
 import type { ChartType } from '@/app/app-client/types';
 import type { ChartTilesWorkerApi, ChartTileReady } from '@/app/scene/chart/chart-tiles.worker';
 import { TileLayer } from './chart/TileLayer';
+import { ALTITUDE_SCALE } from './approach-path/constants';
+import { latLonToLocal } from './approach-path/coordinates';
 
-const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
 const SURFACE_OFFSET_NM = -0.002;
 
 const CHART_TILE_URLS: Record<ChartType, string> = {
@@ -30,12 +31,7 @@ const TAC_OVERLAY_URL =
   'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Terminal/MapServer/tile';
 const TAC_OVERLAY_ZOOM = { min: 10, max: 12 };
 
-// WGS-84 ellipsoid constants
 const DEG_TO_RAD = Math.PI / 180;
-const METERS_TO_NM = 1 / 1852;
-const WGS84_SEMI_MAJOR_METERS = 6378137;
-const WGS84_FLATTENING = 1 / 298.257223563;
-const WGS84_E2 = WGS84_FLATTENING * (2 - WGS84_FLATTENING);
 
 // Maximum texture dimension (width or height) in pixels for 3dmap canvas
 // compositing.  Zoom steps down when the canvas would exceed this.  8192 is
@@ -103,28 +99,6 @@ function tileXToLon(x: number, zoom: number): number {
 function tileYToLat(y: number, zoom: number): number {
   const n = Math.PI - (2 * Math.PI * y) / 2 ** zoom;
   return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-}
-
-// --- WGS-84 lat/lon to local ENU NM ---
-
-function latLonToLocal(
-  lat: number,
-  lon: number,
-  refLat: number,
-  refLon: number
-): { x: number; z: number } {
-  const phi = refLat * DEG_TO_RAD;
-  const sinPhi = Math.sin(phi);
-  const cosPhi = Math.cos(phi);
-  const denom = Math.sqrt(1 - WGS84_E2 * sinPhi * sinPhi);
-  const primeVerticalMeters = WGS84_SEMI_MAJOR_METERS / denom;
-  const meridionalMeters = (WGS84_SEMI_MAJOR_METERS * (1 - WGS84_E2)) / (denom * denom * denom);
-
-  const dLatRad = (lat - refLat) * DEG_TO_RAD;
-  const dLonRad = (lon - refLon) * DEG_TO_RAD;
-  const x = dLonRad * primeVerticalMeters * cosPhi * METERS_TO_NM;
-  const z = -(dLatRad * meridionalMeters * METERS_TO_NM);
-  return { x, z };
 }
 
 // --- Zoom level selection ---

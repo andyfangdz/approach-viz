@@ -1,6 +1,6 @@
 # iOS Native App Implementation Plan
 
-> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical.** This plan targeted a SwiftUI + RealityKit MVP. RealityKit was removed; the shipped native apps are SwiftUI + MetalKit. Do not execute this plan. Current behavior lives in [`docs/rendering-ios-native-mvp.md`](../../rendering-ios-native-mvp.md) and `AGENTS.md`.
 
 **Goal:** Build a native iOS app (SwiftUI + RealityKit) for 3D instrument approach visualization, sharing the Rust core crate via UniFFI.
 

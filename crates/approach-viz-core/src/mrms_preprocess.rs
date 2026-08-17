@@ -2,20 +2,20 @@
 //
 // Ported from `app/scene/nexrad/nexrad-preprocess.ts` — must produce numerically identical results.
 
-use crate::coords::{earth_curvature_drop_nm, ALTITUDE_SCALE};
+use crate::coords::{ALTITUDE_SCALE, earth_curvature_drop_nm};
 use crate::generated::MrmsVolume;
 use crate::types::{
-    CrossSectionData, DecodedMrmsVolume, DeclutterMode, PhaseMode, PreparedVolume,
-    CROSS_SECTION_BINS_X, CROSS_SECTION_BINS_Y, DECLUTTER_LOW_MAX_FEET, DECLUTTER_MID_MAX_FEET,
-    FEET_PER_NM, MIN_VOXEL_HEIGHT_NM, PHASE_RAIN,
+    CROSS_SECTION_BINS_X, CROSS_SECTION_BINS_Y, CrossSectionData, DECLUTTER_LOW_MAX_FEET,
+    DECLUTTER_MID_MAX_FEET, DeclutterMode, FEET_PER_NM, MIN_VOXEL_HEIGHT_NM, PHASE_RAIN, PhaseMode,
+    PreparedVolume,
 };
 
 // ---------------------------------------------------------------------------
 // VolumeSource trait — abstracts indexed voxel access for prepare/cross-section
 // ---------------------------------------------------------------------------
 
-/// Indexed access to MRMS volume voxel fields. Implemented for `DecodedMrmsVolume`
-/// (the fully decoded path) and `FbVolumeView` (zero-copy FlatBuffers view).
+/// Indexed access to MRMS volume voxel fields. Implemented for `FbVolumeView`
+/// (zero-copy FlatBuffers view) and the test-only `TestVolume` fixture.
 pub trait VolumeSource {
     fn voxel_count(&self) -> usize;
     fn x_nm(&self, i: usize) -> f32;
@@ -29,10 +29,27 @@ pub trait VolumeSource {
     fn footprint_y_span(&self, i: usize) -> u16;
 }
 
-impl VolumeSource for DecodedMrmsVolume {
+/// Owned SoA fixture for prepare/render unit tests. Production decode is
+/// `FbVolumeView` over the AVMR FlatBuffers payload.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct TestVolume {
+    pub x_nm: Vec<f32>,
+    pub z_nm: Vec<f32>,
+    pub bottom_feet: Vec<u16>,
+    pub top_feet: Vec<u16>,
+    pub dbz_tenths: Vec<i16>,
+    pub phase: Vec<u8>,
+    pub surface_phase: Vec<u8>,
+    pub footprint_x_span: Vec<u16>,
+    pub footprint_y_span: Vec<u16>,
+}
+
+#[cfg(test)]
+impl VolumeSource for TestVolume {
     #[inline]
     fn voxel_count(&self) -> usize {
-        self.voxel_count as usize
+        self.x_nm.len()
     }
     #[inline]
     fn x_nm(&self, i: usize) -> f32 {
@@ -184,7 +201,7 @@ impl VolumeSource for FbVolumeView<'_> {
 // ---------------------------------------------------------------------------
 
 /// Indexed access to echo-top SoA columns. Implemented for `EchoTopInput`
-/// (owned path / tests) and `FbEchoTopView` (zero-copy FlatBuffers path).
+/// (test fixture) and `FbEchoTopView` (zero-copy FlatBuffers path).
 pub trait EchoTopSource {
     fn len(&self) -> usize;
     fn x_nm(&self, i: usize) -> f32;
@@ -220,19 +237,33 @@ impl EchoTopSource for EchoTopInput {
             .min(self.top50_feet.len())
     }
     #[inline]
-    fn x_nm(&self, i: usize) -> f32 { self.x_nm[i] }
+    fn x_nm(&self, i: usize) -> f32 {
+        self.x_nm[i]
+    }
     #[inline]
-    fn z_nm(&self, i: usize) -> f32 { self.z_nm[i] }
+    fn z_nm(&self, i: usize) -> f32 {
+        self.z_nm[i]
+    }
     #[inline]
-    fn top18_feet(&self, i: usize) -> f64 { f64::from(self.top18_feet[i]) }
+    fn top18_feet(&self, i: usize) -> f64 {
+        f64::from(self.top18_feet[i])
+    }
     #[inline]
-    fn top30_feet(&self, i: usize) -> f64 { f64::from(self.top30_feet[i]) }
+    fn top30_feet(&self, i: usize) -> f64 {
+        f64::from(self.top30_feet[i])
+    }
     #[inline]
-    fn top50_feet(&self, i: usize) -> f64 { f64::from(self.top50_feet[i]) }
+    fn top50_feet(&self, i: usize) -> f64 {
+        f64::from(self.top50_feet[i])
+    }
     #[inline]
-    fn footprint_x_nm(&self) -> f32 { self.footprint_x_nm }
+    fn footprint_x_nm(&self) -> f32 {
+        self.footprint_x_nm
+    }
     #[inline]
-    fn footprint_y_nm(&self) -> f32 { self.footprint_y_nm }
+    fn footprint_y_nm(&self) -> f32 {
+        self.footprint_y_nm
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,21 +306,37 @@ impl<'a> FbEchoTopView<'a> {
 
 impl EchoTopSource for FbEchoTopView<'_> {
     #[inline]
-    fn len(&self) -> usize { self.count }
+    fn len(&self) -> usize {
+        self.count
+    }
     #[inline]
-    fn x_nm(&self, i: usize) -> f32 { self.et_x_nm.get(i) }
+    fn x_nm(&self, i: usize) -> f32 {
+        self.et_x_nm.get(i)
+    }
     #[inline]
-    fn z_nm(&self, i: usize) -> f32 { self.et_z_nm.get(i) }
+    fn z_nm(&self, i: usize) -> f32 {
+        self.et_z_nm.get(i)
+    }
     #[inline]
-    fn top18_feet(&self, i: usize) -> f64 { self.top18.get(i) as f64 }
+    fn top18_feet(&self, i: usize) -> f64 {
+        self.top18.get(i) as f64
+    }
     #[inline]
-    fn top30_feet(&self, i: usize) -> f64 { self.top30.get(i) as f64 }
+    fn top30_feet(&self, i: usize) -> f64 {
+        self.top30.get(i) as f64
+    }
     #[inline]
-    fn top50_feet(&self, i: usize) -> f64 { self.top50.get(i) as f64 }
+    fn top50_feet(&self, i: usize) -> f64 {
+        self.top50.get(i) as f64
+    }
     #[inline]
-    fn footprint_x_nm(&self) -> f32 { self.fp_x }
+    fn footprint_x_nm(&self) -> f32 {
+        self.fp_x
+    }
     #[inline]
-    fn footprint_y_nm(&self) -> f32 { self.fp_y }
+    fn footprint_y_nm(&self) -> f32 {
+        self.fp_y
+    }
 }
 
 /// Prepared echo-top surfaces in SoA layout, ready for direct JS Float32Array handoff.
@@ -434,7 +481,7 @@ pub fn prepare_volume(
     }
 }
 
-/// Declutter filter matching `keepVoxelForDeclutter` in TS.
+/// Declutter filter matching the web client's All/Low/Mid/High bands.
 fn keep_voxel_for_declutter(mode: DeclutterMode, bottom_feet: f64, top_feet: f64) -> bool {
     match mode {
         DeclutterMode::All => true,
@@ -631,25 +678,6 @@ pub fn prepare_echo_top_surfaces(
 }
 
 // ---------------------------------------------------------------------------
-// 4. Echo-top summary metadata
-// ---------------------------------------------------------------------------
-
-/// Summary metadata from an echo-top payload (passed through to JS).
-#[derive(Debug, Clone)]
-pub struct EchoTopSummary {
-    pub source_cell_count: u32,
-    pub max_top18_feet: Option<f32>,
-    pub max_top30_feet: Option<f32>,
-    pub max_top50_feet: Option<f32>,
-    pub max_top60_feet: Option<f32>,
-    pub top18_timestamp: Option<String>,
-    pub top30_timestamp: Option<String>,
-    pub top50_timestamp: Option<String>,
-    pub top60_timestamp: Option<String>,
-    pub error: Option<String>,
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -658,7 +686,7 @@ mod tests {
     use super::*;
     use crate::types::{PHASE_RAIN, PHASE_SNOW};
 
-    /// Helper: build a minimal `DecodedMrmsVolume` with n voxels using provided field closures.
+    /// Helper: build a minimal `TestVolume` with n voxels using provided field closures.
     fn make_volume(
         n: usize,
         x_nm: impl Fn(usize) -> f32,
@@ -668,15 +696,8 @@ mod tests {
         dbz_tenths: impl Fn(usize) -> i16,
         phase: impl Fn(usize) -> u8,
         surface_phase: impl Fn(usize) -> u8,
-    ) -> DecodedMrmsVolume {
-        DecodedMrmsVolume {
-            voxel_count: n as u32,
-            layer_count: 1,
-            generated_at_ms: 0,
-            scan_time_ms: 0,
-            footprint_x_nm: 1.0,
-            footprint_y_nm: 1.0,
-            layer_voxel_counts: vec![n as u32],
+    ) -> TestVolume {
+        TestVolume {
             x_nm: (0..n).map(&x_nm).collect(),
             z_nm: (0..n).map(&z_nm).collect(),
             bottom_feet: (0..n).map(&bottom_feet).collect(),
@@ -696,7 +717,14 @@ mod tests {
     #[test]
     fn prepare_empty_volume() {
         let vol = make_volume(0, |_| 0.0, |_| 0.0, |_| 0, |_| 0, |_| 0, |_| 0, |_| 0);
-        let result = prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 0);
         assert!(result.valid_indices.is_empty());
         assert!(result.y_base.is_empty());
@@ -716,7 +744,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result = prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 0);
     }
 
@@ -733,7 +768,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result = prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1);
         assert_eq!(result.valid_indices[0], 0);
         // center = (5000 + 6000)/2 = 5500, y_base = 5500 * ALTITUDE_SCALE
@@ -759,7 +801,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result = prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, true, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            true,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1);
         // Raw bottom = 10000, curvature drop at 60 NM ≈ 0.52 NM × 6076.12 ≈ 3160 feet
         assert!(
@@ -788,8 +837,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1);
         assert!(
             (result.corrected_bottom_feet[0] - 10000.0).abs() < 0.01,
@@ -815,8 +870,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_SNOW,
         );
-        let result =
-            prepare_volume(&vol, 50, PhaseMode::Surface, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Surface,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1);
         assert_eq!(
             result.effective_phase_code[0], PHASE_SNOW,
@@ -836,8 +897,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_SNOW,
         );
-        let result =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1);
         assert_eq!(
             result.effective_phase_code[0], PHASE_RAIN,
@@ -858,8 +925,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::Low, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::Low,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1, "voxel should still be valid");
         assert_eq!(
             result.declutter_count, 0,
@@ -880,8 +953,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 3);
         assert_eq!(result.declutter_count, 3);
         assert_eq!(result.declutter_indices, vec![0, 1, 2]);
@@ -894,10 +973,15 @@ mod tests {
     #[test]
     fn cross_section_empty() {
         let vol = make_volume(0, |_| 0.0, |_| 0.0, |_| 0, |_| 0, |_| 0, |_| 0, |_| 0);
-        let prepared =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
-        let result =
-            build_cross_section(&vol, &prepared, (1.0, 0.0), (0.0, 1.0), 60.0, 5.0);
+        let prepared = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
+        let result = build_cross_section(&vol, &prepared, (1.0, 0.0), (0.0, 1.0), 60.0, 5.0);
         assert!(result.is_none());
     }
 
@@ -914,12 +998,17 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let prepared =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let prepared = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(prepared.valid_count, 1);
 
-        let result =
-            build_cross_section(&vol, &prepared, (1.0, 0.0), (0.0, 1.0), 60.0, 5.0);
+        let result = build_cross_section(&vol, &prepared, (1.0, 0.0), (0.0, 1.0), 60.0, 5.0);
         assert!(result.is_some());
         let cs = result.unwrap();
         assert_eq!(cs.bins_x, CROSS_SECTION_BINS_X);
@@ -975,11 +1064,16 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let prepared =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let prepared = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
 
-        let result =
-            build_cross_section(&vol, &prepared, (1.0, 0.0), (0.0, 1.0), 60.0, 5.0);
+        let result = build_cross_section(&vol, &prepared, (1.0, 0.0), (0.0, 1.0), 60.0, 5.0);
         // The voxel is valid, so cross_section should return Some, but grid should be empty
         assert!(result.is_some());
         let cs = result.unwrap();
@@ -1126,7 +1220,14 @@ mod tests {
         );
         vol.footprint_x_span = vec![100];
         vol.footprint_y_span = vec![100];
-        let result = prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 0);
     }
 
@@ -1144,7 +1245,14 @@ mod tests {
         );
         vol.footprint_x_span = vec![0]; // zero → skip
         vol.footprint_y_span = vec![100];
-        let result = prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 0);
     }
 
@@ -1161,7 +1269,14 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result = prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::All, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1);
         // height_base should be at least MIN_VOXEL_HEIGHT_NM
         assert!(
@@ -1185,10 +1300,19 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::Mid, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::Mid,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1);
-        assert_eq!(result.declutter_count, 1, "center 15k ft should pass Mid filter");
+        assert_eq!(
+            result.declutter_count, 1,
+            "center 15k ft should pass Mid filter"
+        );
     }
 
     #[test]
@@ -1204,15 +1328,33 @@ mod tests {
             |_| PHASE_RAIN,
             |_| PHASE_RAIN,
         );
-        let result =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::High, false, 40.0);
+        let result = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::High,
+            false,
+            40.0,
+        );
         assert_eq!(result.valid_count, 1);
-        assert_eq!(result.declutter_count, 1, "center 30k ft should pass High filter");
+        assert_eq!(
+            result.declutter_count, 1,
+            "center 30k ft should pass High filter"
+        );
 
         // Same voxel with Low mode → excluded
-        let result2 =
-            prepare_volume(&vol, 50, PhaseMode::Altitude, DeclutterMode::Low, false, 40.0);
-        assert_eq!(result2.declutter_count, 0, "center 30k ft should NOT pass Low filter");
+        let result2 = prepare_volume(
+            &vol,
+            50,
+            PhaseMode::Altitude,
+            DeclutterMode::Low,
+            false,
+            40.0,
+        );
+        assert_eq!(
+            result2.declutter_count, 0,
+            "center 30k ft should NOT pass Low filter"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1375,5 +1517,33 @@ mod tests {
         let fb = flatbuffers::root::<crate::generated::EchoTops>(&data).unwrap();
         let error = FbEchoTopView::new(&fb).expect_err("length mismatch must fail");
         assert!(error.contains("x_nm"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn fb_volume_view_empty_payload() {
+        let data = build_volume_payload(0, 0, true);
+        let fb = flatbuffers::root::<crate::generated::MrmsVolume>(&data).unwrap();
+        let view = FbVolumeView::new(&fb).expect("empty volume should build a view");
+        assert_eq!(view.voxel_count(), 0);
+    }
+
+    #[test]
+    fn fb_volume_view_rejects_invalid_buffer() {
+        let data = vec![0xFFu8; 4];
+        assert!(flatbuffers::root::<crate::generated::MrmsVolume>(&data).is_err());
+    }
+
+    #[test]
+    fn fb_echo_top_view_empty_payload() {
+        let data = build_echo_top_payload(0, 0, true);
+        let fb = flatbuffers::root::<crate::generated::EchoTops>(&data).unwrap();
+        let view = FbEchoTopView::new(&fb).expect("empty echo-tops should build a view");
+        assert_eq!(view.len(), 0);
+    }
+
+    #[test]
+    fn fb_echo_top_view_rejects_invalid_buffer() {
+        let data = vec![0xFFu8; 4];
+        assert!(flatbuffers::root::<crate::generated::EchoTops>(&data).is_err());
     }
 }

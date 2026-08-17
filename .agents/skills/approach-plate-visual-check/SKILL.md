@@ -75,12 +75,11 @@ python3 "$SKILL/scripts/overlay_geometry.py" \
    that stresses the leg type under test (`PI`, `FC`+`CI`, `AF`, `RF`, `HF`…).
 2. **Dump geometry.** `dump_geometry.sh <ICAO>:<PROC_ID> ...` produces one
    segments file per procedure from the real CIFP data, through the same
-   `resolve_approach_altitudes` + `build_path_geometry` + `build_hold_geometry`
-   calls the web (WASM) and iOS (UniFFI) clients make, with the scene's segment
-   composition (final extended through the first missed fix; the final's first
+   `resolve_approach_altitudes` + `compose_approach_scene` + `build_path_geometry` + `build_hold_geometry`
+   calls the web (WASM) and iOS (UniFFI) clients make, with the shared
+   composition export (final extended through the first missed fix; the final's first
    course-carrying leg appended to `CI`/`VI`/`AF`/`RF`-terminated transitions;
-   holds dumped separately). The composition mirrors `app/scene/ApproachPath.tsx`
-   — keep `scripts/extract_geometry.ts` in sync when that changes.
+   holds dumped separately).
 3. **Fetch the plate.** `fetch_plate.sh <ICAO> "<chart name>"` resolves the
    plate PDF from the d-TPP metafile, downloads it, and renders a PNG. With an
    empty chart name it lists every chart for the airport.
@@ -110,7 +109,7 @@ displays north-up (north = -z), matching the north-up plate plan view. The
 - `scripts/dump_geometry.sh` — one-command geometry dump for real CIFP
   procedures (extract → temporary test → run → restore), plus procedure listing.
 - `scripts/extract_geometry.ts` — CIFP extraction + Rust test generation
-  (used by `dump_geometry.sh`; mirrors the scene's segment composition).
+  (used by `dump_geometry.sh`; calls `compose_approach_scene`).
 - `scripts/fetch_plate.sh` — resolve + download + render an FAA d-TPP plate.
 - `scripts/find_plate.py` — look up a plate PDF name in the d-TPP metafile.
 - `scripts/render_plate.py` — render a PDF page/region to PNG (PyMuPDF).

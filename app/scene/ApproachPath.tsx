@@ -8,7 +8,7 @@ import type { Approach, ApproachLeg, Airport, Waypoint } from '@/lib/cifp/parser
 import type { MissedApproachClimbRequirement } from '@/lib/types';
 import { resolveApproachAltitudesWithWorker } from './approach-path/approach-worker-client';
 import { COLORS } from './approach-path/constants';
-import { altToY, isHoldLeg, resolveWaypoint } from './approach-path/coordinates';
+import { altToY, isHoldLeg } from './approach-path/coordinates';
 import { HoldPattern } from './approach-path/HoldPattern';
 import { PathTube } from './approach-path/PathTube';
 import { WaypointMarker } from './approach-path/WaypointMarker';
@@ -24,6 +24,14 @@ interface ApproachPathProps {
   missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
   showHoldProtectedAreas?: boolean;
 }
+
+type ComposedPathSegment = {
+  kind: string;
+  name?: string | null;
+  legs: ApproachLeg[];
+  resolvedAltitudes: number[];
+  showTurnConstraintLabels: boolean;
+};
 
 export const ApproachPath = memo(function ApproachPath({
   approach,
@@ -48,10 +56,30 @@ export const ApproachPath = memo(function ApproachPath({
     return legs;
   }, [approach]);
 
-  const [resolvedAltitudes, setResolvedAltitudes] = useState<Map<ApproachLeg, number>>(new Map());
-  const [missedPathAltitudes, setMissedPathAltitudes] = useState<Map<ApproachLeg, number>>(
-    new Map()
-  );
+  const compositionKey = `${airport.id}:${approach.procedureId}`;
+  const [composed, setComposed] = useState<{
+    key: string;
+    altitudes: Map<ApproachLeg, number>;
+    segments: ComposedPathSegment[];
+  }>(() => ({
+    key: compositionKey,
+    altitudes: new Map(),
+    segments: []
+  }));
+
+  // Reset during render so React discards the mismatched commit. An effect-only
+  // clear would still paint one frame of the previous procedure at the new
+  // airport/waypoint frame.
+  if (composed.key !== compositionKey) {
+    setComposed({
+      key: compositionKey,
+      altitudes: new Map(),
+      segments: []
+    });
+  }
+
+  const resolvedAltitudes = composed.key === compositionKey ? composed.altitudes : new Map();
+  const pathSegments = composed.key === compositionKey ? composed.segments : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -84,18 +112,20 @@ export const ApproachPath = memo(function ApproachPath({
         for (let i = 0; i < approach.missedLegs.length; i += 1) {
           nextResolved.set(approach.missedLegs[i], resolved.missedAltitudes[i] ?? 0);
         }
-        const nextMissed = new Map<ApproachLeg, number>();
-        for (let i = 0; i < approach.missedLegs.length; i += 1) {
-          nextMissed.set(approach.missedLegs[i], resolved.missedPathAltitudes[i] ?? 0);
-        }
-        setResolvedAltitudes(nextResolved);
-        setMissedPathAltitudes(nextMissed);
+        setComposed({
+          key: compositionKey,
+          altitudes: nextResolved,
+          segments: resolved.composed.segments
+        });
       })
       .catch((error) => {
         if (cancelled) return;
         console.error('Approach altitude worker failed.', error);
-        setResolvedAltitudes(new Map());
-        setMissedPathAltitudes(new Map());
+        setComposed({
+          key: compositionKey,
+          altitudes: new Map(),
+          segments: []
+        });
       });
 
     return () => {
@@ -110,25 +140,9 @@ export const ApproachPath = memo(function ApproachPath({
     refLon,
     airport.elevation,
     missedApproachStartAltitudeFeet,
-    missedApproachClimbRequirement
+    missedApproachClimbRequirement,
+    compositionKey
   ]);
-
-  const finalPathLegs = useMemo(() => {
-    if (approach.finalLegs.length === 0) {
-      return approach.finalLegs;
-    }
-
-    const mapLeg = approach.missedLegs[0];
-    if (!mapLeg) {
-      return approach.finalLegs;
-    }
-
-    if (!resolveWaypoint(waypoints, mapLeg.waypointId)) {
-      return approach.finalLegs;
-    }
-
-    return [...approach.finalLegs, mapLeg];
-  }, [approach.finalLegs, approach.missedLegs, waypoints]);
 
   const uniqueWaypoints = useMemo(
     () => collectUniqueWaypoints(allLegs, waypoints, resolvedAltitudes, refLat, refLon),
@@ -136,33 +150,6 @@ export const ApproachPath = memo(function ApproachPath({
   );
 
   const holdLegs = useMemo(() => allLegs.filter((leg) => isHoldLeg(leg)), [allLegs]);
-
-  // Append the final approach's first course-carrying fix leg (the FAF/localizer
-  // leg) to transitions that need a downstream course to roll out onto:
-  //   - A no-fix course-reversal intercept (`CI`/`VI`, e.g. the KDDC I14 FLACK
-  //     teardrop) so the shared engine renders the reversal as a single smooth
-  //     arc that rolls out tangent onto the final approach course.
-  //   - A DME arc (`AF`/`RF`, e.g. the KDDC I14 POKPE/EARPP 14 DME arcs) so the
-  //     engine rolls the arc out onto the inbound course with a lead turn near
-  //     the fix instead of cornering sharply at it.
-  // Either way the appended leg is consumed by the engine and the inbound course
-  // itself is drawn by the segment that owns it.
-  const renderTransitions = useMemo(() => {
-    const rollOutTerminator = new Set(['CI', 'VI', 'AF', 'RF']);
-    const inboundLeg = approach.finalLegs.find(
-      (leg) => typeof leg.course === 'number' && Number.isFinite(leg.course)
-    );
-    return Array.from(approach.transitions.entries()).map(
-      ([name, legs]): [string, ApproachLeg[]] => {
-        const last = legs[legs.length - 1];
-        if (!last || !rollOutTerminator.has(last.pathTerminator) || !inboundLeg) {
-          return [name, legs];
-        }
-        const joinLeg: ApproachLeg = { ...inboundLeg, isMissedApproach: false };
-        return [name, [...legs, joinLeg]];
-      }
-    );
-  }, [approach.transitions, approach.finalLegs]);
 
   const holdAltitudes = useMemo(() => {
     const altitudes = new Map<ApproachLeg, number>();
@@ -183,51 +170,59 @@ export const ApproachPath = memo(function ApproachPath({
         />
       ))}
 
-      {finalPathLegs.length > 0 && (
-        <PathTube
-          legs={finalPathLegs}
-          waypoints={waypoints}
-          resolvedAltitudes={resolvedAltitudes}
-          initialAltitudeFeet={airport.elevation}
-          verticalScale={verticalScale}
-          refLat={refLat}
-          refLon={refLon}
-          magVar={airport.magVar}
-          color={COLORS.approach}
-          dashedBelowAltitudeFeet={missedApproachStartAltitudeFeet}
-          dashedBelowLabel={minimumsLabel}
-        />
-      )}
+      {pathSegments
+        .filter((segment) => segment.kind === 'final')
+        .map((segment, index) => (
+          <PathTube
+            key={`final-${index}`}
+            legs={segment.legs}
+            waypoints={waypoints}
+            resolvedAltitudes={segment.resolvedAltitudes}
+            initialAltitudeFeet={airport.elevation}
+            verticalScale={verticalScale}
+            refLat={refLat}
+            refLon={refLon}
+            magVar={airport.magVar}
+            color={COLORS.approach}
+            dashedBelowAltitudeFeet={missedApproachStartAltitudeFeet}
+            dashedBelowLabel={minimumsLabel}
+          />
+        ))}
 
-      {renderTransitions.map(([name, legs]) => (
-        <PathTube
-          key={name}
-          legs={legs}
-          waypoints={waypoints}
-          resolvedAltitudes={resolvedAltitudes}
-          initialAltitudeFeet={airport.elevation}
-          verticalScale={verticalScale}
-          refLat={refLat}
-          refLon={refLon}
-          magVar={airport.magVar}
-          color={COLORS.transition}
-        />
-      ))}
+      {pathSegments
+        .filter((segment) => segment.kind === 'transition')
+        .map((segment, index) => (
+          <PathTube
+            key={segment.name ?? `transition-${index}`}
+            legs={segment.legs}
+            waypoints={waypoints}
+            resolvedAltitudes={segment.resolvedAltitudes}
+            initialAltitudeFeet={airport.elevation}
+            verticalScale={verticalScale}
+            refLat={refLat}
+            refLon={refLon}
+            magVar={airport.magVar}
+            color={COLORS.transition}
+          />
+        ))}
 
-      {approach.missedLegs.length > 0 && (
-        <PathTube
-          legs={approach.missedLegs}
-          waypoints={waypoints}
-          resolvedAltitudes={missedPathAltitudes}
-          initialAltitudeFeet={airport.elevation}
-          verticalScale={verticalScale}
-          refLat={refLat}
-          refLon={refLon}
-          magVar={airport.magVar}
-          color={COLORS.missed}
-          showTurnConstraintLabels
-        />
-      )}
+      {pathSegments
+        .filter((segment) => segment.kind === 'missed')
+        .map((segment, index) => (
+          <PathTube
+            key={`missed-${index}`}
+            legs={segment.legs}
+            waypoints={waypoints}
+            resolvedAltitudes={segment.resolvedAltitudes}
+            initialAltitudeFeet={airport.elevation}
+            verticalScale={verticalScale}
+            refLat={refLat}
+            refLon={refLon}
+            magVar={airport.magVar}
+            color={COLORS.missed}
+            showTurnConstraintLabels={segment.showTurnConstraintLabels}
+          />
+        ))}
 
       {holdLegs.map((leg, index) => (
         <HoldPattern

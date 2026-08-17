@@ -62,6 +62,8 @@ export function approach_path_build_hold_points(center_x: number, center_z: numb
 
 export function approach_path_build_hold_protected_area(center_x: number, center_z: number, heading_deg: number, leg_length_nm: number, altitude_feet: number, turn_direction: string, vertical_scale: number): any;
 
+export function approach_path_compose_scene(params: any): any;
+
 export function approach_path_resolve_altitudes(params: any): any;
 
 export function approach_path_resolve_hold_leg_length_nm(hold_distance_nm: number | null | undefined, hold_time_minutes: number | null | undefined, altitude_feet: number): number;
@@ -93,35 +95,6 @@ export function decode_and_prepare_echo_top(data: Uint8Array, apply_earth_curvat
  */
 export function decode_and_prepare_mrms(data: Uint8Array, min_dbz_tenths: number, phase_mode: number, declutter_mode: number, apply_earth_curvature: boolean, ref_lat: number, include_cross_section: boolean, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number, include_composite: boolean, mosaic_product: number): any;
 
-/**
- * Scale an altitude in feet to scene Y units.
- */
-export function wasm_alt_to_y(alt_feet: number, vertical_scale: number): number;
-
-/**
- * Approximate earth-curvature sag at a horizontal range, in nautical miles.
- */
-export function wasm_earth_curvature_drop_nm(x_nm: number, z_nm: number, ref_lat: number): number;
-
-/**
- * WGS84 geocentric radius at the given latitude, in nautical miles.
- */
-export function wasm_geocentric_radius_nm(latitude_deg: number): number;
-
-/**
- * Convert (lat, lon) to local scene coordinates relative to a reference point.
- *
- * Returns a Float64Array of `[x, z]` where x = east (NM), z = -north (NM).
- */
-export function wasm_lat_lon_to_local(lat: number, lon: number, ref_lat: number, ref_lon: number): Float64Array;
-
-/**
- * Projection scale factors at a given latitude, in NM per degree.
- *
- * Returns a Float64Array of `[east_nm_per_lon_deg, north_nm_per_lat_deg]`.
- */
-export function wasm_projection_scales(lat_deg: number): Float64Array;
-
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -130,15 +103,11 @@ export interface InitOutput {
     readonly approach_path_build_geometry: (a: any) => [number, number, number];
     readonly approach_path_build_hold_points: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly approach_path_build_hold_protected_area: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly approach_path_compose_scene: (a: any) => [number, number, number];
     readonly approach_path_resolve_altitudes: (a: any) => [number, number, number];
     readonly approach_path_resolve_hold_leg_length_nm: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
-    readonly wasm_alt_to_y: (a: number, b: number) => number;
-    readonly wasm_earth_curvature_drop_nm: (a: number, b: number, c: number) => number;
-    readonly wasm_geocentric_radius_nm: (a: number) => number;
-    readonly wasm_lat_lon_to_local: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly wasm_projection_scales: (a: number) => [number, number];
     readonly wasmtrafficstate_build_render_tracks: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly wasmtrafficstate_merge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly wasmtrafficstate_new: () => number;
@@ -151,7 +120,6 @@ export interface InitOutput {
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __externref_table_dealloc: (a: number) => void;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

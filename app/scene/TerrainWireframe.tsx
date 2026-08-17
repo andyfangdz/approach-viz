@@ -12,8 +12,7 @@ import {
   wrappedTileColumnOffset,
   wrappedTileColumnSpan
 } from './terrain/terrarium';
-
-const ALTITUDE_SCALE = 1 / 6076.12; // feet to NM
+import { ALTITUDE_SCALE } from './approach-path/constants';
 
 const TILE_ZOOM = 10;
 const TERRAIN_RADIUS_NM = 50;

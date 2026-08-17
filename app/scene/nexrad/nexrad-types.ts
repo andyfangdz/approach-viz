@@ -12,9 +12,6 @@ export const POLL_INTERVAL_MS = 120_000;
 export const RETRY_INTERVAL_MS = 10_000;
 export const DEFAULT_MAX_RANGE_NM = 120;
 export const MIN_VOXEL_HEIGHT_NM = 0.04;
-export const MRMS_BINARY_MAGIC = 'AVMR';
-export const MRMS_BINARY_VERSION = 4;
-export const MRMS_BINARY_SOA_BYTES_PER_BRICK = 18;
 export const MRMS_BINARY_BASE_URL = process.env.NEXT_PUBLIC_MRMS_BINARY_BASE_URL?.trim() ?? '';
 export const MRMS_LEVEL_TAGS = [
   '00.50',
@@ -79,14 +76,6 @@ export interface NexradVolumeOverlayProps {
   onDebugChange?: (debug: NexradDebugState) => void;
 }
 
-export interface NexradRadarPayload {
-  id: string;
-  name: string;
-  lat: number;
-  lon: number;
-  elevationFeet: number;
-}
-
 export interface NexradLayerSummary {
   product: string;
   elevationAngleDeg: number;
@@ -101,7 +90,6 @@ export interface NexradLayerSummary {
  */
 export interface NexradVolumePayload {
   generatedAt: string;
-  radar: NexradRadarPayload | null;
   layerSummaries: NexradLayerSummary[];
   voxelCount: number;
   phaseMode?: string | null;
@@ -116,22 +104,9 @@ export interface NexradVolumePayload {
   error?: string;
 }
 
-export type EchoTopCellTuple = [
-  xNm: number,
-  zNm: number,
-  top18Feet: number,
-  top30Feet: number,
-  top50Feet: number,
-  top60Feet: number
-];
-
+/** Echo-top metadata for debug signatures. Per-cell SoA lives on EchoTopSoA. */
 export interface EchoTopPayload {
-  generatedAt?: string | null;
-  scanTime?: string | null;
-  timestamp?: string | null;
   sourceCellCount?: number;
-  footprintXNm?: number;
-  footprintYNm?: number;
   maxTop18Feet?: number | null;
   maxTop30Feet?: number | null;
   maxTop50Feet?: number | null;
@@ -140,26 +115,7 @@ export interface EchoTopPayload {
   top30Timestamp?: string | null;
   top50Timestamp?: string | null;
   top60Timestamp?: string | null;
-  cellCount?: number;
-  xNm?: Float32Array;
-  zNm?: Float32Array;
-  top18Feet?: Float32Array;
-  top30Feet?: Float32Array;
-  top50Feet?: Float32Array;
-  top60Feet?: Float32Array;
-  cells?: EchoTopCellTuple[];
   error?: string;
-}
-
-export interface RenderEchoTopCell {
-  x: number;
-  z: number;
-  footprintXNm: number;
-  footprintYNm: number;
-  top18Feet: number;
-  top30Feet: number;
-  top50Feet: number;
-  top60Feet: number;
 }
 
 export interface DbzColorBand {
@@ -172,13 +128,9 @@ export const MIN_VISIBLE_LUMINANCE = 58;
 export const PHASE_RAIN = 0;
 export const PHASE_MIXED = 1;
 export const PHASE_SNOW = 2;
-export const DECLUTTER_LOW_MAX_FEET = 10_000;
-export const DECLUTTER_MID_MAX_FEET = 25_000;
 export const ALTITUDE_GUIDE_STEP_FEET = 5_000;
 export const MIN_CROSS_SECTION_HALF_WIDTH_NM = 0.8;
 export const MAX_CROSS_SECTION_HALF_WIDTH_NM = 1.8;
-export const CROSS_SECTION_BINS_X = 120;
-export const CROSS_SECTION_BINS_Y = 56;
 
 // Discrete reflectivity bands sampled from the provided legend's rain bar.
 export const RAIN_DBZ_COLOR_BANDS: DbzColorBand[] = [

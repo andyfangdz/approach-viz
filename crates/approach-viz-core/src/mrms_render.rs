@@ -8,7 +8,7 @@
 // columns they can upload directly.
 
 use crate::mrms_preprocess::VolumeSource;
-use crate::types::{PhaseMode, PreparedVolume, PHASE_RAIN};
+use crate::types::{PHASE_RAIN, PhaseMode, PreparedVolume};
 
 /// Flat per-rendered-voxel columns. All positions/sizes are local-frame
 /// nautical miles without vertical exaggeration; renderers multiply the `y`
@@ -298,21 +298,14 @@ pub fn build_composite_surface(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mrms_preprocess::TestVolume;
     use crate::mrms_preprocess::prepare_volume;
     use crate::types::{
-        DeclutterMode, DecodedMrmsVolume, PhaseMode, ALTITUDE_SCALE, PHASE_MIXED, PHASE_RAIN,
-        PHASE_SNOW,
+        ALTITUDE_SCALE, DeclutterMode, PHASE_MIXED, PHASE_RAIN, PHASE_SNOW, PhaseMode,
     };
 
-    fn test_volume() -> DecodedMrmsVolume {
-        DecodedMrmsVolume {
-            voxel_count: 3,
-            layer_count: 2,
-            generated_at_ms: 1_000,
-            scan_time_ms: 2_000,
-            footprint_x_nm: 0.5,
-            footprint_y_nm: 0.6,
-            layer_voxel_counts: vec![2, 1],
+    fn test_volume() -> TestVolume {
+        TestVolume {
             x_nm: vec![1.0, -2.0, 3.0],
             z_nm: vec![4.0, 5.0, -6.0],
             bottom_feet: vec![1_000, 2_000, 30_000],
@@ -408,15 +401,8 @@ mod tests {
     ///
     /// D sits above A in the same column, so the column max at cell (0, 0)
     /// must come from D.
-    fn composite_volume() -> DecodedMrmsVolume {
-        DecodedMrmsVolume {
-            voxel_count: 4,
-            layer_count: 2,
-            generated_at_ms: 1_000,
-            scan_time_ms: 2_000,
-            footprint_x_nm: 0.5,
-            footprint_y_nm: 0.6,
-            layer_voxel_counts: vec![3, 1],
+    fn composite_volume() -> TestVolume {
+        TestVolume {
             x_nm: vec![0.0, 0.75, 0.5, 0.0],
             z_nm: vec![0.0, 0.0, 0.6, 0.0],
             bottom_feet: vec![1_000, 1_000, 1_000, 9_000],

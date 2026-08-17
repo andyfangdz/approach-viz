@@ -429,7 +429,6 @@ export class NexradWorkerApi {
       volumePayload = applyPhaseDebugValues(
         {
           generatedAt,
-          radar: null,
           layerSummaries,
           voxelCount: vp.voxelCount
         },

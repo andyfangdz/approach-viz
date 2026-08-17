@@ -151,33 +151,6 @@ export class TrafficWorkerApi {
     return this.buildAndTransferResult(options, [], [], undefined, processingStartedAt);
   }
 
-  async ingestBinary(
-    payloadBuffer: ArrayBuffer,
-    historyPayloadBuffer: ArrayBuffer | undefined,
-    options: TrafficProcessOptions
-  ): Promise<TrafficWorkerResult> {
-    await this.ready;
-    const processingStartedAt = performance.now();
-    const state = this.getState();
-    const mergeResult = state.merge(
-      new Uint8Array(payloadBuffer),
-      options.nowMs,
-      options.historyMinutes,
-      options.hideGroundTargets,
-      historyPayloadBuffer ? new Uint8Array(historyPayloadBuffer) : new Uint8Array(0)
-    ) as { trackedHexes: string[]; returnedHistoryHexes: string[]; error: string | null };
-    if (typeof mergeResult.error === 'string' && mergeResult.error.trim().length > 0) {
-      throw new Error(`Traffic feed error: ${mergeResult.error}`);
-    }
-    return this.buildAndTransferResult(
-      options,
-      mergeResult.trackedHexes,
-      mergeResult.returnedHistoryHexes,
-      undefined,
-      processingStartedAt
-    );
-  }
-
   async ingestRuntime(
     primaryUrl: string,
     followupUrl: string | undefined,

@@ -17,7 +17,8 @@ const WGS84_E2: f64 = WGS84_FLATTENING * (2.0 - WGS84_FLATTENING);
 const WGS84_SEMI_MINOR_METERS: f64 = WGS84_SEMI_MAJOR_METERS * (1.0 - WGS84_FLATTENING);
 
 /// Feet-to-NM conversion factor used for altitude scaling.
-pub const ALTITUDE_SCALE: f64 = 1.0 / 6076.12;
+pub const FEET_PER_NM: f64 = 6076.12;
+pub const ALTITUDE_SCALE: f64 = 1.0 / FEET_PER_NM;
 
 // ---------------------------------------------------------------------------
 // Functions

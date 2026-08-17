@@ -174,6 +174,18 @@ export function approach_path_build_hold_protected_area(center_x, center_z, head
  * @param {any} params
  * @returns {any}
  */
+export function approach_path_compose_scene(params) {
+    const ret = wasm.approach_path_compose_scene(params);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * @param {any} params
+ * @returns {any}
+ */
 export function approach_path_resolve_altitudes(params) {
     const ret = wasm.approach_path_resolve_altitudes(params);
     if (ret[2]) {
@@ -254,70 +266,6 @@ export function decode_and_prepare_mrms(data, min_dbz_tenths, phase_mode, declut
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
-}
-
-/**
- * Scale an altitude in feet to scene Y units.
- * @param {number} alt_feet
- * @param {number} vertical_scale
- * @returns {number}
- */
-export function wasm_alt_to_y(alt_feet, vertical_scale) {
-    const ret = wasm.wasm_alt_to_y(alt_feet, vertical_scale);
-    return ret;
-}
-
-/**
- * Approximate earth-curvature sag at a horizontal range, in nautical miles.
- * @param {number} x_nm
- * @param {number} z_nm
- * @param {number} ref_lat
- * @returns {number}
- */
-export function wasm_earth_curvature_drop_nm(x_nm, z_nm, ref_lat) {
-    const ret = wasm.wasm_earth_curvature_drop_nm(x_nm, z_nm, ref_lat);
-    return ret;
-}
-
-/**
- * WGS84 geocentric radius at the given latitude, in nautical miles.
- * @param {number} latitude_deg
- * @returns {number}
- */
-export function wasm_geocentric_radius_nm(latitude_deg) {
-    const ret = wasm.wasm_geocentric_radius_nm(latitude_deg);
-    return ret;
-}
-
-/**
- * Convert (lat, lon) to local scene coordinates relative to a reference point.
- *
- * Returns a Float64Array of `[x, z]` where x = east (NM), z = -north (NM).
- * @param {number} lat
- * @param {number} lon
- * @param {number} ref_lat
- * @param {number} ref_lon
- * @returns {Float64Array}
- */
-export function wasm_lat_lon_to_local(lat, lon, ref_lat, ref_lon) {
-    const ret = wasm.wasm_lat_lon_to_local(lat, lon, ref_lat, ref_lon);
-    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-    return v1;
-}
-
-/**
- * Projection scale factors at a given latitude, in NM per degree.
- *
- * Returns a Float64Array of `[east_nm_per_lon_deg, north_nm_per_lat_deg]`.
- * @param {number} lat_deg
- * @returns {Float64Array}
- */
-export function wasm_projection_scales(lat_deg) {
-    const ret = wasm.wasm_projection_scales(lat_deg);
-    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-    return v1;
 }
 
 function __wbg_get_imports() {
@@ -617,11 +565,6 @@ function debugString(val) {
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
-}
-
-function getArrayF64FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 
 function getArrayI16FromWasm0(ptr, len) {
