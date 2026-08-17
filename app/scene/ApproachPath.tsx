@@ -61,6 +61,11 @@ export const ApproachPath = memo(function ApproachPath({
 
   useEffect(() => {
     let cancelled = false;
+    // Drop the previous procedure immediately. Composed segments carry legs from
+    // the last worker result; leaving them in place would draw the old path at
+    // the new airport/waypoint frame until the replacement result arrives.
+    setResolvedAltitudes(new Map());
+    setPathSegments([]);
     const transitionEntries = Array.from(approach.transitions.entries());
 
     void resolveApproachAltitudesWithWorker({
