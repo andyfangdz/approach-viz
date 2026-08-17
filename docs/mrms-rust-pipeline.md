@@ -57,7 +57,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `span_z:u16[n]` (merged vertical levels)
 - v5 replaced the hand-rolled v4 binary header/columns with the FlatBuffers table above; column semantics are unchanged from v4.
 - Merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
-- Decoder in `crates/approach-viz-core/src/mrms_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`. The worker decode path reads columns through the zero-copy `FbVolumeView` (`crates/approach-viz-core/src/mrms_preprocess.rs`), which validates each column's presence and length once at construction — malformed payloads produce an explicit decode error rather than zero-filled values.
+- Decoder is the zero-copy `FbVolumeView` in `crates/approach-viz-core/src/mrms_preprocess.rs`; encoder in `services/runtime-rs/src/weather/encoding.rs`. The view validates each column's presence and length once at construction — malformed payloads produce an explicit decode error rather than zero-filled values.
 
 ## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v3`, AVET v3)
 
@@ -67,7 +67,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `x_nm:f32[n]`, `z_nm:f32[n]`, `top18_feet:u16[n]`, `top30_feet:u16[n]`, `top50_feet:u16[n]`, `top60_feet:u16[n]`
 - v3 replaced the hand-rolled v2 64-byte binary header with the FlatBuffers table above; column semantics are unchanged from v2.
 - Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v3` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
-- Decoder in `crates/approach-viz-core/src/echo_top_wire_codec.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`. The worker decode path reads columns through the zero-copy `FbEchoTopView`, with the same construct-time presence/length validation as the volume view.
+- Decoder is the zero-copy `FbEchoTopView` in `crates/approach-viz-core/src/mrms_preprocess.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`. The view uses the same construct-time presence/length validation as the volume view.
 
 ## Deployment
 
