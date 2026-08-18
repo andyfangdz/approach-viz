@@ -34,6 +34,17 @@ export interface ChartStreamSummary {
   failedTiles: number;
 }
 
+interface ComlinkReleaseable {
+  [Comlink.releaseProxy]: () => void;
+}
+
+type ChartTileCallback = (tile: ChartTileReady) => void | Promise<void>;
+type ChartTileCallbackProxy = ChartTileCallback & ComlinkReleaseable;
+
+function hasComlinkReleaseProxy(value: ChartTileCallback): value is ChartTileCallbackProxy {
+  return Comlink.releaseProxy in value;
+}
+
 async function fetchTile(
   baseUrl: string,
   z: number,
@@ -130,12 +141,10 @@ export class ChartTilesWorkerApi {
       Array.from({ length: Math.min(TILE_FETCH_CONCURRENCY, specs.length) }, () => worker())
     );
 
-    interface ComlinkCallbackProxy {
-      [Comlink.releaseProxy]: () => void;
+    if (!hasComlinkReleaseProxy(onTile)) {
+      throw new Error('Comlink tile callback is missing releaseProxy.');
     }
-    // SAFETY: Comlink injects releaseProxy on proxied callback arguments after the stream completes.
-    const releaseCallback = onTile as ComlinkCallbackProxy;
-    releaseCallback[Comlink.releaseProxy]();
+    onTile[Comlink.releaseProxy]();
     return { totalTiles: specs.length, failedTiles };
   }
 }
