@@ -58,9 +58,7 @@ function localWaypoint(
 }
 
 function resolvedAltitudes(legs: ApproachLeg[]): number[] {
-  return legs.map((leg) =>
-    isPresentFiniteNumber(leg.altitude) ? leg.altitude : 1000
-  );
+  return legs.map((leg) => (isPresentFiniteNumber(leg.altitude) ? leg.altitude : 1000));
 }
 
 function maxTurnDegrees(points: { x: number; z: number }[]): number {
@@ -563,7 +561,15 @@ test('rust wasm hold protected area returns closed primary and secondary rings',
     secondary: HoldScenePoint[];
   }
   // SAFETY: wasm-bindgen returns HoldProtectedAreaRings for approach_path_build_hold_protected_area.
-  const area = approach_path_build_hold_protected_area(0, 0, 356, 3.6, 4400, 'R', 1) as HoldProtectedAreaRings;
+  const area = approach_path_build_hold_protected_area(
+    0,
+    0,
+    356,
+    3.6,
+    4400,
+    'R',
+    1
+  ) as HoldProtectedAreaRings;
   assert.ok(area.primary.length > 100);
   assert.deepEqual(area.primary[0], area.primary[area.primary.length - 1]);
   assert.deepEqual(area.secondary[0], area.secondary[area.secondary.length - 1]);

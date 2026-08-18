@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
    excerpts on this page (ts / rust / glsl). Not a general-purpose
    highlighter — content is controlled, so a light pass is enough. */
 
-const KEYWORDS: Record<string, Set<string>> = {
+const KEYWORDS = {
   ts: new Set([
     'const',
     'let',
@@ -58,7 +58,7 @@ const KEYWORDS: Record<string, Set<string>> = {
   ])
 };
 
-const TYPES: Record<string, Set<string>> = {
+const TYPES = {
   ts: new Set(['number', 'string', 'boolean', 'Math', 'Float32Array', 'Uint8Array']),
   rust: new Set([
     'f32',
@@ -88,17 +88,17 @@ const TYPES: Record<string, Set<string>> = {
     'sampler2D',
     'sampler2DArray'
   ])
-};
+} as const;
 
 const TOKEN_RE =
   /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(\b\d(?:[\d_]*\.?[\d_]*)(?:[eE][+-]?\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|([\s\S])/g;
 
 export function CodeHighlight({ code, lang }: { code: string; lang: string }): ReactNode {
-  const keywords = KEYWORDS[lang];
-  const types = TYPES[lang];
-  if (!keywords || !types) {
+  if (lang !== 'ts' && lang !== 'rust' && lang !== 'glsl') {
     return code;
   }
+  const keywords = KEYWORDS[lang];
+  const types = TYPES[lang];
 
   const nodes: ReactNode[] = [];
   let plain = '';

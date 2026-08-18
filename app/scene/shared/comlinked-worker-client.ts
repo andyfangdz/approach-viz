@@ -1,5 +1,4 @@
 import * as Comlink from 'comlink';
-import { isCallable } from '@/lib/parse-like';
 import { WorkerClientError } from './worker-errors';
 
 interface InFlightEntry {
@@ -130,10 +129,7 @@ export class ComlinkedWorkerClient<T extends object> {
   private teardown(): void {
     this.rawWorker.removeEventListener('error', this.handleWorkerError);
     this.rawWorker.removeEventListener('messageerror', this.handleMessageError);
-    const release = this.proxy[Comlink.releaseProxy];
-    if (isCallable(release)) {
-      release();
-    }
+    this.proxy[Comlink.releaseProxy]();
     this.rawWorker.terminate();
     this.onDispose();
   }

@@ -13,7 +13,7 @@ export interface LocalRunwayThreshold {
   z: number;
 }
 
-const SUFFIX_RECIPROCAL: Record<string, string> = { L: 'R', R: 'L', C: 'C' };
+const SUFFIX_RECIPROCAL = { L: 'R', R: 'L', C: 'C' } as const;
 
 export function parseRunwayId(id: string): { num: number; suffix: string } | null {
   const ident = id.replace(/^RW/, '').trim();
@@ -28,7 +28,10 @@ export function reciprocalRunwayId(id: string): string | null {
   const parsed = parseRunwayId(id);
   if (!parsed) return null;
   const reciprocalNum = ((parsed.num + 17) % 36) + 1;
-  const reciprocalSuffix = parsed.suffix ? (SUFFIX_RECIPROCAL[parsed.suffix] ?? parsed.suffix) : '';
+  const reciprocalSuffix =
+    parsed.suffix === 'L' || parsed.suffix === 'R' || parsed.suffix === 'C'
+      ? SUFFIX_RECIPROCAL[parsed.suffix]
+      : parsed.suffix;
   return `RW${String(reciprocalNum).padStart(2, '0')}${reciprocalSuffix}`;
 }
 

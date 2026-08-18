@@ -145,10 +145,12 @@ export class ApproachWorkerApi {
       pointsFlat[pointOffset++] = point.y;
       pointsFlat[pointOffset++] = point.z;
     }
-    const turnConstraintLabels: TurnConstraintLabel[] = result.turnConstraintLabels.map((label) => ({
-      position: [label.position.x, label.position.y, label.position.z],
-      text: label.text
-    }));
+    const turnConstraintLabels: TurnConstraintLabel[] = result.turnConstraintLabels.map(
+      (label) => ({
+        position: [label.position.x, label.position.y, label.position.z],
+        text: label.text
+      })
+    );
     // SAFETY: Float32Array.buffer is the ArrayBuffer backing the packed path points.
     return Comlink.transfer(
       {

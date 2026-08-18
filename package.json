@@ -7,7 +7,7 @@
     "download-data": "bash scripts/download-data.sh",
     "build-db": "tsx scripts/build-db.ts",
     "prepare-data": "npm run download-data && npm run build-db",
-    "lint": "eslint .",
+    "lint": "eslint . && oxlint",
     "lint:anti-slop": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:parser && npm run test:geometry && npm run test:layers && npm run test:mrms && npm run test:workers && npm run test:routes",

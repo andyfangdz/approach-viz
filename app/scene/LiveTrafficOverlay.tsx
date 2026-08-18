@@ -405,7 +405,8 @@ export function LiveTrafficOverlay({
             if (!hex) continue;
             const lastBackfillAtMs = knownBackfilledHexes.get(hex);
             const hasFreshBackfill =
-              isPresentFiniteNumber(lastBackfillAtMs) && nowMs - lastBackfillAtMs <= historyWindowMs;
+              isPresentFiniteNumber(lastBackfillAtMs) &&
+              nowMs - lastBackfillAtMs <= historyWindowMs;
             if (hasFreshBackfill) {
               pendingBackfillHexes.delete(hex);
               continue;

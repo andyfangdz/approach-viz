@@ -14,10 +14,12 @@ import { WaypointMarker } from './WaypointMarker';
  * the dashed (below-threshold) segment, with an interpolated crossing point
  * shared between both so the two segments meet exactly.
  */
-function splitPointsAtAltitude(
-  points: THREE.Vector3[],
-  thresholdY: number
-): { solidPoints: THREE.Vector3[]; dashedLinePoints: [number, number, number][] | null } {
+type SplitPathPoints = {
+  solidPoints: THREE.Vector3[];
+  dashedLinePoints: [number, number, number][] | null;
+};
+
+function splitPointsAtAltitude(points: THREE.Vector3[], thresholdY: number): SplitPathPoints {
   if (points.length < 2) {
     return { solidPoints: points, dashedLinePoints: null };
   }

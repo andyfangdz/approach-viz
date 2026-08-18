@@ -30,6 +30,14 @@ function makeRequest(
   return new NextRequest(url, { headers });
 }
 
+function headersInit(headers: UpstreamPlateHeaders): Headers {
+  const init = new Headers();
+  init.set('content-type', headers['content-type']);
+  init.set('last-modified', headers['last-modified']);
+  if (headers.etag) init.set('etag', headers.etag);
+  return init;
+}
+
 function pdfBytes(marker: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array(new TextEncoder().encode(`%PDF-1.4 ${marker}`));
 }
@@ -55,7 +63,7 @@ describe('faa plate proxy caching', () => {
     upstreamBody = pdfBytes('alpha');
     upstreamHeaders = defaultUpstreamHeaders();
     const mockFetch: typeof fetch = async () =>
-      new Response(upstreamBody, { status: 200, headers: upstreamHeaders });
+      new Response(upstreamBody, { status: 200, headers: headersInit(upstreamHeaders) });
     globalThis.fetch = mockFetch;
   });
 

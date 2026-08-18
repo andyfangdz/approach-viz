@@ -74,61 +74,61 @@ export interface CIFPData {
 type SliceRange = readonly [start: number, end: number];
 
 const FIELD = {
-  recordType: [0, 1] as SliceRange,
-  sectionCode: [4, 5] as SliceRange,
-  airportId: [6, 10] as SliceRange,
-  subsectionCode: [12, 13] as SliceRange,
+  recordType: [0, 1],
+  sectionCode: [4, 5],
+  airportId: [6, 10],
+  subsectionCode: [12, 13],
   // Shared continuation indicator used by several P-subsections.
-  continuationNumber: [21, 22] as SliceRange,
+  continuationNumber: [21, 22],
 
   // Airport/subsection fields.
-  airportLat: [32, 41] as SliceRange,
-  airportLon: [41, 51] as SliceRange,
-  airportMagVar: [51, 56] as SliceRange,
-  airportElevation: [56, 61] as SliceRange,
-  airportName: [93, 123] as SliceRange,
+  airportLat: [32, 41],
+  airportLon: [41, 51],
+  airportMagVar: [51, 56],
+  airportElevation: [56, 61],
+  airportName: [93, 123],
 
-  terminalWaypointId: [13, 18] as SliceRange,
-  terminalWaypointName: [98, 123] as SliceRange,
+  terminalWaypointId: [13, 18],
+  terminalWaypointName: [98, 123],
 
-  runwayId: [13, 18] as SliceRange,
-  runwayLat: [32, 41] as SliceRange,
-  runwayLon: [41, 51] as SliceRange,
+  runwayId: [13, 18],
+  runwayLat: [32, 41],
+  runwayLon: [41, 51],
 
-  enrouteWaypointId: [13, 18] as SliceRange,
-  enrouteLat: [32, 41] as SliceRange,
-  enrouteLon: [41, 51] as SliceRange,
-  enrouteNameD: [93, 123] as SliceRange,
-  enrouteNameE: [98, 123] as SliceRange,
+  enrouteWaypointId: [13, 18],
+  enrouteLat: [32, 41],
+  enrouteLon: [41, 51],
+  enrouteNameD: [93, 123],
+  enrouteNameE: [98, 123],
 
   // Approach (subsection F) fields.
-  approachProcedureId: [13, 19] as SliceRange,
-  approachTransitionId: [20, 25] as SliceRange,
-  approachSequence: [26, 29] as SliceRange,
-  approachWaypointId: [29, 34] as SliceRange,
-  approachContinuationNumber: [38, 39] as SliceRange,
-  approachApplicationType: [39, 40] as SliceRange,
-  approachDescriptor1: [41, 42] as SliceRange,
-  approachDescriptor2: [42, 43] as SliceRange,
-  approachDescriptor3: [43, 44] as SliceRange,
-  approachPathTerminator: [47, 49] as SliceRange,
-  approachRfCenterFixRf: [106, 111] as SliceRange,
-  approachRfCenterFixAf: [50, 54] as SliceRange,
-  approachCourse: [70, 74] as SliceRange,
-  approachDistance: [74, 78] as SliceRange,
-  approachAltitude: [84, 89] as SliceRange,
+  approachProcedureId: [13, 19],
+  approachTransitionId: [20, 25],
+  approachSequence: [26, 29],
+  approachWaypointId: [29, 34],
+  approachContinuationNumber: [38, 39],
+  approachApplicationType: [39, 40],
+  approachDescriptor1: [41, 42],
+  approachDescriptor2: [42, 43],
+  approachDescriptor3: [43, 44],
+  approachPathTerminator: [47, 49],
+  approachRfCenterFixRf: [106, 111],
+  approachRfCenterFixAf: [50, 54],
+  approachCourse: [70, 74],
+  approachDistance: [74, 78],
+  approachAltitude: [84, 89],
 
   // Procedure data continuation (Continuation 2 / application type W)
   // level-of-service RNP slots: authorization flag + 3 digits.
-  rnpAuth1: [88, 89] as SliceRange,
-  rnpValue1: [89, 92] as SliceRange,
-  rnpAuth2: [92, 93] as SliceRange,
-  rnpValue2: [93, 96] as SliceRange,
-  rnpAuth3: [96, 97] as SliceRange,
-  rnpValue3: [97, 100] as SliceRange,
-  rnpAuth4: [100, 101] as SliceRange,
-  rnpValue4: [101, 104] as SliceRange
-} as const;
+  rnpAuth1: [88, 89],
+  rnpValue1: [89, 92],
+  rnpAuth2: [92, 93],
+  rnpValue2: [93, 96],
+  rnpAuth3: [96, 97],
+  rnpValue3: [97, 100],
+  rnpAuth4: [100, 101],
+  rnpValue4: [101, 104]
+} as const satisfies { readonly [key: string]: SliceRange };
 
 function sliceField(line: string, range: SliceRange): string {
   return line.slice(range[0], range[1]);
@@ -149,7 +149,7 @@ function parseIntegerField(line: string, range: SliceRange): number | undefined 
 
 function parseDecimalTenthsField(line: string, range: SliceRange): number | undefined {
   const parsed = parseIntegerField(line, range);
-  if (typeof parsed !== 'number') {
+  if (parsed === undefined) {
     return undefined;
   }
   return parsed / 10;
@@ -388,34 +388,49 @@ function parseProcedureRnpServiceLevels(line: string): number[] {
   return values;
 }
 
+type ProcedureIdent = {
+  type: string;
+  runway: string;
+};
+
 // Extract procedure type from procedure ID
-function getProcedureType(procId: string): { type: string; runway: string } {
+function getProcedureType(procId: string): ProcedureIdent {
   // L22 = LOC 22, I22 = ILS 22, R04 = RNAV 04, V22 = VOR 22
   const typeChar = procId[0];
   const runway = procId.slice(1).trim();
 
-  const typeMap: Record<string, string> = {
-    I: 'ILS',
-    L: 'LOC',
-    R: 'RNAV',
-    V: 'VOR',
-    N: 'NDB',
-    G: 'GPS',
+  switch (typeChar) {
+    case 'I':
+      return { type: 'ILS', runway };
+    case 'L':
+      return { type: 'LOC', runway };
+    case 'R':
+      return { type: 'RNAV', runway };
+    case 'V':
+      return { type: 'VOR', runway };
+    case 'N':
+      return { type: 'NDB', runway };
+    case 'G':
+      return { type: 'GPS', runway };
     // FAA CIFP "Sxx" procedure identifiers commonly represent conventional
     // non-precision runway approaches (typically VOR-based), not SDF.
-    S: 'VOR',
-    D: 'VOR/DME',
-    P: 'LDA',
-    B: 'LOC/BC',
-    Q: 'NDB/DME',
-    H: 'RNAV/RNP',
-    X: 'LDA/DME'
-  };
-
-  return {
-    type: typeMap[typeChar] || typeChar,
-    runway
-  };
+    case 'S':
+      return { type: 'VOR', runway };
+    case 'D':
+      return { type: 'VOR/DME', runway };
+    case 'P':
+      return { type: 'LDA', runway };
+    case 'B':
+      return { type: 'LOC/BC', runway };
+    case 'Q':
+      return { type: 'NDB/DME', runway };
+    case 'H':
+      return { type: 'RNAV/RNP', runway };
+    case 'X':
+      return { type: 'LDA/DME', runway };
+    default:
+      return { type: typeChar, runway };
+  }
 }
 
 function getOrCreateApproach(data: CIFPData, airportId: string, procedureId: string): Approach {
