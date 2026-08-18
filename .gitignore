@@ -40,6 +40,8 @@ output/playwright
 tools/*
 !tools/uniffi-bindgen-swift/
 !tools/uniffi-bindgen-swift/**
+!tools/oxlint/
+!tools/oxlint/**
 
 # Service worker (bundled from sw/ via esbuild)
 public/service-worker.js

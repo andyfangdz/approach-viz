@@ -13,7 +13,8 @@ export default tseslint.config(
       'public/service-worker.js',
       'public/approach_viz_core.js',
       'services/runtime-rs/target/**',
-      'packages/approach-viz-core-wasm/**'
+      'packages/approach-viz-core-wasm/**',
+      'tools/oxlint/anti-slop/**'
     ]
   },
   ...tseslint.configs.recommended,
