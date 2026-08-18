@@ -1,3 +1,4 @@
+import { isPresentFiniteNumber } from '@/lib/parse-like';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
 import type { ExternalApproach } from './types';
 
@@ -42,7 +43,7 @@ export function extractMissedApproachClimbRequirement(
       feetPerNm: gradientFeetPerNm
     };
     const targetAltitudeFeet = parseTargetAltitudeFeet(match[2]);
-    if (typeof targetAltitudeFeet === 'number') {
+    if (isPresentFiniteNumber(targetAltitudeFeet)) {
       candidate.targetAltitudeFeet = targetAltitudeFeet;
     }
 

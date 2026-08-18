@@ -12,6 +12,7 @@ export function rowToApproachOption(row: ApproachRow): ApproachOption {
 }
 
 export function deserializeApproach(row: ApproachRow): SerializedApproach {
+  // SAFETY: build-db writes approaches.data_json as the serializable Approach object (transitions as entries).
   const parsed = JSON.parse(row.data_json) as SerializedApproach;
   return {
     ...parsed,

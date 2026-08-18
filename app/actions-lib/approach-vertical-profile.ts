@@ -1,3 +1,4 @@
+import { isPresentFiniteNumber } from '@/lib/parse-like';
 import type { SerializedApproach } from '@/lib/types';
 import type { ExternalApproach } from './types';
 
@@ -20,7 +21,7 @@ export function applyExternalVerticalAngleToApproach(
   if (!currentApproach) return null;
 
   const verticalAngleDeg = parseExternalVerticalAngleDeg(externalApproach);
-  if (typeof verticalAngleDeg !== 'number') {
+  if (!isPresentFiniteNumber(verticalAngleDeg)) {
     return currentApproach;
   }
 
@@ -31,7 +32,7 @@ export function applyExternalVerticalAngleToApproach(
 
   const fafLeg = currentApproach.finalLegs[fafIndex];
   if (
-    typeof fafLeg.verticalAngleDeg === 'number' &&
+    isPresentFiniteNumber(fafLeg.verticalAngleDeg) &&
     Math.abs(fafLeg.verticalAngleDeg - verticalAngleDeg) < 1e-6
   ) {
     return currentApproach;

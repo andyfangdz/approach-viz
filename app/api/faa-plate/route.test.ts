@@ -5,6 +5,20 @@ import { GET } from './route';
 
 const VALID_PARAMS = { cycle: '2608', file: '06041R8.PDF' };
 
+interface UpstreamPlateHeaders {
+  'content-type': string;
+  'last-modified': string;
+  etag?: string;
+}
+
+function defaultUpstreamHeaders(): UpstreamPlateHeaders {
+  return {
+    'content-type': 'application/pdf',
+    'last-modified': 'Wed, 15 Jul 2026 13:19:00 GMT',
+    etag: '"a58719805c14dd1:0"'
+  };
+}
+
 function makeRequest(
   params: Record<string, string> = VALID_PARAMS,
   headers: Record<string, string> = {}
@@ -35,17 +49,14 @@ describe('faa plate proxy validation', () => {
 describe('faa plate proxy caching', () => {
   const originalFetch = globalThis.fetch;
   let upstreamBody = pdfBytes('alpha');
-  let upstreamHeaders: Record<string, string> = {};
+  let upstreamHeaders: UpstreamPlateHeaders = defaultUpstreamHeaders();
 
   beforeEach(() => {
     upstreamBody = pdfBytes('alpha');
-    upstreamHeaders = {
-      'content-type': 'application/pdf',
-      'last-modified': 'Wed, 15 Jul 2026 13:19:00 GMT',
-      etag: '"a58719805c14dd1:0"'
-    };
-    globalThis.fetch = (async () =>
-      new Response(upstreamBody, { status: 200, headers: upstreamHeaders })) as typeof fetch;
+    upstreamHeaders = defaultUpstreamHeaders();
+    const mockFetch: typeof fetch = async () =>
+      new Response(upstreamBody, { status: 200, headers: upstreamHeaders });
+    globalThis.fetch = mockFetch;
   });
 
   afterEach(() => {
@@ -125,7 +136,8 @@ describe('faa plate proxy caching', () => {
   });
 
   test('upstream failure stays a 404 rather than a cacheable empty plate', async () => {
-    globalThis.fetch = (async () => new Response('nope', { status: 404 })) as typeof fetch;
+    const mockFetch: typeof fetch = async () => new Response('nope', { status: 404 });
+    globalThis.fetch = mockFetch;
     const response = await GET(makeRequest());
     assert.equal(response.status, 404);
     assert.equal(response.headers.get('etag'), null);
@@ -141,10 +153,11 @@ describe('faa plate proxy upstream bounds', () => {
 
   test('passes an abort deadline to the upstream fetch', async () => {
     let capturedSignal: AbortSignal | null | undefined;
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const mockFetch: typeof fetch = async (_input, init) => {
       capturedSignal = init?.signal;
       return new Response(pdfBytes('alpha'), { status: 200 });
-    }) as typeof fetch;
+    };
+    globalThis.fetch = mockFetch;
 
     await GET(makeRequest());
     assert.ok(capturedSignal instanceof AbortSignal);
@@ -152,29 +165,32 @@ describe('faa plate proxy upstream bounds', () => {
   });
 
   test('reports an upstream timeout as 504 instead of hanging', async () => {
-    globalThis.fetch = (async () => {
+    const mockFetch: typeof fetch = async () => {
       throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
-    }) as typeof fetch;
+    };
+    globalThis.fetch = mockFetch;
 
     const response = await GET(makeRequest());
     assert.equal(response.status, 504);
   });
 
   test('reports a wrapped upstream timeout as 504', async () => {
-    globalThis.fetch = (async () => {
+    const mockFetch: typeof fetch = async () => {
       throw new TypeError('fetch failed', {
         cause: new DOMException('timed out', 'TimeoutError')
       });
-    }) as typeof fetch;
+    };
+    globalThis.fetch = mockFetch;
 
     const response = await GET(makeRequest());
     assert.equal(response.status, 504);
   });
 
   test('reports a non-timeout upstream fetch failure as 502', async () => {
-    globalThis.fetch = (async () => {
+    const mockFetch: typeof fetch = async () => {
       throw new TypeError('upstream unreachable');
-    }) as typeof fetch;
+    };
+    globalThis.fetch = mockFetch;
 
     const response = await GET(makeRequest());
     assert.equal(response.status, 502);
@@ -184,7 +200,7 @@ describe('faa plate proxy upstream bounds', () => {
     // Streams past the 16 MB cap in 1 MB chunks; the read must stop early, so a
     // stream that never ends still terminates the request.
     let chunksPulled = 0;
-    globalThis.fetch = (async () => {
+    const mockFetch: typeof fetch = async () => {
       const stream = new ReadableStream<Uint8Array>({
         pull(controller) {
           chunksPulled += 1;
@@ -192,7 +208,8 @@ describe('faa plate proxy upstream bounds', () => {
         }
       });
       return new Response(stream, { status: 200 });
-    }) as typeof fetch;
+    };
+    globalThis.fetch = mockFetch;
 
     const response = await GET(makeRequest());
     assert.equal(response.status, 502);
@@ -203,8 +220,9 @@ describe('faa plate proxy upstream bounds', () => {
   });
 
   test('serves a plate that sits just under the size cap', async () => {
-    globalThis.fetch = (async () =>
-      new Response(new Uint8Array(1024 * 1024), { status: 200 })) as typeof fetch;
+    const mockFetch: typeof fetch = async () =>
+      new Response(new Uint8Array(1024 * 1024), { status: 200 });
+    globalThis.fetch = mockFetch;
 
     const response = await GET(makeRequest());
     assert.equal(response.status, 200);

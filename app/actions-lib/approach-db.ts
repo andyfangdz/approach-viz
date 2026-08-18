@@ -13,6 +13,7 @@ function loadApproachDb(): ApproachMinimumsDb | null {
 
   try {
     const raw = fs.readFileSync(APPROACH_DB_PATH, 'utf8');
+    // SAFETY: public/data/approach-db/approaches.json is the ApproachMinimumsDb document produced by the approach-db pipeline.
     approachDbCache = JSON.parse(raw) as ApproachMinimumsDb;
     return approachDbCache;
   } catch {

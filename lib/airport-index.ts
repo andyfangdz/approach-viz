@@ -2,6 +2,17 @@ import 'server-only';
 import { getDb } from '@/lib/db';
 import type Database from 'better-sqlite3';
 
+interface AirportIndexRow {
+  id: string;
+  lat: number;
+  lon: number;
+  elevation: number;
+}
+
+interface AirportDistance extends AirportIndexRow {
+  distNm: number;
+}
+
 let _stmt: Database.Statement | null = null;
 
 function getStmt() {
@@ -28,24 +39,19 @@ export function airportsWithinNm(
   refLon: number,
   radiusNm: number,
   excludeId?: string
-): Array<{ id: string; lat: number; lon: number; elevation: number; distNm: number }> {
+): AirportDistance[] {
   const latRadius = radiusNm / 60;
   const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos((refLat * Math.PI) / 180)));
 
+  // SAFETY: build-db writes airport_rtree/airports with id, lat, lon, elevation as selected here.
   const rows = getStmt().all(
     refLat - latRadius,
     refLat + latRadius,
     refLon - lonRadius,
     refLon + lonRadius
-  ) as Array<{ id: string; lat: number; lon: number; elevation: number }>;
+  ) as AirportIndexRow[];
 
-  const results: Array<{
-    id: string;
-    lat: number;
-    lon: number;
-    elevation: number;
-    distNm: number;
-  }> = [];
+  const results: AirportDistance[] = [];
   for (const row of rows) {
     if (excludeId && row.id === excludeId) continue;
     const dLat = (row.lat - refLat) * 60;

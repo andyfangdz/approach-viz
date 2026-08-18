@@ -2,6 +2,11 @@
 
 import { useState, type CSSProperties } from 'react';
 
+function accentStyle(accent: string): CSSProperties {
+  // SAFETY: overview.css reads `--accent` on this element; React's CSSProperties omits dashed custom properties.
+  return { '--accent': accent } as CSSProperties;
+}
+
 /* ------------------------------------------------------------------ */
 /* Interactive system map (hero)                                       */
 /* ------------------------------------------------------------------ */
@@ -213,7 +218,7 @@ export function SystemMap() {
   const litNodeIds = focus ? new Set([focus, ...litEdges.flatMap((e) => [e.from, e.to])]) : null;
 
   return (
-    <div className="ov-diagram" style={{ '--accent': '#45e0c0' } as CSSProperties}>
+    <div className="ov-diagram" style={accentStyle('#45e0c0')}>
       <div className="ov-diagram-bar">
         <span>FIG 1 — SYSTEM MAP</span>
         <span className="ov-diagram-hint">
@@ -296,7 +301,7 @@ export function SystemMap() {
         </svg>
       </div>
       {focused && (
-        <div className="ov-syscard" style={{ '--accent': focused.color } as CSSProperties}>
+        <div className="ov-syscard" style={accentStyle(focused.color)}>
           <span className="ov-syscard-title">{focused.title}</span>
           <span className="ov-syscard-desc">{focused.desc}</span>
           {focused.jump && (
