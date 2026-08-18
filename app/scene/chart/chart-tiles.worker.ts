@@ -130,7 +130,12 @@ export class ChartTilesWorkerApi {
       Array.from({ length: Math.min(TILE_FETCH_CONCURRENCY, specs.length) }, () => worker())
     );
 
-    (onTile as unknown as { [Comlink.releaseProxy]: () => void })[Comlink.releaseProxy]();
+    interface ComlinkCallbackProxy {
+      [Comlink.releaseProxy]: () => void;
+    }
+    // SAFETY: Comlink injects releaseProxy on proxied callback arguments after the stream completes.
+    const releaseCallback = onTile as ComlinkCallbackProxy;
+    releaseCallback[Comlink.releaseProxy]();
     return { totalTiles: specs.length, failedTiles };
   }
 }

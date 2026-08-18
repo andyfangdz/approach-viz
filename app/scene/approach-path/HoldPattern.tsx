@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Html, Line } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
+import { isPresentFiniteNumber } from '@/lib/parse-like';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   approach_path_build_hold_points,
@@ -16,6 +17,17 @@ import {
   normalizeHeading,
   resolveWaypoint
 } from './coordinates';
+
+interface HoldScenePoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface HoldProtectedAreaRings {
+  primary: HoldScenePoint[];
+  secondary: HoldScenePoint[];
+}
 
 export function HoldPattern({
   leg,
@@ -42,17 +54,14 @@ export function HoldPattern({
   const wp = resolveWaypoint(waypoints, leg.waypointId);
   const altitude = altitudeOverride;
   const headingCandidate = leg.holdCourse ?? leg.course;
-  const heading =
-    typeof headingCandidate === 'number' && Number.isFinite(headingCandidate)
-      ? magneticToTrueHeading(headingCandidate, magVar)
-      : 0;
+  const heading = isPresentFiniteNumber(headingCandidate)
+    ? magneticToTrueHeading(headingCandidate, magVar)
+    : 0;
   const holdDistanceCandidate = leg.holdDistance ?? leg.distance;
-  const publishedDistance =
-    typeof holdDistanceCandidate === 'number' && Number.isFinite(holdDistanceCandidate)
-      ? holdDistanceCandidate
-      : undefined;
-  const publishedTimeMinutes =
-    typeof leg.holdTime === 'number' && Number.isFinite(leg.holdTime) ? leg.holdTime : undefined;
+  const publishedDistance = isPresentFiniteNumber(holdDistanceCandidate)
+    ? holdDistanceCandidate
+    : undefined;
+  const publishedTimeMinutes = isPresentFiniteNumber(leg.holdTime) ? leg.holdTime : undefined;
   const turnDirection = leg.holdTurnDirection ?? 'R';
   const magneticHeading = normalizeHeading(leg.holdCourse ?? leg.course ?? heading);
   const trueHeading = normalizeHeading(heading);
@@ -85,7 +94,8 @@ export function HoldPattern({
           publishedDistance,
           publishedTimeMinutes,
           altitude
-        ) as number;
+        );
+        // SAFETY: wasm-bindgen returns HoldScenePoint[] for approach_path_build_hold_points.
         const result = approach_path_build_hold_points(
           center.x,
           center.z,
@@ -94,9 +104,10 @@ export function HoldPattern({
           altitude,
           turnDirection,
           verticalScale
-        ) as { x: number; y: number; z: number }[];
+        ) as HoldScenePoint[];
         // TERPS-style protected area (primary + secondary rings) from the
         // shared engine, built only while the layer is enabled.
+        // SAFETY: wasm-bindgen returns HoldProtectedAreaRings for approach_path_build_hold_protected_area.
         const area = showProtectedArea
           ? (approach_path_build_hold_protected_area(
               center.x,
@@ -106,10 +117,7 @@ export function HoldPattern({
               altitude,
               turnDirection,
               verticalScale
-            ) as {
-              primary: { x: number; y: number; z: number }[];
-              secondary: { x: number; y: number; z: number }[];
-            })
+            ) as HoldProtectedAreaRings)
           : null;
         if (cancelled) return;
         setHoldDistance(legLengthNm);
@@ -125,7 +133,10 @@ export function HoldPattern({
       })
       .catch((error) => {
         if (cancelled) return;
-        console.error('Failed to build hold geometry in Rust WASM.', error);
+        console.error(
+          'Failed to build hold geometry in Rust WASM.',
+          error instanceof Error ? error : 'hold geometry failed'
+        );
         setPoints([]);
       });
     return () => {

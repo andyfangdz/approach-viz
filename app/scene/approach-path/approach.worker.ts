@@ -59,11 +59,36 @@ export interface GeometryResult {
   turnConstraintLabels: TurnConstraintLabel[];
 }
 
+interface WasmAltitudeResult {
+  finalAltitudes: number[];
+  transitionAltitudes: { name: string; altitudes: number[] }[];
+  missedAltitudes: number[];
+  missedPathAltitudes: number[];
+}
+
+interface WasmScenePoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface WasmTurnConstraintLabel {
+  position: WasmScenePoint;
+  text: string;
+}
+
+interface WasmGeometryResult {
+  points: WasmScenePoint[];
+  verticalLines: VerticalLineData[];
+  turnConstraintLabels: WasmTurnConstraintLabel[];
+}
+
 export class ApproachWorkerApi {
   private readonly ready = ensureWasm();
 
   async resolveAltitudes(params: ResolveAltitudesParams): Promise<AltitudeResult> {
     await this.ready;
+    // SAFETY: wasm-bindgen returns the altitude-resolution object documented in approach_viz_core.d.ts.
     const result = approach_path_resolve_altitudes({
       finalLegs: params.finalLegs,
       transitionEntries: params.transitionEntries.map(([name, legs]) => ({ name, legs })),
@@ -74,12 +99,8 @@ export class ApproachWorkerApi {
       airportElevation: params.airportElevation,
       missedApproachStartAltitudeFeet: params.missedApproachStartAltitudeFeet,
       missedApproachClimbRequirement: params.missedApproachClimbRequirement ?? null
-    }) as {
-      finalAltitudes: number[];
-      transitionAltitudes: { name: string; altitudes: number[] }[];
-      missedAltitudes: number[];
-      missedPathAltitudes: number[];
-    };
+    }) as WasmAltitudeResult;
+    // SAFETY: wasm-bindgen returns ComposedApproachScene from approach_path_compose_scene.
     const composed = approach_path_compose_scene({
       finalLegs: params.finalLegs,
       transitionEntries: params.transitionEntries.map(([name, legs]) => ({ name, legs })),
@@ -105,6 +126,7 @@ export class ApproachWorkerApi {
 
   async buildPathGeometry(params: BuildPathGeometryParams): Promise<GeometryResult> {
     await this.ready;
+    // SAFETY: wasm-bindgen returns the path-geometry object documented in approach_viz_core.d.ts.
     const result = approach_path_build_geometry({
       legs: params.legs,
       waypoints: params.waypoints.map(([, waypoint]) => waypoint),
@@ -115,11 +137,7 @@ export class ApproachWorkerApi {
       refLon: params.refLon,
       magVar: params.magVar,
       showTurnConstraintLabels: params.showTurnConstraintLabels
-    }) as {
-      points: { x: number; y: number; z: number }[];
-      verticalLines: VerticalLineData[];
-      turnConstraintLabels: { position: { x: number; y: number; z: number }; text: string }[];
-    };
+    }) as WasmGeometryResult;
     const pointsFlat = new Float32Array(result.points.length * 3);
     let pointOffset = 0;
     for (const point of result.points) {
@@ -127,16 +145,18 @@ export class ApproachWorkerApi {
       pointsFlat[pointOffset++] = point.y;
       pointsFlat[pointOffset++] = point.z;
     }
+    const turnConstraintLabels: TurnConstraintLabel[] = result.turnConstraintLabels.map((label) => ({
+      position: [label.position.x, label.position.y, label.position.z],
+      text: label.text
+    }));
+    // SAFETY: Float32Array.buffer is the ArrayBuffer backing the packed path points.
     return Comlink.transfer(
       {
         pointsFlat,
         verticalLines: result.verticalLines,
-        turnConstraintLabels: result.turnConstraintLabels.map((label) => ({
-          position: [label.position.x, label.position.y, label.position.z],
-          text: label.text
-        })) as TurnConstraintLabel[]
+        turnConstraintLabels
       },
-      [pointsFlat.buffer]
+      [pointsFlat.buffer as ArrayBuffer]
     );
   }
 }

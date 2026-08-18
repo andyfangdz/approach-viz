@@ -12,19 +12,24 @@ import { latLonToLocal } from './approach-path/coordinates';
 
 const SURFACE_OFFSET_NM = -0.002;
 
-const CHART_TILE_URLS: Record<ChartType, string> = {
+const CHART_TILE_URLS = {
   vfr: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile',
   tac: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile',
   low: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/IFR_AreaLow/MapServer/tile',
   high: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/IFR_High/MapServer/tile'
-};
+} as const satisfies Record<ChartType, string>;
 
-const CHART_ZOOM_RANGES: Record<ChartType, { min: number; max: number }> = {
+interface ChartZoomRange {
+  readonly min: number;
+  readonly max: number;
+}
+
+const CHART_ZOOM_RANGES = {
   vfr: { min: 8, max: 12 },
   tac: { min: 8, max: 12 },
   low: { min: 7, max: 12 },
   high: { min: 5, max: 9 }
-};
+} as const satisfies Record<ChartType, ChartZoomRange>;
 
 // TAC overlay: Terminal Area Charts drawn on top of VFR Sectionals
 const TAC_OVERLAY_URL =
@@ -236,6 +241,11 @@ export interface ChartTextureData {
     ne: ChartTextureCorner;
     nw: ChartTextureCorner;
   };
+}
+
+export interface ChartTextureHandle {
+  promise: Promise<ChartTextureData>;
+  cancel: () => void;
 }
 
 // --- ChartMapSurface component ---
@@ -492,9 +502,12 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       });
     }
 
-    run().catch((err: unknown) => {
+    run().catch((err) => {
       if (!cancelled) {
-        console.error('[ChartMapSurface] Unexpected tile streaming error:', err);
+        console.error(
+          '[ChartMapSurface] Unexpected tile streaming error:',
+          err instanceof Error ? err : 'tile streaming failed'
+        );
         onDebugChangeRef.current?.({ ...CHART_DEBUG_INITIAL });
       }
     });
@@ -524,7 +537,7 @@ export function buildChartTexture(
   radiusNm: number,
   chartType: ChartType,
   maxTextureDim = MAX_TEXTURE_DIM
-): { promise: Promise<ChartTextureData>; cancel: () => void } {
+): ChartTextureHandle {
   const range = computeTileRange(
     refLat,
     refLon,
@@ -615,7 +628,9 @@ export function buildChartTexture(
             })
           );
         } catch (err) {
-          if (!cancelled) throw err; // re-throw genuine errors
+          if (!cancelled) {
+            throw err instanceof Error ? err : new Error('TAC overlay tile stream failed.');
+          }
         }
         if (cancelled) throw new Error('Cancelled');
       }
@@ -664,10 +679,10 @@ export function buildChartTexture(
 
       releaseWorker();
 
-      return { texture, corners: { sw, se, ne, nw } } as ChartTextureData;
+      const textureData: ChartTextureData = { texture, corners: { sw, se, ne, nw } };
+      return textureData;
     })().catch((err) => {
-      if (!cancelled) throw err; // re-throw genuine errors
-      return undefined as never;
+      throw err instanceof Error ? err : new Error('Chart texture build failed.');
     })
   ]);
 

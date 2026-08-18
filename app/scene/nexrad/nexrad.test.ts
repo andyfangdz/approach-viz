@@ -72,19 +72,16 @@ test('applyVoxelInstances writes flat render columns into matrices and colors', 
   };
 
   const capacity = 4;
-  const mesh = {
-    count: 0,
-    instanceMatrix: {
-      array: new Float32Array(capacity * 16),
-      count: capacity,
-      needsUpdate: false
-    },
-    instanceColor: null
-  } as unknown as THREE.InstancedMesh;
+  const mesh = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial(),
+    capacity
+  );
 
   applyVoxelInstances(mesh, render);
 
   assert.strictEqual(mesh.count, 2);
+  // SAFETY: InstancedMesh.instanceMatrix is a Float32Array of 16 floats per instance.
   const matrix = mesh.instanceMatrix.array as Float32Array;
   for (let i = 0; i < 32; i += 1) {
     assert.ok(Number.isFinite(matrix[i]), `matrix[${i}] should be finite, got ${matrix[i]}`);
@@ -108,6 +105,7 @@ test('applyVoxelInstances writes flat render columns into matrices and colors', 
 
   // Colors come from the per-phase dBZ band LUTs.
   assert.ok(mesh.instanceColor, 'instanceColor should be allocated');
+  // SAFETY: InstancedBufferAttribute.array for RGB instance colors is a Float32Array.
   const colors = mesh.instanceColor.array as Float32Array;
   const expectSnow = new THREE.Color().setHex(dbzToHex(40, PHASE_SNOW));
   const expectMixed = new THREE.Color().setHex(dbzToHex(55, PHASE_MIXED));

@@ -43,6 +43,22 @@ import { NexradSurfaceMosaic, type MosaicDrapeStatus } from './nexrad/NexradSurf
 
 const MIN_INSTANCE_CAPACITY = 1;
 const EMPTY_PHASE_COUNTS = { rain: 0, mixed: 0, snow: 0 };
+
+interface AltitudeGuideLabel {
+  feet: number;
+  yNm: number;
+  extentNm: number;
+}
+
+interface AltitudeGuideData {
+  geometry: THREE.BufferGeometry | null;
+  labels: AltitudeGuideLabel[];
+}
+
+const EMPTY_ALTITUDE_GUIDE_DATA: AltitudeGuideData = {
+  geometry: null,
+  labels: []
+};
 const EMPTY_TIMINGS_MS: NexradTimingDebugState = {
   pollCycleMs: null,
   volumeFetchMs: null,
@@ -60,7 +76,7 @@ function roundMs(value: number): number {
 
 function toWorkerFetchUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
-  if (typeof window === 'undefined') return url;
+  if (globalThis.window === undefined) return url;
   return new URL(url, window.location.origin).toString();
 }
 
@@ -199,6 +215,7 @@ export function NexradVolumeOverlay({
     setTimingsMs((previous) => {
       let changed = false;
       const next: NexradTimingDebugState = { ...previous };
+      // SAFETY: Object.entries of Partial<NexradTimingDebugState> yields that interface's keys.
       const entries = Object.entries(patch) as Array<[keyof NexradTimingDebugState, number | null]>;
       for (const [key, value] of entries) {
         if (previous[key] === value) continue;
@@ -784,7 +801,7 @@ export function NexradVolumeOverlay({
     }
     const alphaAttribute = voxelGeometry.getAttribute('instanceAlpha');
     if (alphaAttribute) {
-      (alphaAttribute as THREE.InstancedBufferAttribute).needsUpdate = true;
+      alphaAttribute.needsUpdate = true;
     }
 
     const baseMesh = baseMeshRef.current;
@@ -824,12 +841,9 @@ export function NexradVolumeOverlay({
     patchTimings
   ]);
 
-  const guideData = useMemo(() => {
+  const guideData = useMemo((): AltitudeGuideData => {
     if (!showAltitudeGuides || volumeData.count === 0) {
-      return {
-        geometry: null as THREE.BufferGeometry | null,
-        labels: [] as Array<{ feet: number; yNm: number; extentNm: number }>
-      };
+      return EMPTY_ALTITUDE_GUIDE_DATA;
     }
     // Extents over the rendered voxel set come precomputed from the Rust
     // render-volume join.
@@ -850,7 +864,7 @@ export function NexradVolumeOverlay({
       Math.ceil(maxFeet / ALTITUDE_GUIDE_STEP_FEET) * ALTITUDE_GUIDE_STEP_FEET
     );
     const vertices: number[] = [];
-    const labels: Array<{ feet: number; yNm: number; extentNm: number }> = [];
+    const labels: AltitudeGuideLabel[] = [];
     const e = extentNm;
     for (let feet = ALTITUDE_GUIDE_STEP_FEET; feet <= maxFeet; feet += ALTITUDE_GUIDE_STEP_FEET) {
       const yNm = feetToNm(feet);

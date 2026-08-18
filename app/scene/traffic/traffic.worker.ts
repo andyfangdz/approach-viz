@@ -45,9 +45,10 @@ function roundMs(value: number): number {
 
 function normalizeFetchUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
-  const workerLocation = (globalThis as { location?: { origin?: string } }).location;
-  if (workerLocation?.origin && workerLocation.origin !== 'null') {
-    return new URL(url, workerLocation.origin).toString();
+  if (!('location' in globalThis)) return url;
+  const origin = globalThis.location.origin;
+  if (origin.length > 0 && origin !== 'null') {
+    return new URL(url, origin).toString();
   }
   return url;
 }
@@ -110,6 +111,12 @@ function packAirportData(airports: SceneAirport[]): Float64Array {
   return flat;
 }
 
+interface WasmMergeResult {
+  trackedHexes: string[];
+  returnedHistoryHexes: string[];
+  error: string | null;
+}
+
 interface WasmSoA {
   trackCount: number;
   markerPositions: Float32Array;
@@ -160,14 +167,15 @@ export class TrafficWorkerApi {
     const state = this.getState();
     const runtimeData = await fetchRuntimeBinaryData(primaryUrl, followupUrl);
     const processingStartedAt = performance.now();
+    // SAFETY: wasm-bindgen merge returns the AVTR merge summary documented in approach_viz_core.d.ts.
     const mergeResult = state.merge(
       new Uint8Array(runtimeData.primaryBuffer),
       options.nowMs,
       options.historyMinutes,
       options.hideGroundTargets,
       runtimeData.backfillBuffer ? new Uint8Array(runtimeData.backfillBuffer) : new Uint8Array(0)
-    ) as { trackedHexes: string[]; returnedHistoryHexes: string[]; error: string | null };
-    if (typeof mergeResult.error === 'string' && mergeResult.error.trim().length > 0) {
+    ) as WasmMergeResult;
+    if (mergeResult.error !== null && mergeResult.error.trim().length > 0) {
       throw new Error(`Traffic feed error: ${mergeResult.error}`);
     }
     return this.buildAndTransferResult(
@@ -212,6 +220,7 @@ export class TrafficWorkerApi {
     const startedAt = processingStartedAt ?? performance.now();
     const state = this.getState();
     const airportData = packAirportData(options.sceneAirports);
+    // SAFETY: wasm-bindgen build_render_tracks returns the SoA object documented in approach_viz_core.d.ts.
     const wasmRenderResult = state.build_render_tracks(
       options.refLat,
       options.refLon,
@@ -229,7 +238,7 @@ export class TrafficWorkerApi {
       trackCount: state.track_count,
       renderedTrackCount: soa.trackCount,
       historyPointCount,
-      renderHash: typeof soa.hash === 'number' ? soa.hash >>> 0 : null,
+      renderHash: Number.isFinite(soa.hash) ? soa.hash >>> 0 : null,
       markerPositions: soa.markerPositions,
       headingDeg: soa.headingDeg,
       flags: soa.flags,
@@ -244,6 +253,7 @@ export class TrafficWorkerApi {
       historyBackfillError: historyBackfillError ?? null
     };
 
+    // SAFETY: wasm-bindgen traffic SoA columns are TypedArray views over ArrayBuffers.
     const transferList: ArrayBuffer[] = [
       soa.markerPositions.buffer as ArrayBuffer,
       soa.headingDeg.buffer as ArrayBuffer,
