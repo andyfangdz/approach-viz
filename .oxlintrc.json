@@ -29,13 +29,12 @@
     "packages/approach-viz-core-wasm/**",
     "target/**",
     "ios/**",
-    "crates/**",
-    "tools/oxlint/anti-slop/**"
+    "crates/**"
   ],
   "jsPlugins": [
     {
       "name": "anti-slop",
-      "specifier": "./tools/oxlint/anti-slop/index.ts"
+      "specifier": "oxlint-plugin-anti-slop"
     }
   ],
   "rules": {

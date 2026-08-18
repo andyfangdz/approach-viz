@@ -11,4 +11,3 @@ packages/approach-viz-core-wasm
 public/approach_viz_core.js
 test-results
 public/service-worker.js
-tools/oxlint/anti-slop
