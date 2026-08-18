@@ -88,13 +88,14 @@ describe('traffic adsbx proxy forwarding', () => {
 
   beforeEach(() => {
     capturedUrl = null;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const mockFetch: typeof fetch = async (input) => {
       capturedUrl = String(input);
       return new Response(JSON.stringify({ aircraft: [] }), {
         status: 200,
         headers: { 'content-type': 'application/json' }
       });
-    }) as typeof fetch;
+    };
+    globalThis.fetch = mockFetch;
   });
 
   afterEach(() => {
@@ -114,7 +115,7 @@ describe('traffic adsbx proxy forwarding', () => {
   });
 
   test('forwards valid params and passthrough headers untouched', async () => {
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const mockFetch: typeof fetch = async (input) => {
       capturedUrl = String(input);
       return new Response(new ArrayBuffer(8), {
         status: 200,
@@ -124,7 +125,8 @@ describe('traffic adsbx proxy forwarding', () => {
           'x-approach-viz-traffic-snapshot-age-ms': '1234'
         }
       });
-    }) as typeof fetch;
+    };
+    globalThis.fetch = mockFetch;
 
     const response = await GET(
       makeRequest({
@@ -149,9 +151,10 @@ describe('traffic adsbx proxy forwarding', () => {
   });
 
   test('upstream failure degrades to empty JSON payload with error', async () => {
-    globalThis.fetch = (async () => {
+    const mockFetch: typeof fetch = async () => {
       throw new Error('upstream unreachable');
-    }) as typeof fetch;
+    };
+    globalThis.fetch = mockFetch;
 
     const response = await GET(makeRequest(VALID_LAT_LON));
     assert.equal(response.status, 200);

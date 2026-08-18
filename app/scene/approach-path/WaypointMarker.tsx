@@ -36,7 +36,7 @@ export function WaypointMarker({
         }}
       >
         {name}
-        {typeof altitudeLabel === 'number' ? ` ${altitudeLabel}'` : ''}
+        {altitudeLabel !== undefined ? ` ${altitudeLabel}'` : ''}
       </Html>
     </group>
   );

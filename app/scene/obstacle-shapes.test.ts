@@ -1,40 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { obstacleShapeCategory } from './obstacle-shapes';
+import { obstacleGlyphKind } from './obstacle-shapes';
 
 test('towers map to the cone category', () => {
-  assert.equal(obstacleShapeCategory('TOWER'), 'tower');
-  assert.equal(obstacleShapeCategory('T-L TWR'), 'tower');
-  assert.equal(obstacleShapeCategory('CTRL TWR'), 'tower');
-  assert.equal(obstacleShapeCategory('SPIRE'), 'tower');
+  assert.equal(obstacleGlyphKind('TOWER'), 'tower');
+  assert.equal(obstacleGlyphKind('T-L TWR'), 'tower');
+  assert.equal(obstacleGlyphKind('CTRL TWR'), 'tower');
+  assert.equal(obstacleGlyphKind('SPIRE'), 'tower');
 });
 
 test('windmills map to the rotor category', () => {
-  assert.equal(obstacleShapeCategory('WINDMILL'), 'windmill');
+  assert.equal(obstacleGlyphKind('WINDMILL'), 'windmill');
 });
 
 test('buildings and large structures map to the box category', () => {
-  assert.equal(obstacleShapeCategory('BLDG'), 'building');
-  assert.equal(obstacleShapeCategory('STADIUM'), 'building');
-  assert.equal(obstacleShapeCategory('HANGAR'), 'building');
+  assert.equal(obstacleGlyphKind('BLDG'), 'building');
+  assert.equal(obstacleGlyphKind('STADIUM'), 'building');
+  assert.equal(obstacleGlyphKind('HANGAR'), 'building');
 });
 
 test('cylindrical structures map to the tank category', () => {
-  assert.equal(obstacleShapeCategory('TANK'), 'tank');
-  assert.equal(obstacleShapeCategory('STACK'), 'tank');
-  assert.equal(obstacleShapeCategory('SILO'), 'tank');
-  assert.equal(obstacleShapeCategory('GRAIN ELEVATOR'), 'tank');
+  assert.equal(obstacleGlyphKind('TANK'), 'tank');
+  assert.equal(obstacleGlyphKind('STACK'), 'tank');
+  assert.equal(obstacleGlyphKind('SILO'), 'tank');
+  assert.equal(obstacleGlyphKind('GRAIN ELEVATOR'), 'tank');
 });
 
 test('everything else falls back to the generic category', () => {
-  assert.equal(obstacleShapeCategory('POLE'), 'other');
-  assert.equal(obstacleShapeCategory('UTILITY POLE'), 'other');
-  assert.equal(obstacleShapeCategory('CATENARY'), 'other');
-  assert.equal(obstacleShapeCategory('SIGN'), 'other');
-  assert.equal(obstacleShapeCategory('SOME FUTURE TYPE'), 'other');
+  assert.equal(obstacleGlyphKind('POLE'), 'other');
+  assert.equal(obstacleGlyphKind('UTILITY POLE'), 'other');
+  assert.equal(obstacleGlyphKind('CATENARY'), 'other');
+  assert.equal(obstacleGlyphKind('SIGN'), 'other');
+  assert.equal(obstacleGlyphKind('SOME FUTURE TYPE'), 'other');
 });
 
 test('mapping tolerates surrounding whitespace and case', () => {
-  assert.equal(obstacleShapeCategory('  tower  '), 'tower');
-  assert.equal(obstacleShapeCategory('windmill'), 'windmill');
+  assert.equal(obstacleGlyphKind('  tower  '), 'tower');
+  assert.equal(obstacleGlyphKind('windmill'), 'windmill');
 });

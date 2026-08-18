@@ -4,10 +4,9 @@ import * as Comlink from 'comlink';
 import { ComlinkedWorkerClient } from './comlinked-worker-client';
 import { WorkerClientError } from './worker-errors';
 
-const RELEASE_PROXY = Symbol('releaseProxy');
-
 interface TestProxy {
   invoke: () => Promise<string>;
+  [Comlink.releaseProxy]: () => void;
 }
 
 class FakeWorker extends EventTarget {
@@ -19,12 +18,14 @@ class FakeWorker extends EventTarget {
 }
 
 class TestWorkerClient extends ComlinkedWorkerClient<TestProxy> {
-  constructor(worker: Worker, proxy: TestProxy, timeoutMs = 25) {
+  constructor(worker: FakeWorker, proxy: TestProxy, timeoutMs = 25) {
     super(worker, {
       name: 'test',
       defaultTimeoutMs: timeoutMs,
-      wrap: () => proxy as unknown as Comlink.Remote<TestProxy>,
-      releaseProxySymbol: RELEASE_PROXY
+      wrap: () => {
+        // SAFETY: the test double implements TestProxy plus Comlink's release slot, which is the only Remote surface this client uses.
+        return proxy as Comlink.Remote<TestProxy>;
+      }
     });
   }
 
@@ -36,14 +37,14 @@ class TestWorkerClient extends ComlinkedWorkerClient<TestProxy> {
 function createClient(timeoutMs = 25) {
   const worker = new FakeWorker();
   let releaseCount = 0;
-  const proxy: TestProxy & Record<symbol, unknown> = {
+  const proxy: TestProxy = {
     invoke: () => Promise.resolve('ok'),
-    [RELEASE_PROXY]: () => {
+    [Comlink.releaseProxy]: () => {
       releaseCount += 1;
     }
   };
 
-  const client = new TestWorkerClient(worker as unknown as Worker, proxy, timeoutMs);
+  const client = new TestWorkerClient(worker, proxy, timeoutMs);
 
   return {
     client,
@@ -53,6 +54,26 @@ function createClient(timeoutMs = 25) {
       return releaseCount;
     }
   };
+}
+
+function isCancelledWorkerError(error: WorkerClientError): boolean {
+  return error.code === 'cancelled';
+}
+
+function isWorkerRuntimeError(error: WorkerClientError): boolean {
+  return error.code === 'worker-error';
+}
+
+function isMessageError(error: WorkerClientError): boolean {
+  return error.code === 'message-error';
+}
+
+function isTimeoutError(error: WorkerClientError): boolean {
+  return error.code === 'timeout';
+}
+
+function isTerminatedError(error: WorkerClientError): boolean {
+  return error.code === 'terminated';
 }
 
 test('dispose is idempotent and tears down worker once', () => {
@@ -75,10 +96,9 @@ test('cancelAllPending rejects in-flight call with cancelled error', async () =>
   const call = client.run(() => pending);
   client.cancelAllPending();
 
-  await assert.rejects(call, (error: unknown) => {
+  await assert.rejects(call, (error) => {
     assert.ok(error instanceof WorkerClientError);
-    assert.equal(error.code, 'cancelled');
-    return true;
+    return isCancelledWorkerError(error);
   });
 });
 
@@ -92,10 +112,9 @@ test('worker runtime error rejects in-flight call and terminates worker', async 
   const call = client.run(() => pending);
   worker.dispatchEvent(new Event('error'));
 
-  await assert.rejects(call, (error: unknown) => {
+  await assert.rejects(call, (error) => {
     assert.ok(error instanceof WorkerClientError);
-    assert.equal(error.code, 'worker-error');
-    return true;
+    return isWorkerRuntimeError(error);
   });
 
   assert.equal(worker.terminateCount, 1);
@@ -111,10 +130,9 @@ test('message serialization error rejects in-flight call', async () => {
   const call = client.run(() => pending);
   worker.dispatchEvent(new Event('messageerror'));
 
-  await assert.rejects(call, (error: unknown) => {
+  await assert.rejects(call, (error) => {
     assert.ok(error instanceof WorkerClientError);
-    assert.equal(error.code, 'message-error');
-    return true;
+    return isMessageError(error);
   });
 });
 
@@ -126,10 +144,9 @@ test('withTimeout returns timeout error when call does not settle in time', asyn
 
   await assert.rejects(
     client.run(() => pending),
-    (error: unknown) => {
+    (error) => {
       assert.ok(error instanceof WorkerClientError);
-      assert.equal(error.code, 'timeout');
-      return true;
+      return isTimeoutError(error);
     }
   );
 });
@@ -141,10 +158,9 @@ test('withTimeout maps synchronous proxy call failures to terminated', async () 
     client.run(() => {
       throw new TypeError('MessagePort is already detached');
     }),
-    (error: unknown) => {
+    (error) => {
       assert.ok(error instanceof WorkerClientError);
-      assert.equal(error.code, 'terminated');
-      return true;
+      return isTerminatedError(error);
     }
   );
 });

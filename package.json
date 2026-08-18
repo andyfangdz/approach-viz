@@ -7,7 +7,8 @@
     "download-data": "bash scripts/download-data.sh",
     "build-db": "tsx scripts/build-db.ts",
     "prepare-data": "npm run download-data && npm run build-db",
-    "lint": "eslint .",
+    "lint": "eslint . && node --import tsx node_modules/oxlint/bin/oxlint",
+    "lint:anti-slop": "node --import tsx node_modules/oxlint/bin/oxlint",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:parser && npm run test:geometry && npm run test:layers && npm run test:mrms && npm run test:workers && npm run test:routes",
     "test:routes": "node --import tsx --test app/api/traffic/adsbx/route.test.ts app/api/faa-plate/route.test.ts",
@@ -63,6 +64,7 @@
     "three": "^0.182.0"
   },
   "devDependencies": {
+    "@oxlint/plugins": "^1.78.0",
     "@playwright/test": "^1.58.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "25.2.1",
@@ -72,6 +74,8 @@
     "babel-plugin-react-compiler": "^1.0.0",
     "esbuild": "^0.27.3",
     "eslint": "^9.39.1",
+    "oxlint": "^1.78.0",
+    "oxlint-plugin-anti-slop": "git+https://github.com/dmmulroy/anti-slop.git#446268e5d15baa968eaec669ff65358d36ae6259",
     "prettier": "^3.8.1",
     "tsx": "^4.20.0",
     "typescript": "^5.9.3",

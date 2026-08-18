@@ -84,6 +84,7 @@ export function loadObstaclesForAirport(
   const latRadius = clampedRadiusNm / 60;
   const lonRadius = clampedRadiusNm / (60 * Math.max(0.2, Math.cos((airport.lat * Math.PI) / 180)));
 
+  // SAFETY: build-db writes obstacles matching ObstacleRow.
   const rows = stmts().selectObstacles.all(
     airport.lat - latRadius,
     airport.lat + latRadius,

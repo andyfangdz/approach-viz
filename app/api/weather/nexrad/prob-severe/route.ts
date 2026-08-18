@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { parseNumberLike, parseStringLike } from '@/lib/parse-like';
+import {
+  isJsonArray,
+  isJsonObject,
+  parseJsonValue,
+  parseNumberLike,
+  parseStringLike,
+  type JsonObject,
+  type JsonValue
+} from '@/lib/parse-like';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -78,14 +86,14 @@ function isSameLonLat(first: LonLatTuple, second: LonLatTuple): boolean {
   return Math.abs(first[0] - second[0]) < 1e-6 && Math.abs(first[1] - second[1]) < 1e-6;
 }
 
-function parseRing(rawRing: unknown): LonLatTuple[] {
-  if (!Array.isArray(rawRing)) return [];
+function parseRing(rawRing: JsonValue): LonLatTuple[] {
+  if (!isJsonArray(rawRing)) return [];
   const ring: LonLatTuple[] = [];
   for (const rawPoint of rawRing) {
-    if (!Array.isArray(rawPoint) || rawPoint.length < 2) continue;
-    const lon = Number(rawPoint[0]);
-    const lat = Number(rawPoint[1]);
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    if (!isJsonArray(rawPoint) || rawPoint.length < 2) continue;
+    const lon = parseNumberLike(rawPoint[0]);
+    const lat = parseNumberLike(rawPoint[1]);
+    if (lon === null || lat === null) continue;
     ring.push([lon, lat]);
   }
   if (ring.length < 3) return [];
@@ -97,20 +105,19 @@ function parseRing(rawRing: unknown): LonLatTuple[] {
   return ring.length >= 3 ? ring : [];
 }
 
-function parsePrimaryRing(geometry: unknown): LonLatTuple[] {
-  if (!geometry || typeof geometry !== 'object') return [];
-  const geometryRecord = geometry as Record<string, unknown>;
-  const geometryType = geometryRecord.type;
-  const coordinates = geometryRecord.coordinates;
+function parsePrimaryRing(geometry: JsonValue): LonLatTuple[] {
+  if (!isJsonObject(geometry)) return [];
+  const geometryType = geometry.type;
+  const coordinates = geometry.coordinates;
 
-  if (geometryType === 'Polygon' && Array.isArray(coordinates) && coordinates.length > 0) {
+  if (geometryType === 'Polygon' && isJsonArray(coordinates) && coordinates.length > 0) {
     return parseRing(coordinates[0]);
   }
 
-  if (geometryType === 'MultiPolygon' && Array.isArray(coordinates) && coordinates.length > 0) {
+  if (geometryType === 'MultiPolygon' && isJsonArray(coordinates) && coordinates.length > 0) {
     let bestRing: LonLatTuple[] = [];
     for (const rawPolygon of coordinates) {
-      if (!Array.isArray(rawPolygon) || rawPolygon.length === 0) continue;
+      if (!isJsonArray(rawPolygon) || rawPolygon.length === 0) continue;
       const candidate = parseRing(rawPolygon[0]);
       if (candidate.length > bestRing.length) {
         bestRing = candidate;
@@ -149,7 +156,7 @@ function extractLatestProbSevereFile(indexHtml: string): string | null {
 }
 
 function resolveTopHeightFeet(
-  properties: Record<string, unknown>
+  properties: JsonObject
 ): { topFeet: number; topSource: 'ref20' | 'ref10' | 'echoTop50' } | null {
   const ref20Kft = parseNumberLike(properties.REF20);
   if (ref20Kft !== null && ref20Kft > 0) {
@@ -170,20 +177,16 @@ function resolveTopHeightFeet(
 }
 
 function normalizeFeatureCell(
-  rawFeature: unknown,
+  rawFeature: JsonValue,
   refLat: number,
   refLon: number,
   maxRangeNm: number
 ): ProbSevereCell | null {
-  if (!rawFeature || typeof rawFeature !== 'object') return null;
-  const feature = rawFeature as Record<string, unknown>;
-  const polygon = parsePrimaryRing(feature.geometry);
+  if (!isJsonObject(rawFeature)) return null;
+  const polygon = parsePrimaryRing(rawFeature.geometry);
   if (polygon.length < 3) return null;
 
-  const properties =
-    feature.properties && typeof feature.properties === 'object'
-      ? (feature.properties as Record<string, unknown>)
-      : {};
+  const properties = isJsonObject(rawFeature.properties) ? rawFeature.properties : {};
 
   const centroidFromGeometry = centroidFromRing(polygon);
   const centroidLat = centroidFromGeometry?.lat ?? null;
@@ -261,8 +264,11 @@ export async function GET(request: NextRequest) {
         `ProbSevere file request failed (${fileResponse.status}). ${fileError.slice(0, 256)}`
       );
     }
-    const rawPayload = (await fileResponse.json()) as Record<string, unknown>;
-    const rawFeatures = Array.isArray(rawPayload.features) ? rawPayload.features : [];
+    const rawPayload = parseJsonValue(await fileResponse.text());
+    if (!isJsonObject(rawPayload)) {
+      throw new Error('ProbSevere file was not a JSON object.');
+    }
+    const rawFeatures = isJsonArray(rawPayload.features) ? rawPayload.features : [];
     const cells: ProbSevereCell[] = [];
     for (const feature of rawFeatures) {
       const normalized = normalizeFeatureCell(feature, lat, lon, maxRangeNm);

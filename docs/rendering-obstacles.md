@@ -15,7 +15,7 @@ The `Obstacles` layer (web `obstacles`, default off) renders FAA Digital Obstacl
 - Coordinates project through the shared `latLonToLocal` local-tangent projection; x/z are NM offsets from the airport reference.
 - Each obstacle renders as a vertical shaft from its ground elevation (`amslFeet - aglFeet`) to its top (`amslFeet`), both in the absolute-MSL vertical frame (`feet / 6076.12` NM) shared with terrain/path geometry, inside a `[1, verticalScale, 1]`-scaled group like the other overlays.
 - Shafts are a single `LineSegments` batch with vertex colors (dim slate at the base fading to the tip color).
-- Tips are one `InstancedMesh` per shape category, chosen from the DOF obstacle type by `app/scene/obstacle-shapes.ts`:
+- Tips are one `InstancedMesh` per glyph kind, chosen from the DOF obstacle type by `app/scene/obstacle-shapes.ts`:
   - towers (`TOWER`, `T-L TWR`, `CTRL TWR`, `MET`, `ANTENNA`, `SPIRE`, ...) → hex cone
   - `WINDMILL` → rotor ring (torus)
   - buildings (`BLDG`, `HANGAR`, `STADIUM`, `DOME`, `PLANT`, ...) → box

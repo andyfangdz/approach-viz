@@ -393,8 +393,12 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
   const gl = useThree((s) => s.gl);
   const maxTextureDim = useMemo(() => {
-    const ctx = gl.getContext() as WebGL2RenderingContext;
-    return ctx.getParameter(ctx.MAX_TEXTURE_SIZE) as number;
+    const ctx = gl.getContext();
+    const maxTextureSize = Number(ctx.getParameter(ctx.MAX_TEXTURE_SIZE));
+    if (!Number.isFinite(maxTextureSize) || maxTextureSize < 1) {
+      throw new Error('WebGL MAX_TEXTURE_SIZE is not a finite number.');
+    }
+    return maxTextureSize;
   }, [gl]);
   const tilesRendererRef = useRef<TilesRendererImpl | null>(null);
   const loadErrorCountRef = useRef(0);
@@ -544,9 +548,12 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         setChartTexture(data.texture);
         setChartHomography(homography);
       })
-      .catch((error: unknown) => {
+      .catch((error) => {
         if (active) {
-          console.warn('Chart overlay texture load failed.', error);
+          console.warn(
+            'Chart overlay texture load failed.',
+            error instanceof Error ? error : 'chart overlay load failed'
+          );
         }
       });
 
@@ -627,15 +634,8 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   const patchMaterial = useCallback(
     (material: THREE.Material) => {
       if (patchedMaterialsRef.current.has(material)) return;
-      const patchable = material as THREE.Material & {
-        onBeforeCompile: (
-          shader: THREE.WebGLProgramParametersWithUniforms,
-          renderer: THREE.WebGLRenderer
-        ) => void;
-        customProgramCacheKey?: () => string;
-      };
-      const originalOnBeforeCompile = patchable.onBeforeCompile?.bind(patchable);
-      const originalCustomProgramCacheKey = patchable.customProgramCacheKey?.bind(patchable);
+      const originalOnBeforeCompile = material.onBeforeCompile.bind(material);
+      const originalCustomProgramCacheKey = material.customProgramCacheKey.bind(material);
       const uniforms: PatchedMaterialUniforms = {
         uPlateMap: { value: overlayEnabled && plateTexture ? plateTexture : EMPTY_TEXTURE },
         uPlateEnabled: { value: overlayEnabled ? 1 : 0 },
@@ -661,7 +661,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         uVerticalScale: { value: verticalScale }
       };
 
-      patchable.onBeforeCompile = (shader, renderer) => {
+      material.onBeforeCompile = (shader, renderer) => {
         shader.uniforms.uPlateMap = uniforms.uPlateMap;
         shader.uniforms.uPlateEnabled = uniforms.uPlateEnabled;
         shader.uniforms.uPlateHomography = uniforms.uPlateHomography;
@@ -754,7 +754,7 @@ if (uPlateEnabled > 0.5) {
           originalOnBeforeCompile(shader, renderer);
         }
       };
-      patchable.customProgramCacheKey = () => {
+      material.customProgramCacheKey = () => {
         const baseKey = originalCustomProgramCacheKey ? originalCustomProgramCacheKey() : '';
         return `${baseKey}|faa-overlay-v5`;
       };
@@ -789,9 +789,8 @@ if (uPlateEnabled > 0.5) {
   const patchSceneMaterials = useCallback(
     (scene: THREE.Object3D) => {
       scene.traverse((node: THREE.Object3D) => {
-        const mesh = node as THREE.Mesh;
-        if (!mesh.isMesh) return;
-        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        if (!(node instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
         for (const material of materials) {
           if (!material) continue;
           patchMaterial(material);

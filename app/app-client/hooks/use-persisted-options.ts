@@ -28,9 +28,17 @@ import {
   DEFAULT_OBSTACLE_RADIUS_NM,
   DEFAULT_OBSTACLE_MIN_AGL_FEET,
   DEFAULT_SHOW_OBSTACLE_LABELS,
+  LAYER_IDS,
   MIN_TRAFFIC_HISTORY_MINUTES,
   MAX_TRAFFIC_HISTORY_MINUTES
 } from '@/app/app-client/constants';
+import {
+  isBoolean,
+  isFiniteNumber,
+  isJsonObject,
+  isString,
+  parseJsonValue
+} from '@/lib/parse-like';
 import {
   clampValue,
   normalizeCameraControlMode,
@@ -143,114 +151,115 @@ export function usePersistedOptions() {
 
   // Hydrate from localStorage, then apply URL-param overrides on top.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (globalThis.window === undefined) return;
     try {
       const raw = window.localStorage.getItem(OPTIONS_STORAGE_KEY);
       if (raw) {
-        const persisted = JSON.parse(raw) as PersistedOptionsState;
-        if (typeof persisted.verticalScale === 'number') {
-          setVerticalScale(clampValue(persisted.verticalScale, 1, 15, DEFAULT_VERTICAL_SCALE));
-        }
-        if (typeof persisted.terrainRadiusNm === 'number') {
-          setTerrainRadiusNm(normalizeTerrainRadiusNm(persisted.terrainRadiusNm));
-        }
-        if (typeof persisted.flattenBathymetry === 'boolean') {
-          setFlattenBathymetry(persisted.flattenBathymetry);
-        }
-        if (typeof persisted.useParsedMissedClimbGradient === 'boolean') {
-          setUseParsedMissedClimbGradient(persisted.useParsedMissedClimbGradient);
-        }
-        if (typeof persisted.hideGroundTraffic === 'boolean') {
-          setHideGroundTraffic(persisted.hideGroundTraffic);
-        }
-        if (typeof persisted.showTrafficCallsigns === 'boolean') {
-          setShowTrafficCallsigns(persisted.showTrafficCallsigns);
-        }
-        if (typeof persisted.hideGroundTrafficCallsigns === 'boolean') {
-          setHideGroundTrafficCallsigns(persisted.hideGroundTrafficCallsigns);
-        }
-        if (typeof persisted.showDepartedTrafficTrails === 'boolean') {
-          setShowDepartedTrafficTrails(persisted.showDepartedTrafficTrails);
-        }
-        if (typeof persisted.trafficHistoryMinutes === 'number') {
-          setTrafficHistoryMinutes(
-            clampValue(
-              Math.round(persisted.trafficHistoryMinutes),
-              MIN_TRAFFIC_HISTORY_MINUTES,
-              MAX_TRAFFIC_HISTORY_MINUTES,
-              DEFAULT_TRAFFIC_HISTORY_MINUTES
-            )
-          );
-        }
-        if (typeof persisted.nexradMinDbz === 'number') {
-          setNexradMinDbz(normalizeNexradMinDbz(persisted.nexradMinDbz));
-        }
-        if (typeof persisted.nexradOpacity === 'number') {
-          setNexradOpacity(normalizeNexradOpacity(persisted.nexradOpacity));
-        }
-        if (persisted.nexradDeclutterMode) {
-          setNexradDeclutterMode(normalizeNexradDeclutterMode(persisted.nexradDeclutterMode));
-        }
-        if (persisted.nexradSurfaceMosaicProduct) {
-          setNexradSurfaceMosaicProduct(
-            normalizeNexradSurfaceMosaicProduct(persisted.nexradSurfaceMosaicProduct)
-          );
-        }
-        if (persisted.nexradSurfaceMosaicDrape) {
-          setNexradSurfaceMosaicDrape(
-            normalizeNexradSurfaceMosaicDrape(persisted.nexradSurfaceMosaicDrape)
-          );
-        }
-        if (persisted.nexradPhaseMode) {
-          setNexradPhaseMode(normalizeNexradPhaseMode(persisted.nexradPhaseMode));
-        }
-        if (persisted.cameraControlMode) {
-          setCameraControlMode(normalizeCameraControlMode(persisted.cameraControlMode));
-        }
-        if (typeof persisted.nexradCrossSectionHeadingDeg === 'number') {
-          setNexradCrossSectionHeadingDeg(
-            normalizeNexradCrossSectionHeadingDeg(persisted.nexradCrossSectionHeadingDeg)
-          );
-        }
-        if (typeof persisted.nexradCrossSectionRangeNm === 'number') {
-          setNexradCrossSectionRangeNm(
-            normalizeNexradCrossSectionRangeNm(persisted.nexradCrossSectionRangeNm)
-          );
-        }
-        if (typeof persisted.retinaRendering === 'boolean') {
-          setRetinaRendering(persisted.retinaRendering);
-        }
-        if (typeof persisted.obstacleRadiusNm === 'number') {
-          setObstacleRadiusNm(normalizeObstacleRadiusNm(persisted.obstacleRadiusNm));
-        }
-        if (typeof persisted.obstacleMinAglFeet === 'number') {
-          setObstacleMinAglFeet(normalizeObstacleMinAglFeet(persisted.obstacleMinAglFeet));
-        }
-        if (typeof persisted.showObstacleLabels === 'boolean') {
-          setShowObstacleLabels(persisted.showObstacleLabels);
-        }
-        if (persisted.layers) {
-          const restored = { ...DEFAULT_LAYER_STATE };
-          for (const key of Object.keys(DEFAULT_LAYER_STATE) as (keyof LayerState)[]) {
-            if (typeof persisted.layers[key] === 'boolean') {
-              restored[key] = persisted.layers[key];
-            }
+        const parsed = parseJsonValue(raw);
+        if (isJsonObject(parsed)) {
+          if (isFiniteNumber(parsed.verticalScale)) {
+            setVerticalScale(clampValue(parsed.verticalScale, 1, 15, DEFAULT_VERTICAL_SCALE));
           }
-          setLayers(restored);
-        } else {
-          // Legacy migration
-          const migrated = { ...DEFAULT_LAYER_STATE };
-          if (typeof persisted.nexradVolumeEnabled === 'boolean')
-            migrated.mrms = persisted.nexradVolumeEnabled;
-          if (typeof persisted.liveTrafficEnabled === 'boolean')
-            migrated.adsb = persisted.liveTrafficEnabled;
-          if (typeof persisted.nexradShowEchoTops === 'boolean')
-            migrated.echotops = persisted.nexradShowEchoTops;
-          if (typeof persisted.nexradShowAltitudeGuides === 'boolean')
-            migrated.guides = persisted.nexradShowAltitudeGuides;
-          if (typeof persisted.nexradCrossSectionEnabled === 'boolean')
-            migrated.slice = persisted.nexradCrossSectionEnabled;
-          setLayers(migrated);
+          if (isFiniteNumber(parsed.terrainRadiusNm)) {
+            setTerrainRadiusNm(normalizeTerrainRadiusNm(parsed.terrainRadiusNm));
+          }
+          if (isBoolean(parsed.flattenBathymetry)) {
+            setFlattenBathymetry(parsed.flattenBathymetry);
+          }
+          if (isBoolean(parsed.useParsedMissedClimbGradient)) {
+            setUseParsedMissedClimbGradient(parsed.useParsedMissedClimbGradient);
+          }
+          if (isBoolean(parsed.hideGroundTraffic)) {
+            setHideGroundTraffic(parsed.hideGroundTraffic);
+          }
+          if (isBoolean(parsed.showTrafficCallsigns)) {
+            setShowTrafficCallsigns(parsed.showTrafficCallsigns);
+          }
+          if (isBoolean(parsed.hideGroundTrafficCallsigns)) {
+            setHideGroundTrafficCallsigns(parsed.hideGroundTrafficCallsigns);
+          }
+          if (isBoolean(parsed.showDepartedTrafficTrails)) {
+            setShowDepartedTrafficTrails(parsed.showDepartedTrafficTrails);
+          }
+          if (isFiniteNumber(parsed.trafficHistoryMinutes)) {
+            setTrafficHistoryMinutes(
+              clampValue(
+                Math.round(parsed.trafficHistoryMinutes),
+                MIN_TRAFFIC_HISTORY_MINUTES,
+                MAX_TRAFFIC_HISTORY_MINUTES,
+                DEFAULT_TRAFFIC_HISTORY_MINUTES
+              )
+            );
+          }
+          if (isFiniteNumber(parsed.nexradMinDbz)) {
+            setNexradMinDbz(normalizeNexradMinDbz(parsed.nexradMinDbz));
+          }
+          if (isFiniteNumber(parsed.nexradOpacity)) {
+            setNexradOpacity(normalizeNexradOpacity(parsed.nexradOpacity));
+          }
+          if (isString(parsed.nexradDeclutterMode)) {
+            setNexradDeclutterMode(normalizeNexradDeclutterMode(parsed.nexradDeclutterMode));
+          }
+          if (isString(parsed.nexradSurfaceMosaicProduct)) {
+            setNexradSurfaceMosaicProduct(
+              normalizeNexradSurfaceMosaicProduct(parsed.nexradSurfaceMosaicProduct)
+            );
+          }
+          if (isString(parsed.nexradSurfaceMosaicDrape)) {
+            setNexradSurfaceMosaicDrape(
+              normalizeNexradSurfaceMosaicDrape(parsed.nexradSurfaceMosaicDrape)
+            );
+          }
+          if (isString(parsed.nexradPhaseMode)) {
+            setNexradPhaseMode(normalizeNexradPhaseMode(parsed.nexradPhaseMode));
+          }
+          if (isString(parsed.cameraControlMode)) {
+            setCameraControlMode(normalizeCameraControlMode(parsed.cameraControlMode));
+          }
+          if (isFiniteNumber(parsed.nexradCrossSectionHeadingDeg)) {
+            setNexradCrossSectionHeadingDeg(
+              normalizeNexradCrossSectionHeadingDeg(parsed.nexradCrossSectionHeadingDeg)
+            );
+          }
+          if (isFiniteNumber(parsed.nexradCrossSectionRangeNm)) {
+            setNexradCrossSectionRangeNm(
+              normalizeNexradCrossSectionRangeNm(parsed.nexradCrossSectionRangeNm)
+            );
+          }
+          if (isBoolean(parsed.retinaRendering)) {
+            setRetinaRendering(parsed.retinaRendering);
+          }
+          if (isFiniteNumber(parsed.obstacleRadiusNm)) {
+            setObstacleRadiusNm(normalizeObstacleRadiusNm(parsed.obstacleRadiusNm));
+          }
+          if (isFiniteNumber(parsed.obstacleMinAglFeet)) {
+            setObstacleMinAglFeet(normalizeObstacleMinAglFeet(parsed.obstacleMinAglFeet));
+          }
+          if (isBoolean(parsed.showObstacleLabels)) {
+            setShowObstacleLabels(parsed.showObstacleLabels);
+          }
+          if (isJsonObject(parsed.layers)) {
+            const restored = { ...DEFAULT_LAYER_STATE };
+            for (const key of LAYER_IDS) {
+              const enabled = parsed.layers[key];
+              if (isBoolean(enabled)) {
+                restored[key] = enabled;
+              }
+            }
+            setLayers(restored);
+          } else {
+            const migrated = { ...DEFAULT_LAYER_STATE };
+            if (isBoolean(parsed.nexradVolumeEnabled)) migrated.mrms = parsed.nexradVolumeEnabled;
+            if (isBoolean(parsed.liveTrafficEnabled)) migrated.adsb = parsed.liveTrafficEnabled;
+            if (isBoolean(parsed.nexradShowEchoTops)) migrated.echotops = parsed.nexradShowEchoTops;
+            if (isBoolean(parsed.nexradShowAltitudeGuides)) {
+              migrated.guides = parsed.nexradShowAltitudeGuides;
+            }
+            if (isBoolean(parsed.nexradCrossSectionEnabled)) {
+              migrated.slice = parsed.nexradCrossSectionEnabled;
+            }
+            setLayers(migrated);
+          }
         }
       }
     } catch (error) {
@@ -291,7 +300,7 @@ export function usePersistedOptions() {
 
   // Persist after hydration so defaults never clobber stored options.
   useEffect(() => {
-    if (typeof window === 'undefined' || !didInitFromStorage) return;
+    if (globalThis.window === undefined || !didInitFromStorage) return;
     const persisted: PersistedOptionsState = {
       verticalScale,
       terrainRadiusNm,

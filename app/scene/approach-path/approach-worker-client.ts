@@ -29,7 +29,7 @@ class ApproachWorkerClient extends ComlinkedWorkerClient<ApproachWorkerApi> {
 let sharedClient: ApproachWorkerClient | null = null;
 
 function getWorkerClient(): ApproachWorkerClient {
-  if (typeof Worker === 'undefined') {
+  if (globalThis.Worker === undefined) {
     throw new Error('Approach worker API is unavailable in this runtime.');
   }
   if (sharedClient) return sharedClient;

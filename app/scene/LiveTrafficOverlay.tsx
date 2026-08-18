@@ -2,6 +2,7 @@ import { Html } from '@react-three/drei';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { TrafficDebugState, TrafficTimingDebugState } from '@/app/app-client/types';
+import { isPresentFiniteNumber } from '@/lib/parse-like';
 import {
   EMPTY_TRAFFIC_RENDER_BUFFERS,
   TrafficWorkerClient,
@@ -41,20 +42,14 @@ function roundMs(value: number): number {
 
 function toWorkerFetchUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
-  if (typeof window === 'undefined') return url;
+  if (globalThis.window === undefined) return url;
   return new URL(url, window.location.origin).toString();
 }
 
-function isCancelledError(error: unknown): boolean {
-  return error instanceof WorkerClientError && error.code === 'cancelled';
-}
-
-function formatTrafficWorkerErrorReason(error: unknown, context: string): string {
-  if (error instanceof Error) {
-    const message = error.message.trim();
-    if (message.length > 0) {
-      return `${context}: ${message}`;
-    }
+function formatTrafficWorkerErrorReason(error: Error, context: string): string {
+  const message = error.message.trim();
+  if (message.length > 0) {
+    return `${context}: ${message}`;
   }
   return context;
 }
@@ -154,7 +149,7 @@ export function LiveTrafficOverlay({
   const previousHistoryMinutesRef = useRef(normalizedHistoryMinutes);
   historyMinutesRef.current = normalizedHistoryMinutes;
   const [trafficMode, setTrafficMode] = useState<TrafficMode>(() =>
-    typeof Worker !== 'undefined' ? 'worker' : 'worker-error'
+    globalThis.Worker !== undefined ? 'worker' : 'worker-error'
   );
   const [renderBuffers, setRenderBuffers] = useState<TrafficRenderBuffers>(
     EMPTY_TRAFFIC_RENDER_BUFFERS
@@ -164,7 +159,7 @@ export function LiveTrafficOverlay({
   const [feedTransport, setFeedTransport] = useState<string | null>(null);
   const [workerTransport, setWorkerTransport] = useState<string | null>(null);
   const [workerErrorReason, setWorkerErrorReason] = useState<string | null>(() =>
-    typeof Worker === 'undefined' ? 'Worker API unavailable in this environment.' : null
+    globalThis.Worker === undefined ? 'Worker API unavailable in this environment.' : null
   );
   const [isLoading, setIsLoading] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -177,6 +172,7 @@ export function LiveTrafficOverlay({
     setTimingsMs((previous) => {
       let changed = false;
       const next: TrafficTimingDebugState = { ...previous };
+      // SAFETY: Object.entries of Partial<TrafficTimingDebugState> yields that interface's keys.
       const entries = Object.entries(patch) as Array<
         [keyof TrafficTimingDebugState, number | null]
       >;
@@ -219,7 +215,10 @@ export function LiveTrafficOverlay({
       trafficWorkerRef.current = new TrafficWorkerClient();
       setWorkerErrorReason(null);
     } catch (error) {
-      const message = formatTrafficWorkerErrorReason(error, 'Failed to initialize traffic worker');
+      const message =
+        error instanceof Error
+          ? formatTrafficWorkerErrorReason(error, 'Failed to initialize traffic worker')
+          : 'Failed to initialize traffic worker';
       setWorkerErrorReason(message);
       setLastError(message);
       setTrafficMode('worker-error');
@@ -312,7 +311,7 @@ export function LiveTrafficOverlay({
       if (
         showDepartedTrafficTrails &&
         !shouldRequestHistoryBackfill &&
-        typeof lastFullBackfillAtMs === 'number' &&
+        isPresentFiniteNumber(lastFullBackfillAtMs) &&
         pollNowMs - lastFullBackfillAtMs >= fullBackfillIntervalMs
       ) {
         shouldRequestHistoryBackfill = true;
@@ -406,7 +405,8 @@ export function LiveTrafficOverlay({
             if (!hex) continue;
             const lastBackfillAtMs = knownBackfilledHexes.get(hex);
             const hasFreshBackfill =
-              typeof lastBackfillAtMs === 'number' && nowMs - lastBackfillAtMs <= historyWindowMs;
+              isPresentFiniteNumber(lastBackfillAtMs) &&
+              nowMs - lastBackfillAtMs <= historyWindowMs;
             if (hasFreshBackfill) {
               pendingBackfillHexes.delete(hex);
               continue;
@@ -440,7 +440,7 @@ export function LiveTrafficOverlay({
         shouldRequestHistoryBackfill = false;
         needsHistoryBackfillRef.current = false;
       } catch (error) {
-        if (cancelled || isCancelledError(error)) return;
+        if (cancelled || (error instanceof WorkerClientError && error.code === 'cancelled')) return;
         setLastError(error instanceof Error ? error.message : 'Traffic poll failed');
         setLastPollAt(new Date().toISOString());
         const nowMs = Date.now();
@@ -468,10 +468,16 @@ export function LiveTrafficOverlay({
               applyWorkerResult(result);
             }
           } catch (pruneError) {
-            if (cancelled || isCancelledError(pruneError)) return;
+            if (
+              cancelled ||
+              (pruneError instanceof WorkerClientError && pruneError.code === 'cancelled')
+            )
+              return;
             setTrafficMode('worker-error');
             setWorkerErrorReason(
-              formatTrafficWorkerErrorReason(pruneError, 'Traffic worker prune failed')
+              pruneError instanceof Error
+                ? formatTrafficWorkerErrorReason(pruneError, 'Traffic worker prune failed')
+                : 'Traffic worker prune failed'
             );
             setWorkerTransport(null);
             patchTimings({
@@ -553,9 +559,13 @@ export function LiveTrafficOverlay({
           applyWorkerResult(result);
         })
         .catch((error) => {
-          if (cancelled || isCancelledError(error)) return;
+          if (cancelled || (error instanceof WorkerClientError && error.code === 'cancelled'))
+            return;
           if (trafficWorkerRef.current !== recomputeWorker) return;
-          const message = formatTrafficWorkerErrorReason(error, 'Traffic worker recompute failed');
+          const message =
+            error instanceof Error
+              ? formatTrafficWorkerErrorReason(error, 'Traffic worker recompute failed')
+              : 'Traffic worker recompute failed';
           setLastError(message);
         });
     }, RECOMPUTE_DEBOUNCE_MS);

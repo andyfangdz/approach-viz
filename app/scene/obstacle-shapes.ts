@@ -1,22 +1,20 @@
 /**
  * Maps FAA Digital Obstacle File obstacle-type strings onto the tip-marker
- * shape categories rendered by ObstacleOverlay. Kept renderer-free so the
+ * glyph kinds rendered by ObstacleOverlay. Kept renderer-free so the
  * mapping is unit-testable.
  */
 
-export type ObstacleShapeCategory = 'tower' | 'windmill' | 'building' | 'tank' | 'other';
+export type ObstacleGlyphKind = 'tower' | 'windmill' | 'building' | 'tank' | 'other';
 
-export const OBSTACLE_SHAPE_CATEGORIES: ObstacleShapeCategory[] = [
+export const OBSTACLE_GLYPH_KINDS = [
   'tower',
   'windmill',
   'building',
   'tank',
   'other'
-];
+] as const satisfies readonly ObstacleGlyphKind[];
 
-// Exact DOF type strings (post-trim). Anything unlisted renders as 'other'
-// (poles, signs, catenaries, navaids, cranes, ...).
-const TYPE_TO_CATEGORY: Record<string, ObstacleShapeCategory> = {
+const TYPE_TO_GLYPH_KIND = {
   // Lattice/guyed/monopole verticals → cone
   TOWER: 'tower',
   'T-L TWR': 'tower',
@@ -47,8 +45,12 @@ const TYPE_TO_CATEGORY: Record<string, ObstacleShapeCategory> = {
   ELEVATOR: 'tank',
   'GRAIN ELEVATOR': 'tank',
   RIG: 'tank'
-};
+} as const satisfies { readonly [key: string]: ObstacleGlyphKind };
 
-export function obstacleShapeCategory(obstacleType: string): ObstacleShapeCategory {
-  return TYPE_TO_CATEGORY[obstacleType.trim().toUpperCase()] ?? 'other';
+export function obstacleGlyphKind(obstacleType: string): ObstacleGlyphKind {
+  const key = obstacleType.trim().toUpperCase();
+  for (const [typeName, kind] of Object.entries(TYPE_TO_GLYPH_KIND)) {
+    if (typeName === key) return kind;
+  }
+  return 'other';
 }

@@ -7,6 +7,17 @@ import { AIRSPACE_RADIUS_NM } from './constants';
 import { latLonDistanceNm } from './geo';
 import type { AirportRow, AirspaceRow, RunwayRow } from './types';
 
+interface AirportOptionRow {
+  id: string;
+  name: string;
+}
+
+interface RunwayPoint {
+  id: string;
+  lat: number;
+  lon: number;
+}
+
 let _stmts: {
   selectAirportById: Database.Statement;
   selectAirspace: Database.Statement;
@@ -56,23 +67,23 @@ export function rowToAirport(row: AirportRow): Airport {
 export function selectAirport(airportId: string): AirportRow | null {
   const normalized = airportId.trim().toUpperCase();
   if (!normalized) return null;
+  // SAFETY: build-db writes airports matching AirportRow.
   const byId = stmts().selectAirportById.get(normalized) as AirportRow | undefined;
   return byId || null;
 }
 
-export function loadRunwayMap(
-  airportIds: string[]
-): Map<string, Array<{ id: string; lat: number; lon: number }>> {
+export function loadRunwayMap(airportIds: string[]): Map<string, RunwayPoint[]> {
   if (airportIds.length === 0) return new Map();
   const db = getDb();
   const placeholders = airportIds.map(() => '?').join(',');
+  // SAFETY: build-db writes runways matching RunwayRow.
   const rows = db
     .prepare(
       `SELECT airport_id, id, lat, lon FROM runways WHERE airport_id IN (${placeholders}) ORDER BY airport_id, id`
     )
     .all(...airportIds) as RunwayRow[];
 
-  const byAirport = new Map<string, Array<{ id: string; lat: number; lon: number }>>();
+  const byAirport = new Map<string, RunwayPoint[]>();
   for (const row of rows) {
     if (!byAirport.has(row.airport_id)) {
       byAirport.set(row.airport_id, []);
@@ -91,8 +102,10 @@ export function loadAirspaceForAirport(airport: Airport): AirspaceFeature[] {
   const minLon = airport.lon - lonRadius;
   const maxLon = airport.lon + lonRadius;
 
+  // SAFETY: build-db writes airspace rows matching AirspaceRow.
   const rows = stmts().selectAirspace.all(minLat, maxLat, minLon, maxLon) as AirspaceRow[];
 
+  // SAFETY: build-db writes airspace.coordinates_json as lon/lat rings ([number, number][][]).
   return rows
     .map((row) => ({
       type: 'CLASS' as const,
@@ -116,7 +129,8 @@ export function loadAirspaceForAirport(airport: Airport): AirspaceFeature[] {
 }
 
 export function listAirportOptions(): AirportOption[] {
-  const rows = stmts().listAirportOptions.all() as Array<{ id: string; name: string }>;
+  // SAFETY: build-db writes airports (id, name) for airports that have approaches.
+  const rows = stmts().listAirportOptions.all() as AirportOptionRow[];
   const prioritizedIds = Array.from(
     new Set(DEFAULT_SELECTIONS.map((selection) => selection.airportId.trim().toUpperCase()))
   );

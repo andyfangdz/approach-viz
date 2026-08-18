@@ -12,7 +12,7 @@ function resolveDbPath(): string {
   if (resolvedDbPath) return resolvedDbPath;
 
   const candidates = [process.env.APPROACH_VIZ_DB_PATH, DEFAULT_DB_PATH].filter(
-    (value): value is string => typeof value === 'string' && value.length > 0
+    (value): value is string => value !== undefined && value.length > 0
   );
 
   const existing = candidates.find((candidate) => fs.existsSync(candidate));

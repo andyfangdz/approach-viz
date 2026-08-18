@@ -3,9 +3,11 @@
 import { useEffect } from 'react';
 import { datadogRum } from '@datadog/browser-rum';
 
-type RumWindow = Window & {
-  __approachVizRumInitialized?: boolean;
-};
+declare global {
+  interface Window {
+    __approachVizRumInitialized?: boolean;
+  }
+}
 
 const DATADOG_SITE = process.env.NEXT_PUBLIC_DD_SITE || 'datadoghq.com';
 const RUM_PROXY_PATH = process.env.NEXT_PUBLIC_DD_RUM_PROXY_PATH || '/api/datadog/rum';
@@ -36,8 +38,7 @@ export default function DatadogRumInit() {
       return;
     }
 
-    const appWindow = window as RumWindow;
-    if (appWindow.__approachVizRumInitialized) {
+    if (window.__approachVizRumInitialized) {
       return;
     }
 
@@ -58,8 +59,7 @@ export default function DatadogRumInit() {
       allowedTracingUrls: [
         (value: string | URL) => {
           try {
-            const target =
-              typeof value === 'string' ? new URL(value, window.location.origin) : value;
+            const target = value instanceof URL ? value : new URL(value, window.location.origin);
             return target.origin === window.location.origin;
           } catch {
             return false;
@@ -68,7 +68,7 @@ export default function DatadogRumInit() {
       ]
     });
 
-    appWindow.__approachVizRumInitialized = true;
+    window.__approachVizRumInitialized = true;
   }, []);
 
   return null;

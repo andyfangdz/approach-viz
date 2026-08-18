@@ -56,14 +56,7 @@ function recordPrepareTransport(transport: NexradPrepareTransport): void {
   workerTransportDiagnostics = { ...workerTransportDiagnostics, prepareTransport: transport };
 }
 
-function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  return String(error);
-}
-
-function recordWorkerFailure(stage: NexradWorkerFailureStage, error: unknown): void {
-  const message = describeError(error);
+function recordWorkerFailure(stage: NexradWorkerFailureStage, message: string): void {
   workerDiagnostics = {
     lastFailureStage: stage,
     lastFailureMessage: message,
@@ -94,7 +87,7 @@ class NexradDecodeWorkerClient extends ComlinkedWorkerClient<NexradWorkerApi> {
 // --- Module-level singleton management ---
 
 function supportsWorkers(): boolean {
-  return typeof window !== 'undefined' && typeof Worker !== 'undefined';
+  return globalThis.window !== undefined && globalThis.Worker !== undefined;
 }
 
 let sharedClient: NexradDecodeWorkerClient | null = null;
@@ -115,7 +108,10 @@ function getDecodeWorkerClient(): NexradDecodeWorkerClient | null {
     runtimeMode = 'worker';
     return sharedClient;
   } catch (error) {
-    recordWorkerFailure('worker-init', error);
+    recordWorkerFailure(
+      'worker-init',
+      error instanceof Error ? error.message : 'MRMS worker initialization failed.'
+    );
     disableWorkerPath = true;
     runtimeMode = 'worker-error';
     return null;
@@ -158,7 +154,10 @@ export async function pollNexradWithWorker(
     recordPrepareTransport('transfer');
     return result;
   } catch (error) {
-    recordWorkerFailure('worker-request', error);
+    recordWorkerFailure(
+      'worker-request',
+      error instanceof Error ? error.message : 'MRMS poll worker failed.'
+    );
     if (sharedClient === client) disposeClient();
     throw error instanceof Error ? error : new Error('MRMS poll worker failed.');
   } finally {
@@ -180,7 +179,10 @@ export async function rePrepareNexradWithWorker(
     recordPrepareTransport('transfer');
     return result;
   } catch (error) {
-    recordWorkerFailure('worker-request', error);
+    recordWorkerFailure(
+      'worker-request',
+      error instanceof Error ? error.message : 'MRMS re-prepare worker failed.'
+    );
     if (sharedClient === client) disposeClient();
     throw error instanceof Error ? error : new Error('MRMS re-prepare worker failed.');
   }

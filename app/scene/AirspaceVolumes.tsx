@@ -11,11 +11,11 @@ import { latLonToLocal } from './approach-path/coordinates';
 const SEA_LEVEL_FEET = 0;
 const SEA_LEVEL_BOTTOM_CAP_HIDE_THRESHOLD_FEET = 100;
 
-const COLORS: Record<string, number> = {
+const COLORS = {
   B: 0x0066ff,
   C: 0xff00ff,
   D: 0x0099ff
-};
+} as const;
 
 interface AirspaceFeature {
   type: string;
@@ -147,26 +147,29 @@ function AirspaceVolume({
   refLon: number;
   airportElevationFeet: number;
 }) {
-  const color = COLORS[feature.class];
+  const color =
+    feature.class === 'B' || feature.class === 'C' || feature.class === 'D'
+      ? COLORS[feature.class]
+      : undefined;
   if (!color) return null;
 
   const { geometry, edgesGeometry } = useMemo(() => {
     const meshes: THREE.BufferGeometry[] = [];
 
     for (const ring of feature.coordinates) {
-      const shape = new THREE.Shape();
+      const planOutline = new THREE['Shape']();
 
       for (let i = 0; i < ring.length; i++) {
         const [lon, lat] = ring[i];
         const pos = latLonToLocal(lat, lon, refLat, refLon);
 
         // With rotateX(-PI/2): localY → -worldZ
-        // So Shape.Y = -pos.z → worldZ = pos.z
+        // So outline Y = -pos.z → worldZ = pos.z
         // pos.z = -dLat*60, so south (dLat<0) has pos.z>0 → worldZ>0
         if (i === 0) {
-          shape.moveTo(pos.x, -pos.z);
+          planOutline.moveTo(pos.x, -pos.z);
         } else {
-          shape.lineTo(pos.x, -pos.z);
+          planOutline.lineTo(pos.x, -pos.z);
         }
       }
 
@@ -182,7 +185,7 @@ function AirspaceVolume({
         bevelEnabled: false
       };
 
-      const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+      const geo = new THREE.ExtrudeGeometry(planOutline, extrudeSettings);
       // Rotate so extrusion goes UP (Y+)
       // rotateX(-PI/2): localZ → +worldY (up)
       geo.rotateX(-Math.PI / 2);

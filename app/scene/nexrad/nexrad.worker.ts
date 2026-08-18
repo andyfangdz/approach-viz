@@ -121,9 +121,10 @@ function roundMs(value: number): number {
 
 function normalizeFetchUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
-  const workerLocation = (globalThis as { location?: { origin?: string } }).location;
-  if (workerLocation?.origin && workerLocation.origin !== 'null') {
-    return new URL(url, workerLocation.origin).toString();
+  if (!('location' in globalThis)) return url;
+  const origin = globalThis.location.origin;
+  if (origin.length > 0 && origin !== 'null') {
+    return new URL(url, origin).toString();
   }
   return url;
 }
@@ -212,6 +213,7 @@ function colorCompositeSurface(
 /** Collect transferable ArrayBuffers from the composite mosaic (if present). */
 function compositeTransferables(composite: NexradCompositeSurface | null): ArrayBuffer[] {
   if (!composite) return [];
+  // SAFETY: Uint8Array.rgba.buffer is the ArrayBuffer backing the mosaic RGBA column.
   return [composite.rgba.buffer as ArrayBuffer];
 }
 
@@ -257,6 +259,7 @@ function echoTopSoATransferables(...soas: EchoTopSoA[]): ArrayBuffer[] {
   const buffers: ArrayBuffer[] = [];
   for (const soa of soas) {
     if (soa.count === 0) continue;
+    // SAFETY: wasm-bindgen echo-top SoA columns are Float32Array views over ArrayBuffers.
     buffers.push(
       soa.x.buffer as ArrayBuffer,
       soa.z.buffer as ArrayBuffer,
@@ -308,6 +311,7 @@ function encodeDeclutterMode(mode: NexradDeclutterMode): number {
  *  carries fresh per-call buffers that are safe to transfer. */
 function renderVolumeTransferables(render: NexradRenderVolumeData): ArrayBuffer[] {
   if (render === EMPTY_RENDER_VOLUME) return [];
+  // SAFETY: wasm-bindgen render-volume columns are TypedArray views over ArrayBuffers.
   return [
     render.centerXNm.buffer as ArrayBuffer,
     render.centerYNm.buffer as ArrayBuffer,
@@ -323,6 +327,7 @@ function renderVolumeTransferables(render: NexradRenderVolumeData): ArrayBuffer[
 /** Collect transferable ArrayBuffers from cross-section data (if present). */
 function crossSectionTransferables(crossSection: CrossSectionData | null): ArrayBuffer[] {
   if (!crossSection) return [];
+  // SAFETY: wasm-bindgen cross-section grids are TypedArray views over ArrayBuffers.
   return [
     crossSection.grid.buffer as ArrayBuffer,
     crossSection.phaseGrid.buffer as ArrayBuffer,
@@ -370,6 +375,7 @@ export class NexradWorkerApi {
       const decodeAndPrepareStartedAt = performance.now();
 
       // Single WASM call: decode + prepare + cross-section
+      // SAFETY: wasm-bindgen returns the decode_and_prepare_mrms FFI object documented in approach_viz_core.d.ts.
       const result = decode_and_prepare_mrms(
         new Uint8Array(volumeFetch.buffer),
         Math.round(options.minDbz * 10),
@@ -457,6 +463,7 @@ export class NexradWorkerApi {
         const echoDecodeStartedAt = performance.now();
 
         // Single WASM call: AVET binary decode + prepare surfaces
+        // SAFETY: wasm-bindgen returns the decode_and_prepare_echo_top FFI object documented in approach_viz_core.d.ts.
         const result = decode_and_prepare_echo_top(
           new Uint8Array(echoTopFetch.buffer),
           options.applyEarthCurvatureCompensation,
@@ -531,6 +538,7 @@ export class NexradWorkerApi {
 
     const prepareStartedAt = performance.now();
 
+    // SAFETY: wasm-bindgen returns the decode_and_prepare_mrms FFI object documented in approach_viz_core.d.ts.
     const result = decode_and_prepare_mrms(
       new Uint8Array(this.cachedVolumeBuffer),
       Math.round(options.minDbz * 10),

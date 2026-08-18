@@ -18,7 +18,7 @@ export function useSurfaceState() {
   const [satelliteRetryNonce, setSatelliteRetryNonce] = useState(0);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (globalThis.window === undefined) return;
     const modeFromQuery = readSurfaceModeFromSearch(window.location.search);
     if (modeFromQuery) {
       setSurfaceMode(modeFromQuery.surfaceMode);

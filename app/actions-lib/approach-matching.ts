@@ -14,7 +14,12 @@ function normalizeRunwayKey(raw: string | null | undefined): string | null {
   return `${match[1].padStart(2, '0')}${match[2] || ''}`;
 }
 
-function parseProcedureRunway(runway: string): { runwayKey: string | null; variant: string } {
+interface ProcedureRunway {
+  runwayKey: string | null;
+  variant: string;
+}
+
+function parseProcedureRunway(runway: string): ProcedureRunway {
   const cleaned = runway.toUpperCase().replace(/\s+/g, '');
   const match = cleaned.match(/^(\d{1,2}[LRC]?)(?:-?([A-Z]))?$/);
   if (!match) {
@@ -83,23 +88,38 @@ function inferExternalApproachType(externalApproach: ExternalApproach): string {
 }
 
 function approachTypeToProcedurePrefix(type: string): string {
-  const upper = type.toUpperCase();
-  const map: Record<string, string> = {
-    ILS: 'I',
-    LOC: 'L',
-    RNAV: 'R',
-    VOR: 'V',
-    NDB: 'N',
-    GPS: 'G',
-    SDF: 'S',
-    'VOR/DME': 'D',
-    LDA: 'P',
-    'LOC/BC': 'B',
-    'NDB/DME': 'Q',
-    'RNAV/RNP': 'H',
-    'LDA/DME': 'X'
-  };
-  return map[upper] || upper[0] || 'U';
+  switch (type.toUpperCase()) {
+    case 'ILS':
+      return 'I';
+    case 'LOC':
+      return 'L';
+    case 'RNAV':
+      return 'R';
+    case 'VOR':
+      return 'V';
+    case 'NDB':
+      return 'N';
+    case 'GPS':
+      return 'G';
+    case 'SDF':
+      return 'S';
+    case 'VOR/DME':
+      return 'D';
+    case 'LDA':
+      return 'P';
+    case 'LOC/BC':
+      return 'B';
+    case 'NDB/DME':
+      return 'Q';
+    case 'RNAV/RNP':
+      return 'H';
+    case 'LDA/DME':
+      return 'X';
+    default: {
+      const upper = type.toUpperCase();
+      return upper[0] || 'U';
+    }
+  }
 }
 
 function normalizeExternalRunway(externalApproach: ExternalApproach): string {
@@ -145,6 +165,7 @@ function buildExternalProcedureId(
 }
 
 export function parseMinimaRows(rows: MinimaRow[]): ExternalApproach[] {
+  // SAFETY: build-db writes minima.types_json as string[] and minima.minimums_json as ApproachMinimums[].
   return rows.map((row) => ({
     name: row.approach_name,
     runway: row.runway,

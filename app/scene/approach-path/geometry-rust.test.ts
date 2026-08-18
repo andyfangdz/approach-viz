@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
+import { isPresentFiniteNumber } from '@/lib/parse-like';
+import type { ComposedApproachScene } from './approach.worker';
 import {
   approach_path_build_geometry,
   approach_path_build_hold_protected_area,
@@ -56,9 +58,7 @@ function localWaypoint(
 }
 
 function resolvedAltitudes(legs: ApproachLeg[]): number[] {
-  return legs.map((leg) =>
-    typeof leg.altitude === 'number' && Number.isFinite(leg.altitude) ? leg.altitude : 1000
-  );
+  return legs.map((leg) => (isPresentFiniteNumber(leg.altitude) ? leg.altitude : 1000));
 }
 
 function maxTurnDegrees(points: { x: number; z: number }[]): number {
@@ -539,22 +539,37 @@ test('rust wasm hold leg length uses published distance, else altitude-aware max
   assert.equal(approach_path_resolve_hold_leg_length_nm(10, 1, 12000), 10);
   // 1-minute hold at 2,700 ft: 200 KIAS tier with the ~2%/1,000 ft TAS
   // correction → about 3.5 NM instead of the old fixed 4 NM.
-  const low = approach_path_resolve_hold_leg_length_nm(undefined, 1, 2700) as number;
+  const low = approach_path_resolve_hold_leg_length_nm(undefined, 1, 2700);
   assert.ok(Math.abs(low - 3.51) < 0.05, `low-tier length ${low}`);
   // Faster tiers above 6,000 / 14,000 ft grow the leg for the same timing.
-  const mid = approach_path_resolve_hold_leg_length_nm(undefined, 1, 10000) as number;
-  const high = approach_path_resolve_hold_leg_length_nm(undefined, 1, 17000) as number;
+  const mid = approach_path_resolve_hold_leg_length_nm(undefined, 1, 10000);
+  const high = approach_path_resolve_hold_leg_length_nm(undefined, 1, 17000);
   assert.ok(low < mid && mid < high);
   // Neither time nor distance published: standard 1-minute pattern timing.
-  const standard = approach_path_resolve_hold_leg_length_nm(undefined, undefined, 2700) as number;
+  const standard = approach_path_resolve_hold_leg_length_nm(undefined, undefined, 2700);
   assert.equal(standard, low);
 });
 
 test('rust wasm hold protected area returns closed primary and secondary rings', () => {
-  const area = approach_path_build_hold_protected_area(0, 0, 356, 3.6, 4400, 'R', 1) as {
-    primary: { x: number; y: number; z: number }[];
-    secondary: { x: number; y: number; z: number }[];
-  };
+  interface HoldScenePoint {
+    x: number;
+    y: number;
+    z: number;
+  }
+  interface HoldProtectedAreaRings {
+    primary: HoldScenePoint[];
+    secondary: HoldScenePoint[];
+  }
+  // SAFETY: wasm-bindgen returns HoldProtectedAreaRings for approach_path_build_hold_protected_area.
+  const area = approach_path_build_hold_protected_area(
+    0,
+    0,
+    356,
+    3.6,
+    4400,
+    'R',
+    1
+  ) as HoldProtectedAreaRings;
   assert.ok(area.primary.length > 100);
   assert.deepEqual(area.primary[0], area.primary[area.primary.length - 1]);
   assert.deepEqual(area.secondary[0], area.secondary[area.secondary.length - 1]);
@@ -590,6 +605,7 @@ test('rust wasm compose_approach_scene appends roll-out join and extends final t
     altitude: 0,
     isMissedApproach: true
   });
+  // SAFETY: wasm-bindgen returns ComposedApproachScene from approach_path_compose_scene.
   const scene = approach_path_compose_scene({
     finalLegs: [inbound],
     transitionEntries: [{ name: 'FLACK', legs: [ci] }],
@@ -600,16 +616,7 @@ test('rust wasm compose_approach_scene appends roll-out join and extends final t
     missedAltitudes: [0],
     missedPathAltitudes: [800],
     airportElevation: 100
-  }) as {
-    segments: Array<{
-      kind: string;
-      name?: string | null;
-      legs: ApproachLeg[];
-      resolvedAltitudes: number[];
-      showTurnConstraintLabels: boolean;
-    }>;
-    holdLegs: unknown[];
-  };
+  }) as ComposedApproachScene;
   const transition = scene.segments.find((segment) => segment.kind === 'transition');
   assert.ok(transition);
   assert.equal(transition?.name, 'FLACK');

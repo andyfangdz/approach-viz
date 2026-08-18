@@ -1,7 +1,14 @@
 import { Html } from '@react-three/drei';
 import { useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
-import { parseNumberLike, parseStringLike } from '@/lib/parse-like';
+import {
+  isJsonArray,
+  isJsonObject,
+  parseJsonValue,
+  parseNumberLike,
+  parseStringLike,
+  type JsonValue
+} from '@/lib/parse-like';
 import { earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
 
 const FEET_PER_NM = 6076.12;
@@ -73,9 +80,9 @@ function isSameLonLat(first: LonLatTuple, second: LonLatTuple): boolean {
   return Math.abs(first[0] - second[0]) < 1e-6 && Math.abs(first[1] - second[1]) < 1e-6;
 }
 
-function normalizeCell(rawCell: unknown): ProbSevereCellPayload | null {
-  if (!rawCell || typeof rawCell !== 'object') return null;
-  const cell = rawCell as Record<string, unknown>;
+function normalizeCell(rawCell: JsonValue): ProbSevereCellPayload | null {
+  if (!isJsonObject(rawCell)) return null;
+  const cell = rawCell;
   const topFeet = parseNumberLike(cell.topFeet);
   const centroidLat = parseNumberLike(cell.centroidLat);
   const centroidLon = parseNumberLike(cell.centroidLon);
@@ -90,13 +97,13 @@ function normalizeCell(rawCell: unknown): ProbSevereCellPayload | null {
     return null;
   }
 
-  const rawPolygon = Array.isArray(cell.polygon) ? cell.polygon : [];
+  const rawPolygon = isJsonArray(cell.polygon) ? cell.polygon : [];
   const polygon: LonLatTuple[] = [];
   for (const rawPoint of rawPolygon) {
-    if (!Array.isArray(rawPoint) || rawPoint.length < 2) continue;
-    const lon = Number(rawPoint[0]);
-    const lat = Number(rawPoint[1]);
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    if (!isJsonArray(rawPoint) || rawPoint.length < 2) continue;
+    const lon = parseNumberLike(rawPoint[0]);
+    const lat = parseNumberLike(rawPoint[1]);
+    if (lon === null || lat === null) continue;
     polygon.push([lon, lat]);
   }
   if (polygon.length < 3) return null;
@@ -117,10 +124,9 @@ function normalizeCell(rawCell: unknown): ProbSevereCellPayload | null {
   };
 }
 
-function normalizePayload(rawPayload: unknown): ProbSeverePayload {
-  const payload =
-    rawPayload && typeof rawPayload === 'object' ? (rawPayload as Record<string, unknown>) : {};
-  const rawCells = Array.isArray(payload.cells) ? payload.cells : [];
+function normalizePayload(rawPayload: JsonValue): ProbSeverePayload {
+  const payload = isJsonObject(rawPayload) ? rawPayload : {};
+  const rawCells = isJsonArray(payload.cells) ? payload.cells : [];
   const cells: ProbSevereCellPayload[] = [];
   for (const rawCell of rawCells) {
     const normalized = normalizeCell(rawCell);
@@ -193,7 +199,7 @@ export function ProbSevereOverlay({
         if (!response.ok) {
           throw new Error(`ProbSevere request failed (${response.status})`);
         }
-        const nextPayload = normalizePayload(await response.json());
+        const nextPayload = normalizePayload(parseJsonValue(await response.text()));
         if (!cancelled) {
           setPayload((previousPayload) => {
             if (nextPayload.error && previousPayload && previousPayload.cells.length > 0) {

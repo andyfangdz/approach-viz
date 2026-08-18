@@ -4,11 +4,7 @@ import * as THREE from 'three';
 import { loadObstaclesAction } from '@/app/actions';
 import type { ObstaclesPayload } from '@/lib/types';
 import { earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
-import {
-  OBSTACLE_SHAPE_CATEGORIES,
-  obstacleShapeCategory,
-  type ObstacleShapeCategory
-} from './obstacle-shapes';
+import { OBSTACLE_GLYPH_KINDS, obstacleGlyphKind, type ObstacleGlyphKind } from './obstacle-shapes';
 
 const FEET_PER_NM = 6076.12;
 // FAA charting draws different glyphs below/above 1000 ft AGL; we scale the
@@ -31,7 +27,7 @@ const COLOR_SHAFT_BASE = new THREE.Color('#2e3a55');
 // sits at the instance origin — the instance is placed at the obstacle top,
 // so the glyph never extends above the published obstacle height (the marker
 // hangs below the true top instead of stacking on it).
-function buildTipGeometry(category: ObstacleShapeCategory): THREE.BufferGeometry {
+function buildTipGeometry(category: ObstacleGlyphKind): THREE.BufferGeometry {
   switch (category) {
     case 'tower': {
       const geometry = new THREE.ConeGeometry(0.016, 0.04, 6);
@@ -92,7 +88,7 @@ interface RenderObstacle {
   aglFeet: number;
   amslFeet: number;
   oasNumber: string;
-  category: ObstacleShapeCategory;
+  category: ObstacleGlyphKind;
 }
 
 function TipInstances({
@@ -174,7 +170,7 @@ export function ObstacleOverlay({
           totalCount: nextPayload.totalCount
         });
       })
-      .catch((error: unknown) => {
+      .catch((error) => {
         if (cancelled) return;
         setPayload(null);
         onStatsChangeRef.current?.({
@@ -215,7 +211,7 @@ export function ObstacleOverlay({
         aglFeet: obstacle.aglFeet,
         amslFeet: obstacle.amslFeet,
         oasNumber: obstacle.oasNumber,
-        category: obstacleShapeCategory(obstacle.obstacleType)
+        category: obstacleGlyphKind(obstacle.obstacleType)
       });
     }
     return next;
@@ -250,8 +246,8 @@ export function ObstacleOverlay({
   useEffect(() => () => shaftGeometry?.dispose(), [shaftGeometry]);
 
   const tipGeometries = useMemo(() => {
-    const geometries = new Map<ObstacleShapeCategory, THREE.BufferGeometry>();
-    for (const category of OBSTACLE_SHAPE_CATEGORIES) {
+    const geometries = new Map<ObstacleGlyphKind, THREE.BufferGeometry>();
+    for (const category of OBSTACLE_GLYPH_KINDS) {
       geometries.set(category, buildTipGeometry(category));
     }
     return geometries;
@@ -265,7 +261,7 @@ export function ObstacleOverlay({
   );
 
   const tipGroups = useMemo(() => {
-    const groups = new Map<ObstacleShapeCategory, RenderObstacle[]>();
+    const groups = new Map<ObstacleGlyphKind, RenderObstacle[]>();
     for (const obstacle of renderObstacles) {
       const group = groups.get(obstacle.category);
       if (group) group.push(obstacle);
@@ -307,7 +303,7 @@ export function ObstacleOverlay({
           />
         </lineSegments>
       )}
-      {OBSTACLE_SHAPE_CATEGORIES.map((category) => {
+      {OBSTACLE_GLYPH_KINDS.map((category) => {
         const items = tipGroups.get(category);
         if (!items || items.length === 0) return null;
         return (

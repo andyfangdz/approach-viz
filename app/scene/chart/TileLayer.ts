@@ -29,8 +29,14 @@ export class TileLayer {
   ) {
     // Clamp to the GPU's array texture layer limit (spec guarantees >= 256,
     // desktop GPUs typically 2048; mobile GPUs may be exactly 256).
-    const gl = renderer.getContext() as WebGL2RenderingContext;
-    const maxLayers = gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) as number;
+    const gl = renderer.getContext();
+    if (!(gl instanceof WebGL2RenderingContext)) {
+      throw new Error('Chart tile layers require a WebGL2 context.');
+    }
+    const maxLayers = Number(gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS));
+    if (!Number.isFinite(maxLayers) || maxLayers < 1) {
+      throw new Error('WebGL2 MAX_ARRAY_TEXTURE_LAYERS is not a finite number.');
+    }
     const safeCap = Math.min(capacity, maxLayers);
 
     // Pre-allocate DataArrayTexture with `safeCap` layers.
@@ -112,20 +118,20 @@ export class TileLayer {
       // Free the large Uint8Array backing buffer now that the GPU has it.
       // Three.js retains texture.image.data indefinitely; nulling it avoids
       // holding capacity × 256 KB of CPU memory for the TileLayer lifetime.
-      (this.texture.image as { data: Uint8Array | null }).data = null;
+      this.texture.image.data = null;
       this._gpuInitialized = true;
     }
 
     // Upload bitmap to the target layer using the stable public API.
     // copyTextureToTexture handles binding, format conversion, and
     // texSubImage3D internally — no access to __webglTexture needed.
-    this._srcTexture.image = bitmap as unknown as HTMLImageElement;
+    this._srcTexture.image = bitmap;
     this._srcTexture.needsUpdate = true;
 
     _dstPos.set(0, 0, layerIndex);
     renderer.copyTextureToTexture(this._srcTexture, this.texture, null, _dstPos);
 
-    this._srcTexture.image = null!; // release reference
+    this._srcTexture.image = null; // release reference
     bitmap.close();
 
     // Set instance transform
@@ -147,7 +153,7 @@ export class TileLayer {
     if (!this._gpuInitialized) {
       // No tiles arrived — free the CPU backing buffer explicitly rather
       // than waiting for GC (common for rural TAC areas where all 404).
-      (this.texture.image as { data: Uint8Array | null }).data = null;
+      this.texture.image.data = null;
     }
     this.texture.dispose();
     this._srcTexture.dispose();

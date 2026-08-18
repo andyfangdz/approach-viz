@@ -12,7 +12,7 @@ function normalizeCycle(rawCycle: string | null | undefined): string | null {
 }
 
 function canUseServiceWorker(): boolean {
-  return typeof window !== 'undefined' && 'serviceWorker' in navigator;
+  return globalThis.window !== undefined && 'serviceWorker' in navigator;
 }
 
 async function getRegisteredServiceWorker(): Promise<ServiceWorkerRegistration | null> {

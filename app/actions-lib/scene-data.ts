@@ -18,6 +18,16 @@ import {
 import { loadAirspaceForAirport, loadRunwayMap, rowToAirport, selectAirport } from './airports';
 import type { AirportRow, ApproachRow, MinimaRow, WaypointRow } from './types';
 
+interface MetadataValueRow {
+  value: string;
+}
+
+interface RunwayPointRow {
+  id: string;
+  lat: number;
+  lon: number;
+}
+
 let _stmts: {
   selectApproaches: Database.Statement;
   selectMinima: Database.Statement;
@@ -54,12 +64,11 @@ function stmts() {
 function loadCycleInfo(): SceneData['cycleInfo'] {
   try {
     const db = getDb();
-    const cifpRow = db.prepare("SELECT value FROM metadata WHERE key = 'cifp_cycle'").get() as
-      | { value: string }
-      | undefined;
-    const dtppRow = db
-      .prepare("SELECT value FROM metadata WHERE key = 'dtpp_cycle_number'")
-      .get() as { value: string } | undefined;
+    const selectValue = db.prepare('SELECT value FROM metadata WHERE key = ?');
+    // SAFETY: build-db writes metadata (key TEXT, value TEXT); this query selects `value`.
+    const cifpRow = selectValue.get('cifp_cycle') as MetadataValueRow | undefined;
+    // SAFETY: build-db writes metadata (key TEXT, value TEXT); this query selects `value`.
+    const dtppRow = selectValue.get('dtpp_cycle_number') as MetadataValueRow | undefined;
     return {
       cifpCycle: cifpRow?.value || '',
       dtppCycle: dtppRow?.value || ''
@@ -100,7 +109,9 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
   const airport = rowToAirport(airportRow);
   const geoidSeparationFeet = computeGeoidSeparationFeet(airport.lat, airport.lon);
 
+  // SAFETY: build-db writes approaches rows matching ApproachRow.
   const approachRows = s.selectApproaches.all(airport.id) as ApproachRow[];
+  // SAFETY: build-db writes minima rows matching MinimaRow.
   const minimaRows = s.selectMinima.all(airport.id) as MinimaRow[];
 
   const approaches = buildApproachOptions(approachRows, minimaRows);
@@ -139,11 +150,8 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
   const missedApproachClimbRequirement =
     extractMissedApproachClimbRequirement(selectedExternalApproach);
 
-  const runways = s.selectRunways.all(airport.id) as Array<{
-    id: string;
-    lat: number;
-    lon: number;
-  }>;
+  // SAFETY: build-db writes runways (id, lat, lon) as selected by this query.
+  const runways = s.selectRunways.all(airport.id) as RunwayPointRow[];
 
   let waypoints: WaypointRow[] = [];
   if (currentApproachWithVerticalProfile) {
@@ -151,6 +159,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     if (waypointIds.length > 0) {
       const db = getDb();
       const placeholders = waypointIds.map(() => '?').join(',');
+      // SAFETY: build-db writes waypoints matching WaypointRow.
       waypoints = db
         .prepare(`SELECT id, name, lat, lon, type FROM waypoints WHERE id IN (${placeholders})`)
         .all(...waypointIds) as WaypointRow[];
@@ -174,6 +183,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
   if (nearbyAirportIds.length > 0) {
     const db = getDb();
     const placeholders = nearbyAirportIds.map(() => '?').join(',');
+    // SAFETY: build-db writes airports matching AirportRow.
     const nearbyRows = db
       .prepare(
         `SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id IN (${placeholders})`

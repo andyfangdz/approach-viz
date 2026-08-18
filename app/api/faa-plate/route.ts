@@ -31,11 +31,9 @@ function plateEtag(bytes: Uint8Array): string {
 class PlateTooLargeError extends Error {}
 
 /** `AbortSignal.timeout` surfaces as a `TimeoutError`, sometimes wrapped by the fetch stack. */
-function isTimeoutError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+function isTimeoutError(error: Error): boolean {
   if (error.name === 'TimeoutError') return true;
-  const cause = (error as { cause?: unknown }).cause;
-  return cause instanceof Error && cause.name === 'TimeoutError';
+  return error.cause instanceof Error && error.cause.name === 'TimeoutError';
 }
 
 /**
@@ -110,7 +108,7 @@ export async function GET(request: NextRequest) {
       }
     });
   } catch (error) {
-    return isTimeoutError(error)
+    return error instanceof Error && isTimeoutError(error)
       ? new NextResponse('FAA approach plate request timed out', { status: 504 })
       : new NextResponse('FAA approach plate fetch failed', { status: 502 });
   }
@@ -126,7 +124,7 @@ export async function GET(request: NextRequest) {
     if (error instanceof PlateTooLargeError) {
       return new NextResponse('FAA approach plate exceeds size limit', { status: 502 });
     }
-    return isTimeoutError(error)
+    return error instanceof Error && isTimeoutError(error)
       ? new NextResponse('FAA approach plate read timed out', { status: 504 })
       : new NextResponse('FAA approach plate read failed', { status: 502 });
   }

@@ -122,6 +122,7 @@ export function applyVoxelInstances(
   if (!mesh) return;
   const { count, centerXNm, centerYNm, centerZNm, sizeXNm, sizeYNm, sizeZNm, dbz, phaseCode } =
     render;
+  // SAFETY: Three.js InstancedMesh.instanceMatrix is a Float32Array of 16 floats per instance.
   const matrixArray = mesh.instanceMatrix.array as Float32Array;
 
   // Allocate instanceColor up front (mirrors what setColorAt does lazily) so
@@ -132,6 +133,7 @@ export function applyVoxelInstances(
       3
     );
   }
+  // SAFETY: InstancedBufferAttribute.array for RGB instance colors is a Float32Array.
   const colorArray = mesh.instanceColor.array as Float32Array;
   const luts = getPhaseColorLuts();
 
@@ -181,6 +183,7 @@ export function feetToNm(feet: number): number {
 export function applyConstantColorInstances(mesh: THREE.InstancedMesh | null, soa: EchoTopSoA) {
   if (!mesh) return;
   const { count, x, z, yBase, footprintXNm, footprintYNm } = soa;
+  // SAFETY: Three.js InstancedMesh.instanceMatrix is a Float32Array of 16 floats per instance.
   const matrixArray = mesh.instanceMatrix.array as Float32Array;
   // Direct column-major matrix writes (scale + translate only), same scheme
   // as applyVoxelInstances — avoids Object3D compose per instance.

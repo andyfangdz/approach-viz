@@ -30,6 +30,16 @@ interface ExternalApproach {
   minimums: ApproachMinimums[];
 }
 
+interface AirspacePolygonGeometry {
+  type: 'Polygon';
+  coordinates: number[][][];
+}
+
+interface AirspaceMultiPolygonGeometry {
+  type: 'MultiPolygon';
+  coordinates: number[][][][];
+}
+
 interface AirspaceGeoJson {
   features: Array<{
     properties: {
@@ -38,10 +48,7 @@ interface AirspaceGeoJson {
       LOWALT?: string;
       HIGHALT?: string;
     };
-    geometry: {
-      type: 'Polygon' | 'MultiPolygon';
-      coordinates: number[][][] | number[][][][];
-    };
+    geometry: AirspacePolygonGeometry | AirspaceMultiPolygonGeometry;
   }>;
 }
 
@@ -59,19 +66,37 @@ function parseAltitude(alt: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function extractRings(feature: AirspaceGeoJson['features'][number]): [number, number][][] {
-  if (feature.geometry.type === 'Polygon') {
-    return feature.geometry.coordinates as [number, number][][];
+function extractLonLatRing(rawRing: number[][]): [number, number][] {
+  const ring: [number, number][] = [];
+  for (const point of rawRing) {
+    if (point.length < 2) continue;
+    ring.push([point[0], point[1]]);
   }
-  return (feature.geometry.coordinates as [number, number][][][]).flat();
+  return ring;
 }
 
-function computeBounds(rings: [number, number][][]): {
+function extractRings(feature: AirspaceGeoJson['features'][number]): [number, number][][] {
+  if (feature.geometry.type === 'Polygon') {
+    return feature.geometry.coordinates.map(extractLonLatRing).filter((ring) => ring.length > 0);
+  }
+  const rings: [number, number][][] = [];
+  for (const polygon of feature.geometry.coordinates) {
+    for (const rawRing of polygon) {
+      const ring = extractLonLatRing(rawRing);
+      if (ring.length > 0) rings.push(ring);
+    }
+  }
+  return rings;
+}
+
+interface GeoBounds {
   minLat: number;
   maxLat: number;
   minLon: number;
   maxLon: number;
-} {
+}
+
+function computeBounds(rings: [number, number][][]): GeoBounds {
   let minLat = Number.POSITIVE_INFINITY;
   let maxLat = Number.NEGATIVE_INFINITY;
   let minLon = Number.POSITIVE_INFINITY;
@@ -295,6 +320,7 @@ function main() {
 
   let minimumsDb: ApproachMinimumsDb;
   try {
+    // SAFETY: public/data/approach-db/approaches.json is the ApproachMinimumsDb document produced by the approach-db pipeline.
     minimumsDb = JSON.parse(fs.readFileSync(APPROACH_DB_PATH, 'utf8')) as ApproachMinimumsDb;
   } catch (error) {
     throw new Error(
@@ -349,6 +375,7 @@ function main() {
     ];
 
     for (const { file, classCode } of classes) {
+      // SAFETY: download-data installs FAA Class B/C/D GeoJSON matching AirspaceGeoJson.
       const geo = JSON.parse(
         fs.readFileSync(path.join(AIRSPACE_DIR, file), 'utf8')
       ) as AirspaceGeoJson;

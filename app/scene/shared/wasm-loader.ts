@@ -13,11 +13,10 @@ let wasmReady: Promise<void> | undefined;
 /** Resolve a root-relative path to an absolute URL in worker scope. */
 function resolveWorkerUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path;
-  const loc = (globalThis as { location?: { origin?: string } }).location;
-  if (loc?.origin && loc.origin !== 'null') {
-    return new URL(path, loc.origin).toString();
-  }
-  return path;
+  if (!('location' in globalThis)) return path;
+  const origin = globalThis.location.origin;
+  if (!origin || origin === 'null') return path;
+  return new URL(path, origin).toString();
 }
 
 /**

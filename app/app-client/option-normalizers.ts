@@ -34,6 +34,8 @@ import type {
   NexradSurfaceMosaicDrape,
   NexradSurfaceMosaicProduct
 } from '@/app/app-client/types';
+import { isMemberOf, isString } from '@/lib/parse-like';
+import type { JsonValue } from '@/lib/parse-like';
 
 export function clampValue(value: number, min: number, max: number, fallback = min): number {
   if (!Number.isFinite(value)) return fallback;
@@ -76,43 +78,59 @@ export function normalizeNexradOpacity(opacity: number): number {
   return Math.round(clamped * 100) / 100;
 }
 
-export const NEXRAD_DECLUTTER_MODES: NexradDeclutterMode[] = ['all', 'low', 'mid', 'high'];
+export const NEXRAD_DECLUTTER_MODES = [
+  'all',
+  'low',
+  'mid',
+  'high'
+] as const satisfies readonly NexradDeclutterMode[];
 
-export function normalizeNexradDeclutterMode(mode: unknown): NexradDeclutterMode {
-  return NEXRAD_DECLUTTER_MODES.includes(mode as NexradDeclutterMode)
-    ? (mode as NexradDeclutterMode)
+export function normalizeNexradDeclutterMode(mode: JsonValue): NexradDeclutterMode {
+  return isString(mode) && isMemberOf(mode, NEXRAD_DECLUTTER_MODES)
+    ? mode
     : DEFAULT_NEXRAD_DECLUTTER_MODE;
 }
 
-export const NEXRAD_PHASE_MODES: NexradPhaseMode[] = ['thermo', 'surface'];
+export const NEXRAD_PHASE_MODES = [
+  'thermo',
+  'surface'
+] as const satisfies readonly NexradPhaseMode[];
 
-export function normalizeNexradPhaseMode(mode: unknown): NexradPhaseMode {
-  return NEXRAD_PHASE_MODES.includes(mode as NexradPhaseMode)
-    ? (mode as NexradPhaseMode)
-    : DEFAULT_NEXRAD_PHASE_MODE;
+export function normalizeNexradPhaseMode(mode: JsonValue): NexradPhaseMode {
+  return isString(mode) && isMemberOf(mode, NEXRAD_PHASE_MODES) ? mode : DEFAULT_NEXRAD_PHASE_MODE;
 }
 
-export const NEXRAD_SURFACE_MOSAIC_DRAPES: NexradSurfaceMosaicDrape[] = ['flat', 'terrain'];
+export const NEXRAD_SURFACE_MOSAIC_DRAPES = [
+  'flat',
+  'terrain'
+] as const satisfies readonly NexradSurfaceMosaicDrape[];
 
-export function normalizeNexradSurfaceMosaicDrape(mode: unknown): NexradSurfaceMosaicDrape {
-  return NEXRAD_SURFACE_MOSAIC_DRAPES.includes(mode as NexradSurfaceMosaicDrape)
-    ? (mode as NexradSurfaceMosaicDrape)
+export function normalizeNexradSurfaceMosaicDrape(mode: JsonValue): NexradSurfaceMosaicDrape {
+  return isString(mode) && isMemberOf(mode, NEXRAD_SURFACE_MOSAIC_DRAPES)
+    ? mode
     : DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE;
 }
 
-export const NEXRAD_SURFACE_MOSAIC_PRODUCTS: NexradSurfaceMosaicProduct[] = ['composite', 'base'];
+export const NEXRAD_SURFACE_MOSAIC_PRODUCTS = [
+  'composite',
+  'base'
+] as const satisfies readonly NexradSurfaceMosaicProduct[];
 
-export function normalizeNexradSurfaceMosaicProduct(mode: unknown): NexradSurfaceMosaicProduct {
-  return NEXRAD_SURFACE_MOSAIC_PRODUCTS.includes(mode as NexradSurfaceMosaicProduct)
-    ? (mode as NexradSurfaceMosaicProduct)
+export function normalizeNexradSurfaceMosaicProduct(mode: JsonValue): NexradSurfaceMosaicProduct {
+  return isString(mode) && isMemberOf(mode, NEXRAD_SURFACE_MOSAIC_PRODUCTS)
+    ? mode
     : DEFAULT_NEXRAD_SURFACE_MOSAIC_PRODUCT;
 }
 
-export const CAMERA_CONTROL_MODES: CameraControlMode[] = ['orbit', 'arcball', 'map'];
+export const CAMERA_CONTROL_MODES = [
+  'orbit',
+  'arcball',
+  'map'
+] as const satisfies readonly CameraControlMode[];
 
-export function normalizeCameraControlMode(mode: unknown): CameraControlMode {
-  return CAMERA_CONTROL_MODES.includes(mode as CameraControlMode)
-    ? (mode as CameraControlMode)
+export function normalizeCameraControlMode(mode: JsonValue): CameraControlMode {
+  return isString(mode) && isMemberOf(mode, CAMERA_CONTROL_MODES)
+    ? mode
     : DEFAULT_CAMERA_CONTROL_MODE;
 }
 

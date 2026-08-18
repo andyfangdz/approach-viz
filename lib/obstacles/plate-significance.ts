@@ -86,8 +86,10 @@ export function buildCenterlineGeometry(ends: RunwayEnd[], airport: LatLon): Cen
   return { segments, points };
 }
 
+type LocalNmOffset = { x: number; z: number };
+
 /** Local equirectangular projection to NM offsets around a reference point. */
-function toLocalNm(point: LatLon, ref: LatLon): { x: number; z: number } {
+function toLocalNm(point: LatLon, ref: LatLon): LocalNmOffset {
   return {
     x: (point.lon - ref.lon) * 60 * Math.cos((ref.lat * Math.PI) / 180),
     z: (point.lat - ref.lat) * 60

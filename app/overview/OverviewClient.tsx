@@ -12,6 +12,11 @@ import {
 import { githubUrlForPath } from '@/app/overview/github';
 import { CodeHighlight } from '@/app/overview/syntax';
 
+function accentStyle(accent: string): CSSProperties {
+  // SAFETY: overview.css reads `--accent` on this element; React's CSSProperties omits dashed custom properties.
+  return { '--accent': accent } as CSSProperties;
+}
+
 function renderInline(text: string): ReactNode[] {
   const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
   return parts.map((part, i) => {
@@ -330,7 +335,7 @@ export default function OverviewClient() {
               key={section.id}
               id={section.id}
               className="ov-section"
-              style={{ '--accent': section.accent } as CSSProperties}
+              style={accentStyle(section.accent)}
             >
               <div className="ov-section-strip">
                 <span className="ov-section-num">SEC {section.num}</span>

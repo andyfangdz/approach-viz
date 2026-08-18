@@ -261,7 +261,7 @@ test('terrain mesh vertices stay continuous across the antimeridian', () => {
     minTileY
   );
 
-  const positions = geometry.getAttribute('position').array as ArrayLike<number>;
+  const positions = geometry.getAttribute('position').array;
   const pointsPerAxis = Math.round(Math.sqrt(positions.length / 3));
   const rowStart = 0;
   let previousX = -Infinity;
