@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Approach } from '@/lib/cifp/parser';
 import { pickDefaultApproachForAirport } from '@/app/default-selections';
 import {
@@ -47,6 +48,7 @@ import type {
   TrafficDebugState
 } from '@/app/app-client/types';
 import { CHART_DEBUG_INITIAL, type ChartDebugState } from '@/app/scene/ChartMapSurface';
+import { isPresentFiniteNumber } from '@/lib/parse-like';
 import type { ObstacleStats } from '@/app/scene/ObstacleOverlay';
 import type { AirportOption, SceneData } from '@/lib/types';
 
@@ -147,12 +149,16 @@ const EMPTY_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
   crossOriginIsolated: false
 };
 
-const SURFACE_LEGEND_LABELS: Record<SurfaceMode, string> = {
+const SURFACE_LEGEND_LABELS = {
   terrain: 'Terrain Wireframe',
   satellite: 'Satellite Surface',
   map: 'FAA Chart Map',
   '3dmap': '3D Chart Map'
-};
+} as const satisfies Record<SurfaceMode, string>;
+
+interface MainContentStyle extends CSSProperties {
+  '--controls-overlay-offset': string;
+}
 
 export function AppClient({
   initialAirportOptions,
@@ -208,11 +214,11 @@ export function AppClient({
   // Runs after the hooks' mount effects (declaration order), so URL params
   // have been consumed before URL writeback is enabled.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (globalThis.window === undefined) return;
     setRuntimeCapabilities({
-      workerAvailable: typeof Worker !== 'undefined',
-      sharedArrayBufferAvailable: typeof SharedArrayBuffer !== 'undefined',
-      atomicsAvailable: typeof Atomics !== 'undefined',
+      workerAvailable: globalThis.Worker !== undefined,
+      sharedArrayBufferAvailable: globalThis.SharedArrayBuffer !== undefined,
+      atomicsAvailable: globalThis.Atomics !== undefined,
       crossOriginIsolated: window.crossOriginIsolated === true
     });
     if (isMobileViewport()) {
@@ -227,7 +233,7 @@ export function AppClient({
   const nexradShowSurfaceMosaic = options.layers.mosaic;
 
   const airport = sceneData.airport;
-  const menuPortalTarget = typeof document === 'undefined' ? undefined : document.body;
+  const menuPortalTarget = globalThis.document === undefined ? undefined : document.body;
   const currentApproach = useMemo(() => sceneApproachToRuntimeApproach(sceneData), [sceneData]);
   const contextApproach = useMemo<Approach | null>(() => {
     if (currentApproach) return currentApproach;
@@ -309,10 +315,9 @@ export function AppClient({
       Math.abs(roundedFeetPerNm - Math.round(roundedFeetPerNm)) < 1e-6
         ? `${Math.round(roundedFeetPerNm)}`
         : `${roundedFeetPerNm.toFixed(1)}`;
-    const targetText =
-      typeof requirement.targetAltitudeFeet === 'number'
-        ? ` to ${Math.round(requirement.targetAltitudeFeet)} ft`
-        : '';
+    const targetText = isPresentFiniteNumber(requirement.targetAltitudeFeet)
+      ? ` to ${Math.round(requirement.targetAltitudeFeet)} ft`
+      : '';
     return `${feetPerNmText} ft/NM${targetText}`;
   }, [sceneData.missedApproachClimbRequirement]);
   const effectiveMissedApproachClimbRequirement =
@@ -354,18 +359,20 @@ export function AppClient({
 
   const { setNexradDeclutterMode } = options;
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (globalThis.window === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (!nexradVolumeEnabled || event.defaultPrevented) return;
-      const target = event.target as HTMLElement | null;
-      const tagName = target?.tagName?.toLowerCase();
-      if (
-        tagName === 'input' ||
-        tagName === 'textarea' ||
-        tagName === 'select' ||
-        target?.isContentEditable
-      ) {
-        return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tagName = target.tagName.toLowerCase();
+        if (
+          tagName === 'input' ||
+          tagName === 'textarea' ||
+          tagName === 'select' ||
+          target.isContentEditable
+        ) {
+          return;
+        }
       }
       if (event.key.toLowerCase() !== 'v') return;
       event.preventDefault();
@@ -379,6 +386,10 @@ export function AppClient({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [nexradVolumeEnabled, setNexradDeclutterMode]);
+
+  const mainContentStyle: MainContentStyle = {
+    '--controls-overlay-offset': `${controlsOverlayHeight}px`
+  };
 
   return (
     <div className="app">
@@ -413,10 +424,7 @@ export function AppClient({
         onControlsHeightChange={setControlsOverlayHeight}
       />
 
-      <main
-        className="main-content"
-        style={{ '--controls-overlay-offset': `${controlsOverlayHeight}px` } as CSSProperties}
-      >
+      <main className="main-content" style={mainContentStyle}>
         {(selection.loading || selection.isPending) && (
           <div className="loading">Loading approach data...</div>
         )}

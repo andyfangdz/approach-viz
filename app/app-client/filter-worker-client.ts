@@ -18,7 +18,7 @@ class FilterWorkerClient extends ComlinkedWorkerClient<FilterWorkerApi> {
 let sharedClient: FilterWorkerClient | null = null;
 
 function getClient(): FilterWorkerClient {
-  if (typeof Worker === 'undefined') {
+  if (globalThis.Worker === undefined) {
     throw new Error('Filter worker API is unavailable in this runtime.');
   }
   if (sharedClient) return sharedClient;

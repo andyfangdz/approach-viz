@@ -35,6 +35,28 @@ interface RecenterControlsApi {
   saveState?: () => void;
 }
 
+interface PointerPosition {
+  x: number;
+  y: number;
+}
+
+interface ThreePointerControls extends RecenterControlsApi {
+  _pointers?: number[];
+  _pointerPositions?: { [pointerId: number]: PointerPosition };
+  state?: number;
+  _touchStart?: PointerPosition[];
+  _touchCurrent?: PointerPosition[];
+  _input?: number;
+  disconnect?: () => void;
+  connect?: (el: HTMLElement) => void;
+}
+
+function asThreePointerControls(controls: RecenterControlsApi | null): ThreePointerControls | null {
+  if (controls === null) return null;
+  // SAFETY: drei OrbitControls/MapControls/ArcballControls keep pointer-tracking fields on this same object.
+  return controls as ThreePointerControls;
+}
+
 const MIN_CAMERA_DISTANCE = 0.35;
 const MAX_CAMERA_DISTANCE = 250;
 const ORBIT_MIN_POLAR_ANGLE = 0.01;
@@ -88,14 +110,7 @@ function PointerRecoveryGuard({
 
     // Force-clear stale pointer tracking on the underlying three.js controls.
     function resetControlPointers() {
-      const controls = controlsRef.current as unknown as {
-        _pointers?: number[];
-        _pointerPositions?: Record<number, unknown>;
-        state?: number;
-        _touchStart?: unknown[];
-        _touchCurrent?: unknown[];
-        _input?: number;
-      } | null;
+      const controls = asThreePointerControls(controlsRef.current);
       if (!controls) return;
 
       // OrbitControls / MapControls
@@ -122,15 +137,11 @@ function PointerRecoveryGuard({
     // We force a disconnect+reconnect to guarantee those listeners are
     // cleaned up, then clear the internal pointer tracking.
     function onLostPointerCapture() {
-      const controls = controlsRef.current as unknown as {
-        _pointers?: number[];
-        disconnect?: () => void;
-        connect?: (el: HTMLElement) => void;
-      } | null;
+      const controls = asThreePointerControls(controlsRef.current);
       if (controls?._pointers && controls._pointers.length > 0) {
         // disconnect() removes all listeners including stale document ones,
         // then connect() re-attaches the base pointerdown/wheel/etc listeners.
-        if (typeof controls.disconnect === 'function' && typeof controls.connect === 'function') {
+        if (controls.disconnect && controls.connect) {
           controls.disconnect();
           controls.connect(canvas);
         }
@@ -141,9 +152,7 @@ function PointerRecoveryGuard({
     // On a new pointerdown, if the controls still have stale tracked pointers
     // from a previous gesture, reset before the new gesture begins.
     function onPointerDown() {
-      const controls = controlsRef.current as unknown as {
-        _pointers?: number[];
-      } | null;
+      const controls = asThreePointerControls(controlsRef.current);
       if (controls?._pointers && controls._pointers.length > 0) {
         // Controls think fingers are still down — but we're getting a fresh
         // pointerdown from the browser, meaning the previous gesture is over.
@@ -186,7 +195,7 @@ function CameraStabilityGuard({
       camera.position.set(...CAMERA_POSITION);
       camera.up.set(0, 1, 0);
       controls.setTarget?.(...ORBIT_TARGET);
-      if (typeof controls.setTarget !== 'function') {
+      if (!controls.setTarget) {
         controls.target.set(...ORBIT_TARGET);
       }
       controls.update();
@@ -255,7 +264,7 @@ function RecenterCamera({
     const controls = controlsRef.current;
     if (controls) {
       controls.reset?.();
-      if (typeof controls.setTarget === 'function') {
+      if (controls.setTarget) {
         controls.setTarget(...ORBIT_TARGET);
       } else {
         controls.target.set(...ORBIT_TARGET);
@@ -282,7 +291,7 @@ function AdaptiveDprController({ retinaRendering }: { retinaRendering: boolean }
       initializedRef.current = true;
       return;
     }
-    const devicePixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const devicePixelRatio = globalThis.window !== undefined ? window.devicePixelRatio || 1 : 1;
     const initialDpr = clamp(devicePixelRatio, ADAPTIVE_DPR_MIN, ADAPTIVE_DPR_MAX);
     currentDprRef.current = initialDpr;
     setDpr(initialDpr);
@@ -291,7 +300,7 @@ function AdaptiveDprController({ retinaRendering }: { retinaRendering: boolean }
 
   useFrame((_, deltaSeconds) => {
     if (!initializedRef.current || retinaRendering) return;
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    if (globalThis.document !== undefined && document.visibilityState !== 'visible') return;
 
     const frameMs = Math.max(1, deltaSeconds * 1000);
     frameMsEmaRef.current = frameMsEmaRef.current * 0.9 + frameMs * 0.1;

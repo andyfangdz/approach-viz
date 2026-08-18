@@ -31,14 +31,17 @@ export function useServiceWorkerDebug(dtppCycle: string | null | undefined) {
       .then((snapshot) => {
         setServiceWorkerDebug(snapshot);
       })
-      .catch((error: unknown) => {
+      .catch((error) => {
         // Non-fatal, but report it so debug-panel gaps are explainable.
-        console.warn('Service worker cache introspection failed.', error);
+        console.warn(
+          'Service worker cache introspection failed.',
+          error instanceof Error ? error : String(error)
+        );
       });
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (globalThis.window === undefined) return;
     ensureServiceWorkerCacheRegistration();
   }, []);
 
@@ -48,7 +51,7 @@ export function useServiceWorkerDebug(dtppCycle: string | null | undefined) {
   }, [refreshServiceWorkerDebug, dtppCycle]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+    if (globalThis.window === undefined || !('serviceWorker' in navigator)) return;
 
     const handleControllerChange = () => {
       refreshServiceWorkerDebug(dtppCycle);

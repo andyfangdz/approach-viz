@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { listAirportsAction, loadSceneDataAction } from '@/app/actions';
+import { isJsonObject, isNonEmptyString, isString, parseJsonValue } from '@/lib/parse-like';
 import type { AirportOption, SceneData } from '@/lib/types';
 
 export const SELECTION_STORAGE_KEY = 'approach-viz:last-selection';
@@ -44,18 +45,18 @@ export function useSceneSelection({
 
   // Restore last-selected airport/approach on the default route.
   useEffect(() => {
-    if (typeof window === 'undefined' || !isDefaultRoute) return;
+    if (globalThis.window === undefined || !isDefaultRoute) return;
     let target: { airportId: string; approachId: string } | null = null;
     try {
       const raw = window.localStorage.getItem(SELECTION_STORAGE_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw);
+        const parsed = parseJsonValue(raw);
         if (
-          typeof parsed.airportId === 'string' &&
-          parsed.airportId.length > 0 &&
-          typeof parsed.approachId === 'string'
+          isJsonObject(parsed) &&
+          isNonEmptyString(parsed.airportId) &&
+          isString(parsed.approachId)
         ) {
-          target = parsed;
+          target = { airportId: parsed.airportId, approachId: parsed.approachId };
         }
       }
     } catch {

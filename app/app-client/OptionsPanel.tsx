@@ -19,6 +19,18 @@ import {
   MAX_OBSTACLE_MIN_AGL_FEET,
   OBSTACLE_MIN_AGL_STEP_FEET
 } from './constants';
+import {
+  CAMERA_CONTROL_MODES,
+  NEXRAD_DECLUTTER_MODES,
+  NEXRAD_PHASE_MODES,
+  NEXRAD_SURFACE_MOSAIC_DRAPES,
+  NEXRAD_SURFACE_MOSAIC_PRODUCTS,
+  normalizeCameraControlMode,
+  normalizeNexradDeclutterMode,
+  normalizeNexradPhaseMode,
+  normalizeNexradSurfaceMosaicDrape,
+  normalizeNexradSurfaceMosaicProduct
+} from './option-normalizers';
 import type {
   CameraControlMode,
   NexradDeclutterMode,
@@ -69,33 +81,33 @@ function useDebouncedSlider(
   return [localValue, handleChange];
 }
 
-const DECLUTTER_MODE_LABELS: Record<NexradDeclutterMode, string> = {
+const DECLUTTER_MODE_LABELS = {
   all: 'All Layers',
   low: 'Low (SFC-10k)',
   mid: 'Mid (10k-25k)',
   high: 'High (25k+)'
-};
+} as const satisfies Record<NexradDeclutterMode, string>;
 
-const PHASE_MODE_LABELS: Record<NexradPhaseMode, string> = {
+const PHASE_MODE_LABELS = {
   thermo: 'Thermodynamic',
   surface: 'Surface Precip Type'
-};
+} as const satisfies Record<NexradPhaseMode, string>;
 
-const SURFACE_MOSAIC_PRODUCT_LABELS: Record<NexradSurfaceMosaicProduct, string> = {
+const SURFACE_MOSAIC_PRODUCT_LABELS = {
   composite: 'Composite (column max)',
   base: 'Base (lowest echo)'
-};
+} as const satisfies Record<NexradSurfaceMosaicProduct, string>;
 
-const SURFACE_MOSAIC_DRAPE_LABELS: Record<NexradSurfaceMosaicDrape, string> = {
+const SURFACE_MOSAIC_DRAPE_LABELS = {
   flat: 'Flat (field elevation)',
   terrain: 'Drape over terrain'
-};
+} as const satisfies Record<NexradSurfaceMosaicDrape, string>;
 
-const CAMERA_CONTROL_MODE_LABELS: Record<CameraControlMode, string> = {
+const CAMERA_CONTROL_MODE_LABELS = {
   orbit: 'OrbitControls',
   arcball: 'ArcballControls',
   map: 'MapControls'
-};
+} as const satisfies Record<CameraControlMode, string>;
 
 export function OptionsPanel({
   optionsCollapsed,
@@ -241,10 +253,12 @@ export function OptionsPanel({
         <select
           className="options-inline-select"
           value={cameraControlMode}
-          onChange={(event) => onCameraControlModeChange(event.target.value as CameraControlMode)}
+          onChange={(event) =>
+            onCameraControlModeChange(normalizeCameraControlMode(event.target.value))
+          }
           aria-label="Camera controls mode"
         >
-          {(Object.keys(CAMERA_CONTROL_MODE_LABELS) as CameraControlMode[]).map((mode) => (
+          {CAMERA_CONTROL_MODES.map((mode) => (
             <option key={mode} value={mode}>
               {CAMERA_CONTROL_MODE_LABELS[mode]}
             </option>
@@ -487,10 +501,12 @@ export function OptionsPanel({
           className="options-inline-select"
           value={nexradPhaseMode}
           disabled={!layers.mrms}
-          onChange={(event) => onNexradPhaseModeChange(event.target.value as NexradPhaseMode)}
+          onChange={(event) =>
+            onNexradPhaseModeChange(normalizeNexradPhaseMode(event.target.value))
+          }
           aria-label="MRMS phase detection mode"
         >
-          {(Object.keys(PHASE_MODE_LABELS) as NexradPhaseMode[]).map((mode) => (
+          {NEXRAD_PHASE_MODES.map((mode) => (
             <option key={mode} value={mode}>
               {PHASE_MODE_LABELS[mode]}
             </option>
@@ -510,17 +526,17 @@ export function OptionsPanel({
           value={nexradSurfaceMosaicProduct}
           disabled={!layers.mosaic}
           onChange={(event) =>
-            onNexradSurfaceMosaicProductChange(event.target.value as NexradSurfaceMosaicProduct)
+            onNexradSurfaceMosaicProductChange(
+              normalizeNexradSurfaceMosaicProduct(event.target.value)
+            )
           }
           aria-label="Surface mosaic reflectivity product"
         >
-          {(Object.keys(SURFACE_MOSAIC_PRODUCT_LABELS) as NexradSurfaceMosaicProduct[]).map(
-            (mode) => (
-              <option key={mode} value={mode}>
-                {SURFACE_MOSAIC_PRODUCT_LABELS[mode]}
-              </option>
-            )
-          )}
+          {NEXRAD_SURFACE_MOSAIC_PRODUCTS.map((mode) => (
+            <option key={mode} value={mode}>
+              {SURFACE_MOSAIC_PRODUCT_LABELS[mode]}
+            </option>
+          ))}
         </select>
       </label>
 
@@ -536,11 +552,11 @@ export function OptionsPanel({
           value={nexradSurfaceMosaicDrape}
           disabled={!layers.mosaic}
           onChange={(event) =>
-            onNexradSurfaceMosaicDrapeChange(event.target.value as NexradSurfaceMosaicDrape)
+            onNexradSurfaceMosaicDrapeChange(normalizeNexradSurfaceMosaicDrape(event.target.value))
           }
           aria-label="Surface mosaic base surface"
         >
-          {(Object.keys(SURFACE_MOSAIC_DRAPE_LABELS) as NexradSurfaceMosaicDrape[]).map((mode) => (
+          {NEXRAD_SURFACE_MOSAIC_DRAPES.map((mode) => (
             <option key={mode} value={mode}>
               {SURFACE_MOSAIC_DRAPE_LABELS[mode]}
             </option>
@@ -557,11 +573,11 @@ export function OptionsPanel({
           value={nexradDeclutterMode}
           disabled={!layers.mrms}
           onChange={(event) =>
-            onNexradDeclutterModeChange(event.target.value as NexradDeclutterMode)
+            onNexradDeclutterModeChange(normalizeNexradDeclutterMode(event.target.value))
           }
           aria-label="MRMS declutter mode"
         >
-          {(Object.keys(DECLUTTER_MODE_LABELS) as NexradDeclutterMode[]).map((mode) => (
+          {NEXRAD_DECLUTTER_MODES.map((mode) => (
             <option key={mode} value={mode}>
               {DECLUTTER_MODE_LABELS[mode]}
             </option>

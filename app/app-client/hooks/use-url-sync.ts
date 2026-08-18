@@ -57,7 +57,7 @@ export function useUrlSync({
   showTrafficCallsigns
 }: UseUrlSyncParams) {
   useEffect(() => {
-    if (typeof window === 'undefined' || !selectedAirport || !enabled) return;
+    if (globalThis.window === undefined || !selectedAirport || !enabled) return;
     const encodedApproach = selectedApproach ? `/${encodeURIComponent(selectedApproach)}` : '';
     const nextPath = `/${selectedAirport}${encodedApproach}`;
     const params = new URLSearchParams(window.location.search);

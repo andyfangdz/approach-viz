@@ -2,7 +2,8 @@ import type { StylesConfig } from 'react-select';
 import type { Approach, Waypoint } from '@/lib/cifp/parser';
 import type { MinimumsValueSummary, SceneData } from '@/lib/types';
 import { DEFAULT_LAYER_STATE, LAYER_IDS } from '@/app/app-client/constants';
-import type { ChartType, LayerId, LayerState, SurfaceMode } from '@/app/app-client/types';
+import type { ChartType, LayerState, SurfaceMode } from '@/app/app-client/types';
+import { isMemberOf } from '@/lib/parse-like';
 
 export { DEFAULT_LAYER_STATE };
 
@@ -18,7 +19,7 @@ export interface SelectOption {
 
 export function isMobileViewport(): boolean {
   return (
-    typeof window !== 'undefined' &&
+    globalThis.window !== undefined &&
     window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches
   );
 }
@@ -170,7 +171,7 @@ export function sceneApproachToRuntimeApproach(scene: SceneData): Approach | nul
 }
 
 export function sceneWaypointsToMap(scene: SceneData): Map<string, Waypoint> {
-  return new Map(scene.waypoints.map((waypoint) => [waypoint.id, waypoint as Waypoint]));
+  return new Map(scene.waypoints.map((waypoint) => [waypoint.id, waypoint]));
 }
 
 export function parseLayersParam(param: string | null): LayerState {
@@ -181,8 +182,8 @@ export function parseLayersParam(param: string | null): LayerState {
     const trimmed = token.trim();
     if (trimmed.length < 2) continue;
     const sign = trimmed[0];
-    const id = trimmed.slice(1) as LayerId;
-    if (!LAYER_IDS.includes(id)) continue;
+    const id = trimmed.slice(1);
+    if (!isMemberOf(id, LAYER_IDS)) continue;
     if (sign === '+') state[id] = true;
     else if (sign === '-') state[id] = false;
   }
