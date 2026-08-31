@@ -86,7 +86,7 @@ export interface NexradLayerSummary {
 
 /**
  * Volume metadata for the debug panel and payload-change signatures. The
- * per-voxel columns live in {@link NexradRenderVolumeData}, joined in Rust.
+ * voxel data lives in {@link NexradVolumeTextureData}, rasterized in Rust.
  */
 export interface NexradVolumePayload {
   generatedAt: string;
@@ -222,23 +222,31 @@ export interface CrossSectionData {
 }
 
 /**
- * Flat render-ready voxel columns from the Rust `build_render_volume` join:
- * one entry per rendered voxel, ordered by declutter selection. The
- * `prepare_volume` dual index space (`declutterIndices` → `validIndices` →
- * raw payload columns) is resolved inside Rust, so these columns are
- * addressed by instance index only. Positions/sizes are unscaled local-frame
- * NM; the renderer applies vertical scale.
+ * Dense RG8 voxel grid from the Rust `build_volume_texture` rasterization,
+ * uploaded as a 3D texture and rendered by raymarching a single box instead
+ * of per-brick instanced geometry. Texels run `x` fastest, then `z` (row),
+ * then altitude bin; `R` is whole dBZ (`0` = empty), `G` is the phase code.
+ * Altitudes are corrected feet (earth-curvature drop already applied), and
+ * positions are unscaled local-frame NM; the renderer applies vertical scale.
+ * The `prepare_volume` dual index space is resolved inside Rust.
  */
-export interface NexradRenderVolumeData {
-  count: number;
-  centerXNm: Float32Array;
-  centerYNm: Float32Array;
-  centerZNm: Float32Array;
-  sizeXNm: Float32Array;
-  sizeYNm: Float32Array;
-  sizeZNm: Float32Array;
-  dbz: Float32Array;
-  phaseCode: Uint8Array;
+export interface NexradVolumeTextureData {
+  width: number;
+  height: number;
+  depth: number;
+  /** Local-frame NM position of the outer edge of cell `(0, 0)`. */
+  originXNm: number;
+  originZNm: number;
+  cellSizeXNm: number;
+  cellSizeZNm: number;
+  /** Corrected altitude of the bottom of bin 0, feet. */
+  baseFeet: number;
+  binSizeFeet: number;
+  /** RG texel pairs, `width * height * depth * 2` bytes. */
+  texels: Uint8Array;
+  filledTexelCount: number;
+  /** Bricks selected by threshold/declutter (debug panel count). */
+  renderedVoxelCount: number;
   /** Altitude-guide extents over the rendered voxel set. */
   maxAbsXNm: number;
   maxAbsZNm: number;
@@ -263,19 +271,3 @@ export interface NexradCompositeSurface {
   filledCellCount: number;
   maxDbz: number;
 }
-
-const EMPTY_U8 = new Uint8Array(0);
-export const EMPTY_RENDER_VOLUME: NexradRenderVolumeData = {
-  count: 0,
-  centerXNm: EMPTY_F32,
-  centerYNm: EMPTY_F32,
-  centerZNm: EMPTY_F32,
-  sizeXNm: EMPTY_F32,
-  sizeYNm: EMPTY_F32,
-  sizeZNm: EMPTY_F32,
-  dbz: EMPTY_F32,
-  phaseCode: EMPTY_U8,
-  maxAbsXNm: 0,
-  maxAbsZNm: 0,
-  maxCorrectedTopFeet: 0
-};

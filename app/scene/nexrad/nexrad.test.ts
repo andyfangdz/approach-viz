@@ -6,8 +6,9 @@ import {
   buildEchoTopRequestUrl,
   extractPhaseDebugHeaderValues
 } from './nexrad-decode';
-import { applyVoxelInstances, dbzToHex } from './nexrad-render';
-import { PHASE_MIXED, PHASE_RAIN, PHASE_SNOW, type NexradRenderVolumeData } from './nexrad-types';
+import { DBZ_LUT_PHASE_ROWS, buildDbzPhaseLutData, dbzToHex } from './nexrad-render';
+import { DBZ_BAND_STEP, DBZ_LUT_MAX_INDEX } from './nexrad-colors';
+import { PHASE_MIXED, PHASE_RAIN, PHASE_SNOW } from './nexrad-types';
 import { COMPOSITE_EMPTY_DBZ_TENTHS, buildCompositeRgba, compositeAlpha } from './nexrad-composite';
 
 test('buildNexradRequestUrl returns local API path when MRMS_BINARY_BASE_URL is unset', () => {
@@ -51,70 +52,29 @@ test('extractPhaseDebugHeaderValues parses numeric and string headers', () => {
   assert.strictEqual(values.zdrTimestamp, null);
 });
 
-test('applyVoxelInstances writes flat render columns into matrices and colors', () => {
-  // The prepare-pass dual index space (declutterIndices → validIndices → raw
-  // payload columns) is joined inside Rust (`build_render_volume`; covered by
-  // crates/approach-viz-core/src/mrms_render.rs unit tests), so the upload
-  // consumes flat per-instance columns with no index resolution.
-  const render: NexradRenderVolumeData = {
-    count: 2,
-    centerXNm: new Float32Array([1.5, 4.0]),
-    centerYNm: new Float32Array([0.5, 2.0]),
-    centerZNm: new Float32Array([-2.5, 3.0]),
-    sizeXNm: new Float32Array([0.25 * 2, 0.25 * 3]),
-    sizeYNm: new Float32Array([0.1, 0.2]),
-    sizeZNm: new Float32Array([0.5 * 4, 0.5 * 5]),
-    dbz: new Float32Array([40, 55]),
-    phaseCode: new Uint8Array([PHASE_SNOW, PHASE_MIXED]),
-    maxAbsXNm: 4.0,
-    maxAbsZNm: 3.0,
-    maxCorrectedTopFeet: 12_000
-  };
+test('buildDbzPhaseLutData mirrors the band tables per phase row', () => {
+  // The raymarch shader indexes this grid by (floor(dbz / 5), phase code), so
+  // each texel must match what dbzToHex produces for that band and phase.
+  const width = DBZ_LUT_MAX_INDEX + 1;
+  const data = buildDbzPhaseLutData();
+  assert.strictEqual(data.length, width * DBZ_LUT_PHASE_ROWS * 4);
 
-  const capacity = 4;
-  const mesh = new THREE.InstancedMesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshBasicMaterial(),
-    capacity
-  );
-
-  applyVoxelInstances(mesh, render);
-
-  assert.strictEqual(mesh.count, 2);
-  // SAFETY: InstancedMesh.instanceMatrix is a Float32Array of 16 floats per instance.
-  const matrix = mesh.instanceMatrix.array as Float32Array;
-  for (let i = 0; i < 32; i += 1) {
-    assert.ok(Number.isFinite(matrix[i]), `matrix[${i}] should be finite, got ${matrix[i]}`);
+  const color = new THREE.Color();
+  for (const [row, phase] of [
+    [0, PHASE_RAIN],
+    [1, PHASE_MIXED],
+    [2, PHASE_SNOW]
+  ] as const) {
+    for (const dbz of [0, 20, 45, 95]) {
+      const band = Math.min(DBZ_LUT_MAX_INDEX, Math.floor(dbz / DBZ_BAND_STEP));
+      const offset = (row * width + band) * 4;
+      color.setHex(dbzToHex(dbz, phase));
+      assert.ok(Math.abs(data[offset] - color.r) < 1e-6, `r for dbz ${dbz} phase ${phase}`);
+      assert.ok(Math.abs(data[offset + 1] - color.g) < 1e-6, `g for dbz ${dbz} phase ${phase}`);
+      assert.ok(Math.abs(data[offset + 2] - color.b) < 1e-6, `b for dbz ${dbz} phase ${phase}`);
+      assert.strictEqual(data[offset + 3], 1);
+    }
   }
-
-  // Instance 0: scale from size columns, translate from center columns.
-  assert.strictEqual(matrix[0], 0.25 * 2); // scale X
-  assert.strictEqual(matrix[5], Math.fround(0.1)); // scale Y
-  assert.strictEqual(matrix[10], 0.5 * 4); // scale Z
-  assert.strictEqual(matrix[12], 1.5); // translate X
-  assert.strictEqual(matrix[13], 0.5); // translate Y
-  assert.strictEqual(matrix[14], -2.5); // translate Z
-
-  // Instance 1.
-  assert.strictEqual(matrix[16], 0.25 * 3);
-  assert.strictEqual(matrix[21], Math.fround(0.2));
-  assert.strictEqual(matrix[26], 0.5 * 5);
-  assert.strictEqual(matrix[28], 4.0);
-  assert.strictEqual(matrix[29], 2.0);
-  assert.strictEqual(matrix[30], 3.0);
-
-  // Colors come from the per-phase dBZ band LUTs.
-  assert.ok(mesh.instanceColor, 'instanceColor should be allocated');
-  // SAFETY: InstancedBufferAttribute.array for RGB instance colors is a Float32Array.
-  const colors = mesh.instanceColor.array as Float32Array;
-  const expectSnow = new THREE.Color().setHex(dbzToHex(40, PHASE_SNOW));
-  const expectMixed = new THREE.Color().setHex(dbzToHex(55, PHASE_MIXED));
-  assert.ok(Math.abs(colors[0] - expectSnow.r) < 1e-6);
-  assert.ok(Math.abs(colors[1] - expectSnow.g) < 1e-6);
-  assert.ok(Math.abs(colors[2] - expectSnow.b) < 1e-6);
-  assert.ok(Math.abs(colors[3] - expectMixed.r) < 1e-6);
-  assert.ok(Math.abs(colors[4] - expectMixed.g) < 1e-6);
-  assert.ok(Math.abs(colors[5] - expectMixed.b) < 1e-6);
 });
 
 test('buildCompositeRgba colors filled cells and leaves empty cells transparent', () => {

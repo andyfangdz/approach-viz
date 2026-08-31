@@ -83,6 +83,237 @@ pub fn build_render_volume(
     data
 }
 
+/// Ceiling on the horizontal axes of the raymarch volume texture. A 120 NM
+/// request lands near 440 source cells per axis, so the builder coarsens the
+/// cell size by an integer footprint multiple until both axes fit.
+const MAX_TEXTURE_AXIS_CELLS: usize = 256;
+
+/// Ceiling on raymarch altitude bins.
+const MAX_TEXTURE_ALTITUDE_BINS: usize = 96;
+
+/// Preferred altitude-bin thickness. Finer than the lowest MRMS level spacing
+/// (~820 ft), so no level is skipped while shallow fields get shallow bins.
+const TARGET_ALTITUDE_BIN_FEET: f64 = 500.0;
+
+/// Sanity ceiling on the reconstructed source-grid axis, mirroring
+/// [`MAX_COMPOSITE_AXIS_CELLS`]: exceeding it means the index reconstruction
+/// broke, not that the storm got big.
+const MAX_TEXTURE_SOURCE_AXIS_CELLS: f64 = 4096.0;
+
+/// Dense RG8 voxel grid for raymarched volume rendering.
+///
+/// Texels are laid out `x` fastest, then `z` (row), then altitude bin:
+/// `index = ((bin * height + row) * width + col) * 2`. Each texel is two
+/// bytes: `R` = dBZ rounded to whole dBZ (`0` = empty), `G` = phase code.
+/// Altitudes are corrected feet (earth-curvature drop already subtracted when
+/// requested), so the sampler needs no per-sample curvature work. Cell `(0,0)`
+/// spans `origin_*_nm` to `origin_*_nm + cell_size_*_nm`; bin `0` spans
+/// `base_feet` to `base_feet + bin_size_feet`.
+///
+/// `max_abs_x_nm`/`max_abs_z_nm`/`max_corrected_top_feet` summarize the
+/// rendered voxel set for altitude-guide sizing, matching the semantics of
+/// [`MrmsRenderVolumeData`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct MrmsVolumeTexture {
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    pub origin_x_nm: f32,
+    pub origin_z_nm: f32,
+    pub cell_size_x_nm: f32,
+    pub cell_size_z_nm: f32,
+    pub base_feet: f32,
+    pub bin_size_feet: f32,
+    pub texels: Vec<u8>,
+    pub filled_texel_count: u32,
+    pub max_abs_x_nm: f32,
+    pub max_abs_z_nm: f32,
+    pub max_corrected_top_feet: f32,
+}
+
+/// Rasterize the declutter-selected voxel bricks into a dense RG8 3D texture
+/// for raymarched volume rendering.
+///
+/// Consumes the same `prepare_volume` selection as [`build_render_volume`]
+/// (threshold, phase mode, curvature, declutter), so a raymarched frame shows
+/// exactly the voxel set the instanced path would have drawn. Overlapping
+/// bricks resolve strongest-return-wins so intensity is never understated.
+/// Returns `Ok(None)` when the selection is empty.
+pub fn build_volume_texture(
+    volume: &impl VolumeSource,
+    footprint_base_x_nm: f32,
+    footprint_base_y_nm: f32,
+    prepared: &PreparedVolume,
+) -> Result<Option<MrmsVolumeTexture>, String> {
+    let footprint_x_nm = f64::from(footprint_base_x_nm);
+    let footprint_z_nm = f64::from(footprint_base_y_nm);
+    if !(footprint_x_nm > 0.0) || !(footprint_z_nm > 0.0) {
+        return Err(format!(
+            "MRMS volume texture needs positive grid footprints, got {footprint_base_x_nm} x {footprint_base_y_nm} NM"
+        ));
+    }
+
+    let count = prepared.declutter_count;
+    if count == 0 {
+        return Ok(None);
+    }
+
+    // --- Bounds over the selected bricks ---
+    let mut min_x = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut min_z = f64::INFINITY;
+    let mut max_z = f64::NEG_INFINITY;
+    let mut base_feet = f64::INFINITY;
+    let mut top_feet = f64::NEG_INFINITY;
+    let mut max_abs_x_nm = 0.0_f32;
+    let mut max_abs_z_nm = 0.0_f32;
+    let mut max_corrected_top_feet = 0.0_f32;
+
+    for i in 0..count {
+        let valid_index = prepared.declutter_indices[i] as usize;
+        let payload_index = prepared.valid_indices[valid_index] as usize;
+        let x = f64::from(volume.x_nm(payload_index));
+        let z = f64::from(volume.z_nm(payload_index));
+        let half_sx = footprint_x_nm * f64::from(volume.footprint_x_span(payload_index).max(1)) * 0.5;
+        let half_sz = footprint_z_nm * f64::from(volume.footprint_y_span(payload_index).max(1)) * 0.5;
+        min_x = min_x.min(x - half_sx);
+        max_x = max_x.max(x + half_sx);
+        min_z = min_z.min(z - half_sz);
+        max_z = max_z.max(z + half_sz);
+        let bottom = f64::from(prepared.corrected_bottom_feet[valid_index]);
+        let top = f64::from(prepared.corrected_top_feet[valid_index]);
+        base_feet = base_feet.min(bottom);
+        top_feet = top_feet.max(top);
+        max_abs_x_nm = max_abs_x_nm.max(volume.x_nm(payload_index).abs());
+        max_abs_z_nm = max_abs_z_nm.max(volume.z_nm(payload_index).abs());
+        max_corrected_top_feet =
+            max_corrected_top_feet.max(prepared.corrected_top_feet[valid_index]);
+    }
+
+    if !min_x.is_finite() || !min_z.is_finite() || !base_feet.is_finite() || !top_feet.is_finite() {
+        return Ok(None);
+    }
+
+    let source_cols = (max_x - min_x) / footprint_x_nm;
+    let source_rows = (max_z - min_z) / footprint_z_nm;
+    if source_cols > MAX_TEXTURE_SOURCE_AXIS_CELLS || source_rows > MAX_TEXTURE_SOURCE_AXIS_CELLS {
+        return Err(format!(
+            "MRMS volume texture source grid {source_cols:.0} x {source_rows:.0} exceeds the {MAX_TEXTURE_SOURCE_AXIS_CELLS}-cell axis limit"
+        ));
+    }
+
+    // Coarsen by an integer footprint multiple until each axis fits, so texture
+    // cells stay aligned with whole source-grid cells.
+    let coarsen_x = (source_cols / MAX_TEXTURE_AXIS_CELLS as f64).ceil().max(1.0);
+    let coarsen_z = (source_rows / MAX_TEXTURE_AXIS_CELLS as f64).ceil().max(1.0);
+    let cell_x_nm = footprint_x_nm * coarsen_x;
+    let cell_z_nm = footprint_z_nm * coarsen_z;
+    let width = ((max_x - min_x) / cell_x_nm - 1e-6).ceil().max(1.0) as usize;
+    let height = ((max_z - min_z) / cell_z_nm - 1e-6).ceil().max(1.0) as usize;
+    if width > MAX_TEXTURE_AXIS_CELLS + 1 || height > MAX_TEXTURE_AXIS_CELLS + 1 {
+        return Err(format!(
+            "MRMS volume texture grid {width} x {height} escaped the {MAX_TEXTURE_AXIS_CELLS}-cell cap"
+        ));
+    }
+
+    let span_feet = (top_feet - base_feet).max(1.0);
+    let depth = ((span_feet / TARGET_ALTITUDE_BIN_FEET).ceil() as usize)
+        .clamp(1, MAX_TEXTURE_ALTITUDE_BINS);
+    let bin_feet = span_feet / depth as f64;
+
+    let mut texels = vec![0_u8; width * height * depth * 2];
+    let mut filled_texel_count: u32 = 0;
+
+    for i in 0..count {
+        let valid_index = prepared.declutter_indices[i] as usize;
+        let payload_index = prepared.valid_indices[valid_index] as usize;
+        let x = f64::from(volume.x_nm(payload_index));
+        let z = f64::from(volume.z_nm(payload_index));
+        let half_sx = footprint_x_nm * f64::from(volume.footprint_x_span(payload_index).max(1)) * 0.5;
+        let half_sz = footprint_z_nm * f64::from(volume.footprint_y_span(payload_index).max(1)) * 0.5;
+
+        let col_start = (((x - half_sx - min_x) / cell_x_nm) + 1e-6).floor().max(0.0) as usize;
+        let col_end = ((((x + half_sx - min_x) / cell_x_nm) - 1e-6).ceil() as usize).min(width);
+        let row_start = (((z - half_sz - min_z) / cell_z_nm) + 1e-6).floor().max(0.0) as usize;
+        let row_end = ((((z + half_sz - min_z) / cell_z_nm) - 1e-6).ceil() as usize).min(height);
+
+        let bottom = f64::from(prepared.corrected_bottom_feet[valid_index]);
+        let top = f64::from(prepared.corrected_top_feet[valid_index]);
+        let bin_start = (((bottom - base_feet) / bin_feet) + 1e-6).floor().max(0.0) as usize;
+        let mut bin_end = ((((top - base_feet) / bin_feet) - 1e-6).ceil() as usize).min(depth);
+        if bin_end <= bin_start {
+            bin_end = (bin_start + 1).min(depth);
+        }
+
+        let dbz_byte = ((f64::from(volume.dbz_tenths(payload_index)) / 10.0).round() as i64)
+            .clamp(1, 255) as u8;
+        let phase = prepared.effective_phase_code[valid_index];
+
+        for bin in bin_start..bin_end {
+            let bin_offset = bin * height;
+            for row in row_start..row_end {
+                let row_offset = (bin_offset + row) * width;
+                for col in col_start..col_end {
+                    let t = (row_offset + col) * 2;
+                    if texels[t] == 0 {
+                        filled_texel_count += 1;
+                    } else if texels[t] >= dbz_byte {
+                        continue;
+                    }
+                    texels[t] = dbz_byte;
+                    texels[t + 1] = phase;
+                }
+            }
+        }
+    }
+
+    // Bleed phase codes into empty texels bordering filled ones so trilinear
+    // filtering interpolates toward the neighbor's phase instead of toward
+    // rain (`phase == 0`), which would tint snow-echo edges. Safe in place:
+    // adoption reads only neighbors' `R` (never written here).
+    for bin in 0..depth {
+        for row in 0..height {
+            for col in 0..width {
+                let t = ((bin * height + row) * width + col) * 2;
+                if texels[t] != 0 {
+                    continue;
+                }
+                let neighbors = [
+                    (col > 0).then(|| t - 2),
+                    (col + 1 < width).then(|| t + 2),
+                    (row > 0).then(|| t - width * 2),
+                    (row + 1 < height).then(|| t + width * 2),
+                    (bin > 0).then(|| t - width * height * 2),
+                    (bin + 1 < depth).then(|| t + width * height * 2),
+                ];
+                for neighbor in neighbors.into_iter().flatten() {
+                    if texels[neighbor] != 0 {
+                        texels[t + 1] = texels[neighbor + 1];
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Some(MrmsVolumeTexture {
+        width: width as u32,
+        height: height as u32,
+        depth: depth as u32,
+        origin_x_nm: min_x as f32,
+        origin_z_nm: min_z as f32,
+        cell_size_x_nm: cell_x_nm as f32,
+        cell_size_z_nm: cell_z_nm as f32,
+        base_feet: base_feet as f32,
+        bin_size_feet: bin_feet as f32,
+        texels,
+        filled_texel_count,
+        max_abs_x_nm,
+        max_abs_z_nm,
+        max_corrected_top_feet,
+    }))
+}
+
 /// Sentinel for a composite raster cell with no echo at or above the
 /// threshold. Renderers treat it as fully transparent.
 pub const COMPOSITE_EMPTY_DBZ_TENTHS: i16 = i16::MIN;
@@ -598,6 +829,222 @@ mod tests {
         )
         .expect_err("a zero footprint must fail loudly");
         assert!(error.contains("positive grid footprints"), "{error}");
+    }
+
+    fn texel_at(texture: &MrmsVolumeTexture, col: usize, row: usize, bin: usize) -> (u8, u8) {
+        let width = texture.width as usize;
+        let height = texture.height as usize;
+        let t = ((bin * height + row) * width + col) * 2;
+        (texture.texels[t], texture.texels[t + 1])
+    }
+
+    #[test]
+    fn volume_texture_rasterizes_bricks_into_grid_cells_and_bins() {
+        let volume = composite_volume();
+        let prepared = prepare_volume(
+            &volume,
+            0,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
+        let texture = build_volume_texture(&volume, 0.5, 0.6, &prepared)
+            .expect("texture build should succeed")
+            .expect("texture should be present");
+
+        // 3 source columns x 2 rows, altitude span 1k-11k ft.
+        assert_eq!((texture.width, texture.height), (3, 2));
+        assert!((texture.origin_x_nm - -0.25).abs() < 1e-6);
+        assert!((texture.origin_z_nm - -0.3).abs() < 1e-6);
+        assert!((texture.cell_size_x_nm - 0.5).abs() < 1e-6);
+        assert!((texture.cell_size_z_nm - 0.6).abs() < 1e-6);
+        assert!((texture.base_feet - 1_000.0).abs() < 1e-3);
+        assert_eq!(texture.depth, 20);
+        assert!((texture.bin_size_feet - 500.0).abs() < 1e-3);
+
+        // Brick A (20 dBZ rain, 1k-3k ft) fills cell (0,0) bins 0-3.
+        assert_eq!(texel_at(&texture, 0, 0, 0), (20, PHASE_RAIN));
+        assert_eq!(texel_at(&texture, 0, 0, 3), (20, PHASE_RAIN));
+        // Brick D (40 dBZ snow, 9k-11k ft) sits above it: bins 16-19.
+        assert_eq!(texel_at(&texture, 0, 0, 16), (40, PHASE_SNOW));
+        assert_eq!(texel_at(&texture, 0, 0, 19), (40, PHASE_SNOW));
+        // Between them the column is empty.
+        assert_eq!(texel_at(&texture, 0, 0, 8).0, 0);
+        // Brick B (35 dBZ snow) covers cells (1,0) and (2,0) at bins 0-3.
+        assert_eq!(texel_at(&texture, 1, 0, 0), (35, PHASE_SNOW));
+        assert_eq!(texel_at(&texture, 2, 0, 3), (35, PHASE_SNOW));
+        // Brick C (10 dBZ mixed) covers the full second row.
+        assert_eq!(texel_at(&texture, 0, 1, 0), (10, PHASE_MIXED));
+        assert_eq!(texel_at(&texture, 2, 1, 3), (10, PHASE_MIXED));
+        // Row 1 has no echo above 3k ft.
+        assert_eq!(texel_at(&texture, 0, 1, 16).0, 0);
+
+        // A(4 bins) + D(4) + B(2 cells x 4) + C(3 cells x 4) = 28 filled.
+        assert_eq!(texture.filled_texel_count, 28);
+        assert!((texture.max_corrected_top_feet - 11_000.0).abs() < 1e-3);
+        assert!((texture.max_abs_x_nm - 0.75).abs() < 1e-6);
+        assert!((texture.max_abs_z_nm - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn volume_texture_overlaps_resolve_to_the_strongest_return() {
+        // Two bricks over the same cell and altitude range.
+        let volume = TestVolume {
+            x_nm: vec![0.0, 0.0],
+            z_nm: vec![0.0, 0.0],
+            bottom_feet: vec![1_000, 1_000],
+            top_feet: vec![2_000, 2_000],
+            dbz_tenths: vec![250, 415],
+            phase: vec![PHASE_RAIN, PHASE_SNOW],
+            surface_phase: vec![PHASE_RAIN, PHASE_SNOW],
+            footprint_x_span: vec![1, 1],
+            footprint_y_span: vec![1, 1],
+        };
+        let prepared = prepare_volume(
+            &volume,
+            0,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
+        let texture = build_volume_texture(&volume, 0.5, 0.6, &prepared)
+            .expect("texture build should succeed")
+            .expect("texture should be present");
+
+        assert_eq!((texture.width, texture.height), (1, 1));
+        // 41.5 dBZ rounds to 42 and wins over 25; the winner's phase rides along.
+        assert_eq!(texel_at(&texture, 0, 0, 0), (42, PHASE_SNOW));
+        assert_eq!(texture.filled_texel_count as usize, texture.depth as usize);
+    }
+
+    #[test]
+    fn volume_texture_honors_the_declutter_selection() {
+        let volume = test_volume();
+        let prepared = prepare_volume(
+            &volume,
+            0,
+            PhaseMode::Altitude,
+            DeclutterMode::Low,
+            false,
+            40.0,
+        );
+        let texture = build_volume_texture(&volume, 0.5, 0.6, &prepared)
+            .expect("texture build should succeed")
+            .expect("texture should be present");
+
+        // The 30k-34k ft voxel is excluded, so the altitude span covers only
+        // the low band and its top never reaches the excluded voxel.
+        assert!(texture.base_feet >= 999.0);
+        assert!(
+            texture.base_feet as f64 + f64::from(texture.depth) * f64::from(texture.bin_size_feet)
+                < 5_000.0
+        );
+        assert!((texture.max_corrected_top_feet - 4_000.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn volume_texture_bleeds_phase_into_adjacent_empty_texels() {
+        // A single snow brick: its empty neighbors must adopt the snow phase
+        // so trilinear filtering does not tint edges toward rain.
+        let volume = TestVolume {
+            x_nm: vec![0.5, 2.0],
+            z_nm: vec![0.0, 0.0],
+            bottom_feet: vec![1_000, 1_000],
+            top_feet: vec![2_000, 2_000],
+            dbz_tenths: vec![300, 100],
+            phase: vec![PHASE_SNOW, PHASE_SNOW],
+            surface_phase: vec![PHASE_SNOW, PHASE_SNOW],
+            footprint_x_span: vec![1, 1],
+            footprint_y_span: vec![1, 1],
+        };
+        let prepared = prepare_volume(
+            &volume,
+            0,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
+        let texture = build_volume_texture(&volume, 0.5, 0.6, &prepared)
+            .expect("texture build should succeed")
+            .expect("texture should be present");
+
+        assert_eq!((texture.width, texture.height), (4, 1));
+        // Cells 1 and 2 are empty; both border a filled snow cell.
+        assert_eq!(texel_at(&texture, 1, 0, 0), (0, PHASE_SNOW));
+        assert_eq!(texel_at(&texture, 2, 0, 0), (0, PHASE_SNOW));
+    }
+
+    #[test]
+    fn volume_texture_coarsens_axes_by_integer_footprint_multiples() {
+        // Two bricks 300 NM apart force > 256 source columns at a 0.5 NM
+        // footprint, so the x axis must coarsen to a whole multiple.
+        let volume = TestVolume {
+            x_nm: vec![0.0, 300.0],
+            z_nm: vec![0.0, 0.0],
+            bottom_feet: vec![1_000, 1_000],
+            top_feet: vec![2_000, 2_000],
+            dbz_tenths: vec![300, 300],
+            phase: vec![PHASE_RAIN, PHASE_RAIN],
+            surface_phase: vec![PHASE_RAIN, PHASE_RAIN],
+            footprint_x_span: vec![1, 1],
+            footprint_y_span: vec![1, 1],
+        };
+        let prepared = prepare_volume(
+            &volume,
+            0,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
+        let texture = build_volume_texture(&volume, 0.5, 0.6, &prepared)
+            .expect("texture build should succeed")
+            .expect("texture should be present");
+
+        let multiple = texture.cell_size_x_nm / 0.5;
+        assert!((multiple - multiple.round()).abs() < 1e-4, "cell size must stay a footprint multiple");
+        assert!(texture.width as usize <= MAX_TEXTURE_AXIS_CELLS + 1);
+        // Both bricks still land in the raster.
+        assert_eq!(texel_at(&texture, 0, 0, 0).0, 30);
+        assert_eq!(
+            texel_at(&texture, texture.width as usize - 1, 0, 0).0,
+            30
+        );
+    }
+
+    #[test]
+    fn volume_texture_rejects_a_non_positive_footprint() {
+        let volume = composite_volume();
+        let prepared = prepare_volume(
+            &volume,
+            0,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
+        let error = build_volume_texture(&volume, 0.0, 0.6, &prepared)
+            .expect_err("a zero footprint must fail loudly");
+        assert!(error.contains("positive grid footprints"), "{error}");
+    }
+
+    #[test]
+    fn volume_texture_is_absent_for_an_empty_selection() {
+        let volume = composite_volume();
+        let prepared = prepare_volume(
+            &volume,
+            1_000,
+            PhaseMode::Altitude,
+            DeclutterMode::All,
+            false,
+            40.0,
+        );
+        let texture = build_volume_texture(&volume, 0.5, 0.6, &prepared)
+            .expect("texture build should succeed");
+        assert!(texture.is_none());
     }
 
     #[test]

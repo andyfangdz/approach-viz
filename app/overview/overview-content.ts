@@ -826,18 +826,18 @@ export const SECTIONS: Section[] = [
         blocks: [
           {
             kind: 'p',
-            text: 'The weather overlay polls the volume every **120 s** (10 s retry), gated on `mrms || mosaic || echotops`; failures are tracked per payload so one feed going down never blanks the other, and the last good scan stays on screen. The worker feeds the binary through `decode_and_prepare_mrms` — decode, threshold filter, curvature correction, declutter, phase selection, cross-section and the render join all inside one WASM call — and returns metadata plus flat render columns. **Option-only changes (threshold, phase mode, declutter, slice) re-run prepare on the cached binary** with a 100 ms debounce; no network involved.'
+            text: 'The weather overlay polls the volume every **120 s** (10 s retry), gated on `mrms || mosaic || echotops`; failures are tracked per payload so one feed going down never blanks the other, and the last good scan stays on screen. The worker feeds the binary through `decode_and_prepare_mrms` — decode, threshold filter, curvature correction, declutter, phase selection, cross-section and the volume-texture rasterization all inside one WASM call — and returns metadata plus a dense RG8 3D texel grid. **Option-only changes (threshold, phase mode, declutter, slice) re-run prepare on the cached binary** with a 100 ms debounce; no network involved.'
           },
           {
             kind: 'p',
-            text: 'Voxels render as GPU-instanced unit boxes drawn twice from **shared instance buffers**: a base pass (renderOrder 80) and a soft glow pass (81), both depth-read-only. A patched material adds per-instance alpha, radial edge falloff, vertical glow shaping and an optical-depth curve (`1 − exp(−density·α)`), with the opacity slider lerping base 0.12–0.66 and glow 0.01–0.08 as a master volume. Instance colors come from precomputed per-phase LUTs written straight into `instanceColor.array` — indexed by `floor(dbz/5)`, no per-voxel color math on upload:'
+            text: 'The reflectivity volume renders as **one raymarched box** (renderOrder 80, depth-read-only, back faces so the camera can sit inside): the fragment shader marches the RG8 3D texture front-to-back with resolution-aware sampling (about one sample per texel crossed, 24–384 steps, jittered start) and an optical-depth curve (`1 − exp(−density·α·ds)`) integrated over unscaled NM, so vertical exaggeration changes shape but not opacity, and the opacity slider maps to the extinction coefficient. Draw cost is per-pixel, not per-voxel — replacing the old base+glow instanced pair (~2 GPU instances per brick, >1M instances in a Miami-scale event). Sample colors come from a nearest-filtered `(band × phase)` LUT texture built once from the shared band tables — indexed by `floor(dbz/5)`, no per-voxel color math anywhere:'
           },
           { kind: 'dbz' },
           {
             kind: 'code',
-            title: 'app/scene/nexrad/nexrad-render.ts — per-instance alpha',
-            lang: 'ts',
-            text: 'const t = clamp((dbz - 5) / 60, 0, 1);\nalpha = 0.1 + 0.9 * Math.pow(t, 1.5);   // weak echoes fade, cores stay solid'
+            title: 'app/scene/nexrad/NexradVolumeRaymarch.tsx — per-sample alpha',
+            lang: 'glsl',
+            text: 'float t = clamp((dbz - 5.0) / 60.0, 0.0, 1.0);\nfloat a = (0.1 + 0.9 * pow(t, 1.5)) * smoothstep(1.0, 5.0, dbz); // weak echoes fade, cores stay solid'
           },
           {
             kind: 'list',
@@ -853,6 +853,7 @@ export const SECTIONS: Section[] = [
             kind: 'files',
             paths: [
               'app/scene/NexradVolumeOverlay.tsx',
+              'app/scene/nexrad/NexradVolumeRaymarch.tsx',
               'app/scene/nexrad/nexrad-render.ts',
               'app/scene/nexrad/NexradSurfaceMosaic.tsx',
               'app/scene/nexrad/NexradCrossSection.tsx'
@@ -917,7 +918,7 @@ export const SECTIONS: Section[] = [
         blocks: [
           {
             kind: 'p',
-            text: 'Every algorithm the web runs in WASM, the native app runs through UniFFI: approach altitudes and geometry (`ApproachPathGeometry.swift`), MRMS `decode_and_prepare_mrms_volume` with the same render join and cross-section, echo-tops decode, and the shared `TrafficStateHandle` merge state. The native weather layer polls the runtime directly (AVMR v5 / AVET v3, 120 s cadence), renders base + glow instanced voxel passes, echo-top tiles, altitude guides and a slice HUD — the full web overlay surface — and the traffic layer polls AVTR binary at 5 s with the same history backfill contract. Prepare-only option changes re-run the Rust prepare pass over the cached binary, exactly like the web worker.'
+            text: 'Every algorithm the web runs in WASM, the native app runs through UniFFI: approach altitudes and geometry (`ApproachPathGeometry.swift`), MRMS `decode_and_prepare_mrms_volume` with the flat-column render join and cross-section, echo-tops decode, and the shared `TrafficStateHandle` merge state. The native weather layer polls the runtime directly (AVMR v5 / AVET v3, 120 s cadence), renders base + glow instanced voxel passes, echo-top tiles, altitude guides and a slice HUD — the full web overlay surface — and the traffic layer polls AVTR binary at 5 s with the same history backfill contract. Prepare-only option changes re-run the Rust prepare pass over the cached binary, exactly like the web worker.'
           },
           {
             kind: 'files',
