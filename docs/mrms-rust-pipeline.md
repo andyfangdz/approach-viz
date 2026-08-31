@@ -49,14 +49,14 @@ This project now uses an external Rust runtime service for MRMS instead of decod
   - `z_hundredths:i16[n]`
   - `bottom_feet:u16[n]`
   - `top_feet:u16[n]`
-  - `dbz_tenths:i16[n]` (5 dBZ quantized for merge grouping)
+  - `dbz_tenths:i16[n]` (true maximum over the merged cells; grouping quantizes to 5 dBZ but the bucket value is never shipped)
   - `phase:u8[n]`
   - `surface_phase:u8[n]`
   - `span_x:u16[n]` (grid-cell width multiplier)
   - `span_y:u16[n]` (grid-cell depth multiplier)
   - `span_z:u16[n]` (merged vertical levels)
 - v5 replaced the hand-rolled v4 binary header/columns with the FlatBuffers table above; column semantics are unchanged from v4.
-- Merge strategy groups contiguous same-phase/similar-dBZ cells into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively.
+- Merge strategy groups contiguous cells sharing `{phase, surface_phase, 5 dBZ-quantized dbz}` into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively. `surface_phase` is part of the merge key because the default client phase mode colors by it — merging across a surface rain/snow boundary would paint one cell's surface phase over the whole brick. Each brick ships the true maximum `dbz_tenths` over its merged cells so intensity is never understated.
 - Decoder is the zero-copy `FbVolumeView` in `crates/approach-viz-core/src/mrms_preprocess.rs`; encoder in `services/runtime-rs/src/weather/encoding.rs`. The view validates each column's presence and length once at construction — malformed payloads produce an explicit decode error rather than zero-filled values.
 
 ## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v3`, AVET v3)

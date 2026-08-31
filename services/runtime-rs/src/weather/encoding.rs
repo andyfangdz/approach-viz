@@ -11,10 +11,17 @@ use crate::constants::{
 use crate::types::ScanSnapshot;
 use crate::utils::{round_i16, round_u16, shortest_lon_delta_degrees, to_lon360};
 
+/// Full merge identity: two cells may share a brick only when every keyed
+/// field matches. `surface_phase` is keyed because the default client phase
+/// mode colors by it — merging across a rain/snow surface boundary would
+/// paint one cell's surface phase over the whole brick footprint.
+/// `quantized_dbz_tenths` is the 5 dBZ grouping bucket; the true per-brick
+/// maximum is tracked separately so the wire never understates intensity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct MergeKey {
     phase: u8,
-    dbz_tenths: i16,
+    surface_phase: u8,
+    quantized_dbz_tenths: i16,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -22,7 +29,7 @@ struct MergeCell {
     row: u32,
     col: u32,
     key: MergeKey,
-    surface_phase: u8,
+    dbz_tenths: i16,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -30,7 +37,7 @@ struct RowRun {
     col_start: u32,
     col_end: u32,
     key: MergeKey,
-    surface_phase: u8,
+    max_dbz_tenths: i16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,7 +54,7 @@ struct HorizontalRect {
     col_start: u32,
     col_end: u32,
     key: MergeKey,
-    surface_phase: u8,
+    max_dbz_tenths: i16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -68,7 +75,7 @@ struct BrickCandidate {
     level_start: u8,
     level_end: u8,
     key: MergeKey,
-    surface_phase: u8,
+    max_dbz_tenths: i16,
 }
 
 pub(crate) fn build_echo_top_cells(
@@ -220,12 +227,13 @@ fn build_volume_wire_fb_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u
                     col,
                     key: MergeKey {
                         phase: record.phase,
-                        dbz_tenths: quantize_dbz_tenths(
+                        surface_phase: record.surface_phase,
+                        quantized_dbz_tenths: quantize_dbz_tenths(
                             record.dbz_tenths,
                             WIRE_DBZ_QUANT_STEP_TENTHS,
                         ),
                     },
-                    surface_phase: record.surface_phase,
+                    dbz_tenths: record.dbz_tenths,
                 });
             }
         }
@@ -238,7 +246,7 @@ fn build_volume_wire_fb_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u
         let mut rectangles = build_level_rectangles(cells);
         let mut split_rectangles: Vec<HorizontalRect> = Vec::with_capacity(rectangles.len());
         for rect in rectangles.drain(..) {
-            let max_span = max_span_for_dbz(rect.key.dbz_tenths);
+            let max_span = max_span_for_dbz(rect.key.quantized_dbz_tenths);
             split_rectangle(rect, max_span, &mut split_rectangles);
         }
 
@@ -264,6 +272,8 @@ fn build_volume_wire_fb_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u
                     let next_bounds = scan.level_bounds[level_idx];
                     if next_bounds.bottom_feet <= prev_bounds.top_feet.saturating_add(1) {
                         merged_bricks[existing_idx].level_end = level_idx as u8;
+                        merged_bricks[existing_idx].max_dbz_tenths =
+                            current.max_dbz_tenths.max(rect.max_dbz_tenths);
                         next_active.insert(signature, existing_idx);
                         extended = true;
                     }
@@ -280,7 +290,7 @@ fn build_volume_wire_fb_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u
                     level_start: level_idx as u8,
                     level_end: level_idx as u8,
                     key: rect.key,
-                    surface_phase: rect.surface_phase,
+                    max_dbz_tenths: rect.max_dbz_tenths,
                 });
                 next_active.insert(signature, new_idx);
             }
@@ -326,9 +336,11 @@ fn build_volume_wire_fb_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u
         soa_z.push(round_i16(z_nm * 100.0));
         soa_bottom.push(level_start_bounds.bottom_feet);
         soa_top.push(level_end_bounds.top_feet);
-        soa_dbz.push(brick.key.dbz_tenths);
+        // Ship the true maximum over the merged cells, not the quantized
+        // grouping bucket, so a core is never rounded down on the wire.
+        soa_dbz.push(brick.max_dbz_tenths);
         soa_phase.push(brick.key.phase);
-        soa_surface_phase.push(brick.surface_phase);
+        soa_surface_phase.push(brick.key.surface_phase);
         soa_span_x.push(span_x);
         soa_span_y.push(span_y);
         soa_span_z.push(span_z);
@@ -430,13 +442,16 @@ fn split_rectangle(rect: HorizontalRect, max_span: u16, out: &mut Vec<Horizontal
         let mut col_start = rect.col_start;
         while col_start <= rect.col_end {
             let col_end = min(col_start.saturating_add(chunk_size - 1), rect.col_end);
+            // Chunks inherit the parent rectangle's max; every merged cell
+            // shares the same 5 dBZ quantization bucket, so the value stays
+            // within the bucket's half-step of each chunk's true maximum.
             out.push(HorizontalRect {
                 row_start,
                 row_end,
                 col_start,
                 col_end,
                 key: rect.key,
-                surface_phase: rect.surface_phase,
+                max_dbz_tenths: rect.max_dbz_tenths,
             });
             if col_end == rect.col_end {
                 break;
@@ -473,6 +488,8 @@ fn merge_row_runs_into_rectangles(
         };
         if let Some(rect_idx) = active.remove(&signature) {
             rectangles[rect_idx].row_end = row;
+            rectangles[rect_idx].max_dbz_tenths =
+                rectangles[rect_idx].max_dbz_tenths.max(run.max_dbz_tenths);
             next_active.insert(signature, rect_idx);
         } else {
             let rect_idx = rectangles.len();
@@ -482,7 +499,7 @@ fn merge_row_runs_into_rectangles(
                 col_start: run.col_start,
                 col_end: run.col_end,
                 key: run.key,
-                surface_phase: run.surface_phase,
+                max_dbz_tenths: run.max_dbz_tenths,
             });
             next_active.insert(signature, rect_idx);
         }
@@ -508,15 +525,17 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
     let mut run_col_start = cells[0].col;
     let mut run_col_end = cells[0].col;
     let mut run_key = cells[0].key;
-    let mut run_surface_phase = cells[0].surface_phase;
+    let mut run_max_dbz_tenths = cells[0].dbz_tenths;
 
     for cell in &cells[1..] {
         if cell.row == run_row && cell.key == run_key {
             if cell.col == run_col_end {
+                run_max_dbz_tenths = run_max_dbz_tenths.max(cell.dbz_tenths);
                 continue;
             }
             if cell.col == run_col_end.saturating_add(1) {
                 run_col_end = cell.col;
+                run_max_dbz_tenths = run_max_dbz_tenths.max(cell.dbz_tenths);
                 continue;
             }
         }
@@ -524,7 +543,7 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
             col_start: run_col_start,
             col_end: run_col_end,
             key: run_key,
-            surface_phase: run_surface_phase,
+            max_dbz_tenths: run_max_dbz_tenths,
         });
         if cell.row != run_row {
             merge_row_runs_into_rectangles(
@@ -540,14 +559,14 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
         run_col_start = cell.col;
         run_col_end = cell.col;
         run_key = cell.key;
-        run_surface_phase = cell.surface_phase;
+        run_max_dbz_tenths = cell.dbz_tenths;
     }
 
     runs_for_row.push(RowRun {
         col_start: run_col_start,
         col_end: run_col_end,
         key: run_key,
-        surface_phase: run_surface_phase,
+        max_dbz_tenths: run_max_dbz_tenths,
     });
 
     merge_row_runs_into_rectangles(
@@ -616,78 +635,39 @@ mod tests {
         }
     }
 
+    fn cell(row: u32, col: u32, key: MergeKey, dbz_tenths: i16) -> MergeCell {
+        MergeCell {
+            row,
+            col,
+            key,
+            dbz_tenths,
+        }
+    }
+
     #[test]
     fn build_level_rectangles_merges_runs_and_respects_row_gaps() {
         let key_a = MergeKey {
             phase: 1,
-            dbz_tenths: 300,
+            surface_phase: 1,
+            quantized_dbz_tenths: 300,
         };
         let key_b = MergeKey {
             phase: 2,
-            dbz_tenths: 300,
+            surface_phase: 2,
+            quantized_dbz_tenths: 300,
         };
 
         let mut cells = vec![
-            MergeCell {
-                row: 1,
-                col: 1,
-                key: key_a,
-                surface_phase: 1,
-            },
-            MergeCell {
-                row: 0,
-                col: 1,
-                key: key_a,
-                surface_phase: 1,
-            },
-            MergeCell {
-                row: 0,
-                col: 0,
-                key: key_a,
-                surface_phase: 1,
-            },
-            MergeCell {
-                row: 1,
-                col: 0,
-                key: key_a,
-                surface_phase: 1,
-            },
-            MergeCell {
-                row: 1,
-                col: 4,
-                key: key_a,
-                surface_phase: 1,
-            },
-            MergeCell {
-                row: 2,
-                col: 4,
-                key: key_a,
-                surface_phase: 1,
-            },
-            MergeCell {
-                row: 4,
-                col: 0,
-                key: key_a,
-                surface_phase: 1,
-            },
-            MergeCell {
-                row: 0,
-                col: 6,
-                key: key_b,
-                surface_phase: 2,
-            },
-            MergeCell {
-                row: 1,
-                col: 6,
-                key: key_b,
-                surface_phase: 2,
-            },
-            MergeCell {
-                row: 1,
-                col: 6,
-                key: key_b,
-                surface_phase: 2,
-            },
+            cell(1, 1, key_a, 300),
+            cell(0, 1, key_a, 300),
+            cell(0, 0, key_a, 300),
+            cell(1, 0, key_a, 300),
+            cell(1, 4, key_a, 300),
+            cell(2, 4, key_a, 300),
+            cell(4, 0, key_a, 300),
+            cell(0, 6, key_b, 300),
+            cell(1, 6, key_b, 300),
+            cell(1, 6, key_b, 300),
         ];
 
         let mut rectangles = build_level_rectangles(&mut cells);
@@ -723,5 +703,183 @@ mod tests {
         assert_eq!(rectangles[3].col_start, 0);
         assert_eq!(rectangles[3].col_end, 0);
         assert_eq!(rectangles[3].key, key_a);
+    }
+
+    #[test]
+    fn cells_with_different_surface_phase_never_share_a_rectangle() {
+        // Same aloft phase and same quantized dBZ, but a surface rain/snow
+        // boundary between columns 1 and 2: the run must split there, and the
+        // rows must merge only within each surface-phase side.
+        let key_rain = MergeKey {
+            phase: 1,
+            surface_phase: 0,
+            quantized_dbz_tenths: 300,
+        };
+        let key_snow = MergeKey {
+            phase: 1,
+            surface_phase: 2,
+            quantized_dbz_tenths: 300,
+        };
+
+        let mut cells = vec![
+            cell(0, 0, key_rain, 300),
+            cell(0, 1, key_rain, 300),
+            cell(0, 2, key_snow, 300),
+            cell(0, 3, key_snow, 300),
+            cell(1, 0, key_rain, 300),
+            cell(1, 1, key_rain, 300),
+            cell(1, 2, key_snow, 300),
+            cell(1, 3, key_snow, 300),
+        ];
+
+        let mut rectangles = build_level_rectangles(&mut cells);
+        rectangles.sort_unstable_by_key(|r| r.col_start);
+
+        assert_eq!(rectangles.len(), 2);
+        assert_eq!(
+            (rectangles[0].col_start, rectangles[0].col_end),
+            (0, 1),
+            "rain side should merge into its own 2x2 rectangle"
+        );
+        assert_eq!(rectangles[0].key, key_rain);
+        assert_eq!(
+            (rectangles[1].col_start, rectangles[1].col_end),
+            (2, 3),
+            "snow side should merge into its own 2x2 rectangle"
+        );
+        assert_eq!(rectangles[1].key, key_snow);
+        assert_eq!(rectangles[0].row_end, 1);
+        assert_eq!(rectangles[1].row_end, 1);
+    }
+
+    #[test]
+    fn rectangles_carry_the_true_max_dbz_over_merged_cells() {
+        // All cells quantize to the same 300-tenths bucket but the raw values
+        // differ; the rectangle must report the maximum, not the bucket.
+        let key = MergeKey {
+            phase: 1,
+            surface_phase: 1,
+            quantized_dbz_tenths: 300,
+        };
+
+        let mut cells = vec![
+            cell(0, 0, key, 288),
+            cell(0, 1, key, 305),
+            cell(1, 0, key, 297),
+            cell(1, 1, key, 312),
+        ];
+
+        let rectangles = build_level_rectangles(&mut cells);
+        assert_eq!(rectangles.len(), 1);
+        assert_eq!(rectangles[0].max_dbz_tenths, 312);
+        assert_eq!(rectangles[0].key.quantized_dbz_tenths, 300);
+    }
+
+    fn merge_scan(voxels: Vec<crate::types::StoredVoxel>, levels: usize) -> ScanSnapshot {
+        let mut scan = sample_scan_for_projection();
+        scan.level_bounds = (0..levels)
+            .map(|i| LevelBounds {
+                bottom_feet: (1_000 + i * 1_000) as u16,
+                top_feet: (2_000 + i * 1_000) as u16,
+            })
+            .collect();
+        scan.tile_offsets = vec![0, voxels.len() as u32, voxels.len() as u32, voxels.len() as u32, voxels.len() as u32];
+        scan.voxels = voxels;
+        scan
+    }
+
+    fn decode_wire(payload: &[u8]) -> approach_viz_core::generated::MrmsVolume<'_> {
+        flatbuffers::root::<approach_viz_core::generated::MrmsVolume>(payload)
+            .expect("encoded AVMR payload should decode")
+    }
+
+    #[test]
+    fn wire_bricks_split_on_surface_phase_and_ship_max_dbz() {
+        use crate::types::StoredVoxel;
+
+        // Two adjacent cells, identical aloft phase and quantization bucket:
+        // one rain-surface at 28.8 dBZ, one snow-surface at 31.2 dBZ. With the
+        // old {phase, dbz} key these merged into a single brick that carried
+        // the first cell's surface phase and the quantized 30.0 dBZ.
+        let scan = merge_scan(
+            vec![
+                StoredVoxel {
+                    row: 2,
+                    col: 2,
+                    level_idx: 0,
+                    dbz_tenths: 288,
+                    phase: 1,
+                    surface_phase: 0,
+                },
+                StoredVoxel {
+                    row: 2,
+                    col: 3,
+                    level_idx: 0,
+                    dbz_tenths: 312,
+                    phase: 1,
+                    surface_phase: 2,
+                },
+            ],
+            1,
+        );
+
+        let payload = build_volume_wire_fb(&scan, 35.1, -109.85, 0.0, 40.0)
+            .expect("wire build should succeed");
+        let fb = decode_wire(&payload);
+
+        assert_eq!(fb.source_voxel_count(), 2);
+        assert_eq!(fb.brick_count(), 2, "surface-phase boundary must split the run");
+        let dbz: Vec<i16> = fb.dbz_tenths().expect("dbz column").iter().collect();
+        let surface: Vec<u8> = fb.surface_phase().expect("surface column").iter().collect();
+        let mut pairs: Vec<(u8, i16)> = surface.into_iter().zip(dbz).collect();
+        pairs.sort_unstable();
+        assert_eq!(
+            pairs,
+            vec![(0, 288), (2, 312)],
+            "each brick keeps its own surface phase and true (unquantized) dBZ"
+        );
+    }
+
+    #[test]
+    fn wire_bricks_report_max_dbz_across_vertical_merges() {
+        use crate::types::StoredVoxel;
+
+        // The same cell on two contiguous levels, both in the 30 dBZ bucket
+        // but with different raw values: the merged brick must span both
+        // levels and report the stronger return.
+        let scan = merge_scan(
+            vec![
+                StoredVoxel {
+                    row: 2,
+                    col: 2,
+                    level_idx: 0,
+                    dbz_tenths: 291,
+                    phase: 1,
+                    surface_phase: 1,
+                },
+                StoredVoxel {
+                    row: 2,
+                    col: 2,
+                    level_idx: 1,
+                    dbz_tenths: 309,
+                    phase: 1,
+                    surface_phase: 1,
+                },
+            ],
+            2,
+        );
+
+        let payload = build_volume_wire_fb(&scan, 35.1, -109.85, 0.0, 40.0)
+            .expect("wire build should succeed");
+        let fb = decode_wire(&payload);
+
+        assert_eq!(fb.source_voxel_count(), 2);
+        assert_eq!(fb.brick_count(), 1, "contiguous levels should merge vertically");
+        assert_eq!(fb.span_z().expect("span_z column").get(0), 2);
+        assert_eq!(
+            fb.dbz_tenths().expect("dbz column").get(0),
+            309,
+            "vertical merge must keep the true maximum"
+        );
     }
 }
