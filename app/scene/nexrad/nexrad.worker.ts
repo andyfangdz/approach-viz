@@ -3,18 +3,12 @@ import { applyPhaseDebugValues, extractPhaseDebugHeaderValues } from './nexrad-d
 import type {
   NexradVolumePayload,
   NexradLayerSummary,
-  NexradRenderVolumeData,
+  NexradVolumeTextureData,
   NexradCompositeSurface,
   EchoTopSoA,
   CrossSectionData
 } from './nexrad-types';
-import {
-  MRMS_LEVEL_TAGS,
-  EMPTY_ECHO_TOP_SOA,
-  EMPTY_RENDER_VOLUME,
-  PHASE_MIXED,
-  PHASE_SNOW
-} from './nexrad-types';
+import { MRMS_LEVEL_TAGS, EMPTY_ECHO_TOP_SOA, PHASE_MIXED, PHASE_SNOW } from './nexrad-types';
 import { buildCompositeRgba } from './nexrad-composite';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
@@ -94,7 +88,7 @@ export interface NexradPhaseCounts {
 
 export interface NexradPollAndPrepareResult {
   volumePayload: NexradVolumePayload | null;
-  renderVolume: NexradRenderVolumeData;
+  volumeTexture: NexradVolumeTextureData | null;
   crossSectionData: CrossSectionData | null;
   compositeSurface: NexradCompositeSurface | null;
   /** Per-payload phase tally (debug panel), computed off main thread. */
@@ -107,7 +101,7 @@ export interface NexradPollAndPrepareResult {
 }
 
 export interface NexradRePrepareResult {
-  renderVolume: NexradRenderVolumeData;
+  volumeTexture: NexradVolumeTextureData | null;
   crossSectionData: CrossSectionData | null;
   compositeSurface: NexradCompositeSurface | null;
   timings: { volumePrepareMs: number | null } | null;
@@ -180,7 +174,7 @@ interface WasmCompositeSurface {
 }
 
 interface WasmDecodeAndPrepareMrmsResult {
-  renderVolume: NexradRenderVolumeData;
+  volumeTexture: NexradVolumeTextureData | null;
   crossSection: CrossSectionData | null;
   composite: WasmCompositeSurface | null;
   volumePayload: WasmVolumePayload;
@@ -305,23 +299,12 @@ function encodeDeclutterMode(mode: NexradDeclutterMode): number {
   }
 }
 
-/** Collect transferable ArrayBuffers from render volume columns (zero-copy
- *  postMessage). Skips the shared empty singleton by identity so its
- *  module-level shared buffers are never neutered; a real zero-count result
- *  carries fresh per-call buffers that are safe to transfer. */
-function renderVolumeTransferables(render: NexradRenderVolumeData): ArrayBuffer[] {
-  if (render === EMPTY_RENDER_VOLUME) return [];
-  // SAFETY: wasm-bindgen render-volume columns are TypedArray views over ArrayBuffers.
-  return [
-    render.centerXNm.buffer as ArrayBuffer,
-    render.centerYNm.buffer as ArrayBuffer,
-    render.centerZNm.buffer as ArrayBuffer,
-    render.sizeXNm.buffer as ArrayBuffer,
-    render.sizeYNm.buffer as ArrayBuffer,
-    render.sizeZNm.buffer as ArrayBuffer,
-    render.dbz.buffer as ArrayBuffer,
-    render.phaseCode.buffer as ArrayBuffer
-  ];
+/** Collect the transferable texel buffer from the raymarch volume texture
+ *  (zero-copy postMessage). */
+function volumeTextureTransferables(texture: NexradVolumeTextureData | null): ArrayBuffer[] {
+  if (!texture) return [];
+  // SAFETY: the wasm-bindgen texel column is a Uint8Array view over an ArrayBuffer.
+  return [texture.texels.buffer as ArrayBuffer];
 }
 
 /** Collect transferable ArrayBuffers from cross-section data (if present). */
@@ -359,7 +342,7 @@ export class NexradWorkerApi {
     };
 
     let volumePayload: NexradVolumePayload | null = null;
-    let renderVolume: NexradRenderVolumeData = EMPTY_RENDER_VOLUME;
+    let volumeTexture: NexradVolumeTextureData | null = null;
     let crossSectionData: CrossSectionData | null = null;
     let compositeSurface: NexradCompositeSurface | null = null;
     let phaseCounts: NexradPhaseCounts | null = null;
@@ -394,8 +377,8 @@ export class NexradWorkerApi {
         encodeSurfaceMosaicProduct(options.surfaceMosaicProduct)
       ) as WasmDecodeAndPrepareMrmsResult;
 
-      // Flat render-ready columns — the dual-index join already ran in Rust.
-      renderVolume = result.renderVolume;
+      // Dense raymarch texel grid — the dual-index join already ran in Rust.
+      volumeTexture = result.volumeTexture;
 
       // Cross-section (null if not requested or empty volume)
       crossSectionData = result.crossSection;
@@ -508,7 +491,7 @@ export class NexradWorkerApi {
     // Build result and transfer list
     const result: NexradPollAndPrepareResult = {
       volumePayload,
-      renderVolume,
+      volumeTexture,
       crossSectionData,
       compositeSurface,
       phaseCounts,
@@ -520,7 +503,7 @@ export class NexradWorkerApi {
     };
 
     const transferList: ArrayBuffer[] = [
-      ...renderVolumeTransferables(renderVolume),
+      ...volumeTextureTransferables(volumeTexture),
       ...crossSectionTransferables(crossSectionData),
       ...compositeTransferables(compositeSurface),
       ...echoTopSoATransferables(echoTop18, echoTop30, echoTop50)
@@ -557,21 +540,21 @@ export class NexradWorkerApi {
       encodeSurfaceMosaicProduct(options.surfaceMosaicProduct)
     ) as WasmDecodeAndPrepareMrmsResult;
 
-    const renderVolume: NexradRenderVolumeData = result.renderVolume;
+    const volumeTexture: NexradVolumeTextureData | null = result.volumeTexture;
     const crossSectionData: CrossSectionData | null = result.crossSection;
     const compositeSurface = colorCompositeSurface(result.composite);
 
     const prepareMs = roundMs(performance.now() - prepareStartedAt);
 
     const rePrepareResult: NexradRePrepareResult = {
-      renderVolume,
+      volumeTexture,
       crossSectionData,
       compositeSurface,
       timings: { volumePrepareMs: prepareMs }
     };
 
     const transferList: ArrayBuffer[] = [
-      ...renderVolumeTransferables(renderVolume),
+      ...volumeTextureTransferables(volumeTexture),
       ...crossSectionTransferables(crossSectionData),
       ...compositeTransferables(compositeSurface)
     ];

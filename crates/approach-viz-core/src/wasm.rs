@@ -17,15 +17,16 @@ fn js_err<E: std::fmt::Display>(context: &str, error: E) -> JsValue {
 // MRMS Decode + Prepare + Cross-Section (single boundary crossing)
 // ---------------------------------------------------------------------------
 
-/// Decode, filter, curvature-correct, declutter, and join into render-ready
-/// voxel columns from a raw AVMR binary payload — all in one WASM call,
-/// optionally building a cross-section grid.
+/// Decode, filter, curvature-correct, declutter, and rasterize into a dense
+/// raymarch volume texture from a raw AVMR binary payload — all in one WASM
+/// call, optionally building a cross-section grid.
 ///
-/// Returns a JS object with three top-level keys:
-///   `renderVolume` — flat per-rendered-voxel columns + altitude-guide
-///       extents from `build_render_volume` (the `prepare_volume` dual index
+/// Returns a JS object with these top-level keys:
+///   `volumeTexture` — RG8 3D texel grid + placement metadata + altitude-guide
+///       extents from `build_volume_texture` (the `prepare_volume` dual index
 ///       space is resolved here in Rust; JS never pairs
-///       `declutterIndices`/`validIndices` with payload columns)
+///       `declutterIndices`/`validIndices` with payload columns), or null when
+///       nothing passes the selection
 ///   `crossSection` — CrossSectionData | null
 ///   `composite` — ground reflectivity raster (composite or base) | null
 ///   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
@@ -94,33 +95,48 @@ pub fn decode_and_prepare_mrms(
         None
     };
 
-    // 4. Join prepare outputs with payload columns into flat render columns
-    //    (the same `build_render_volume` path the native iOS/macOS app uses).
-    let render = crate::mrms_render::build_render_volume(
+    // 4. Rasterize the selected bricks into the dense raymarch texture (the
+    //    dual index space is resolved inside `build_volume_texture`).
+    let texture = crate::mrms_render::build_volume_texture(
         &vol_view,
         fb.footprint_x_milli() as f32 / 1000.0,
         fb.footprint_y_milli() as f32 / 1000.0,
         &prepared,
-    );
+    )
+    .map_err(|e| JsValue::from_str(&e))?;
 
     // 5. Build result object
     let root = js_sys::Object::new();
 
-    // -- render volume (flat per-rendered-voxel columns + guide extents) --
-    let render_obj = js_sys::Object::new();
-    set_prop(&render_obj, "count", &JsValue::from(render.center_x_nm.len() as u32))?;
-    set_prop(&render_obj, "centerXNm", &js_sys::Float32Array::from(&render.center_x_nm[..]).into())?;
-    set_prop(&render_obj, "centerYNm", &js_sys::Float32Array::from(&render.center_y_nm[..]).into())?;
-    set_prop(&render_obj, "centerZNm", &js_sys::Float32Array::from(&render.center_z_nm[..]).into())?;
-    set_prop(&render_obj, "sizeXNm", &js_sys::Float32Array::from(&render.size_x_nm[..]).into())?;
-    set_prop(&render_obj, "sizeYNm", &js_sys::Float32Array::from(&render.size_y_nm[..]).into())?;
-    set_prop(&render_obj, "sizeZNm", &js_sys::Float32Array::from(&render.size_z_nm[..]).into())?;
-    set_prop(&render_obj, "dbz", &js_sys::Float32Array::from(&render.dbz[..]).into())?;
-    set_prop(&render_obj, "phaseCode", &js_sys::Uint8Array::from(&render.phase_code[..]).into())?;
-    set_prop(&render_obj, "maxAbsXNm", &JsValue::from(render.max_abs_x_nm))?;
-    set_prop(&render_obj, "maxAbsZNm", &JsValue::from(render.max_abs_z_nm))?;
-    set_prop(&render_obj, "maxCorrectedTopFeet", &JsValue::from(render.max_corrected_top_feet))?;
-    set_prop(&root, "renderVolume", &render_obj.into())?;
+    // -- raymarch volume texture (RG8 texels + placement + guide extents) --
+    match &texture {
+        None => {
+            set_prop(&root, "volumeTexture", &JsValue::NULL)?;
+        }
+        Some(tex) => {
+            let tex_obj = js_sys::Object::new();
+            set_prop(&tex_obj, "width", &JsValue::from(tex.width))?;
+            set_prop(&tex_obj, "height", &JsValue::from(tex.height))?;
+            set_prop(&tex_obj, "depth", &JsValue::from(tex.depth))?;
+            set_prop(&tex_obj, "originXNm", &JsValue::from(tex.origin_x_nm))?;
+            set_prop(&tex_obj, "originZNm", &JsValue::from(tex.origin_z_nm))?;
+            set_prop(&tex_obj, "cellSizeXNm", &JsValue::from(tex.cell_size_x_nm))?;
+            set_prop(&tex_obj, "cellSizeZNm", &JsValue::from(tex.cell_size_z_nm))?;
+            set_prop(&tex_obj, "baseFeet", &JsValue::from(tex.base_feet))?;
+            set_prop(&tex_obj, "binSizeFeet", &JsValue::from(tex.bin_size_feet))?;
+            set_prop(&tex_obj, "texels", &js_sys::Uint8Array::from(&tex.texels[..]).into())?;
+            set_prop(&tex_obj, "filledTexelCount", &JsValue::from(tex.filled_texel_count))?;
+            set_prop(
+                &tex_obj,
+                "renderedVoxelCount",
+                &JsValue::from(prepared.declutter_count as u32),
+            )?;
+            set_prop(&tex_obj, "maxAbsXNm", &JsValue::from(tex.max_abs_x_nm))?;
+            set_prop(&tex_obj, "maxAbsZNm", &JsValue::from(tex.max_abs_z_nm))?;
+            set_prop(&tex_obj, "maxCorrectedTopFeet", &JsValue::from(tex.max_corrected_top_feet))?;
+            set_prop(&root, "volumeTexture", &tex_obj.into())?;
+        }
+    }
 
     // -- cross-section --
     match &cross_section {

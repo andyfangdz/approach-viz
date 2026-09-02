@@ -5,7 +5,7 @@ import type { NexradDebugState, NexradTimingDebugState } from '@/app/app-client/
 import type {
   CrossSectionData,
   NexradCompositeSurface,
-  NexradRenderVolumeData,
+  NexradVolumeTextureData,
   NexradVolumeOverlayProps,
   NexradVolumePayload,
   EchoTopPayload,
@@ -18,8 +18,7 @@ import {
   ALTITUDE_GUIDE_STEP_FEET,
   MIN_CROSS_SECTION_HALF_WIDTH_NM,
   MAX_CROSS_SECTION_HALF_WIDTH_NM,
-  EMPTY_ECHO_TOP_SOA,
-  EMPTY_RENDER_VOLUME
+  EMPTY_ECHO_TOP_SOA
 } from './nexrad/nexrad-types';
 import { MIN_NEXRAD_MIN_DBZ } from '@/app/app-client/constants';
 import { buildEchoTopRequestUrl, buildNexradRequestUrl } from './nexrad/nexrad-decode';
@@ -30,16 +29,10 @@ import {
   pollNexradWithWorker,
   rePrepareNexradWithWorker
 } from './nexrad/nexrad-worker-client';
-import {
-  dbzToAlpha,
-  patchMaterialForInstanceAlpha,
-  applyVoxelInstances,
-  feetToNm,
-  applyConstantColorInstances,
-  feetLabel
-} from './nexrad/nexrad-render';
+import { feetToNm, applyConstantColorInstances, feetLabel } from './nexrad/nexrad-render';
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
 import { NexradSurfaceMosaic, type MosaicDrapeStatus } from './nexrad/NexradSurfaceMosaic';
+import { NexradVolumeRaymarch } from './nexrad/NexradVolumeRaymarch';
 
 const MIN_INSTANCE_CAPACITY = 1;
 const EMPTY_PHASE_COUNTS = { rain: 0, mixed: 0, snow: 0 };
@@ -152,8 +145,6 @@ export function NexradVolumeOverlay({
   const [isLoading, setIsLoading] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastPollAt, setLastPollAt] = useState<string | null>(null);
-  const baseMeshRef = useRef<THREE.InstancedMesh | null>(null);
-  const glowMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const echo18MeshRef = useRef<THREE.InstancedMesh | null>(null);
   const echo30MeshRef = useRef<THREE.InstancedMesh | null>(null);
   const echo50MeshRef = useRef<THREE.InstancedMesh | null>(null);
@@ -202,7 +193,7 @@ export function NexradVolumeOverlay({
   sliceAxisRef.current = sliceAxis;
   const slicePerpAxisRef = useRef(slicePerpAxis);
   slicePerpAxisRef.current = slicePerpAxis;
-  const [volumeData, setVolumeData] = useState<NexradRenderVolumeData>(EMPTY_RENDER_VOLUME);
+  const [volumeTexture, setVolumeTexture] = useState<NexradVolumeTextureData | null>(null);
   const [crossSectionData, setCrossSectionData] = useState<CrossSectionData | null>(null);
   const [compositeSurface, setCompositeSurface] = useState<NexradCompositeSurface | null>(null);
   const [mosaicDrapeStatus, setMosaicDrapeStatus] = useState<MosaicDrapeStatus | null>(null);
@@ -226,61 +217,12 @@ export function NexradVolumeOverlay({
     });
   }, []);
 
-  const renderedVoxelCount = volumeData.count;
-  const instanceCapacity = useGrowingInstanceCapacity(renderedVoxelCount);
-  const instanceAlphaArray = useMemo(() => {
-    const array = new Float32Array(instanceCapacity);
-    array.fill(1);
-    return array;
-  }, [instanceCapacity]);
+  const renderedVoxelCount = volumeTexture?.renderedVoxelCount ?? 0;
   const echo18Capacity = useGrowingInstanceCapacity(echoTop18.count);
   const echo30Capacity = useGrowingInstanceCapacity(echoTop30.count);
   const echo50Capacity = useGrowingInstanceCapacity(echoTop50.count);
 
-  const voxelGeometry = useMemo(() => {
-    const nextGeometry = new THREE.BoxGeometry(1, 1, 1);
-    const positionAttribute = nextGeometry.getAttribute('position');
-    const colors = new Float32Array(positionAttribute.count * 3);
-    colors.fill(1);
-    nextGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const alphaAttribute = new THREE.InstancedBufferAttribute(instanceAlphaArray, 1);
-    alphaAttribute.setUsage(THREE.DynamicDrawUsage);
-    nextGeometry.setAttribute('instanceAlpha', alphaAttribute);
-    return nextGeometry;
-  }, [instanceAlphaArray]);
   const blockGeometry = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
-  const baseMaterial = useMemo(() => {
-    const material = new THREE.MeshBasicMaterial({
-      transparent: true,
-      opacity: 0.32,
-      depthWrite: false,
-      depthTest: true,
-      color: 0xffffff,
-      blending: THREE.NormalBlending,
-      side: THREE.FrontSide,
-      vertexColors: true,
-      toneMapped: false,
-      fog: false
-    });
-    patchMaterialForInstanceAlpha(material, 1.12, 2.5);
-    return material;
-  }, []);
-  const glowMaterial = useMemo(() => {
-    const material = new THREE.MeshBasicMaterial({
-      transparent: true,
-      opacity: 0.08,
-      depthWrite: false,
-      depthTest: true,
-      color: 0xffffff,
-      blending: THREE.NormalBlending,
-      side: THREE.FrontSide,
-      vertexColors: true,
-      toneMapped: false,
-      fog: false
-    });
-    patchMaterialForInstanceAlpha(material, 0.62, 1.6);
-    return material;
-  }, []);
   const echoTop18Material = useMemo(() => {
     const material = new THREE.MeshBasicMaterial({
       transparent: true,
@@ -329,28 +271,13 @@ export function NexradVolumeOverlay({
 
   useEffect(() => {
     const clampedOpacity = Math.min(1, Math.max(0, opacity));
-    // Per-instance alpha already encodes intensity, so the material opacity
-    // acts as a master volume knob with a low floor and a dense ceiling.
-    baseMaterial.opacity = THREE.MathUtils.lerp(0.12, 0.66, clampedOpacity);
-    glowMaterial.opacity = THREE.MathUtils.lerp(0.01, 0.08, clampedOpacity);
+    // The raymarched volume reads intensity from the texture; the slider acts
+    // as a master knob for the echo-top sheets here and for the raymarch
+    // density inside NexradVolumeRaymarch.
     echoTop18Material.opacity = THREE.MathUtils.lerp(0.08, 0.24, clampedOpacity);
     echoTop30Material.opacity = THREE.MathUtils.lerp(0.11, 0.29, clampedOpacity);
     echoTop50Material.opacity = THREE.MathUtils.lerp(0.14, 0.34, clampedOpacity);
-  }, [
-    baseMaterial,
-    glowMaterial,
-    echoTop18Material,
-    echoTop30Material,
-    echoTop50Material,
-    opacity
-  ]);
-
-  useEffect(
-    () => () => {
-      voxelGeometry.dispose();
-    },
-    [voxelGeometry]
-  );
+  }, [echoTop18Material, echoTop30Material, echoTop50Material, opacity]);
 
   useEffect(
     () => () => {
@@ -359,19 +286,6 @@ export function NexradVolumeOverlay({
     [blockGeometry]
   );
 
-  useEffect(
-    () => () => {
-      baseMaterial.dispose();
-    },
-    [baseMaterial]
-  );
-
-  useEffect(
-    () => () => {
-      glowMaterial.dispose();
-    },
-    [glowMaterial]
-  );
   useEffect(
     () => () => {
       echoTop18Material.dispose();
@@ -385,7 +299,7 @@ export function NexradVolumeOverlay({
     if (!enabled) {
       setPayload(null);
       setEchoTopPayload(null);
-      setVolumeData(EMPTY_RENDER_VOLUME);
+      setVolumeTexture(null);
       setCrossSectionData(null);
       setCompositeSurface(null);
       setEchoTop18(EMPTY_ECHO_TOP_SOA);
@@ -401,7 +315,7 @@ export function NexradVolumeOverlay({
 
     setPayload(null);
     setEchoTopPayload(null);
-    setVolumeData(EMPTY_RENDER_VOLUME);
+    setVolumeTexture(null);
     setCrossSectionData(null);
     setCompositeSurface(null);
     setEchoTop18(EMPTY_ECHO_TOP_SOA);
@@ -512,7 +426,7 @@ export function NexradVolumeOverlay({
                 }
                 return nextPayload;
               });
-              setVolumeData(result.renderVolume);
+              setVolumeTexture(result.volumeTexture);
               setCrossSectionData(result.crossSectionData);
               setCompositeSurface(result.compositeSurface);
               setPhaseCounts(result.phaseCounts ?? EMPTY_PHASE_COUNTS);
@@ -520,7 +434,7 @@ export function NexradVolumeOverlay({
             }
           } else if (!shouldFetchVolume) {
             setPayload(null);
-            setVolumeData(EMPTY_RENDER_VOLUME);
+            setVolumeTexture(null);
             setCrossSectionData(null);
             setCompositeSurface(null);
             setPhaseCounts(EMPTY_PHASE_COUNTS);
@@ -637,7 +551,7 @@ export function NexradVolumeOverlay({
           surfaceMosaicProduct
         });
         if (cancelled) return;
-        setVolumeData(result.renderVolume);
+        setVolumeTexture(result.volumeTexture);
         setCrossSectionData(result.crossSectionData);
         setCompositeSurface(result.compositeSurface);
         if (result.timings?.volumePrepareMs != null) {
@@ -776,79 +690,36 @@ export function NexradVolumeOverlay({
   );
 
   useEffect(() => {
-    const meshes = [
-      baseMeshRef.current,
-      glowMeshRef.current,
-      echo18MeshRef.current,
-      echo30MeshRef.current,
-      echo50MeshRef.current
-    ];
+    const meshes = [echo18MeshRef.current, echo30MeshRef.current, echo50MeshRef.current];
     for (const mesh of meshes) {
       if (!mesh) continue;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     }
     // Re-run when sub-layer visibility changes so newly mounted meshes
     // get DynamicDrawUsage set before the first data arrives.
-  }, [showVolume, showEchoTops]);
+  }, [showEchoTops]);
 
   useEffect(() => {
     const uploadStartedAt = performance.now();
-    // Compute per-instance alpha from dBZ intensity (shared by both passes).
-    // The render columns are flat and instance-ordered, so alpha is a direct
-    // per-instance read — no index resolution.
-    for (let i = 0; i < volumeData.count; i += 1) {
-      instanceAlphaArray[i] = dbzToAlpha(volumeData.dbz[i]);
-    }
-    const alphaAttribute = voxelGeometry.getAttribute('instanceAlpha');
-    if (alphaAttribute) {
-      alphaAttribute.needsUpdate = true;
-    }
-
-    const baseMesh = baseMeshRef.current;
-    applyVoxelInstances(baseMesh, volumeData);
-    const glowMesh = glowMeshRef.current;
-    if (baseMesh && glowMesh) {
-      // Share the populated instance buffers so the glow pass avoids a second
-      // full per-voxel transform/color write on every update.
-      if (glowMesh.instanceMatrix !== baseMesh.instanceMatrix) {
-        glowMesh.instanceMatrix = baseMesh.instanceMatrix;
-      }
-      if (baseMesh.instanceColor && glowMesh.instanceColor !== baseMesh.instanceColor) {
-        glowMesh.instanceColor = baseMesh.instanceColor;
-      }
-      glowMesh.count = baseMesh.count;
-      glowMesh.instanceMatrix.needsUpdate = true;
-      if (glowMesh.instanceColor) {
-        glowMesh.instanceColor.needsUpdate = true;
-      }
-    }
+    // The volume itself uploads as a 3D texture inside NexradVolumeRaymarch;
+    // only the echo-top sheets still use instanced geometry here.
     applyConstantColorInstances(echo18MeshRef.current, echoTop18);
     applyConstantColorInstances(echo30MeshRef.current, echoTop30);
     applyConstantColorInstances(echo50MeshRef.current, echoTop50);
     patchTimings({ instanceUploadMs: roundMs(performance.now() - uploadStartedAt) });
-    // showVolume/showEchoTops: re-run when sub-layer toggles so freshly
-    // mounted meshes get count set to 0 (or the real count if data exists)
-    // instead of rendering an uninitialized instance at origin.
-  }, [
-    volumeData,
-    echoTop18,
-    echoTop30,
-    echoTop50,
-    instanceAlphaArray,
-    voxelGeometry,
-    showVolume,
-    showEchoTops,
-    patchTimings
-  ]);
+    // showEchoTops: re-run when the sub-layer toggles so freshly mounted
+    // meshes get count set to 0 (or the real count if data exists) instead of
+    // rendering an uninitialized instance at origin.
+  }, [echoTop18, echoTop30, echoTop50, showEchoTops, patchTimings]);
 
   const guideData = useMemo((): AltitudeGuideData => {
-    if (!showAltitudeGuides || volumeData.count === 0) {
+    if (!showAltitudeGuides || volumeTexture === null) {
       return EMPTY_ALTITUDE_GUIDE_DATA;
     }
     // Extents over the rendered voxel set come precomputed from the Rust
-    // render-volume join.
-    let extentNm = Math.max(volumeData.maxAbsXNm, volumeData.maxAbsZNm);
-    let maxFeet = volumeData.maxCorrectedTopFeet;
+    // texture rasterization.
+    let extentNm = Math.max(volumeTexture.maxAbsXNm, volumeTexture.maxAbsZNm);
+    let maxFeet = volumeTexture.maxCorrectedTopFeet;
     if (echoTopPayload) {
       maxFeet = Math.max(
         maxFeet,
@@ -889,7 +760,7 @@ export function NexradVolumeOverlay({
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     return { geometry, labels };
-  }, [showAltitudeGuides, volumeData, echoTopPayload, maxRangeNm]);
+  }, [showAltitudeGuides, volumeTexture, echoTopPayload, maxRangeNm]);
 
   useEffect(
     () => () => {
@@ -930,23 +801,8 @@ export function NexradVolumeOverlay({
           onDrapeStatusChange={setMosaicDrapeStatus}
         />
       )}
-      {showVolume && (
-        <instancedMesh
-          key={`mrms-base-${instanceCapacity}`}
-          ref={baseMeshRef}
-          args={[voxelGeometry, baseMaterial, instanceCapacity]}
-          frustumCulled={false}
-          renderOrder={80}
-        />
-      )}
-      {showVolume && (
-        <instancedMesh
-          key={`mrms-glow-${instanceCapacity}`}
-          ref={glowMeshRef}
-          args={[voxelGeometry, glowMaterial, instanceCapacity]}
-          frustumCulled={false}
-          renderOrder={81}
-        />
+      {showVolume && volumeTexture && (
+        <NexradVolumeRaymarch texture={volumeTexture} opacity={opacity} />
       )}
       {showEchoTops && (
         <>

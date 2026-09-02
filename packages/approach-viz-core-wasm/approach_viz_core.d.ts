@@ -77,15 +77,16 @@ export function approach_path_resolve_hold_leg_length_nm(hold_distance_nm: numbe
 export function decode_and_prepare_echo_top(data: Uint8Array, apply_earth_curvature: boolean, ref_lat: number): any;
 
 /**
- * Decode, filter, curvature-correct, declutter, and join into render-ready
- * voxel columns from a raw AVMR binary payload — all in one WASM call,
- * optionally building a cross-section grid.
+ * Decode, filter, curvature-correct, declutter, and rasterize into a dense
+ * raymarch volume texture from a raw AVMR binary payload — all in one WASM
+ * call, optionally building a cross-section grid.
  *
- * Returns a JS object with three top-level keys:
- *   `renderVolume` — flat per-rendered-voxel columns + altitude-guide
- *       extents from `build_render_volume` (the `prepare_volume` dual index
+ * Returns a JS object with these top-level keys:
+ *   `volumeTexture` — RG8 3D texel grid + placement metadata + altitude-guide
+ *       extents from `build_volume_texture` (the `prepare_volume` dual index
  *       space is resolved here in Rust; JS never pairs
- *       `declutterIndices`/`validIndices` with payload columns)
+ *       `declutterIndices`/`validIndices` with payload columns), or null when
+ *       nothing passes the selection
  *   `crossSection` — CrossSectionData | null
  *   `composite` — ground reflectivity raster (composite or base) | null
  *   `volumePayload` — volume metadata + full-payload phase codes (debug tally)
