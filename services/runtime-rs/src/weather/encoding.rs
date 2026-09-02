@@ -243,11 +243,13 @@ fn build_volume_wire_fb_impl(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u
     let mut merged_bricks: Vec<BrickCandidate> = Vec::new();
 
     for (level_idx, cells) in cells_by_level.iter_mut().enumerate() {
+        // `build_level_rectangles` leaves `cells` sorted by (row, col), which
+        // `split_rectangle` relies on to recompute per-chunk maxima.
         let mut rectangles = build_level_rectangles(cells);
         let mut split_rectangles: Vec<HorizontalRect> = Vec::with_capacity(rectangles.len());
         for rect in rectangles.drain(..) {
             let max_span = max_span_for_dbz(rect.key.quantized_dbz_tenths);
-            split_rectangle(rect, max_span, &mut split_rectangles);
+            split_rectangle(rect, max_span, cells, &mut split_rectangles);
         }
 
         let mut next_active: FxHashMap<VerticalSignature, usize> =
@@ -434,24 +436,77 @@ fn max_span_for_dbz(dbz_tenths: i16) -> u16 {
     }
 }
 
-fn split_rectangle(rect: HorizontalRect, max_span: u16, out: &mut Vec<HorizontalRect>) {
+/// True maximum `dbz_tenths` over the cells of `key` inside one chunk of a
+/// rectangle. `cells` must be sorted by (row, col) — the order
+/// `build_level_rectangles` leaves them in. Every chunk row is a sub-range of
+/// a same-key run, so a matching cell always exists; if the invariant ever
+/// breaks, the parent rectangle's maximum is the conservative answer (it can
+/// overstate within the quantization bucket, never understate).
+fn max_dbz_in_chunk(
+    cells: &[MergeCell],
+    key: MergeKey,
+    row_start: u32,
+    row_end: u32,
+    col_start: u32,
+    col_end: u32,
+    parent_max_dbz_tenths: i16,
+) -> i16 {
+    let mut max: Option<i16> = None;
+    for row in row_start..=row_end {
+        let target = (u64::from(row) << 32) | u64::from(col_start);
+        let start = cells
+            .partition_point(|cell| ((u64::from(cell.row) << 32) | u64::from(cell.col)) < target);
+        for cell in &cells[start..] {
+            if cell.row != row || cell.col > col_end {
+                break;
+            }
+            if cell.key == key {
+                max = Some(max.map_or(cell.dbz_tenths, |m| m.max(cell.dbz_tenths)));
+            }
+        }
+    }
+    debug_assert!(max.is_some(), "split chunk contains no cell of its own key");
+    max.unwrap_or(parent_max_dbz_tenths)
+}
+
+fn split_rectangle(
+    rect: HorizontalRect,
+    max_span: u16,
+    cells: &[MergeCell],
+    out: &mut Vec<HorizontalRect>,
+) {
     let chunk_size = max_span.max(1) as u32;
+    let splits =
+        rect.row_end - rect.row_start >= chunk_size || rect.col_end - rect.col_start >= chunk_size;
     let mut row_start = rect.row_start;
     while row_start <= rect.row_end {
         let row_end = min(row_start.saturating_add(chunk_size - 1), rect.row_end);
         let mut col_start = rect.col_start;
         while col_start <= rect.col_end {
             let col_end = min(col_start.saturating_add(chunk_size - 1), rect.col_end);
-            // Chunks inherit the parent rectangle's max; every merged cell
-            // shares the same 5 dBZ quantization bucket, so the value stays
-            // within the bucket's half-step of each chunk's true maximum.
+            // An unsplit rectangle already carries its exact maximum; a split
+            // chunk recomputes its own so a chunk without the strongest cell
+            // is not pushed into a stronger 5 dBZ display band.
+            let max_dbz_tenths = if splits {
+                max_dbz_in_chunk(
+                    cells,
+                    rect.key,
+                    row_start,
+                    row_end,
+                    col_start,
+                    col_end,
+                    rect.max_dbz_tenths,
+                )
+            } else {
+                rect.max_dbz_tenths
+            };
             out.push(HorizontalRect {
                 row_start,
                 row_end,
                 col_start,
                 col_end,
                 key: rect.key,
-                max_dbz_tenths: rect.max_dbz_tenths,
+                max_dbz_tenths,
             });
             if col_end == rect.col_end {
                 break;
@@ -773,6 +828,55 @@ mod tests {
         assert_eq!(rectangles.len(), 1);
         assert_eq!(rectangles[0].max_dbz_tenths, 312);
         assert_eq!(rectangles[0].key.quantized_dbz_tenths, 300);
+    }
+
+    #[test]
+    fn split_chunks_carry_their_own_max_dbz_not_the_parents() {
+        // One 1x4 run, all in the 300-tenths bucket, strongest cell in the
+        // second half. Splitting at span 2 must not push the weak first chunk
+        // into the stronger chunk's display band.
+        let key = MergeKey {
+            phase: 1,
+            surface_phase: 1,
+            quantized_dbz_tenths: 300,
+        };
+        let mut cells = vec![
+            cell(0, 0, key, 288),
+            cell(0, 1, key, 291),
+            cell(0, 2, key, 312),
+            cell(0, 3, key, 289),
+        ];
+
+        let rectangles = build_level_rectangles(&mut cells);
+        assert_eq!(rectangles.len(), 1);
+        assert_eq!(rectangles[0].max_dbz_tenths, 312);
+
+        let mut chunks = Vec::new();
+        split_rectangle(rectangles[0], 2, &cells, &mut chunks);
+        chunks.sort_unstable_by_key(|c| c.col_start);
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!((chunks[0].col_start, chunks[0].col_end), (0, 1));
+        assert_eq!(chunks[0].max_dbz_tenths, 291, "weak chunk keeps its own max");
+        assert_eq!((chunks[1].col_start, chunks[1].col_end), (2, 3));
+        assert_eq!(chunks[1].max_dbz_tenths, 312);
+    }
+
+    #[test]
+    fn unsplit_rectangles_keep_their_exact_max_without_a_cell_lookup() {
+        let key = MergeKey {
+            phase: 1,
+            surface_phase: 1,
+            quantized_dbz_tenths: 300,
+        };
+        let mut cells = vec![cell(0, 0, key, 297), cell(0, 1, key, 302)];
+        let rectangles = build_level_rectangles(&mut cells);
+        assert_eq!(rectangles.len(), 1);
+
+        let mut chunks = Vec::new();
+        split_rectangle(rectangles[0], 48, &cells, &mut chunks);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].max_dbz_tenths, 302);
     }
 
     fn merge_scan(voxels: Vec<crate::types::StoredVoxel>, levels: usize) -> ScanSnapshot {
