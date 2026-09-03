@@ -73,8 +73,14 @@ export interface NexradVolumeOverlayProps {
   crossSectionRangeNm?: number;
   maxRangeNm?: number;
   applyEarthCurvatureCompensation?: boolean;
+  /** Whether the scene's surface is opaque terrain the volume must not paint
+   *  through (`terrain`, tiled satellite / 3D map modes) or a translucent
+   *  surface the weather may overlay (`none`). */
+  groundOcclusion?: NexradVolumeGroundOcclusion;
   onDebugChange?: (debug: NexradDebugState) => void;
 }
+
+export type NexradVolumeGroundOcclusion = 'none' | 'terrain';
 
 export interface NexradLayerSummary {
   product: string;

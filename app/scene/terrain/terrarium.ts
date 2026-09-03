@@ -9,6 +9,14 @@ import { localToLatLon } from '../approach-path/coordinates';
 
 export const TERRARIUM_TILE_SIZE = 256;
 export const TERRARIUM_TILE_BASE_URL = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium';
+/**
+ * Zoom for the weather layers' elevation raster (mosaic drape and volume
+ * ground occlusion). z8 is ~0.25 NM per pixel — finer than the MRMS ~0.5 NM
+ * cells — while covering the full 120 NM weather range in ~25 tiles. The z10
+ * grid the terrain wireframe uses would need several hundred tiles over the
+ * same area.
+ */
+export const WEATHER_ELEVATION_ZOOM = 8;
 
 const METERS_TO_FEET = 3.28084;
 

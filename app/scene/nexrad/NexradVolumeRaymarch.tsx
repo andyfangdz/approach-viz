@@ -1,24 +1,36 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
+import type { ElevationSampler } from '../terrain/terrarium';
 import type { NexradVolumeTextureData } from './nexrad-types';
 import { ALTITUDE_SCALE } from './nexrad-types';
 import { DBZ_BAND_STEP, DBZ_LUT_MAX_INDEX } from './nexrad-colors';
+import { buildGroundHeightfield } from './nexrad-ground';
 import { DBZ_LUT_PHASE_ROWS, buildDbzPhaseLutTexture } from './nexrad-render';
 
 /** Hard ceiling on samples per ray; the shader loop cannot be unbounded. */
 const MAX_RAY_STEPS = 384;
 /** Floor on samples per ray so short grazing segments still resolve layers. */
 const MIN_RAY_STEPS = 24;
-/** Extinction (per unscaled NM) at the opacity slider's endpoints. The curve
- *  is tuned so the default 35% opacity reads like the previous instanced
- *  renderer's default density. */
-const DENSITY_MIN = 0.08;
-const DENSITY_MAX = 1.6;
+/**
+ * Extinction (per unscaled NM, at full intensity) at the opacity slider's
+ * endpoints. Combined with the cubic dBZ ramp in the shader, the default
+ * 35% opacity leaves a 10 NM deep 20 dBZ shell around 10% opaque while a
+ * 3 NM 50 dBZ core reads above 50%, so cores stay legible through the
+ * light precipitation that surrounds them.
+ */
+const DENSITY_MIN = 0.12;
+const DENSITY_MAX = 2.0;
 
 interface NexradVolumeRaymarchProps {
   texture: NexradVolumeTextureData;
   opacity: number;
+  /** Terrain under the volume. When present, rays stop where they enter the
+   *  ground so opaque terrain occludes the weather behind it; `null` marches
+   *  the full box (translucent surfaces, or terrain not yet loaded). */
+  ground: ElevationSampler | null;
+  applyEarthCurvatureCompensation: boolean;
+  refLat: number;
 }
 
 const VERTEX_SHADER = /* glsl */ `
@@ -42,6 +54,8 @@ const FRAGMENT_SHADER = /* glsl */ `
 
   uniform sampler3D uVolume;
   uniform sampler2D uColorLut;
+  uniform sampler2D uGround;
+  uniform float uGroundEnabled;
   uniform vec3 uCamLocal;
   uniform vec3 uBoxSpanNm;
   uniform vec3 uTexelCounts;
@@ -55,11 +69,14 @@ const FRAGMENT_SHADER = /* glsl */ `
   const float BAND_COUNT = float(${DBZ_LUT_MAX_INDEX + 1});
   const float PHASE_ROWS = float(${DBZ_LUT_PHASE_ROWS});
 
-  // Mirrors the legacy per-voxel alpha ramp, gated to zero below ~2 dBZ so
-  // trilinear falloff into empty texels fades out instead of leaving a floor.
+  // Extinction weight by intensity. Cubic in the 5-65 dBZ span so light
+  // precipitation is nearly transparent and heavy cores dominate the
+  // integral — a thick 20 dBZ shell must not bury a 50 dBZ core behind it.
+  // Gated to zero below ~5 dBZ so trilinear falloff into empty texels fades
+  // out instead of leaving a floor.
   float dbzAlpha(float dbz) {
     float t = clamp((dbz - 5.0) / 60.0, 0.0, 1.0);
-    return (0.1 + 0.9 * pow(t, 1.5)) * smoothstep(1.0, 5.0, dbz);
+    return t * t * t * smoothstep(3.0, 8.0, dbz);
   }
 
   // Slab intersection with the unit box in local space.
@@ -97,6 +114,13 @@ const FRAGMENT_SHADER = /* glsl */ `
     for (int i = 0; i < ${MAX_RAY_STEPS}; i++) {
       if (t > tEnd || alpha > 0.985) break;
       vec3 p = uCamLocal + dir * t;
+      // Opaque ground: the heightfield holds the terrain top in the box's
+      // normalized altitude frame, so entering it ends the ray — nothing
+      // behind a ridge is visible.
+      if (uGroundEnabled > 0.5) {
+        float groundY = texture(uGround, vec2(p.x + 0.5, p.z + 0.5)).r - 0.5;
+        if (p.y < groundY) break;
+      }
       // Local axes: x = texture u, y = altitude bin (w), z = row (v).
       vec2 rg = texture(uVolume, vec3(p.x + 0.5, p.z + 0.5, p.y + 0.5)).rg;
       float dbz = rg.r * 255.0;
@@ -121,18 +145,69 @@ const FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
+/** Placeholder bound to `uGround` while no terrain is in use, so the sampler
+ *  uniform always has a valid texture behind it. */
+function createEmptyGroundTexture(): THREE.DataTexture {
+  const texture = new THREE.DataTexture(
+    new Uint16Array([THREE.DataUtils.toHalfFloat(-1e4)]),
+    1,
+    1,
+    THREE.RedFormat,
+    THREE.HalfFloatType
+  );
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/** Upload a normalized heightfield as a linearly filtered R16F texture. Half
+ *  float is the widest format WebGL2 guarantees filterable; its precision is
+ *  ample for altitudes normalized to the volume's span. */
+function createGroundTexture(
+  heights: Float32Array,
+  width: number,
+  height: number
+): THREE.DataTexture {
+  const halves = new Uint16Array(heights.length);
+  for (let i = 0; i < heights.length; i += 1) {
+    halves[i] = THREE.DataUtils.toHalfFloat(heights[i]);
+  }
+  const texture = new THREE.DataTexture(
+    halves,
+    width,
+    height,
+    THREE.RedFormat,
+    THREE.HalfFloatType
+  );
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.unpackAlignment = 2;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 /**
  * Raymarched MRMS reflectivity volume: one box mesh and one 3D texture in
  * place of the former per-brick instanced meshes, so draw cost no longer
- * scales with voxel count. Renders back faces so the camera can sit inside
- * the weather volume.
+ * scales with voxel count.
  *
- * Known limitation versus the instanced path: depth testing happens where a
- * ray exits the volume, so opaque geometry standing inside the box (a ridge
- * in satellite mode) hides the whole ray rather than only the weather behind
- * it.
+ * The box renders its back faces with the hardware depth test off: the camera
+ * usually sits inside the weather volume, and a depth test at the ray's exit
+ * point would let any geometry between the camera and the far wall — a
+ * terrain wireframe line, a ridge under the box floor — discard the whole
+ * ray. Terrain occlusion is done per sample instead, against a heightfield of
+ * the ground under each volume column, when the scene's surface is opaque.
+ * Other opaque geometry inside the volume (approach path, aircraft) is
+ * overlaid by the translucent weather rather than occluding it.
  */
-export function NexradVolumeRaymarch({ texture, opacity }: NexradVolumeRaymarchProps) {
+export function NexradVolumeRaymarch({
+  texture,
+  opacity,
+  ground,
+  applyEarthCurvatureCompensation,
+  refLat
+}: NexradVolumeRaymarchProps) {
   const meshRef = useRef<THREE.Mesh | null>(null);
 
   const volumeTexture = useMemo(() => {
@@ -156,6 +231,21 @@ export function NexradVolumeRaymarch({ texture, opacity }: NexradVolumeRaymarchP
 
   useEffect(() => () => volumeTexture.dispose(), [volumeTexture]);
 
+  const groundTexture = useMemo(() => {
+    if (!ground) return null;
+    const heights = buildGroundHeightfield(
+      texture,
+      (xNm, zNm) => ground.sampleFeet(xNm, zNm),
+      applyEarthCurvatureCompensation,
+      refLat
+    );
+    return createGroundTexture(heights, texture.width, texture.height);
+  }, [texture, ground, applyEarthCurvatureCompensation, refLat]);
+  useEffect(() => () => groundTexture?.dispose(), [groundTexture]);
+
+  const emptyGroundTexture = useMemo(() => createEmptyGroundTexture(), []);
+  useEffect(() => () => emptyGroundTexture.dispose(), [emptyGroundTexture]);
+
   const colorLut = useMemo(() => buildDbzPhaseLutTexture(), []);
   useEffect(() => () => colorLut.dispose(), [colorLut]);
 
@@ -168,6 +258,8 @@ export function NexradVolumeRaymarch({ texture, opacity }: NexradVolumeRaymarchP
         uniforms: {
           uVolume: { value: null },
           uColorLut: { value: null },
+          uGround: { value: null },
+          uGroundEnabled: { value: 0 },
           uCamLocal: { value: new THREE.Vector3() },
           uBoxSpanNm: { value: new THREE.Vector3(1, 1, 1) },
           uTexelCounts: { value: new THREE.Vector3(1, 1, 1) },
@@ -178,7 +270,7 @@ export function NexradVolumeRaymarch({ texture, opacity }: NexradVolumeRaymarchP
         glslVersion: THREE.GLSL3,
         transparent: true,
         depthWrite: false,
-        depthTest: true,
+        depthTest: false,
         side: THREE.BackSide
       }),
     []
@@ -196,6 +288,8 @@ export function NexradVolumeRaymarch({ texture, opacity }: NexradVolumeRaymarchP
 
   material.uniforms.uVolume.value = volumeTexture;
   material.uniforms.uColorLut.value = colorLut;
+  material.uniforms.uGround.value = groundTexture ?? emptyGroundTexture;
+  material.uniforms.uGroundEnabled.value = groundTexture ? 1 : 0;
   material.uniforms.uBoxSpanNm.value.set(spanXNm, spanYNm, spanZNm);
   // Local axes are (x, altitude, row); texel counts follow the same order.
   material.uniforms.uTexelCounts.value.set(texture.width, texture.depth, texture.height);

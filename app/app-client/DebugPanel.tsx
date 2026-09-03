@@ -508,6 +508,10 @@ export function DebugPanel({
               <span>{nexradDebug.surfaceMosaicDrape ?? 'n/a'}</span>
             </div>
             <div className="debug-row">
+              <span>Volume Ground</span>
+              <span>{nexradDebug.volumeGround ?? 'n/a'}</span>
+            </div>
+            <div className="debug-row">
               <span>Mosaic Cells</span>
               <span>
                 {nexradDebug.surfaceMosaicCellCount}

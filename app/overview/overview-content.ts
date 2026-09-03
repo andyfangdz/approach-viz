@@ -833,14 +833,14 @@ export const SECTIONS: Section[] = [
           },
           {
             kind: 'p',
-            text: 'The reflectivity volume renders as **one raymarched box** (renderOrder 80, depth-read-only, back faces so the camera can sit inside): the fragment shader marches the RG8 3D texture front-to-back with resolution-aware sampling (about one sample per texel crossed, 24–384 steps, jittered start) and an optical-depth curve (`1 − exp(−density·α·ds)`) integrated over unscaled NM, so vertical exaggeration changes shape but not opacity, and the opacity slider maps to the extinction coefficient. Draw cost is per-pixel, not per-voxel — replacing the old base+glow instanced pair (~2 GPU instances per brick, >1M instances in a Miami-scale event). Sample colors come from a nearest-filtered `(band × phase)` LUT texture built once from the shared band tables — indexed by `floor(dbz/5)`, no per-voxel color math anywhere:'
+            text: 'The reflectivity volume renders as **one raymarched box** (renderOrder 80, back faces with the hardware depth test off so the camera can sit inside and no wireframe line or ridge can discard a whole ray): the fragment shader marches the RG8 3D texture front-to-back with resolution-aware sampling (about one sample per texel crossed, 24–384 steps, jittered start) and an optical-depth curve (`1 − exp(−density·α·ds)`) integrated over unscaled NM, so vertical exaggeration changes shape but not opacity, and the opacity slider maps to the extinction coefficient. α is cubic in dBZ, so light precipitation stays nearly transparent and cores read through their shells. In satellite / 3D map modes a ray also ends where it enters the ground: a curvature-corrected heightfield of the mosaic z8 Terrarium raster, sampled under every volume column, so terrain occludes the weather behind it. Draw cost is per-pixel, not per-voxel — replacing the old base+glow instanced pair (~2 GPU instances per brick, >1M instances in a Miami-scale event). Sample colors come from a nearest-filtered `(band × phase)` LUT texture built once from the shared band tables — indexed by `floor(dbz/5)`, no per-voxel color math anywhere:'
           },
           { kind: 'dbz' },
           {
             kind: 'code',
             title: 'app/scene/nexrad/NexradVolumeRaymarch.tsx — per-sample alpha',
             lang: 'glsl',
-            text: 'float t = clamp((dbz - 5.0) / 60.0, 0.0, 1.0);\nfloat a = (0.1 + 0.9 * pow(t, 1.5)) * smoothstep(1.0, 5.0, dbz); // weak echoes fade, cores stay solid'
+            text: 'float t = clamp((dbz - 5.0) / 60.0, 0.0, 1.0);\nfloat a = t * t * t * smoothstep(3.0, 8.0, dbz); // light precip nearly clear, cores dominate'
           },
           {
             kind: 'list',

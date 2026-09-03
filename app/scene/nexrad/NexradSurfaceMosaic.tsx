@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { NexradSurfaceMosaicDrape } from '@/app/app-client/types';
 import { earthCurvatureDropNm } from '../approach-path/coordinates';
-import { loadElevationSampler, type ElevationSampler } from '../terrain/terrarium';
+import { WEATHER_ELEVATION_ZOOM } from '../terrain/terrarium';
+import { useElevationSampler } from '../terrain/use-elevation-sampler';
 import type { NexradCompositeSurface } from './nexrad-types';
 import { feetToNm } from './nexrad-render';
 
@@ -27,14 +28,6 @@ const CURVED_MOSAIC_SEGMENTS = 64;
 const DRAPE_SEGMENT_TARGET_NM = 1;
 const MIN_DRAPE_SEGMENTS = 32;
 const MAX_DRAPE_SEGMENTS = 256;
-/**
- * Zoom for the drape's elevation raster. z8 is ~0.25 NM per pixel — finer than
- * the mosaic's own ~0.5 NM cells — while covering the full 120 NM weather
- * range in ~25 tiles. The z10 grid the terrain wireframe uses would need
- * several hundred tiles over the same area.
- */
-const DRAPE_ELEVATION_ZOOM = 8;
-
 export type MosaicDrapeStatus = 'flat' | 'terrain' | 'terrain-loading' | 'terrain-unavailable';
 
 interface NexradSurfaceMosaicProps {
@@ -75,57 +68,22 @@ export function NexradSurfaceMosaic({
   refLon,
   onDrapeStatusChange
 }: NexradSurfaceMosaicProps) {
-  const [elevation, setElevation] = useState<ElevationSampler | null>(null);
-  const [elevationFailed, setElevationFailed] = useState(false);
-
   const wantsDrape = drapeMode === 'terrain';
-
-  useEffect(() => {
-    if (!wantsDrape) {
-      setElevation(null);
-      setElevationFailed(false);
-      return;
-    }
-
-    let cancelled = false;
-    setElevation(null);
-    setElevationFailed(false);
-
-    loadElevationSampler({
-      refLat,
-      refLon,
-      radiusNm: maxRangeNm,
-      zoom: DRAPE_ELEVATION_ZOOM,
-      fallbackFeet: surfaceElevationFeet
-    })
-      .then((sampler) => {
-        if (cancelled) return;
-        if (!sampler) {
-          // Every tile failed. Say so rather than drawing a flat sheet that
-          // would be indistinguishable from real terrain that happens to be
-          // level.
-          console.warn('[MRMS mosaic] terrain elevation tiles unavailable; drawing flat.');
-          setElevationFailed(true);
-          return;
-        }
-        setElevation(() => sampler);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.warn('[MRMS mosaic] terrain elevation load failed; drawing flat:', error);
-        setElevationFailed(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [wantsDrape, refLat, refLon, maxRangeNm, surfaceElevationFeet]);
+  const { sampler: elevation, status: elevationStatus } = useElevationSampler({
+    enabled: wantsDrape,
+    refLat,
+    refLon,
+    radiusNm: maxRangeNm,
+    zoom: WEATHER_ELEVATION_ZOOM,
+    fallbackFeet: surfaceElevationFeet,
+    label: 'MRMS mosaic'
+  });
 
   const drapeStatus: MosaicDrapeStatus = !wantsDrape
     ? 'flat'
-    : elevation
+    : elevationStatus === 'ready'
       ? 'terrain'
-      : elevationFailed
+      : elevationStatus === 'unavailable'
         ? 'terrain-unavailable'
         : 'terrain-loading';
 

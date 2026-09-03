@@ -93,6 +93,7 @@ const EMPTY_NEXRAD_DEBUG_STATE: NexradDebugState = {
   surfaceMosaicCellCount: 0,
   surfaceMosaicMaxDbz: null,
   surfaceMosaicDrape: null,
+  volumeGround: null,
   echoTopCellCount: 0,
   echoTopMax18Feet: null,
   echoTopMax30Feet: null,
