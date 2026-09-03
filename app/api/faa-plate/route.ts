@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { loadPreservedHistoricalPlate } from '@/lib/cifp/historical-approaches';
 
 const FAA_DTPP_BASE_URL = 'https://aeronav.faa.gov/d-tpp';
 const PLATE_CACHE_CONTROL = 'public, max-age=43200, stale-while-revalidate=86400';
@@ -85,12 +86,38 @@ function matchesIfNoneMatch(headerValue: string | null, etag: string): boolean {
   return candidates.some((candidate) => stripWeak(candidate) === stripWeak(etag));
 }
 
+function plateResponse(
+  request: NextRequest,
+  plateBytes: Uint8Array<ArrayBuffer>,
+  sourceHeaders?: Headers
+): NextResponse {
+  const etag = plateEtag(plateBytes);
+  const headers = new Headers();
+  headers.set('cache-control', PLATE_CACHE_CONTROL);
+  headers.set('etag', etag);
+  const lastModified = sourceHeaders?.get('last-modified');
+  if (lastModified) headers.set('last-modified', lastModified);
+
+  if (matchesIfNoneMatch(request.headers.get('if-none-match'), etag)) {
+    return new NextResponse(null, { status: 304, headers });
+  }
+
+  headers.set('content-type', sourceHeaders?.get('content-type') || 'application/pdf');
+  headers.set('content-length', String(plateBytes.byteLength));
+  return new NextResponse(plateBytes, { status: 200, headers });
+}
+
 export async function GET(request: NextRequest) {
   const cycleDir = normalizeCycleDir(request.nextUrl.searchParams.get('cycle'));
   const plateFile = normalizePlateFile(request.nextUrl.searchParams.get('file'));
 
   if (!cycleDir || !plateFile) {
     return new NextResponse('Invalid cycle or plate file', { status: 400 });
+  }
+
+  const preservedPlate = loadPreservedHistoricalPlate(cycleDir, plateFile);
+  if (preservedPlate) {
+    return plateResponse(request, preservedPlate.bytes);
   }
 
   const sourceUrl = `${FAA_DTPP_BASE_URL}/${cycleDir}/${plateFile}`;
@@ -129,23 +156,5 @@ export async function GET(request: NextRequest) {
       : new NextResponse('FAA approach plate read failed', { status: 502 });
   }
 
-  const etag = plateEtag(plateBytes);
-
-  const headers = new Headers();
-  headers.set('cache-control', PLATE_CACHE_CONTROL);
-  headers.set('etag', etag);
-  const lastModified = sourceResponse.headers.get('last-modified');
-  if (lastModified) headers.set('last-modified', lastModified);
-
-  if (matchesIfNoneMatch(request.headers.get('if-none-match'), etag)) {
-    return new NextResponse(null, { status: 304, headers });
-  }
-
-  headers.set('content-type', sourceResponse.headers.get('content-type') || 'application/pdf');
-  headers.set('content-length', String(plateBytes.byteLength));
-
-  return new NextResponse(plateBytes, {
-    status: 200,
-    headers
-  });
+  return plateResponse(request, plateBytes, sourceResponse.headers);
 }

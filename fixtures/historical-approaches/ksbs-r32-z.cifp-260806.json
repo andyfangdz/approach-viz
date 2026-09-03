@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "decommissioned",
   "intendedUse": "education-and-training-only",
   "source": {
@@ -9,6 +9,12 @@
   "capture": {
     "approachSha256": "477d52772c18ba2c17411214c1ae62bc5a7e05c364889dad069bd994abfde135",
     "waypointsSha256": "b0c56b5a652dfb56066fe64864f054a73944899ec25d5844c76651eaaa72b5ce"
+  },
+  "plate": {
+    "dtppCycle": "2608",
+    "plateFile": "06404RZ32.PDF",
+    "pdfSha256": "6c381363d7062ca44c231027e69ef8dc7837740b32271c92d5afa0913ebc8ccf",
+    "pdfBytes": 354548
   },
   "approach": {
     "airportId": "KSBS",

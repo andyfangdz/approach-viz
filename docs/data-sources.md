@@ -7,8 +7,8 @@ External data feeds and their ingestion paths.
 - Source: FAA digital products download page (latest archive URL scraped at download time).
 - Contains waypoint/leg/altitude geometry for instrument approaches, parsed into SQLite at `build-db` time.
 - Current CIFP is the primary source of build-time approach geometry. Two intentional historical exceptions preserve decommissioned procedures for education and training: `KSBS / R32-Z` at `fixtures/historical-approaches/ksbs-r32-z.cifp-260806.json` from FAA CIFP cycle `260806`, and the non-RNP `KCRQ / R24-X` (`RNAV (GPS) X RWY 24`) at `fixtures/historical-approaches/kcrq-r24-x.cifp-251225.json` from cycle `251225`.
-- `build-db` uses a historical fixture only when the same airport/procedure ID is absent from the current CIFP, so a current FAA record always wins. Each fixture includes hashes of its exact captured procedure JSON and waypoint rows; hash mismatches fail the build.
-- Historical fallback rows are stored in `approaches` with `source = historical`, their captured `source_cycle`, and approach-specific preserved waypoint JSON. Scene payloads expose that provenance, and historical geometry is not matched to current minimums, missed-instruction, or plate metadata.
+- `build-db` uses a historical fixture only when the same airport/procedure ID is absent from the current CIFP, so a current FAA record always wins. Each fixture includes hashes of its exact captured procedure JSON and waypoint rows plus preserved plate metadata; fixture loading validates the PDF byte count, SHA-256, PDF header, and `/GPTS` + `/LPTS` markers.
+- Historical fallback rows are stored in `approaches` with `source = historical`, their captured `source_cycle`, and approach-specific preserved waypoint JSON. Scene payloads expose that provenance. Historical geometry is not matched to current minimums, missed-instruction, vertical-profile, or live plate metadata; an exact airport/procedure/source-cycle fixture lookup supplies only its preserved historical plate metadata.
 
 ## Airspace Overlays
 
@@ -31,10 +31,11 @@ External data feeds and their ingestion paths.
 
 ## FAA Approach Plates (PDF)
 
-- Source: `aeronav.faa.gov/d-tpp/<cycle>/<plate_file>`.
-- Fetched server-side through same-origin proxy `app/api/faa-plate/route.ts` to avoid browser CORS.
+- Live source: `aeronav.faa.gov/d-tpp/<cycle>/<plate_file>`.
+- Preserved historical source: exact geo-referenced PDF bytes in `fixtures/historical-approaches/plates/`, identified and hash-validated by the adjacent schema-v2 historical fixtures and explicitly included in Next server output tracing. The clients continue extracting `/GPTS` and `/LPTS` from those real PDF bytes; no georeference coordinates are copied into JSON.
+- Served through same-origin route `app/api/faa-plate/route.ts` to avoid browser CORS. Exact preserved cycle/filename keys are resolved locally before the route attempts a live FAA fetch.
 - The proxy returns a strong `ETag` computed as `"sha256-<hex>"` over the served PDF bytes (not the upstream CDN's validator, which varies by edge), forwards `Last-Modified`, and answers a weak-comparison `If-None-Match` match with `304 Not Modified` so revalidation does not re-send the full plate.
-- Plate metadata (`cycle`, `plateFile`) is resolved server-side and included in scene payloads.
+- Plate metadata (`cycle`, `plateFile`) is resolved server-side and included in scene payloads, from current approach-db matching for current/external selections or from the preserved fixture for a historical selection.
 - Client service worker caching stores plate responses in D-TPP-cycle-scoped caches and purges older cycle caches when the app reports the active `dtppCycle`.
 
 ## Terrain Elevation Tiles

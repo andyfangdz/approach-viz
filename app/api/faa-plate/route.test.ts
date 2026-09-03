@@ -1,5 +1,6 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { NextRequest } from 'next/server';
 import { GET } from './route';
 
@@ -51,6 +52,64 @@ describe('faa plate proxy validation', () => {
   test('rejects a non-PDF plate file', async () => {
     const response = await GET(makeRequest({ cycle: '2608', file: '../secret.txt' }));
     assert.equal(response.status, 400);
+  });
+});
+
+describe('preserved historical faa plates', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('serves both preserved PDFs and their strong etags without an upstream request', async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      throw new Error('preserved plates must not use the network');
+    };
+
+    const plates = [
+      {
+        cycle: '2608',
+        file: '06404RZ32.PDF',
+        sha256: '6c381363d7062ca44c231027e69ef8dc7837740b32271c92d5afa0913ebc8ccf',
+        url: new URL(
+          '../../../fixtures/historical-approaches/plates/06404RZ32.PDF',
+          import.meta.url
+        )
+      },
+      {
+        cycle: '2512',
+        file: '05310RX24.PDF',
+        sha256: 'f13818cb6f9764c9a18e05a98892bb7506235b9a7717d75eb4ad27402548f1f1',
+        url: new URL(
+          '../../../fixtures/historical-approaches/plates/05310RX24.PDF',
+          import.meta.url
+        )
+      }
+    ];
+
+    for (const plate of plates) {
+      const expectedBytes = fs.readFileSync(plate.url);
+      const response = await GET(makeRequest({ cycle: plate.cycle, file: plate.file }));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'application/pdf');
+      assert.equal(response.headers.get('content-length'), String(expectedBytes.byteLength));
+      assert.equal(response.headers.get('etag'), `"sha256-${plate.sha256}"`);
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), expectedBytes);
+
+      const revalidated = await GET(
+        makeRequest(
+          { cycle: plate.cycle, file: plate.file },
+          { 'if-none-match': `W/"sha256-${plate.sha256}"` }
+        )
+      );
+      assert.equal(revalidated.status, 304);
+      assert.equal(revalidated.body, null);
+    }
+
+    assert.equal(fetchCalls, 0);
   });
 });
 

@@ -6,6 +6,7 @@ import {
   serializeLayersParam,
   DEFAULT_LAYER_STATE
 } from '@/app/app-client-utils';
+import { deriveApproachPlate } from '@/app/actions-lib/approach-db';
 import { findSelectedExternalApproach } from '@/app/actions-lib/approach-matching';
 import {
   deserializeHistoricalWaypoints,
@@ -152,7 +153,7 @@ test('KCRQ R24-X historical option uses the generic training-only label', () => 
   );
 });
 
-test('historical geometry does not inherit current FAA minimums or plate metadata', () => {
+test('historical geometry does not inherit current FAA minimums or live plate metadata', () => {
   const currentApproach: SerializedApproach = {
     airportId: 'KSBS',
     procedureId: 'R32-Z',
@@ -181,6 +182,51 @@ test('historical geometry does not inherit current FAA minimums or plate metadat
         sourceCycle: '260806'
       },
       currentApproach
+    ),
+    null
+  );
+});
+
+test('historical scene plate derivation uses the preserved fixture metadata', () => {
+  assert.deepEqual(
+    deriveApproachPlate(
+      'KSBS',
+      {
+        procedureId: 'R32-Z',
+        type: 'RNAV',
+        runway: '32-Z',
+        source: 'historical',
+        sourceCycle: '260806'
+      },
+      null
+    ),
+    { cycle: '2608', plateFile: '06404RZ32.PDF' }
+  );
+  assert.deepEqual(
+    deriveApproachPlate(
+      'KCRQ',
+      {
+        procedureId: 'R24-X',
+        type: 'RNAV',
+        runway: '24-X',
+        source: 'historical',
+        sourceCycle: '251225'
+      },
+      null
+    ),
+    { cycle: '2512', plateFile: '05310RX24.PDF' }
+  );
+  assert.equal(
+    deriveApproachPlate(
+      'KSBS',
+      {
+        procedureId: 'R32-Z',
+        type: 'RNAV',
+        runway: '32-Z',
+        source: 'historical',
+        sourceCycle: 'wrong-cycle'
+      },
+      null
     ),
     null
   );
