@@ -36,7 +36,7 @@ External data feeds and their ingestion paths.
 - Served through same-origin route `app/api/faa-plate/route.ts` to avoid browser CORS. Exact preserved cycle/filename keys are resolved locally before the route attempts a live FAA fetch.
 - The proxy returns a strong `ETag` computed as `"sha256-<hex>"` over the served PDF bytes (not the upstream CDN's validator, which varies by edge), forwards `Last-Modified`, and answers a weak-comparison `If-None-Match` match with `304 Not Modified` so revalidation does not re-send the full plate.
 - Plate metadata (`cycle`, `plateFile`) is resolved server-side and included in scene payloads, from current approach-db matching for current/external selections or from the preserved fixture for a historical selection.
-- Client service worker caching stores plate responses in D-TPP-cycle-scoped caches and purges older cycle caches when the app reports the active `dtppCycle`.
+- Client service worker caching stores plate responses in D-TPP-cycle-scoped caches. Plate requests, including preserved historical cycles, never trigger eviction; older cycle caches are purged only when the app reports a new official active `dtppCycle`.
 
 ## Terrain Elevation Tiles
 

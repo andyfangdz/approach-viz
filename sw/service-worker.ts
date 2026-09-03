@@ -9,6 +9,11 @@ import { clientsClaim } from 'workbox-core';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { registerRoute } from 'workbox-routing';
 import { CacheFirst } from 'workbox-strategies';
+import {
+  cacheFirstPlateRequest,
+  cleanupObsoletePlateCaches,
+  normalizeDtppCycle
+} from './plate-cache-policy';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -19,7 +24,6 @@ declare const self: ServiceWorkerGlobalScope;
 const SW_VERSION = 'v1';
 const ELEVATION_TILES_CACHE = `approach-viz-elevation-tiles-${SW_VERSION}`;
 const CHART_TILES_CACHE = `approach-viz-chart-tiles-${SW_VERSION}`;
-const PLATE_CACHE_PREFIX = 'approach-viz-faa-plates-cycle-';
 const GOOGLE_TILES_CACHE_PREFIX = 'approach-viz-google-3dtiles-';
 const ELEVATION_TILES_CACHE_PREFIX = 'approach-viz-elevation-tiles-';
 const SET_DTPP_CYCLE_MESSAGE = 'approach-viz:set-dtpp-cycle';
@@ -29,12 +33,6 @@ let currentDtppCycle: string | null = null;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function normalizeCycle(rawCycle: string | null | undefined): string | null {
-  const digits = String(rawCycle || '').replace(/[^\d]/g, '');
-  if (digits.length < 4) return null;
-  return digits.slice(0, 4);
-}
 
 /**
  * Workbox's CacheableResponsePlugin rejects opaque responses by default.
@@ -94,32 +92,6 @@ function isPlateRequest(url: URL): boolean {
   return url.origin === self.location.origin && url.pathname === '/api/faa-plate';
 }
 
-async function cacheFirstPlateRequest(
-  event: FetchEvent,
-  request: Request,
-  url: URL
-): Promise<Response> {
-  const cycleFromRequest = normalizeCycle(url.searchParams.get('cycle'));
-  const cycle = cycleFromRequest || currentDtppCycle || 'unknown';
-  const cacheName = `${PLATE_CACHE_PREFIX}${cycle}`;
-  const cache = await caches.open(cacheName);
-  const cachedResponse = await cache.match(request);
-  if (cachedResponse) {
-    return cachedResponse;
-  }
-
-  const networkResponse = await fetch(request);
-  if (networkResponse.ok || networkResponse.type === 'opaque') {
-    const responseClone = networkResponse.clone();
-    event.waitUntil(cache.put(request, responseClone));
-    const cleanupCycle = cycleFromRequest || currentDtppCycle;
-    if (cleanupCycle) {
-      event.waitUntil(cleanupPlateCaches(cleanupCycle));
-    }
-  }
-  return networkResponse;
-}
-
 // Register plate route manually (before Workbox's router) via fetch listener
 self.addEventListener('fetch', (event: FetchEvent) => {
   const request = event.request;
@@ -133,7 +105,7 @@ self.addEventListener('fetch', (event: FetchEvent) => {
   }
 
   if (isPlateRequest(url)) {
-    event.respondWith(cacheFirstPlateRequest(event, request, url));
+    event.respondWith(cacheFirstPlateRequest(event, request, url, currentDtppCycle, caches, fetch));
   }
 });
 
@@ -158,17 +130,7 @@ async function cleanupOldVersionedCaches(): Promise<void> {
 }
 
 async function cleanupPlateCaches(activeCycle: string | null | undefined): Promise<void> {
-  const cycle = normalizeCycle(activeCycle);
-  if (!cycle) return;
-  const activeCache = `${PLATE_CACHE_PREFIX}${cycle}`;
-  const names = await caches.keys();
-  const deletes: Promise<boolean>[] = [];
-  for (const name of names) {
-    if (name.startsWith(PLATE_CACHE_PREFIX) && name !== activeCache) {
-      deletes.push(caches.delete(name));
-    }
-  }
-  await Promise.all(deletes);
+  await cleanupObsoletePlateCaches(caches, activeCycle);
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +161,7 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
   if (!data || data.type !== SET_DTPP_CYCLE_MESSAGE) {
     return;
   }
-  const nextCycle = normalizeCycle(data.cycle);
+  const nextCycle = normalizeDtppCycle(data.cycle);
   if (!nextCycle || nextCycle === currentDtppCycle) {
     return;
   }
