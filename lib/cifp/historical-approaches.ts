@@ -20,7 +20,8 @@ export interface HistoricalApproachFixture {
 }
 
 const FIXTURE_URLS = [
-  new URL('../../fixtures/historical-approaches/ksbs-r32-z.cifp-260806.json', import.meta.url)
+  new URL('../../fixtures/historical-approaches/ksbs-r32-z.cifp-260806.json', import.meta.url),
+  new URL('../../fixtures/historical-approaches/kcrq-r24-x.cifp-251225.json', import.meta.url)
 ];
 
 function sha256Json(value: SerializedApproach | Waypoint[]): string {

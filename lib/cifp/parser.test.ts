@@ -129,15 +129,16 @@ test('parses single-slot RNP continuation values for PHNL H26L FAF without bogus
 
 test('uses the versioned KSBS historical fixture when the FAA procedure disappears', () => {
   const fallbacks = selectMissingHistoricalApproachFallbacks(new Map([['KSBS', []]]));
+  const fixture = fallbacks.find(
+    (candidate) =>
+      candidate.approach.airportId === 'KSBS' && candidate.approach.procedureId === 'R32-Z'
+  );
 
-  assert.equal(fallbacks.length, 1);
-  assert.equal(fallbacks[0], HISTORICAL_APPROACH_FIXTURES[0]);
-  assert.equal(fallbacks[0].approach.airportId, 'KSBS');
-  assert.equal(fallbacks[0].approach.procedureId, 'R32-Z');
-  assert.equal(fallbacks[0].source.cycle, '260806');
-  assert.equal(fallbacks[0].status, 'decommissioned');
-  assert.equal(fallbacks[0].intendedUse, 'education-and-training-only');
-  assert.equal(fallbacks[0].waypoints.length, 6);
+  assert.equal(fixture, HISTORICAL_APPROACH_FIXTURES[0]);
+  assert.equal(fixture.source.cycle, '260806');
+  assert.equal(fixture.status, 'decommissioned');
+  assert.equal(fixture.intendedUse, 'education-and-training-only');
+  assert.equal(fixture.waypoints.length, 6);
 });
 
 test('prefers a current FAA KSBS procedure over the historical fallback', () => {
@@ -145,5 +146,81 @@ test('prefers a current FAA KSBS procedure over the historical fallback', () => 
     ['KSBS', [{ procedureId: 'R32-Z', type: 'RNAV', runway: '32-Z' }]]
   ]);
 
-  assert.deepEqual(selectMissingHistoricalApproachFallbacks(currentApproaches), []);
+  const fallbacks = selectMissingHistoricalApproachFallbacks(currentApproaches);
+
+  assert.equal(
+    fallbacks.some(
+      (candidate) =>
+        candidate.approach.airportId === 'KSBS' && candidate.approach.procedureId === 'R32-Z'
+    ),
+    false
+  );
+});
+
+test('uses the versioned KCRQ historical fixture when the FAA procedure disappears', () => {
+  const fallbacks = selectMissingHistoricalApproachFallbacks(new Map([['KCRQ', []]]));
+  const fixture = fallbacks.find(
+    (candidate) =>
+      candidate.approach.airportId === 'KCRQ' && candidate.approach.procedureId === 'R24-X'
+  );
+
+  assert.ok(fixture);
+  assert.equal(fixture, HISTORICAL_APPROACH_FIXTURES[1]);
+  assert.equal(fixture.approach.type, 'RNAV');
+  assert.equal(fixture.approach.runway, '24-X');
+  assert.equal(fixture.source.cycle, '251225');
+  assert.equal(fixture.status, 'decommissioned');
+  assert.equal(fixture.intendedUse, 'education-and-training-only');
+
+  const rfLegs = fixture.approach.transitions
+    .flatMap(([, legs]) => legs)
+    .filter((leg) => leg.pathTerminator === 'RF');
+  assert.equal(rfLegs.length, 2);
+  assert.deepEqual(
+    rfLegs.map((leg) => ({
+      sequence: leg.sequence,
+      waypointId: leg.waypointId,
+      turnDirection: leg.rfTurnDirection,
+      center: leg.rfCenterWaypointId
+    })),
+    [
+      {
+        sequence: 40,
+        waypointId: 'KCRQ_FEHPY',
+        turnDirection: 'R',
+        center: 'KCRQ_CFFVQ'
+      },
+      {
+        sequence: 50,
+        waypointId: 'KCRQ_KANEC',
+        turnDirection: 'R',
+        center: 'KCRQ_CFFVQ'
+      }
+    ]
+  );
+  assert.deepEqual(
+    ['OCN', 'VISTA', 'KCRQ_CFFVQ'].map(
+      (id) => fixture.waypoints.find((waypoint) => waypoint.id === id)?.id
+    ),
+    ['OCN', 'VISTA', 'KCRQ_CFFVQ']
+  );
+  assert.equal(
+    fixture.waypoints.some((waypoint) => waypoint.id === 'KCRQ_'),
+    false
+  );
+});
+
+test('prefers a current FAA KCRQ R24-X procedure over the historical fallback', () => {
+  const currentApproaches = new Map([
+    ['KCRQ', [{ procedureId: 'R24-X', type: 'RNAV', runway: '24-X' }]]
+  ]);
+  const fallbacks = selectMissingHistoricalApproachFallbacks(currentApproaches);
+
+  assert.equal(
+    fallbacks.some(
+      (candidate) =>
+        candidate.approach.airportId === 'KCRQ' && candidate.approach.procedureId === 'R24-X'
+    ),
+    false
+  );
 });

@@ -333,7 +333,7 @@ export const SECTIONS: Section[] = [
               ],
               [
                 '`approaches`',
-                'Full serialized procedure JSON plus source/cycle provenance; current CIFP wins over the versioned KSBS historical training fallback'
+                'Full serialized procedure JSON plus source/cycle provenance; current CIFP wins over the versioned KSBS and KCRQ historical training fallbacks'
               ],
               [
                 '`minima`',

@@ -134,6 +134,24 @@ test('historical approach provenance survives the scene API row mapping', () => 
   );
 });
 
+test('KCRQ R24-X historical option uses the generic training-only label', () => {
+  const option = rowToApproachOption({
+    airport_id: 'KCRQ',
+    procedure_id: 'R24-X',
+    type: 'RNAV',
+    runway: '24-X',
+    data_json: '{}',
+    source: 'historical',
+    source_cycle: '251225',
+    historical_waypoints_json: '[]'
+  });
+
+  assert.equal(
+    formatApproachLabel(option),
+    'RNAV RWY 24-X (R24-X) — historical/decommissioned, training only, FAA cycle 251225'
+  );
+});
+
 test('historical geometry does not inherit current FAA minimums or plate metadata', () => {
   const currentApproach: SerializedApproach = {
     airportId: 'KSBS',

@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "status": "decommissioned",
+  "intendedUse": "education-and-training-only",
+  "source": {
+    "provider": "FAA CIFP",
+    "cycle": "251225"
+  },
+  "capture": {
+    "approachSha256": "31a68e8764744b2108b6fa47b3c93e94c19176abd92a4aef54dab5ad30914f28",
+    "waypointsSha256": "02e4d98f3442d0dc2a699919bd4edb873dca5b30a29b09ad371d2bb7ca039158"
+  },
+  "approach": {
+    "airportId": "KCRQ",
+    "procedureId": "R24-X",
+    "type": "RNAV",
+    "runway": "24-X",
+    "transitions": [
+      [
+        "OCN",
+        [
+          {
+            "sequence": 10,
+            "waypointId": "KCRQ_OCN",
+            "waypointName": "OCN",
+            "pathTerminator": "IF",
+            "isFinalApproachFix": false,
+            "isInitialFix": false,
+            "isFinalFix": false,
+            "isMissedApproach": false
+          },
+          {
+            "sequence": 20,
+            "waypointId": "KCRQ_VISTA",
+            "waypointName": "VISTA",
+            "pathTerminator": "TF",
+            "altitude": 5300,
+            "altitudeConstraint": "at",
+            "isFinalApproachFix": false,
+            "isInitialFix": false,
+            "isFinalFix": false,
+            "isMissedApproach": false
+          },
+          {
+            "sequence": 30,
+            "waypointId": "KCRQ_JIDOV",
+            "waypointName": "JIDOV",
+            "pathTerminator": "TF",
+            "altitude": 5300,
+            "altitudeConstraint": "at",
+            "isFinalApproachFix": false,
+            "isInitialFix": false,
+            "isFinalFix": false,
+            "isMissedApproach": false
+          },
+          {
+            "sequence": 40,
+            "waypointId": "KCRQ_FEHPY",
+            "waypointName": "FEHPY",
+            "pathTerminator": "RF",
+            "altitude": 5300,
+            "altitudeConstraint": "at",
+            "course": 190.1,
+            "distance": 9.9,
+            "turnDirection": "R",
+            "rfCenterWaypointId": "KCRQ_CFFVQ",
+            "rfTurnDirection": "R",
+            "isFinalApproachFix": false,
+            "isInitialFix": false,
+            "isFinalFix": false,
+            "isMissedApproach": false
+          },
+          {
+            "sequence": 50,
+            "waypointId": "KCRQ_KANEC",
+            "waypointName": "KANEC",
+            "pathTerminator": "RF",
+            "altitude": 4300,
+            "altitudeConstraint": "at",
+            "course": 245.3,
+            "distance": 3.8,
+            "turnDirection": "R",
+            "rfCenterWaypointId": "KCRQ_CFFVQ",
+            "rfTurnDirection": "R",
+            "isFinalApproachFix": false,
+            "isInitialFix": false,
+            "isFinalFix": false,
+            "isMissedApproach": false
+          }
+        ]
+      ]
+    ],
+    "finalLegs": [
+      {
+        "sequence": 10,
+        "waypointId": "KCRQ_KANEC",
+        "waypointName": "KANEC",
+        "pathTerminator": "IF",
+        "altitude": 4300,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": false
+      },
+      {
+        "sequence": 20,
+        "waypointId": "KCRQ_JABAL",
+        "waypointName": "JABAL",
+        "pathTerminator": "TF",
+        "altitude": 3100,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": true,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": false
+      },
+      {
+        "sequence": 21,
+        "waypointId": "KCRQ_GUGEC",
+        "waypointName": "GUGEC",
+        "pathTerminator": "TF",
+        "altitude": 2040,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": false
+      },
+      {
+        "sequence": 22,
+        "waypointId": "KCRQ_ZUXAX",
+        "waypointName": "ZUXAX",
+        "pathTerminator": "TF",
+        "altitude": 1220,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": false
+      }
+    ],
+    "missedLegs": [
+      {
+        "sequence": 30,
+        "waypointId": "KCRQ_RW24",
+        "waypointName": "RW24",
+        "pathTerminator": "TF",
+        "altitude": 380,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": true
+      },
+      {
+        "sequence": 40,
+        "waypointId": "KCRQ_",
+        "waypointName": "",
+        "pathTerminator": "CA",
+        "altitude": 528,
+        "altitudeConstraint": "at",
+        "course": 245.2,
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": true
+      },
+      {
+        "sequence": 50,
+        "waypointId": "KCRQ_IBUGE",
+        "waypointName": "IBUGE",
+        "pathTerminator": "DF",
+        "altitude": 2000,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": true
+      },
+      {
+        "sequence": 60,
+        "waypointId": "KCRQ_IBUGE",
+        "waypointName": "IBUGE",
+        "pathTerminator": "HM",
+        "altitude": 2000,
+        "altitudeConstraint": "at",
+        "course": 65,
+        "distance": 4,
+        "holdCourse": 65,
+        "holdDistance": 4,
+        "turnDirection": "R",
+        "holdTurnDirection": "R",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": true
+      }
+    ]
+  },
+  "waypoints": [
+    {
+      "id": "KCRQ_CFFVQ",
+      "name": "CFFVQ(CNF)",
+      "lat": 33.238419444444446,
+      "lon": -117.01699166666667,
+      "type": "terminal"
+    },
+    {
+      "id": "KCRQ_FEHPY",
+      "name": "FEHPY",
+      "lat": 33.210911111111116,
+      "lon": -116.94456666666667,
+      "type": "terminal"
+    },
+    {
+      "id": "KCRQ_GUGEC",
+      "name": "GUGEC",
+      "lat": 33.14490277777778,
+      "lon": -117.17669166666667,
+      "type": "terminal"
+    },
+    {
+      "id": "KCRQ_IBUGE",
+      "name": "IBUGE",
+      "lat": 33.09527222222223,
+      "lon": -117.48315833333334,
+      "type": "terminal"
+    },
+    {
+      "id": "KCRQ_JABAL",
+      "name": "JABAL",
+      "lat": 33.15461388888889,
+      "lon": -117.1161361111111,
+      "type": "terminal"
+    },
+    {
+      "id": "KCRQ_JIDOV",
+      "name": "JIDOV",
+      "lat": 33.297780555555555,
+      "lon": -117.05344444444444,
+      "type": "terminal"
+    },
+    {
+      "id": "KCRQ_KANEC",
+      "name": "KANEC",
+      "lat": 33.17278888888889,
+      "lon": -117.00221666666667,
+      "type": "terminal"
+    },
+    {
+      "id": "KCRQ_RW24",
+      "name": "RW24",
+      "lat": 33.129525,
+      "lon": -117.27221666666667,
+      "type": "runway"
+    },
+    {
+      "id": "KCRQ_ZUXAX",
+      "name": "ZUXAX",
+      "lat": 33.13737777777778,
+      "lon": -117.22348333333333,
+      "type": "terminal"
+    },
+    {
+      "id": "OCN",
+      "name": "OCEANSIDE",
+      "lat": 33.240633333333335,
+      "lon": -117.41772222222222,
+      "type": "enroute"
+    },
+    {
+      "id": "VISTA",
+      "name": "VISTA",
+      "lat": 33.21907222222222,
+      "lon": -117.23449722222222,
+      "type": "enroute"
+    }
+  ]
+}
