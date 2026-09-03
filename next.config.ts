@@ -18,7 +18,11 @@ const crossOriginIsolationHeaders = crossOriginIsolationDisabled
 const nextConfig: NextConfig = {
   reactCompiler: true,
   outputFileTracingIncludes: {
-    '/*': ['data/approach-viz.sqlite']
+    '/*': [
+      'data/approach-viz.sqlite',
+      'fixtures/historical-approaches/*.json',
+      'fixtures/historical-approaches/plates/*.PDF'
+    ]
   },
   async headers() {
     if (crossOriginIsolationHeaders.length === 0) {

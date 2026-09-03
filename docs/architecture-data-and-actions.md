@@ -28,13 +28,13 @@
 - Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions-lib/approaches.ts` and included in scene payloads for client rendering.
 - Matched external approach metadata is also used to parse official missed-climb requirements from `missed_instructions` text (`minimum climb of X feet per NM to Y`), which are included in scene payloads for missed-approach vertical-profile rendering.
 - CIFP-to-minima/plate matching uses runway + type-family scoring.
-- Historical training geometry never participates in current minimums/plate matching; scene-action payloads expose it as `source: historical` with its captured cycle instead.
+- Historical training geometry never participates in current minimums or live plate matching; scene-action payloads expose it as `source: historical` with its captured cycle, and an exact fixture lookup can attach that procedure's preserved historical plate metadata.
 - `VOR/DME` procedures prefer `VOR/DME`/`TACAN` external approaches over same-runway RNAV rows.
 - Selector data merges CIFP procedures, the conditional historical training fallbacks, and minima/plate-only procedures missing CIFP geometry. Historical fallback and external-only provenance remain distinct in the scene-action API.
 
 ## FAA Plate PDF Access
 
-- FAA plate PDF fetching is routed through same-origin proxy `app/api/faa-plate/route.ts` to avoid browser CORS issues.
+- FAA plate PDF fetching is routed through same-origin `app/api/faa-plate/route.ts` to avoid browser CORS issues. Preserved historical cycle/filename keys are served from their hash-validated in-repo PDFs before any live FAA request.
 - The proxy buffers the upstream PDF to emit a content-derived strong `ETag` (`"sha256-<hex>"`) plus `Content-Length`, and returns `304 Not Modified` for a matching `If-None-Match` (RFC 9110 weak comparison, including `W/` prefixes and `*`).
 - That buffered read is bounded so a stalled or pathological upstream cannot hold the route open or exhaust memory: a single 15s `AbortSignal.timeout` spans connect and body read, and the body streams through a byte-counting reader that aborts past 16 MB. Timeouts surface as `504`, oversize/failed reads as `502`, non-`ok` upstream responses as `404`.
 

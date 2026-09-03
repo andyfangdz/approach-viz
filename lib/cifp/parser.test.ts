@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import test from 'node:test';
 import {
   HISTORICAL_APPROACH_FIXTURES,
+  loadPreservedHistoricalPlate,
   selectMissingHistoricalApproachFallbacks
 } from './historical-approaches';
 import { parseCIFP, type Approach } from './parser';
@@ -138,6 +140,12 @@ test('uses the versioned KSBS historical fixture when the FAA procedure disappea
   assert.equal(fixture.source.cycle, '260806');
   assert.equal(fixture.status, 'decommissioned');
   assert.equal(fixture.intendedUse, 'education-and-training-only');
+  assert.deepEqual(fixture.plate, {
+    dtppCycle: '2608',
+    plateFile: '06404RZ32.PDF',
+    pdfSha256: '6c381363d7062ca44c231027e69ef8dc7837740b32271c92d5afa0913ebc8ccf',
+    pdfBytes: 354548
+  });
   assert.equal(fixture.waypoints.length, 6);
 });
 
@@ -171,6 +179,12 @@ test('uses the versioned KCRQ historical fixture when the FAA procedure disappea
   assert.equal(fixture.source.cycle, '251225');
   assert.equal(fixture.status, 'decommissioned');
   assert.equal(fixture.intendedUse, 'education-and-training-only');
+  assert.deepEqual(fixture.plate, {
+    dtppCycle: '2512',
+    plateFile: '05310RX24.PDF',
+    pdfSha256: 'f13818cb6f9764c9a18e05a98892bb7506235b9a7717d75eb4ad27402548f1f1',
+    pdfBytes: 313830
+  });
 
   const rfLegs = fixture.approach.transitions
     .flatMap(([, legs]) => legs)
@@ -208,6 +222,25 @@ test('uses the versioned KCRQ historical fixture when the FAA procedure disappea
     fixture.waypoints.some((waypoint) => waypoint.id === 'KCRQ_'),
     false
   );
+});
+
+test('preserved historical plates match fixture hashes and contain FAA georeferencing', () => {
+  for (const fixture of HISTORICAL_APPROACH_FIXTURES) {
+    const preserved = loadPreservedHistoricalPlate(
+      fixture.plate.dtppCycle,
+      fixture.plate.plateFile
+    );
+    assert.ok(preserved, `Expected preserved plate ${fixture.plate.plateFile}`);
+    assert.equal(preserved.bytes.byteLength, fixture.plate.pdfBytes);
+    assert.equal(
+      createHash('sha256').update(preserved.bytes).digest('hex'),
+      fixture.plate.pdfSha256
+    );
+    const pdf = Buffer.from(preserved.bytes);
+    assert.equal(pdf.subarray(0, 5).toString('ascii'), '%PDF-');
+    assert.ok(pdf.includes('/GPTS'));
+    assert.ok(pdf.includes('/LPTS'));
+  }
 });
 
 test('prefers a current FAA KCRQ R24-X procedure over the historical fallback', () => {

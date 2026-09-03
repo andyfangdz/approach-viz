@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { findPreservedHistoricalApproachPlate } from '@/lib/cifp/historical-approaches';
 import type { ApproachOption, SceneData, SerializedApproach } from '@/lib/types';
 import { APPROACH_DB_PATH } from './constants';
 import { findSelectedExternalApproach } from './approach-matching';
@@ -31,6 +32,13 @@ export function deriveApproachPlate(
   currentApproach: SerializedApproach | null
 ): SceneData['approachPlate'] {
   if (!selectedApproachOption) return null;
+  if (selectedApproachOption.source === 'historical') {
+    return findPreservedHistoricalApproachPlate(
+      airportId,
+      selectedApproachOption.procedureId,
+      selectedApproachOption.sourceCycle
+    );
+  }
 
   const approachDb = loadApproachDb();
   const airportApproaches = approachDb?.airports?.[airportId]?.approaches;

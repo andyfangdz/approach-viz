@@ -13,7 +13,7 @@ FAA approach plates are an independent overlay toggle (not a surface mode) avail
 
 - On flat modes (Terrain, Map): plate mesh rendered above the base surface.
 - On tiled modes (Satellite, 3D Map): plate texture projected onto Google 3D Tiles via shader patching.
-- Only visible when an approach with plate metadata is selected.
+- Only visible when an approach with plate metadata is selected. Current/external selections use current approach-db metadata; historical selections use only their exact preserved fixture metadata.
 - Legacy URLs `?surface=plate` and `?surface=3dplate` are automatically migrated to `?surface=terrain&plate=on` and `?surface=satellite&plate=on`.
 
 ## Weather Overlay
@@ -42,6 +42,7 @@ MRMS 3D volumetric weather is a surface-independent overlay (not a surface mode)
 ## FAA Plate Overlay Specifics
 
 - FAA plate mesh is rendered at the selected airport elevation (scaled by vertical scale), not fixed at sea-level.
+- Preserved historical PDFs use the same runtime `/GPTS` + `/LPTS` extraction and draping path as live PDFs; their georeference is read from the versioned PDF bytes rather than duplicated as fixture numbers.
 - When plate overlay is enabled but no matching plate metadata is found, a warning is shown in the legend panel.
 - URL state: `?plate=on` (omitted when off).
 

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "decommissioned",
   "intendedUse": "education-and-training-only",
   "source": {
@@ -9,6 +9,12 @@
   "capture": {
     "approachSha256": "31a68e8764744b2108b6fa47b3c93e94c19176abd92a4aef54dab5ad30914f28",
     "waypointsSha256": "02e4d98f3442d0dc2a699919bd4edb873dca5b30a29b09ad371d2bb7ca039158"
+  },
+  "plate": {
+    "dtppCycle": "2512",
+    "plateFile": "05310RX24.PDF",
+    "pdfSha256": "f13818cb6f9764c9a18e05a98892bb7506235b9a7717d75eb4ad27402548f1f1",
+    "pdfBytes": 313830
   },
   "approach": {
     "airportId": "KCRQ",

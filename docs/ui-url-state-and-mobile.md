@@ -68,7 +68,7 @@ All options-panel and layer values are persisted to browser `localStorage` and r
 - Airport/approach selectors use `react-select` searchable comboboxes.
 - Airport dropdown options are ordered with `DEFAULT_SELECTIONS` airport IDs first (in configured order), then remaining airports alphabetically by ID.
 - When selecting an airport from the dropdown, if that airport appears in `DEFAULT_SELECTIONS`, the selected approach defaults to one matching configured approach. Explicit approach selections made by the user are not overridden.
-- Historical fallback options append `historical/decommissioned, training only` plus their source cycle to the approach label. The always-visible FAA disclaimer becomes a historical/decommissioned training-procedure warning, and the legend repeats that warning while stating that current FAA minimums/plate metadata is not applied.
+- Historical fallback options append `historical/decommissioned, training only` plus their source cycle to the approach label. The always-visible FAA disclaimer becomes a historical/decommissioned training-procedure warning, and the legend repeats that warning while stating that current FAA minimums and live plate metadata are not applied. When present, the fallback's own preserved historical plate remains available for training draping.
 - Search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header and avoid scene re-renders.
 - Selector-collapse toggle uses chevron icon states (up/down) with accessible show/hide labels.
 - Expanded selector controls render as an overlay panel (absolute-positioned beneath the header row), so opening selectors does not push/reflow the scene canvas.

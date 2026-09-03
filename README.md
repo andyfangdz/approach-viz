@@ -247,7 +247,7 @@ Legacy aliases `/v1/volume` and `/v1/echo-tops` are still supported.
 | `app/api/weather/nexrad/route.ts`           | `/v1/weather/volume`               |
 | `app/api/weather/nexrad/echo-tops/route.ts` | `/v1/weather/echo-tops`            |
 | `app/api/traffic/adsbx/route.ts`            | `/v1/traffic/adsbx`                |
-| `app/api/faa-plate/route.ts`                | FAA `aeronav.faa.gov` (CORS proxy) |
+| `app/api/faa-plate/route.ts`                | Preserved PDFs, FAA d-TPP fallback |
 
 ## Environment Variables
 
