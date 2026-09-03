@@ -27,7 +27,7 @@ MRMS 3D volumetric weather is a surface-independent overlay (not a surface mode)
 - FAA plate surface texture/geometry is fetched and rasterized per selected plate/airport reference; vertical-scale changes apply via mesh Y-scale transform (no plate re-fetch/re-render on slider changes).
 - 3D plate texture projection data is fetched/rasterized per selected plate/airport reference; vertical-scale changes reuse the shared 3D-tile transform (no plate re-fetch/re-render on slider changes).
 - FAA plate PDF rasterization uses 4x render scale (retina-quality) for both flat FAA Plate surface rendering and 3D Plate texture projection.
-- A client-registered service worker caches FAA plate PDFs, Terrarium elevation tiles, and FAA chart tiles; plate caches are cycle-scoped and old D-TPP cycle caches are purged when the active cycle changes.
+- A client-registered service worker caches FAA plate PDFs, Terrarium elevation tiles, and FAA chart tiles. Plate caches are cycle-scoped; fetching a preserved historical plate never evicts another cycle, while an app-synced official D-TPP cycle change purges caches outside that current cycle.
 
 ## FAA Chart Map Specifics
 

@@ -2,6 +2,14 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { NextRequest } from 'next/server';
+import {
+  PLATE_CACHE_PREFIX,
+  cacheFirstPlateRequest,
+  cleanupObsoletePlateCaches,
+  type PlateCacheLike,
+  type PlateCacheStorageLike,
+  type PlateRequestEventLike
+} from '../../../sw/plate-cache-policy';
 import { GET } from './route';
 
 const VALID_PARAMS = { cycle: '2608', file: '06041R8.PDF' };
@@ -110,6 +118,101 @@ describe('preserved historical faa plates', () => {
     }
 
     assert.equal(fetchCalls, 0);
+  });
+});
+
+describe('service worker faa plate cache policy', () => {
+  function createMemoryCacheStorage(): PlateCacheStorageLike {
+    const entriesByCache = new Map<string, Map<string, Response>>();
+    return {
+      async open(cacheName: string): Promise<PlateCacheLike> {
+        let entries = entriesByCache.get(cacheName);
+        if (!entries) {
+          entries = new Map();
+          entriesByCache.set(cacheName, entries);
+        }
+        return {
+          async match(request) {
+            return entries.get(request.url)?.clone();
+          },
+          async put(request, response) {
+            entries.set(request.url, response.clone());
+          }
+        };
+      },
+      async keys() {
+        return [...entriesByCache.keys()];
+      },
+      async delete(cacheName) {
+        return entriesByCache.delete(cacheName);
+      }
+    };
+  }
+
+  async function requestPlate(
+    requestUrl: string,
+    cacheStorage: PlateCacheStorageLike,
+    fetchRequest: (request: Request) => Promise<Response>
+  ): Promise<Response> {
+    const pendingWrites: Promise<unknown>[] = [];
+    const event: PlateRequestEventLike = {
+      waitUntil(promise) {
+        pendingWrites.push(promise);
+      }
+    };
+    const request = new Request(requestUrl);
+    const response = await cacheFirstPlateRequest(
+      event,
+      request,
+      new URL(request.url),
+      '2608',
+      cacheStorage,
+      fetchRequest
+    );
+    await Promise.all(pendingWrites);
+    return response;
+  }
+
+  test('current and historical plates alternate without evicting the current response', async () => {
+    const cacheStorage = createMemoryCacheStorage();
+    let networkRequests = 0;
+    const fetchRequest = async (request: Request) => {
+      networkRequests += 1;
+      return new Response(new URL(request.url).searchParams.get('cycle'));
+    };
+    const currentUrl = 'https://example.test/api/faa-plate?cycle=2608&file=current.PDF';
+    const historicalUrl = 'https://example.test/api/faa-plate?cycle=2512&file=historical.PDF';
+
+    assert.equal(await (await requestPlate(currentUrl, cacheStorage, fetchRequest)).text(), '2608');
+    assert.equal(
+      await (await requestPlate(historicalUrl, cacheStorage, fetchRequest)).text(),
+      '2512'
+    );
+    assert.equal(await (await requestPlate(currentUrl, cacheStorage, fetchRequest)).text(), '2608');
+    assert.equal(networkRequests, 2);
+    assert.deepEqual(await cacheStorage.keys(), [
+      `${PLATE_CACHE_PREFIX}2608`,
+      `${PLATE_CACHE_PREFIX}2512`
+    ]);
+  });
+
+  test('an official cycle advance deletes obsolete plate caches and nothing else', async () => {
+    const cacheStorage = createMemoryCacheStorage();
+    for (const cacheName of [
+      `${PLATE_CACHE_PREFIX}2512`,
+      `${PLATE_CACHE_PREFIX}2608`,
+      `${PLATE_CACHE_PREFIX}2609`,
+      'approach-viz-chart-tiles-v1'
+    ]) {
+      await cacheStorage.open(cacheName);
+    }
+
+    await cleanupObsoletePlateCaches(cacheStorage, '2609');
+
+    assert.deepEqual(await cacheStorage.keys(), [
+      `${PLATE_CACHE_PREFIX}2609`,
+      'approach-viz-chart-tiles-v1'
+    ]);
   });
 });
 

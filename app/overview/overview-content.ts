@@ -407,7 +407,7 @@ export const SECTIONS: Section[] = [
           },
           {
             kind: 'p',
-            text: 'The app ships with **cross-origin isolation on by default** (`COOP: same-origin`, `COEP: require-corp`), and a Workbox service worker (`sw/service-worker.ts`, bundled by esbuild) caches Terrarium elevation tiles (800 entries), FAA chart tiles (1,200 entries) and approach plates in a **cycle-aware cache** — the client messages the active d-TPP cycle to the worker, which purges caches for expired cycles.'
+            text: 'The app ships with **cross-origin isolation on by default** (`COOP: same-origin`, `COEP: require-corp`), and a Workbox service worker (`sw/service-worker.ts`, bundled by esbuild) caches Terrarium elevation tiles (800 entries), FAA chart tiles (1,200 entries) and approach plates in **cycle-scoped caches**. Plate requests never trigger eviction, so preserved historical and current plates can coexist; the client-synced official d-TPP cycle is the sole authority that purges expired-cycle caches.'
           },
           {
             kind: 'files',
