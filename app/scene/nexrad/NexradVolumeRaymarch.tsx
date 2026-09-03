@@ -21,6 +21,16 @@ const MIN_RAY_STEPS = 24;
  */
 const DENSITY_MIN = 0.12;
 const DENSITY_MAX = 2.0;
+/**
+ * Opacity ceiling a ray may reach while sampling the lightest echoes, at the
+ * opacity slider's endpoints (the shader raises the ceiling with intensity up
+ * to fully opaque for heavy cores). Widespread stratiform rain around an
+ * airport puts the camera inside 100+ NM of 20-40 dBZ; without a ceiling any
+ * extinction curve saturates over that path and the approach, terrain, and
+ * cores all disappear behind a wall of color.
+ */
+const LIGHT_OPACITY_CAP_MIN = 0.08;
+const LIGHT_OPACITY_CAP_MAX = 0.8;
 
 interface NexradVolumeRaymarchProps {
   texture: NexradVolumeTextureData;
@@ -60,6 +70,7 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform vec3 uBoxSpanNm;
   uniform vec3 uTexelCounts;
   uniform float uDensity;
+  uniform float uLightOpacityCap;
 
   in vec3 vLocalPos;
   out vec4 fragColor;
@@ -68,6 +79,10 @@ const FRAGMENT_SHADER = /* glsl */ `
   const float BAND_MAX_INDEX = float(${DBZ_LUT_MAX_INDEX});
   const float BAND_COUNT = float(${DBZ_LUT_MAX_INDEX + 1});
   const float PHASE_ROWS = float(${DBZ_LUT_PHASE_ROWS});
+  // The opacity ceiling ramps from the light-echo cap at this intensity to
+  // fully opaque at CAP_FULL_DBZ.
+  const float CAP_LIGHT_DBZ = 10.0;
+  const float CAP_FULL_DBZ = 60.0;
 
   // Extinction weight by intensity. Cubic in the 5-65 dBZ span so light
   // precipitation is nearly transparent and heavy cores dominate the
@@ -77,6 +92,16 @@ const FRAGMENT_SHADER = /* glsl */ `
   float dbzAlpha(float dbz) {
     float t = clamp((dbz - 5.0) / 60.0, 0.0, 1.0);
     return t * t * t * smoothstep(3.0, 8.0, dbz);
+  }
+
+  // Accumulated opacity a ray may reach while sampling an echo of this
+  // intensity. Light precipitation can only tint the scene; the ceiling
+  // rises steeply with intensity so a heavy core behind a shell of moderate
+  // rain always has headroom left to read through it, and a camera inside
+  // 100 NM of stratiform rain still sees the approach and the terrain.
+  float opacityCap(float dbz) {
+    float t = clamp((dbz - CAP_LIGHT_DBZ) / (CAP_FULL_DBZ - CAP_LIGHT_DBZ), 0.0, 1.0);
+    return mix(uLightOpacityCap, 1.0, pow(t, 2.2));
   }
 
   // Slab intersection with the unit box in local space.
@@ -132,7 +157,10 @@ const FRAGMENT_SHADER = /* glsl */ `
           uColorLut,
           vec2((band + 0.5) / BAND_COUNT, (phase + 0.5) / PHASE_ROWS)
         ).rgb;
-        float weight = (1.0 - alpha) * sampleAlpha;
+        // Front-to-back compositing, with the sample limited to the opacity
+        // headroom its intensity allows (see opacityCap).
+        float headroom = max(opacityCap(dbz) - alpha, 0.0);
+        float weight = min((1.0 - alpha) * sampleAlpha, headroom);
         accum += bandColor * weight;
         alpha += weight;
       }
@@ -263,7 +291,8 @@ export function NexradVolumeRaymarch({
           uCamLocal: { value: new THREE.Vector3() },
           uBoxSpanNm: { value: new THREE.Vector3(1, 1, 1) },
           uTexelCounts: { value: new THREE.Vector3(1, 1, 1) },
-          uDensity: { value: DENSITY_MIN }
+          uDensity: { value: DENSITY_MIN },
+          uLightOpacityCap: { value: LIGHT_OPACITY_CAP_MIN }
         },
         vertexShader: VERTEX_SHADER,
         fragmentShader: FRAGMENT_SHADER,
@@ -296,6 +325,9 @@ export function NexradVolumeRaymarch({
   const clampedOpacity = Math.min(1, Math.max(0, opacity));
   material.uniforms.uDensity.value =
     DENSITY_MIN + (DENSITY_MAX - DENSITY_MIN) * Math.pow(clampedOpacity, 1.2);
+  material.uniforms.uLightOpacityCap.value =
+    LIGHT_OPACITY_CAP_MIN +
+    (LIGHT_OPACITY_CAP_MAX - LIGHT_OPACITY_CAP_MIN) * Math.pow(clampedOpacity, 1.5);
 
   const cameraLocal = useMemo(() => new THREE.Vector3(), []);
   useFrame(({ camera }) => {
