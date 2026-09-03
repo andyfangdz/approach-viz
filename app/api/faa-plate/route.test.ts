@@ -122,7 +122,9 @@ describe('preserved historical faa plates', () => {
 });
 
 describe('service worker faa plate cache policy', () => {
-  function createMemoryCacheStorage(): PlateCacheStorageLike {
+  function createMemoryCacheStorage(
+    beforePut?: (cacheName: string, request: Request) => Promise<void>
+  ): PlateCacheStorageLike {
     const entriesByCache = new Map<string, Map<string, Response>>();
     return {
       async open(cacheName: string): Promise<PlateCacheLike> {
@@ -136,6 +138,7 @@ describe('service worker faa plate cache policy', () => {
             return entries.get(request.url)?.clone();
           },
           async put(request, response) {
+            await beforePut?.(cacheName, request);
             entries.set(request.url, response.clone());
           }
         };
@@ -194,6 +197,51 @@ describe('service worker faa plate cache policy', () => {
       `${PLATE_CACHE_PREFIX}2608`,
       `${PLATE_CACHE_PREFIX}2512`
     ]);
+  });
+
+  test('official cleanup preserves an overlapping historical plate cache write', async () => {
+    const historicalCacheName = `${PLATE_CACHE_PREFIX}2512`;
+    let markPutStarted!: () => void;
+    let finishPut!: () => void;
+    const putStarted = new Promise<void>((resolve) => {
+      markPutStarted = resolve;
+    });
+    const putCanFinish = new Promise<void>((resolve) => {
+      finishPut = resolve;
+    });
+    const cacheStorage = createMemoryCacheStorage(async (cacheName) => {
+      if (cacheName !== historicalCacheName) return;
+      markPutStarted();
+      await putCanFinish;
+    });
+    const pendingWrites: Promise<unknown>[] = [];
+    const event: PlateRequestEventLike = {
+      waitUntil(promise) {
+        pendingWrites.push(promise);
+      }
+    };
+    const request = new Request(
+      'https://example.test/api/faa-plate?cycle=2512&file=historical.PDF'
+    );
+
+    const response = await cacheFirstPlateRequest(
+      event,
+      request,
+      new URL(request.url),
+      '2608',
+      cacheStorage,
+      async () => new Response('historical plate')
+    );
+    assert.equal(await response.text(), 'historical plate');
+    await putStarted;
+
+    await cleanupObsoletePlateCaches(cacheStorage, '2608');
+    finishPut();
+    await Promise.all(pendingWrites);
+
+    const persisted = await (await cacheStorage.open(historicalCacheName)).match(request);
+    assert.ok(persisted);
+    assert.equal(await persisted.text(), 'historical plate');
   });
 
   test('an official cycle advance deletes obsolete plate caches and nothing else', async () => {
