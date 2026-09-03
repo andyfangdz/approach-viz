@@ -5,12 +5,41 @@ struct AirportOption: Identifiable, Hashable {
     let label: String
 }
 
+enum ApproachDataSource: String, Hashable {
+    case cifp
+    case historical
+}
+
 struct ApproachOption: Identifiable, Hashable {
     let procedureID: String
     let type: String
     let runway: String
+    let source: ApproachDataSource
+    let sourceCycle: String?
+
+    init(
+        procedureID: String,
+        type: String,
+        runway: String,
+        source: ApproachDataSource = .cifp,
+        sourceCycle: String? = nil
+    ) {
+        self.procedureID = procedureID
+        self.type = type
+        self.runway = runway
+        self.source = source
+        self.sourceCycle = sourceCycle
+    }
 
     var id: String { procedureID }
+
+    var displaySubtitle: String {
+        guard source == .historical else {
+            return "\(type) • Runway \(runway)"
+        }
+        let cycle = sourceCycle.map { " • FAA cycle \($0)" } ?? ""
+        return "Historical • Decommissioned • Training only\(cycle)"
+    }
 }
 
 struct AirportRecord: Hashable {
@@ -29,7 +58,7 @@ struct RunwayRecord: Hashable {
     let lon: Double
 }
 
-struct WaypointRecord: Hashable {
+struct WaypointRecord: Hashable, Codable {
     let id: String
     let name: String
     let lat: Double

@@ -30,6 +30,9 @@ export interface ApproachRow {
   type: string;
   runway: string;
   data_json: string;
+  source: 'cifp' | 'historical';
+  source_cycle: string;
+  historical_waypoints_json: string | null;
 }
 
 export interface MinimaRow {

@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  formatApproachLabel,
   parseLayersParam,
   serializeLayersParam,
   DEFAULT_LAYER_STATE
 } from '@/app/app-client-utils';
+import { findSelectedExternalApproach } from '@/app/actions-lib/approach-matching';
+import {
+  deserializeHistoricalWaypoints,
+  rowToApproachOption
+} from '@/app/actions-lib/approach-serialization';
+import type { ApproachRow } from '@/app/actions-lib/types';
+import type { SerializedApproach } from '@/lib/types';
 import type { LayerState } from '@/app/app-client/types';
 
 // --- parseLayersParam ---
@@ -93,4 +101,87 @@ test('serializeLayersParam serializes the turned-on obstacles layer with +', () 
 test('serializeLayersParam serializes multiple deltas sorted by layer ID', () => {
   const state: LayerState = { ...DEFAULT_LAYER_STATE, airspace: false, slice: true };
   assert.equal(serializeLayersParam(state), '-airspace,+slice');
+});
+
+test('historical approach provenance survives the scene API row mapping', () => {
+  const row: ApproachRow = {
+    airport_id: 'KSBS',
+    procedure_id: 'R32-Z',
+    type: 'RNAV',
+    runway: '32-Z',
+    data_json: '{}',
+    source: 'historical',
+    source_cycle: '260806',
+    historical_waypoints_json:
+      '[{"id":"KSBS_MABKY","name":"MABKY","lat":40.35366388888889,"lon":-106.82384166666667,"type":"terminal"}]'
+  };
+  const option = rowToApproachOption(row);
+
+  assert.equal(option.source, 'historical');
+  assert.equal(option.sourceCycle, '260806');
+  assert.deepEqual(deserializeHistoricalWaypoints(row), [
+    {
+      id: 'KSBS_MABKY',
+      name: 'MABKY',
+      lat: 40.35366388888889,
+      lon: -106.82384166666667,
+      type: 'terminal'
+    }
+  ]);
+  assert.equal(
+    formatApproachLabel(option),
+    'RNAV RWY 32-Z (R32-Z) — historical/decommissioned, training only, FAA cycle 260806'
+  );
+});
+
+test('KCRQ R24-X historical option uses the generic training-only label', () => {
+  const option = rowToApproachOption({
+    airport_id: 'KCRQ',
+    procedure_id: 'R24-X',
+    type: 'RNAV',
+    runway: '24-X',
+    data_json: '{}',
+    source: 'historical',
+    source_cycle: '251225',
+    historical_waypoints_json: '[]'
+  });
+
+  assert.equal(
+    formatApproachLabel(option),
+    'RNAV RWY 24-X (R24-X) — historical/decommissioned, training only, FAA cycle 251225'
+  );
+});
+
+test('historical geometry does not inherit current FAA minimums or plate metadata', () => {
+  const currentApproach: SerializedApproach = {
+    airportId: 'KSBS',
+    procedureId: 'R32-Z',
+    type: 'RNAV',
+    runway: '32-Z',
+    transitions: [],
+    finalLegs: [],
+    missedLegs: []
+  };
+
+  assert.equal(
+    findSelectedExternalApproach(
+      [
+        {
+          name: 'RNAV (GPS) Z RWY 32',
+          types: ['RNAV (GPS)'],
+          runway: 'RW32',
+          minimums: []
+        }
+      ],
+      {
+        procedureId: 'R32-Z',
+        type: 'RNAV',
+        runway: '32-Z',
+        source: 'historical',
+        sourceCycle: '260806'
+      },
+      currentApproach
+    ),
+    null
+  );
 });

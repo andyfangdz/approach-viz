@@ -18,6 +18,21 @@ final class AppFeatureTests: XCTestCase {
         }
     }
 
+    func testHistoricalApproachPresentationIsExplicitlyTrainingOnly() {
+        let approach = ApproachOption(
+            procedureID: "R32-Z",
+            type: "RNAV",
+            runway: "32-Z",
+            source: .historical,
+            sourceCycle: "260806"
+        )
+
+        XCTAssertEqual(
+            approach.displaySubtitle,
+            "Historical • Decommissioned • Training only • FAA cycle 260806"
+        )
+    }
+
     private static func makeTestScene() -> NativeSceneData {
         NativeSceneData(
             airport: AirportRecord(

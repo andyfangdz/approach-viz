@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { parseCIFP } from '../lib/cifp/parser';
+import { selectMissingHistoricalApproachFallbacks } from '../lib/cifp/historical-approaches';
 import { parseDOF } from '../lib/dof/parser';
 
 interface ApproachMinimumsDb {
@@ -120,6 +121,19 @@ function ensureSourceFile(filePath: string) {
   }
 }
 
+function loadCifpCycle(): string {
+  const cifpCyclePath = path.join(DATA_DIR, 'cifp', 'cycle.txt');
+  try {
+    return fs.readFileSync(cifpCyclePath, 'utf8').trim();
+  } catch {
+    console.warn(
+      `⚠️  ${cifpCyclePath} is missing; cifp_cycle metadata will be blank. ` +
+        'Run `npm run download-data` to record the CIFP cycle.'
+    );
+    return '';
+  }
+}
+
 function main() {
   ensureSourceFile(CIFP_PATH);
   ensureSourceFile(APPROACH_DB_PATH);
@@ -184,6 +198,9 @@ function main() {
       type TEXT NOT NULL,
       runway TEXT NOT NULL,
       data_json TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('cifp', 'historical')),
+      source_cycle TEXT NOT NULL,
+      historical_waypoints_json TEXT,
       PRIMARY KEY (airport_id, procedure_id)
     );
 
@@ -238,6 +255,8 @@ function main() {
 
   const cifpContent = fs.readFileSync(CIFP_PATH, 'utf8');
   const parsed = parseCIFP(cifpContent);
+  const cifpCycle = loadCifpCycle();
+  const historicalApproachFallbacks = selectMissingHistoricalApproachFallbacks(parsed.approaches);
 
   const insertMetadata = db.prepare('INSERT INTO metadata (key, value) VALUES (?, ?)');
   const insertAirport = db.prepare(
@@ -250,7 +269,9 @@ function main() {
     'INSERT INTO runways (airport_id, id, lat, lon) VALUES (?, ?, ?, ?)'
   );
   const insertApproach = db.prepare(
-    'INSERT INTO approaches (airport_id, procedure_id, type, runway, data_json) VALUES (?, ?, ?, ?, ?)'
+    `INSERT INTO approaches
+      (airport_id, procedure_id, type, runway, data_json, source, source_cycle, historical_waypoints_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertMinima = db.prepare(
     'INSERT INTO minima (airport_id, approach_name, runway, types_json, minimums_json, cycle) VALUES (?, ?, ?, ?, ?, ?)'
@@ -311,8 +332,31 @@ function main() {
           ...approach,
           transitions: Array.from(approach.transitions.entries())
         };
-        insertApproach.run(airportId, procedureId, type, runway, JSON.stringify(serializable));
+        insertApproach.run(
+          airportId,
+          procedureId,
+          type,
+          runway,
+          JSON.stringify(serializable),
+          'cifp',
+          cifpCycle,
+          null
+        );
       }
+    }
+
+    for (const fixture of historicalApproachFallbacks) {
+      const { approach } = fixture;
+      insertApproach.run(
+        approach.airportId,
+        approach.procedureId,
+        approach.type,
+        approach.runway,
+        JSON.stringify(approach),
+        'historical',
+        fixture.source.cycle,
+        JSON.stringify(fixture.waypoints)
+      );
     }
   });
 
@@ -453,17 +497,6 @@ function main() {
   });
   const airportSpatialCount = insertAirportSpatial();
 
-  // cifp_cycle from cycle.txt (release tag, written by download-data.sh)
-  const cifpCyclePath = path.join(DATA_DIR, 'cifp', 'cycle.txt');
-  let cifpCycle = '';
-  try {
-    cifpCycle = fs.readFileSync(cifpCyclePath, 'utf8').trim();
-  } catch {
-    console.warn(
-      `⚠️  ${cifpCyclePath} is missing; cifp_cycle metadata will be blank. ` +
-        'Run `npm run download-data` to record the CIFP cycle.'
-    );
-  }
   insertMetadata.run('cifp_cycle', cifpCycle);
   // dtpp_cycle_number from approaches.json (d-TPP cycle embedded by scraper)
   insertMetadata.run('dtpp_cycle_number', minimumsDb.dtpp_cycle_number || '');
@@ -473,6 +506,7 @@ function main() {
     'approach_count',
     String(Array.from(parsed.approaches.values()).reduce((sum, rows) => sum + rows.length, 0))
   );
+  insertMetadata.run('historical_approach_count', String(historicalApproachFallbacks.length));
   insertMetadata.run('dof_currency_date', parsedDof.currencyDate);
   insertMetadata.run('obstacle_count', String(obstacleCount));
 
@@ -482,6 +516,11 @@ function main() {
   console.log(
     `✅ Obstacles loaded (${obstacleCount} records, DOF currency ${parsedDof.currencyDate})`
   );
+  if (historicalApproachFallbacks.length > 0) {
+    console.log(
+      `✅ Historical training fallbacks loaded (${historicalApproachFallbacks.length} procedures)`
+    );
+  }
 }
 
 main();

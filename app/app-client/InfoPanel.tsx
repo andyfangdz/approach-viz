@@ -27,6 +27,10 @@ export function InfoPanel({
     );
   }
 
+  const selectedApproach = sceneData.approaches.find(
+    (approach) => approach.procedureId === sceneData.selectedApproachId
+  );
+
   return (
     <div className="info-panel compact">
       <div className="section-header">
@@ -120,6 +124,13 @@ export function InfoPanel({
       {plateOverlayEnabled && !hasApproachPlate && (
         <div className="legend-note">No FAA plate matched this approach.</div>
       )}
+      {selectedApproachSource === 'historical' && (
+        <div className="historical-approach-note" role="status">
+          <strong>Historical/decommissioned procedure.</strong> Preserved for education and training
+          only; not current operational FAA data
+          {selectedApproach?.sourceCycle ? ` (source cycle ${selectedApproach.sourceCycle})` : ''}.
+        </div>
+      )}
 
       <div className="minimums-section">
         <h3>Minimums</h3>
@@ -133,6 +144,12 @@ export function InfoPanel({
           <div className="minimums-row">
             <span>Geometry</span>
             <span className="minimums-value">Unavailable (CIFP)</span>
+          </div>
+        )}
+        {selectedApproachSource === 'historical' && (
+          <div className="minimums-row">
+            <span>Current FAA metadata</span>
+            <span className="minimums-value">Not applied</span>
           </div>
         )}
         {sceneData.minimumsSummary ? (

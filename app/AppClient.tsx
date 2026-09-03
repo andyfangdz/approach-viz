@@ -276,8 +276,9 @@ export function AppClient({
         value: approach.procedureId,
         label: formatApproachLabel(approach),
         searchText:
-          `${approach.procedureId} ${approach.type} ${approach.runway} ${approach.externalApproachName || ''}`.toLowerCase(),
+          `${approach.procedureId} ${approach.type} ${approach.runway} ${approach.source} ${approach.sourceCycle || ''} ${approach.externalApproachName || ''}`.toLowerCase(),
         source: approach.source,
+        sourceCycle: approach.sourceCycle,
         externalApproachName: approach.externalApproachName
       })),
     [sceneData.approaches]
@@ -477,8 +478,13 @@ export function AppClient({
           />
         )}
 
-        <div className="faa-disclaimer" role="note">
-          Not official FAA data — Do not use for navigation
+        <div
+          className={`faa-disclaimer ${selectedApproachOption?.source === 'historical' ? 'historical' : ''}`}
+          role="note"
+        >
+          {selectedApproachOption?.source === 'historical'
+            ? `Historical/decommissioned training procedure${selectedApproachOption.sourceCycle ? ` — FAA cycle ${selectedApproachOption.sourceCycle}` : ''} — Do not use for navigation`
+            : 'Not official FAA data — Do not use for navigation'}
         </div>
 
         {showMrmsLoadingIndicator && (

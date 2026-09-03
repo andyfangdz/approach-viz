@@ -5,7 +5,8 @@
 - Server-side data is backed by `data/approach-viz.sqlite`.
 - An SQLite R-tree spatial index (`airport_rtree` + `airport_rtree_map` tables) is built at `build-db` time and accelerates nearby-airport queries during scene-data assembly. A second R-tree (`airspace_rtree`) indexes airspace bounding boxes for efficient overlap queries, and a third (`obstacle_rtree`) indexes published-obstacle points (FAA Digital Obstacle File) for the obstacles scene query.
 - The airport spatial index also provides `elevationAirports` covering the full 80 NM traffic radius, used to place ADS-B targets without reported altitude at their nearest airport's field elevation.
-- Build/runtime geometry source of truth is CIFP data; approach geometry remains CIFP-only.
+- Current FAA CIFP is the normal build/runtime geometry source of truth. `build-db` conditionally adds the versioned `KSBS / R32-Z` (FAA cycle `260806`) and `KCRQ / R24-X` (FAA cycle `251225`) historical fixtures only when current CIFP no longer contains each exact procedure ID. A live/current row therefore always takes precedence.
+- The `approaches` table carries `source` (`cifp` or `historical`) and `source_cycle`. Historical rows also carry approach-specific preserved waypoint JSON so later FAA waypoint changes cannot alter the captured training geometry.
 
 ## Server Action Layering
 
@@ -27,8 +28,9 @@
 - Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions-lib/approaches.ts` and included in scene payloads for client rendering.
 - Matched external approach metadata is also used to parse official missed-climb requirements from `missed_instructions` text (`minimum climb of X feet per NM to Y`), which are included in scene payloads for missed-approach vertical-profile rendering.
 - CIFP-to-minima/plate matching uses runway + type-family scoring.
+- Historical training geometry never participates in current minimums/plate matching; scene-action payloads expose it as `source: historical` with its captured cycle instead.
 - `VOR/DME` procedures prefer `VOR/DME`/`TACAN` external approaches over same-runway RNAV rows.
-- Selector data merges CIFP procedures with minima/plate-only procedures missing CIFP geometry; these still show minimums/plate and indicate geometry is unavailable from CIFP.
+- Selector data merges CIFP procedures, the conditional historical training fallbacks, and minima/plate-only procedures missing CIFP geometry. Historical fallback and external-only provenance remain distinct in the scene-action API.
 
 ## FAA Plate PDF Access
 

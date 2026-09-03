@@ -145,7 +145,7 @@ struct NativeSelectorPanel: View {
                     ForEach(store.approaches) { approach in
                         SelectorRow(
                             title: approach.procedureID,
-                            subtitle: "\(approach.type) • Runway \(approach.runway)",
+                            subtitle: approach.displaySubtitle,
                             isSelected: approach.procedureID == store.selectedApproachID,
                             compactTitle: true
                         ) {

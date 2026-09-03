@@ -331,7 +331,10 @@ export const SECTIONS: Section[] = [
                 '`waypoints` / `runways`',
                 'Terminal + enroute fixes, runway thresholds; terminal IDs scoped `airport_waypoint`'
               ],
-              ['`approaches`', 'Full serialized procedure JSON — transitions, final, missed legs'],
+              [
+                '`approaches`',
+                'Full serialized procedure JSON plus source/cycle provenance; current CIFP wins over the versioned KSBS and KCRQ historical training fallbacks'
+              ],
               [
                 '`minima`',
                 'Per-approach minimums sets (DA/MDA by category) from the external release'
