@@ -6,6 +6,7 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 - Airport selection is encoded in the URL path: `/<AIRPORT>` or `/<AIRPORT>/<PROCEDURE_ID>`.
 - For `/<AIRPORT>` without a procedure, if that airport appears in `DEFAULT_SELECTIONS`, one matching default approach from `DEFAULT_SELECTIONS` is applied. Explicit `/<AIRPORT>/<PROCEDURE_ID>` is always preserved.
+- `KSBS / R32-Z` remains a configured default after FAA removal through a historical fallback. While a current FAA CIFP row exists it is preferred normally; when the fallback is active, selectors and the legend identify it as historical, decommissioned, training-only data and show the captured FAA cycle.
 - Surface mode is a query parameter: `?surface=terrain`, `?surface=satellite`, `?surface=map`, or `?surface=3dmap`. FAA plates are an overlay (`?plate=on`), not a surface mode. Legacy `?surface=plate` / `?surface=3dplate` migrate to terrain+plate and satellite+plate.
 - Layer visibility is a query parameter: `?layers=-mrms,+echotops` (delta-from-defaults format). `+layerId` turns a default-off layer on; `-layerId` turns a default-on layer off. Omitting `?layers=` means use all defaults. URL layer state takes precedence over localStorage on page load.
 - MRMS phase detection mode is a query parameter: `?phaseMode=thermo`. Default (`surface`) is omitted from URL. Values: `thermo` (thermodynamic per-altitude), `surface` (surface precip type for entire column).
@@ -66,6 +67,7 @@ All options-panel and layer values are persisted to browser `localStorage` and r
 - Airport/approach selectors use `react-select` searchable comboboxes.
 - Airport dropdown options are ordered with `DEFAULT_SELECTIONS` airport IDs first (in configured order), then remaining airports alphabetically by ID.
 - When selecting an airport from the dropdown, if that airport appears in `DEFAULT_SELECTIONS`, the selected approach defaults to one matching configured approach. Explicit approach selections made by the user are not overridden.
+- Historical fallback options append `historical/decommissioned, training only` plus their source cycle to the approach label. The always-visible FAA disclaimer becomes a historical/decommissioned training-procedure warning, and the legend repeats that warning while stating that current FAA minimums/plate metadata is not applied.
 - Search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header and avoid scene re-renders.
 - Selector-collapse toggle uses chevron icon states (up/down) with accessible show/hide labels.
 - Expanded selector controls render as an overlay panel (absolute-positioned beneath the header row), so opening selectors does not push/reflow the scene canvas.

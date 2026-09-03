@@ -86,6 +86,7 @@ Current native scene behavior:
 
 - SQLite source: bundled `approach-viz.sqlite` copied into the app bundle during the Xcode build and read through `GRDB.swift`
 - Bundled external reference source: `public/data/approach-db/approaches.json`, copied into the app bundle during Xcode builds and used to match official minimums/VDA rows against CIFP procedures
+- The shared SQLite bundle conditionally includes the decommissioned `KSBS / R32-Z` FAA-cycle-`260806` historical fallback when current CIFP omits it. Native scene loading uses its approach-specific preserved waypoints, skips current external-reference matching, and marks it `Historical • Decommissioned • Training only` in the selector and scene title.
 - Terrain tiles are fetched from the Terrarium public tile service at runtime through `Nuke`; individual tile fetch failures no longer abort the entire wireframe build
 - Queries are read-only and currently cover:
   - airports

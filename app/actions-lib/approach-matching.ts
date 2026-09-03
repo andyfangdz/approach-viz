@@ -293,6 +293,7 @@ export function findSelectedExternalApproach(
       ) || null
     );
   }
+  if (selectedApproachOption.source === 'historical') return null;
   if (!currentApproach) return null;
   return resolveExternalApproach(airportApproaches, serializedApproachToRuntime(currentApproach));
 }
@@ -328,6 +329,7 @@ export function buildApproachOptions(
       type: inferExternalApproachType(approach),
       runway: normalizeExternalRunway(approach),
       source: 'external' as const,
+      sourceCycle: minimaRows[0]?.cycle || undefined,
       externalApproachName: approach.name
     }));
 

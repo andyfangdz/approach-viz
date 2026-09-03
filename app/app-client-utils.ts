@@ -13,7 +13,8 @@ export interface SelectOption {
   value: string;
   label: string;
   searchText: string;
-  source: 'cifp' | 'external';
+  source: 'cifp' | 'external' | 'historical';
+  sourceCycle?: string;
   externalApproachName?: string;
 }
 
@@ -57,16 +58,25 @@ export function formatApproachLabel(approach: SceneData['approaches'][number]): 
   const { type, runway, procedureId } = approach;
   const cleanedRunway = (runway || '').toUpperCase().replace(/\s+/g, '');
   if (/\d/.test(cleanedRunway)) {
-    return `${type} RWY ${runway} (${procedureId})`;
+    return appendApproachSourceLabel(`${type} RWY ${runway} (${procedureId})`, approach);
   }
   const circlingMatch = cleanedRunway.match(/-?([A-Z])$/);
   if (circlingMatch) {
-    return `${type}-${circlingMatch[1]} (${procedureId})`;
+    return appendApproachSourceLabel(`${type}-${circlingMatch[1]} (${procedureId})`, approach);
   }
   if (runway) {
-    return `${type} ${runway} (${procedureId})`;
+    return appendApproachSourceLabel(`${type} ${runway} (${procedureId})`, approach);
   }
-  return `${type} (${procedureId})`;
+  return appendApproachSourceLabel(`${type} (${procedureId})`, approach);
+}
+
+function appendApproachSourceLabel(
+  label: string,
+  approach: SceneData['approaches'][number]
+): string {
+  if (approach.source !== 'historical') return label;
+  const cycle = approach.sourceCycle ? `, FAA cycle ${approach.sourceCycle}` : '';
+  return `${label} — historical/decommissioned, training only${cycle}`;
 }
 
 export function formatMinimumValue(minimum: MinimumsValueSummary | undefined): string {

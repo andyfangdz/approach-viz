@@ -333,6 +333,12 @@ textarea,
   transition: top 0.2s ease;
 }
 
+.faa-disclaimer.historical {
+  color: #ffd39a;
+  border-color: rgba(255, 184, 77, 0.45);
+  background: rgba(42, 30, 22, 0.9);
+}
+
 .mrms-loading-spinner {
   width: 12px;
   height: 12px;
@@ -822,6 +828,17 @@ textarea,
   margin-top: 6px;
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.historical-approach-note {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid rgba(255, 184, 77, 0.45);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 184, 77, 0.08);
+  color: #ffd39a;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .minimums-section {

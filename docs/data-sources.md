@@ -6,7 +6,9 @@ External data feeds and their ingestion paths.
 
 - Source: FAA digital products download page (latest archive URL scraped at download time).
 - Contains waypoint/leg/altitude geometry for instrument approaches, parsed into SQLite at `build-db` time.
-- CIFP is the sole source of build-time approach geometry; procedures without CIFP records have no rendered path.
+- Current CIFP is the primary source of build-time approach geometry. The one intentional exception is the versioned `KSBS / R32-Z` historical fixture at `fixtures/historical-approaches/ksbs-r32-z.cifp-260806.json`, captured from FAA CIFP cycle `260806` for education and training after decommissioning.
+- `build-db` uses a historical fixture only when the same airport/procedure ID is absent from the current CIFP, so a current FAA record always wins. The fixture includes hashes of the exact captured procedure JSON and its six waypoint rows; hash mismatches fail the build.
+- Historical fallback rows are stored in `approaches` with `source = historical`, their captured `source_cycle`, and approach-specific preserved waypoint JSON. Scene payloads expose that provenance, and historical geometry is not matched to current minimums, missed-instruction, or plate metadata.
 
 ## Airspace Overlays
 
@@ -87,4 +89,4 @@ External data feeds and their ingestion paths.
 
 - The airport/approach selectors expose all airports present in parsed FAA CIFP data (not a curated list).
 - Selectors use `react-select` searchable comboboxes.
-- Selector data merges CIFP procedures with minima/plate-only procedures that lack CIFP geometry; these still display minimums and plates while indicating geometry is unavailable.
+- Selector data merges current CIFP procedures, the conditional KSBS historical training fallback, and minima/plate-only procedures that lack CIFP geometry. Historical and external-only options both carry explicit source labels; external-only entries still display minimums and plates while indicating geometry is unavailable.

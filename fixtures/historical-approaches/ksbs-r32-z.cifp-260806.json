@@ -1,0 +1,210 @@
+{
+  "schemaVersion": 1,
+  "status": "decommissioned",
+  "intendedUse": "education-and-training-only",
+  "source": {
+    "provider": "FAA CIFP",
+    "cycle": "260806"
+  },
+  "capture": {
+    "approachSha256": "477d52772c18ba2c17411214c1ae62bc5a7e05c364889dad069bd994abfde135",
+    "waypointsSha256": "b0c56b5a652dfb56066fe64864f054a73944899ec25d5844c76651eaaa72b5ce"
+  },
+  "approach": {
+    "airportId": "KSBS",
+    "procedureId": "R32-Z",
+    "type": "RNAV",
+    "runway": "32-Z",
+    "transitions": [
+      [
+        "ROUTT",
+        [
+          {
+            "sequence": 10,
+            "waypointId": "KSBS_ROUTT",
+            "waypointName": "ROUTT",
+            "pathTerminator": "IF",
+            "isFinalApproachFix": false,
+            "isInitialFix": false,
+            "isFinalFix": false,
+            "isMissedApproach": false
+          },
+          {
+            "sequence": 20,
+            "waypointId": "KSBS_TILLI",
+            "waypointName": "TILLI",
+            "pathTerminator": "TF",
+            "altitude": 12400,
+            "altitudeConstraint": "at",
+            "isFinalApproachFix": false,
+            "isInitialFix": false,
+            "isFinalFix": false,
+            "isMissedApproach": false
+          }
+        ]
+      ],
+      [
+        "TILLI",
+        [
+          {
+            "sequence": 10,
+            "waypointId": "KSBS_TILLI",
+            "waypointName": "TILLI",
+            "pathTerminator": "HF",
+            "altitude": 12400,
+            "altitudeConstraint": "at",
+            "course": 350.4,
+            "distance": 8,
+            "holdCourse": 350.4,
+            "holdDistance": 8,
+            "turnDirection": "R",
+            "holdTurnDirection": "R",
+            "isFinalApproachFix": false,
+            "isInitialFix": false,
+            "isFinalFix": false,
+            "isMissedApproach": false
+          }
+        ]
+      ]
+    ],
+    "finalLegs": [
+      {
+        "sequence": 10,
+        "waypointId": "KSBS_TILLI",
+        "waypointName": "TILLI",
+        "pathTerminator": "IF",
+        "altitude": 12400,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": false
+      },
+      {
+        "sequence": 20,
+        "waypointId": "KSBS_MABKY",
+        "waypointName": "MABKY",
+        "pathTerminator": "TF",
+        "altitude": 10800,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": true,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": false
+      },
+      {
+        "sequence": 21,
+        "waypointId": "KSBS_WDCHK",
+        "waypointName": "WDCHK",
+        "pathTerminator": "TF",
+        "altitude": 9100,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": false
+      }
+    ],
+    "missedLegs": [
+      {
+        "sequence": 30,
+        "waypointId": "KSBS_ACDIY",
+        "waypointName": "ACDIY",
+        "pathTerminator": "TF",
+        "altitude": 7119,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": true
+      },
+      {
+        "sequence": 40,
+        "waypointId": "KSBS_",
+        "waypointName": "",
+        "pathTerminator": "CA",
+        "altitude": 7282,
+        "altitudeConstraint": "at",
+        "course": 340,
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": true
+      },
+      {
+        "sequence": 50,
+        "waypointId": "KSBS_HAHNS",
+        "waypointName": "HAHNS",
+        "pathTerminator": "DF",
+        "altitude": 13600,
+        "altitudeConstraint": "at",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": true
+      },
+      {
+        "sequence": 60,
+        "waypointId": "KSBS_HAHNS",
+        "waypointName": "HAHNS",
+        "pathTerminator": "HM",
+        "altitude": 13600,
+        "altitudeConstraint": "at",
+        "course": 143.4,
+        "distance": 8,
+        "holdCourse": 143.4,
+        "holdDistance": 8,
+        "turnDirection": "L",
+        "holdTurnDirection": "L",
+        "isFinalApproachFix": false,
+        "isInitialFix": false,
+        "isFinalFix": false,
+        "isMissedApproach": true
+      }
+    ]
+  },
+  "waypoints": [
+    {
+      "id": "HAHNS",
+      "name": "HAHNS",
+      "lat": 40.690799999999996,
+      "lon": -106.98088055555556,
+      "type": "enroute"
+    },
+    {
+      "id": "KSBS_ACDIY",
+      "name": "ACDIY",
+      "lat": 40.50496111111111,
+      "lon": -106.85871666666667,
+      "type": "terminal"
+    },
+    {
+      "id": "KSBS_MABKY",
+      "name": "MABKY",
+      "lat": 40.35366388888889,
+      "lon": -106.82384166666667,
+      "type": "terminal"
+    },
+    {
+      "id": "KSBS_ROUTT",
+      "name": "ROUTT",
+      "lat": 40.23367777777778,
+      "lon": -107.13644444444445,
+      "type": "terminal"
+    },
+    {
+      "id": "KSBS_WDCHK",
+      "name": "WDCHK",
+      "lat": 40.42283611111111,
+      "lon": -106.83976666666666,
+      "type": "terminal"
+    },
+    {
+      "id": "TILLI",
+      "name": "TILLI",
+      "lat": 40.23397222222222,
+      "lon": -106.82502777777778,
+      "type": "enroute"
+    }
+  ]
+}

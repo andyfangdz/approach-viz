@@ -12,6 +12,7 @@ import {
   deriveApproachPlate,
   deriveMinimumsSummary,
   deserializeApproach,
+  deserializeHistoricalWaypoints,
   findSelectedExternalApproach,
   loadAirportExternalApproaches
 } from './approaches';
@@ -40,7 +41,8 @@ function stmts() {
     const db = getDb();
     _stmts = {
       selectApproaches: db.prepare(`
-        SELECT airport_id, procedure_id, type, runway, data_json
+        SELECT airport_id, procedure_id, type, runway, data_json,
+               source, source_cycle, historical_waypoints_json
         FROM approaches
         WHERE airport_id = ?
         ORDER BY type, runway, procedure_id
@@ -133,7 +135,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
 
   const selectedApproachOption = approachOptionByProcedureId.get(selectedApproachId) || null;
   const selectedApproachRow =
-    selectedApproachOption?.source === 'cifp'
+    selectedApproachOption && selectedApproachOption.source !== 'external'
       ? approachRowByProcedureId.get(selectedApproachId) || null
       : null;
   const currentApproach = selectedApproachRow ? deserializeApproach(selectedApproachRow) : null;
@@ -154,7 +156,9 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
   const runways = s.selectRunways.all(airport.id) as RunwayPointRow[];
 
   let waypoints: WaypointRow[] = [];
-  if (currentApproachWithVerticalProfile) {
+  if (selectedApproachRow?.source === 'historical') {
+    waypoints = deserializeHistoricalWaypoints(selectedApproachRow);
+  } else if (currentApproachWithVerticalProfile) {
     const waypointIds = collectWaypointIds(currentApproachWithVerticalProfile);
     if (waypointIds.length > 0) {
       const db = getDb();

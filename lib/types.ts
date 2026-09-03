@@ -42,7 +42,8 @@ export interface ApproachOption {
   procedureId: string;
   type: string;
   runway: string;
-  source: 'cifp' | 'external';
+  source: 'cifp' | 'external' | 'historical';
+  sourceCycle?: string;
   externalApproachName?: string;
 }
 

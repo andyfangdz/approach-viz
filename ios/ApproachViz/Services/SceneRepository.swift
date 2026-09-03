@@ -37,21 +37,30 @@ struct SceneRepository {
         let selectedApproachID = requestedApproachID.flatMap { requested in
             approaches.contains(where: { $0.procedureID == requested }) ? requested : nil
         } ?? approaches.first?.procedureID ?? ""
+        let selectedApproach = approaches.first { $0.procedureID == selectedApproachID }
+        let isHistoricalApproach = selectedApproach?.source == .historical
 
         let rawApproach = try loadApproachPayload(airportID: airportID, approachID: selectedApproachID)
         let minimaRows = try loadMinimaRows(airportID: airportID)
-        let minimaApproaches = ApproachReferenceData.minimaApproaches(from: minimaRows)
-        let externalApproaches = ApproachReferenceData.loadExternalApproaches(airportID: airportID)
-        let selectedExternalApproach = ApproachReferenceData.findSelectedExternalApproach(
-            airportApproaches: externalApproaches,
-            currentApproach: rawApproach
-        )
+        let minimaApproaches: [ExternalApproach] = isHistoricalApproach
+            ? []
+            : ApproachReferenceData.minimaApproaches(from: minimaRows)
+        let selectedExternalApproach: ExternalApproach? = isHistoricalApproach
+            ? nil
+            : ApproachReferenceData.findSelectedExternalApproach(
+                airportApproaches: ApproachReferenceData.loadExternalApproaches(airportID: airportID),
+                currentApproach: rawApproach
+            )
         let currentApproach = ApproachReferenceData.applyExternalVerticalAngle(
             to: rawApproach,
             externalApproach: selectedExternalApproach
         )
         let runways = try loadRunways(airportID: airportID)
-        let waypoints = try loadWaypoints(for: currentApproach)
+        let waypoints = try loadWaypoints(
+            for: currentApproach,
+            airportID: airportID,
+            historicalApproachID: isHistoricalApproach ? selectedApproachID : nil
+        )
         let elevationAirports = try loadElevationAirports(airport: airport)
         let airspace = try loadAirspace(airport: airport)
         let minimumsSummary = ApproachReferenceData.deriveMinimumsSummary(
@@ -99,16 +108,26 @@ struct SceneRepository {
 
     private func loadApproaches(airportID: String) throws -> [ApproachOption] {
         let sql = """
-            SELECT procedure_id, type, runway
+            SELECT procedure_id, type, runway, source, source_cycle
             FROM approaches
             WHERE airport_id = ?
             ORDER BY type, runway, procedure_id
             """
         return try database.query(sql: sql, bindings: [airportID]) { row in
-            ApproachOption(
+            let sourceValue: String = row[3]
+            guard let source = ApproachDataSource(rawValue: sourceValue) else {
+                throw SQLiteDatabaseError.invalidData(
+                    "Unsupported approach source for \(airportID): \(sourceValue)"
+                )
+            }
+            let sourceCycleValue: String = row[4]
+            let sourceCycle = sourceCycleValue.isEmpty ? nil : sourceCycleValue
+            return ApproachOption(
                 procedureID: row[0],
                 type: row[1],
-                runway: row[2]
+                runway: row[2],
+                source: source,
+                sourceCycle: sourceCycle
             )
         }
     }
@@ -165,9 +184,36 @@ struct SceneRepository {
         }
     }
 
-    private func loadWaypoints(for approach: SerializedApproach?) throws -> [WaypointRecord] {
+    private func loadWaypoints(
+        for approach: SerializedApproach?,
+        airportID: String,
+        historicalApproachID: String?
+    ) throws -> [WaypointRecord] {
         guard let approach else {
             return []
+        }
+
+        if let historicalApproachID {
+            let sql = """
+                SELECT historical_waypoints_json
+                FROM approaches
+                WHERE airport_id = ? AND procedure_id = ? AND source = 'historical'
+                """
+            guard let rawJSON = try database.scalar(
+                sql: sql,
+                bindings: [airportID, historicalApproachID]
+            ), let data = rawJSON.data(using: .utf8) else {
+                throw SQLiteDatabaseError.invalidData(
+                    "Historical approach \(airportID) \(historicalApproachID) has no preserved waypoints."
+                )
+            }
+            do {
+                return try decoder.decode([WaypointRecord].self, from: data)
+            } catch {
+                throw SQLiteDatabaseError.invalidData(
+                    "Historical approach \(airportID) \(historicalApproachID) has invalid preserved waypoints."
+                )
+            }
         }
 
         let waypointIDs = Array(Set(collectWaypointIDs(from: approach))).sorted()

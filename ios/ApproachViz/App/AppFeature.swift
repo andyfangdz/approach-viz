@@ -77,7 +77,11 @@ struct AppFeature {
             return SceneTitleContext(
                 airportID: sceneData.airport.id,
                 approachID: sceneData.selectedApproachID,
-                subtitle: selectedApproach.map { "\($0.type) • RWY \($0.runway)" } ?? nil,
+                subtitle: selectedApproach.map { approach in
+                    approach.source == .historical
+                        ? approach.displaySubtitle
+                        : "\(approach.type) • RWY \(approach.runway)"
+                },
                 airportLabel: sceneData.airport.name
             )
         }

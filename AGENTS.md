@@ -84,6 +84,7 @@
 
 ## Current Behavior (Keep in Sync)
 
+- `KSBS / R32-Z` remains a default even after FAA decommissioning: `fixtures/historical-approaches/ksbs-r32-z.cifp-260806.json` preserves the exact cycle-`260806` procedure JSON and six resolved waypoint rows with validated SHA-256 hashes. `build-db` inserts it only when current CIFP lacks that same airport/procedure ID (current FAA data always wins), marks the SQLite/API source as `historical` with its captured cycle, and embeds approach-specific waypoint JSON. Web and native selectors/title/legend identify the active fallback as historical, decommissioned, and training-only; historical geometry never inherits current minimums, missed-instruction, vertical-profile, or plate metadata.
 - AVMR brick merging keys on `{phase, surface_phase, 5 dBZ-quantized dbz}` — `surface_phase` is keyed because the default client phase mode colors by it, so bricks never blend cells across a surface rain/snow boundary — and each brick ships the true maximum `dbz_tenths` over its merged cells rather than the quantized grouping bucket, so displayed intensity is never understated.
 - Runtime endpoints:
   - `GET /v1/weather/volume` -> `application/vnd.approach-viz.mrms.v5` content-type (wire format AVMR v5, FlatBuffers) (legacy alias `/v1/volume`)

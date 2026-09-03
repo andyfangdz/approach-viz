@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import {
+  HISTORICAL_APPROACH_FIXTURES,
+  selectMissingHistoricalApproachFallbacks
+} from './historical-approaches';
 import { parseCIFP, type Approach } from './parser';
 
 const FIXTURE_PATH = new URL('./__fixtures__/real-cifp-procedures.txt', import.meta.url);
@@ -121,4 +125,25 @@ test('parses single-slot RNP continuation values for PHNL H26L FAF without bogus
   assert.equal(faf.isFinalApproachFix, true);
   assert.deepEqual(faf.rnpServiceLevels, [1.52]);
   assert.equal(faf.verticalAngleDeg, undefined);
+});
+
+test('uses the versioned KSBS historical fixture when the FAA procedure disappears', () => {
+  const fallbacks = selectMissingHistoricalApproachFallbacks(new Map([['KSBS', []]]));
+
+  assert.equal(fallbacks.length, 1);
+  assert.equal(fallbacks[0], HISTORICAL_APPROACH_FIXTURES[0]);
+  assert.equal(fallbacks[0].approach.airportId, 'KSBS');
+  assert.equal(fallbacks[0].approach.procedureId, 'R32-Z');
+  assert.equal(fallbacks[0].source.cycle, '260806');
+  assert.equal(fallbacks[0].status, 'decommissioned');
+  assert.equal(fallbacks[0].intendedUse, 'education-and-training-only');
+  assert.equal(fallbacks[0].waypoints.length, 6);
+});
+
+test('prefers a current FAA KSBS procedure over the historical fallback', () => {
+  const currentApproaches = new Map([
+    ['KSBS', [{ procedureId: 'R32-Z', type: 'RNAV', runway: '32-Z' }]]
+  ]);
+
+  assert.deepEqual(selectMissingHistoricalApproachFallbacks(currentApproaches), []);
 });
