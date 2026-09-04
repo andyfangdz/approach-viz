@@ -158,6 +158,7 @@
   - `docs/worker-transport-protocols.md`
   - `docs/mrms-rust-pipeline.md`
   - `docs/mrms-phase-methodology.md`
+  - `docs/hosting-and-availability.md` (proposal: multi-replica runtime hosting, not yet implemented)
 - Rendering:
   - `docs/rendering-coordinate-system.md`
   - `docs/rendering-ios-native-mvp.md`
