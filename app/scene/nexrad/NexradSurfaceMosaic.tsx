@@ -2,8 +2,8 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { NexradSurfaceMosaicDrape } from '@/app/app-client/types';
 import { earthCurvatureDropNm } from '../approach-path/coordinates';
-import { WEATHER_ELEVATION_ZOOM } from '../terrain/terrarium';
-import { useElevationSampler } from '../terrain/use-elevation-sampler';
+import type { ElevationSampler } from '../terrain/terrarium';
+import type { ElevationSamplerStatus } from '../terrain/use-elevation-sampler';
 import type { NexradCompositeSurface } from './nexrad-types';
 import { feetToNm } from './nexrad-render';
 
@@ -33,14 +33,17 @@ export type MosaicDrapeStatus = 'flat' | 'terrain' | 'terrain-loading' | 'terrai
 interface NexradSurfaceMosaicProps {
   composite: NexradCompositeSurface;
   drapeMode: NexradSurfaceMosaicDrape;
-  /** Weather request radius; the drape raster covers this, not the echo
-   *  bounding box, so a moving storm reuses one tile fetch. */
-  maxRangeNm: number;
+  /** Terrarium raster over the weather radius, owned by the overlay and
+   *  shared with the volume's ground occlusion so the two never fetch the
+   *  same tiles twice. `null` until loaded (or when every tile failed). */
+  elevation: ElevationSampler | null;
+  /** Lifecycle of that raster; the drape reports `terrain-loading` and
+   *  `terrain-unavailable` from it rather than guessing. */
+  elevationStatus: ElevationSamplerStatus;
   surfaceElevationFeet: number;
   opacity: number;
   applyEarthCurvatureCompensation: boolean;
   refLat: number;
-  refLon: number;
   onDrapeStatusChange?: (status: MosaicDrapeStatus) => void;
 }
 
@@ -60,24 +63,15 @@ interface NexradSurfaceMosaicProps {
 export function NexradSurfaceMosaic({
   composite,
   drapeMode,
-  maxRangeNm,
+  elevation,
+  elevationStatus,
   surfaceElevationFeet,
   opacity,
   applyEarthCurvatureCompensation,
   refLat,
-  refLon,
   onDrapeStatusChange
 }: NexradSurfaceMosaicProps) {
   const wantsDrape = drapeMode === 'terrain';
-  const { sampler: elevation, status: elevationStatus } = useElevationSampler({
-    enabled: wantsDrape,
-    refLat,
-    refLon,
-    radiusNm: maxRangeNm,
-    zoom: WEATHER_ELEVATION_ZOOM,
-    fallbackFeet: surfaceElevationFeet,
-    label: 'MRMS mosaic'
-  });
 
   const drapeStatus: MosaicDrapeStatus = !wantsDrape
     ? 'flat'
