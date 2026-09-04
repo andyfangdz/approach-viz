@@ -61,6 +61,7 @@ export interface NexradDebugState {
   surfaceMosaicCellCount: number;
   surfaceMosaicMaxDbz: number | null;
   surfaceMosaicDrape: string | null;
+  volumeGround: string | null;
   echoTopCellCount: number;
   echoTopMax18Feet: number | null;
   echoTopMax30Feet: number | null;

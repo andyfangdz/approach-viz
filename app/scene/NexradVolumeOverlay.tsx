@@ -33,6 +33,8 @@ import { feetToNm, applyConstantColorInstances, feetLabel } from './nexrad/nexra
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
 import { NexradSurfaceMosaic, type MosaicDrapeStatus } from './nexrad/NexradSurfaceMosaic';
 import { NexradVolumeRaymarch } from './nexrad/NexradVolumeRaymarch';
+import { WEATHER_ELEVATION_ZOOM } from './terrain/terrarium';
+import { useElevationSampler } from './terrain/use-elevation-sampler';
 
 const MIN_INSTANCE_CAPACITY = 1;
 const EMPTY_PHASE_COUNTS = { rain: 0, mixed: 0, snow: 0 };
@@ -138,6 +140,7 @@ export function NexradVolumeOverlay({
   crossSectionRangeNm = 80,
   maxRangeNm = DEFAULT_MAX_RANGE_NM,
   applyEarthCurvatureCompensation = false,
+  groundOcclusion = 'none',
   onDebugChange
 }: NexradVolumeOverlayProps) {
   const [payload, setPayload] = useState<NexradVolumePayload | null>(null);
@@ -197,6 +200,29 @@ export function NexradVolumeOverlay({
   const [crossSectionData, setCrossSectionData] = useState<CrossSectionData | null>(null);
   const [compositeSurface, setCompositeSurface] = useState<NexradCompositeSurface | null>(null);
   const [mosaicDrapeStatus, setMosaicDrapeStatus] = useState<MosaicDrapeStatus | null>(null);
+  // One Terrarium raster serves both terrain consumers: the raymarched
+  // volume stops rays at the ground where the scene's surface is opaque
+  // (tiled satellite / 3D map modes), and the surface mosaic drapes over the
+  // same relief. Fetched once here and handed to both, so enabling them
+  // together does not load and decode the ~25 tiles twice.
+  const wantsGround = enabled && showVolume && groundOcclusion === 'terrain';
+  const wantsMosaicDrape = enabled && showSurfaceMosaic && surfaceMosaicDrape === 'terrain';
+  const { sampler: weatherElevation, status: weatherElevationStatus } = useElevationSampler({
+    enabled: wantsGround || wantsMosaicDrape,
+    refLat,
+    refLon,
+    radiusNm: maxRangeNm,
+    zoom: WEATHER_ELEVATION_ZOOM,
+    fallbackFeet: surfaceElevationFeet,
+    label: 'MRMS weather terrain'
+  });
+  const volumeGroundStatus = !wantsGround
+    ? 'none'
+    : weatherElevationStatus === 'ready'
+      ? 'terrain'
+      : weatherElevationStatus === 'unavailable'
+        ? 'terrain-unavailable'
+        : 'terrain-loading';
   const [echoTop18, setEchoTop18] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop30, setEchoTop30] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop50, setEchoTop50] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
@@ -625,6 +651,7 @@ export function NexradVolumeOverlay({
     surfaceMosaicCellCount: compositeSurface?.filledCellCount ?? 0,
     surfaceMosaicMaxDbz: compositeSurface?.maxDbz ?? null,
     surfaceMosaicDrape: mosaicDrapeStatus,
+    volumeGround: volumeGroundStatus,
     echoTopCellCount: echoTopPayload?.sourceCellCount ?? 0,
     echoTopMax18Feet: echoTopPayload?.maxTop18Feet ?? null,
     echoTopMax30Feet: echoTopPayload?.maxTop30Feet ?? null,
@@ -674,6 +701,7 @@ export function NexradVolumeOverlay({
         surfaceMosaicCellCount: 0,
         surfaceMosaicMaxDbz: null,
         surfaceMosaicDrape: null,
+        volumeGround: null,
         echoTopCellCount: 0,
         echoTopMax18Feet: null,
         echoTopMax30Feet: null,
@@ -792,17 +820,23 @@ export function NexradVolumeOverlay({
         <NexradSurfaceMosaic
           composite={compositeSurface}
           drapeMode={surfaceMosaicDrape}
-          maxRangeNm={maxRangeNm}
+          elevation={weatherElevation}
+          elevationStatus={weatherElevationStatus}
           surfaceElevationFeet={surfaceElevationFeet}
           opacity={opacity}
           applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
           refLat={refLat}
-          refLon={refLon}
           onDrapeStatusChange={setMosaicDrapeStatus}
         />
       )}
       {showVolume && volumeTexture && (
-        <NexradVolumeRaymarch texture={volumeTexture} opacity={opacity} />
+        <NexradVolumeRaymarch
+          texture={volumeTexture}
+          opacity={opacity}
+          ground={weatherElevation}
+          applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
+          refLat={refLat}
+        />
       )}
       {showEchoTops && (
         <>

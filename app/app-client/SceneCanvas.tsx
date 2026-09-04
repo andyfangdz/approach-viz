@@ -606,6 +606,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             crossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
             crossSectionRangeNm={nexradCrossSectionRangeNm}
             applyEarthCurvatureCompensation={isTiledSurface}
+            groundOcclusion={isTiledSurface ? 'terrain' : 'none'}
             onDebugChange={onNexradDebugChange}
           />
         )}
