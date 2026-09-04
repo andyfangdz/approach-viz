@@ -2,13 +2,13 @@
 
 ## App Client Composition
 
-- `app/AppClient.tsx` coordinates client state and effects.
+- `app/AppClient.tsx` composes selection, persisted-options, surface, URL-sync, and service-worker hooks. `options-state.ts` owns the typed options defaults and saved/URL parsing; `usePersistedOptions` exposes a typed update function.
 - Picker formatting/filtering/runtime conversion helpers are delegated to `app/app-client-utils.ts`.
 - Header selector filtering uses an async worker helper (`app/app-client/filter.worker.ts`) so keystroke filtering stays off the main thread; worker failures surface as explicit errors and stop worker filtering (no synchronous fallback).
 - Worker request/response contracts and transport details (postMessage vs SAB, overflow growth/retry semantics, and fallback policy) are documented in [`docs/worker-transport-protocols.md`](worker-transport-protocols.md).
-- Optional live traffic state (enable flag + hide-ground toggle + callsign-label toggle + hide-ground-callsign-label toggle + departed-trail toggle + history retention minutes) is managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
-- Optional MRMS weather state (volume enable toggle + reflectivity threshold dBZ + opacity + declutter mode + direct echo-top overlay toggle that can run without volume + altitude-guide toggle + vertical cross-section controls) plus ProbSevere storm-cell layer visibility are managed in `app/AppClient.tsx` and fed into `SceneCanvas`/`OptionsPanel`.
-- Camera-control mode state (`orbit`/`arcball`/`map`) is managed in `app/AppClient.tsx`, selected in `OptionsPanel`, and consumed by `SceneCanvas` to mount the corresponding Drei controls component.
+- Optional live traffic state (enable flag + hide-ground toggle + callsign-label toggle + hide-ground-callsign-label toggle + departed-trail toggle + history retention minutes) is owned by `usePersistedOptions` and fed into `SceneCanvas`/`OptionsPanel`.
+- Optional MRMS weather state (volume enable toggle + reflectivity threshold dBZ + opacity + declutter mode + direct echo-top overlay toggle that can run without volume + altitude-guide toggle + vertical cross-section controls) plus ProbSevere storm-cell layer visibility are owned by `usePersistedOptions` and fed into `SceneCanvas`/`OptionsPanel`.
+- Camera-control mode state (`orbit`/`arcball`/`map`) is owned by `usePersistedOptions`, selected in `OptionsPanel`, and consumed by `SceneCanvas` to mount the corresponding Drei controls component.
 - Options-panel state (camera control mode, vertical scale, terrain radius, bathymetry, traffic toggles/history window/departed-trail visibility, MRMS weather toggles/threshold/opacity/declutter/slice controls) is persisted in browser `localStorage` and restored on client startup.
 - `app/AppClient.tsx` registers `public/service-worker.js` for client cache acceleration and syncs the active D-TPP cycle (`sceneData.cycleInfo.dtppCycle`) so stale FAA plate cycle caches can be purged.
 - Major UI sections are delegated to `app/app-client/*`:

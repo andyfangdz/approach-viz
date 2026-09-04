@@ -4,20 +4,14 @@ import { airportsWithinNm } from '@/lib/airport-index';
 import type { SceneData } from '@/lib/types';
 import { NEARBY_AIRPORT_RADIUS_NM, ELEVATION_AIRPORT_RADIUS_NM } from './constants';
 import { computeGeoidSeparationFeet } from './geo';
-import { extractMissedApproachClimbRequirement } from './missed-approach-climb';
 import {
-  applyExternalVerticalAngleToApproach,
-  buildApproachOptions,
   collectWaypointIds,
-  deriveApproachPlate,
-  deriveMinimumsSummary,
   deserializeApproach,
-  deserializeHistoricalWaypoints,
-  findSelectedExternalApproach,
-  loadAirportExternalApproaches
-} from './approaches';
+  deserializeHistoricalWaypoints
+} from './approach-serialization';
+import type { ApproachOption, ApproachReference } from '@/lib/types';
 import { loadAirspaceForAirport, loadRunwayMap, rowToAirport, selectAirport } from './airports';
-import type { AirportRow, ApproachRow, MinimaRow, WaypointRow } from './types';
+import type { AirportRow, ApproachRow, WaypointRow } from './types';
 
 interface MetadataValueRow {
   value: string;
@@ -31,9 +25,8 @@ interface RunwayPointRow {
 
 let _stmts: {
   selectApproaches: Database.Statement;
-  selectMinima: Database.Statement;
+  selectOptions: Database.Statement;
   selectRunways: Database.Statement;
-  selectAirportById: Database.Statement;
 } | null = null;
 
 function stmts() {
@@ -47,37 +40,26 @@ function stmts() {
         WHERE airport_id = ?
         ORDER BY type, runway, procedure_id
       `),
-      selectMinima: db.prepare(`
-        SELECT airport_id, approach_name, runway, types_json, minimums_json, cycle
-        FROM minima
-        WHERE airport_id = ?
-      `),
-      selectRunways: db.prepare(
-        'SELECT id, lat, lon FROM runways WHERE airport_id = ? ORDER BY id'
+      selectOptions: db.prepare(
+        'SELECT option_json, reference_json FROM approach_options WHERE airport_id = ? ORDER BY ordinal'
       ),
-      selectAirportById: db.prepare(
-        'SELECT id, name, lat, lon, elevation, mag_var FROM airports WHERE id = ?'
-      )
+      selectRunways: db.prepare('SELECT id, lat, lon FROM runways WHERE airport_id = ? ORDER BY id')
     };
   }
   return _stmts;
 }
 
 function loadCycleInfo(): SceneData['cycleInfo'] {
-  try {
-    const db = getDb();
-    const selectValue = db.prepare('SELECT value FROM metadata WHERE key = ?');
-    // SAFETY: build-db writes metadata (key TEXT, value TEXT); this query selects `value`.
-    const cifpRow = selectValue.get('cifp_cycle') as MetadataValueRow | undefined;
-    // SAFETY: build-db writes metadata (key TEXT, value TEXT); this query selects `value`.
-    const dtppRow = selectValue.get('dtpp_cycle_number') as MetadataValueRow | undefined;
-    return {
-      cifpCycle: cifpRow?.value || '',
-      dtppCycle: dtppRow?.value || ''
-    };
-  } catch {
-    return null;
-  }
+  const db = getDb();
+  const selectValue = db.prepare('SELECT value FROM metadata WHERE key = ?');
+  // SAFETY: build-db writes metadata (key TEXT, value TEXT); this query selects `value`.
+  const cifpRow = selectValue.get('cifp_cycle') as MetadataValueRow | undefined;
+  // SAFETY: build-db writes metadata (key TEXT, value TEXT); this query selects `value`.
+  const dtppRow = selectValue.get('dtpp_cycle_number') as MetadataValueRow | undefined;
+  return {
+    cifpCycle: cifpRow?.value || '',
+    dtppCycle: dtppRow?.value || ''
+  };
 }
 
 function emptySceneData(): SceneData {
@@ -113,10 +95,21 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
 
   // SAFETY: build-db writes approaches rows matching ApproachRow.
   const approachRows = s.selectApproaches.all(airport.id) as ApproachRow[];
-  // SAFETY: build-db writes minima rows matching MinimaRow.
-  const minimaRows = s.selectMinima.all(airport.id) as MinimaRow[];
-
-  const approaches = buildApproachOptions(approachRows, minimaRows);
+  // SAFETY: build-db materializes validated option/reference JSON in approach_options.
+  const optionRows = s.selectOptions.all(airport.id) as {
+    option_json: string;
+    reference_json: string;
+  }[];
+  const resolvedOptions = optionRows.map((row) => ({
+    // SAFETY: resolveApproachReferences writes these exact contracts.
+    option: JSON.parse(row.option_json) as ApproachOption,
+    // SAFETY: resolveApproachReferences writes these exact contracts.
+    reference: JSON.parse(row.reference_json) as ApproachReference
+  }));
+  const approaches = resolvedOptions.map((entry) => entry.option);
+  if (approachRows.length > 0 && approaches.length === 0) {
+    throw new Error('Missing resolved approach references. Run npm run build-db.');
+  }
   const approachRowByProcedureId = new Map(approachRows.map((row) => [row.procedure_id, row]));
   const approachOptionByProcedureId = new Map(
     approaches.map((option) => [option.procedureId, option])
@@ -139,18 +132,9 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
       ? approachRowByProcedureId.get(selectedApproachId) || null
       : null;
   const currentApproach = selectedApproachRow ? deserializeApproach(selectedApproachRow) : null;
-  const airportExternalApproaches = loadAirportExternalApproaches(airport.id);
-  const selectedExternalApproach = findSelectedExternalApproach(
-    airportExternalApproaches,
-    selectedApproachOption,
-    currentApproach
-  );
-  const currentApproachWithVerticalProfile = applyExternalVerticalAngleToApproach(
-    currentApproach,
-    selectedExternalApproach
-  );
-  const missedApproachClimbRequirement =
-    extractMissedApproachClimbRequirement(selectedExternalApproach);
+  const reference = resolvedOptions.find(
+    (entry) => entry.option.procedureId === selectedApproachId
+  )?.reference;
 
   // SAFETY: build-db writes runways (id, lat, lon) as selected by this query.
   const runways = s.selectRunways.all(airport.id) as RunwayPointRow[];
@@ -158,8 +142,8 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
   let waypoints: WaypointRow[] = [];
   if (selectedApproachRow?.source === 'historical') {
     waypoints = deserializeHistoricalWaypoints(selectedApproachRow);
-  } else if (currentApproachWithVerticalProfile) {
-    const waypointIds = collectWaypointIds(currentApproachWithVerticalProfile);
+  } else if (currentApproach) {
+    const waypointIds = collectWaypointIds(currentApproach);
     if (waypointIds.length > 0) {
       const db = getDb();
       const placeholders = waypointIds.map(() => '?').join(',');
@@ -230,23 +214,15 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     approaches,
     selectedApproachId,
     requestedProcedureNotInCifp,
-    currentApproach: currentApproachWithVerticalProfile,
+    currentApproach,
     waypoints,
     runways: runwayMap.get(airport.id) || runways,
     nearbyAirports,
     elevationAirports,
     airspace: loadAirspaceForAirport(airport),
-    minimumsSummary: deriveMinimumsSummary(
-      minimaRows,
-      selectedApproachOption,
-      currentApproachWithVerticalProfile
-    ),
-    approachPlate: deriveApproachPlate(
-      airport.id,
-      selectedApproachOption,
-      currentApproachWithVerticalProfile
-    ),
-    missedApproachClimbRequirement,
+    minimumsSummary: reference?.minimumsSummary ?? null,
+    approachPlate: reference?.approachPlate ?? null,
+    missedApproachClimbRequirement: reference?.missedApproachClimbRequirement ?? null,
     cycleInfo: loadCycleInfo()
   };
 }

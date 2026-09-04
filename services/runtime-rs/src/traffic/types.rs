@@ -130,23 +130,6 @@ pub struct QueryResult {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DbTrackState {
-    pub flight: Option<String>,
-    pub is_on_ground: bool,
-    pub altitude_feet: Option<f64>,
-    pub ground_speed_kt: Option<f64>,
-    pub track_deg: Option<f64>,
-    pub last_observed_at_ms: i64,
-    pub last_lat: f64,
-    pub last_lon: f64,
-    pub last_point_ts_ms: Option<i64>,
-    pub last_point_lat: Option<f64>,
-    pub last_point_lon: Option<f64>,
-    pub last_point_altitude_feet: Option<f64>,
-    pub last_point_is_on_ground: Option<bool>,
-}
-
-#[derive(Debug, Clone)]
 pub(crate) struct HistoryTargetCandidate {
     pub closest_distance_nm: f64,
     pub latest_timestamp_ms: i64,

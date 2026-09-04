@@ -1,35 +1,13 @@
-import fs from 'node:fs';
 import { findPreservedHistoricalApproachPlate } from '@/lib/cifp/historical-approaches';
 import type { ApproachOption, SceneData, SerializedApproach } from '@/lib/types';
-import { APPROACH_DB_PATH } from './constants';
 import { findSelectedExternalApproach } from './approach-matching';
-import type { ApproachMinimumsDb, ExternalApproach } from './types';
-
-let approachDbCache: ApproachMinimumsDb | null = null;
-
-function loadApproachDb(): ApproachMinimumsDb | null {
-  if (approachDbCache) {
-    return approachDbCache;
-  }
-
-  try {
-    const raw = fs.readFileSync(APPROACH_DB_PATH, 'utf8');
-    // SAFETY: public/data/approach-db/approaches.json is the ApproachMinimumsDb document produced by the approach-db pipeline.
-    approachDbCache = JSON.parse(raw) as ApproachMinimumsDb;
-    return approachDbCache;
-  } catch {
-    return null;
-  }
-}
-
-export function loadAirportExternalApproaches(airportId: string): ExternalApproach[] {
-  return loadApproachDb()?.airports?.[airportId]?.approaches || [];
-}
+import type { ApproachMinimumsDb } from './types';
 
 export function deriveApproachPlate(
   airportId: string,
   selectedApproachOption: ApproachOption | null,
-  currentApproach: SerializedApproach | null
+  currentApproach: SerializedApproach | null,
+  approachDb: ApproachMinimumsDb
 ): SceneData['approachPlate'] {
   if (!selectedApproachOption) return null;
   if (selectedApproachOption.source === 'historical') {
@@ -40,7 +18,6 @@ export function deriveApproachPlate(
     );
   }
 
-  const approachDb = loadApproachDb();
   const airportApproaches = approachDb?.airports?.[airportId]?.approaches;
   if (!approachDb || !airportApproaches || airportApproaches.length === 0) {
     return null;

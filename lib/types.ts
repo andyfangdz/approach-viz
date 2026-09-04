@@ -111,3 +111,10 @@ export interface SceneData {
   approachPlate: ApproachPlate | null;
   missedApproachClimbRequirement: MissedApproachClimbRequirement | null;
 }
+
+/** Resolved once by build-db; consumed by both web and native clients. */
+export interface ApproachReference {
+  minimumsSummary: SceneData['minimumsSummary'];
+  missedApproachClimbRequirement: SceneData['missedApproachClimbRequirement'];
+  approachPlate: SceneData['approachPlate'];
+}

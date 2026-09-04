@@ -12,7 +12,7 @@
 
 - Server interactions are implemented as Next.js server actions in `app/actions.ts`.
 - `app/actions.ts` is a thin wrapper; core internals live in `app/actions-lib/*`.
-- `app/actions-lib/*` responsibilities include airport queries, external/minimums matching, vertical-profile enrichment, and scene-data assembly.
+- `app/actions-lib/*` runtime responsibilities include airport queries and scene-data assembly. Matching/enrichment helpers are invoked by `scripts/resolve-approach-references.ts` at database generation time.
 
 ## Payload Assembly and Routing
 
@@ -25,7 +25,10 @@
 
 ## External Metadata and Matching Rules
 
-- Plate metadata (`cycle`, `plateFile`) is resolved in `app/actions-lib/approaches.ts` and included in scene payloads for client rendering.
+- `build-db` validates required source JSON with `lib/approach-reference-source.ts` before opening a staging database. `scripts/resolve-approach-references.ts` resolves every selectable procedure once, writes ordered options and reference JSON to `approach_options`, and applies the matched VDA to `approaches.data_json`. A successful build closes and renames the staging database into place; ordinary build failures remove staging files and retain the previous database.
+- Web and native read the same precomputed minimums and missed-climb requirements. Web also reads precomputed plate metadata (`cycle`, `plateFile`). Native no longer ships or parses a separate reference JSON bundle. Missing reference rows for native procedures and missing required database tables are errors, not empty metadata. Rebuild the database with `npm run build-db` after this schema change.
+- Circling candidates must have a positive score. The single build-time resolver owns runway/type/variant scoring, minimum-category selection, VDA application, and missed-climb parsing; historical rows never consume or suppress current reference matches.
+- Required source shape, minimum-category objects, and profile field types are validated; absent airport/procedure records remain legitimate non-matches. Failed geoid calculations and non-finite results propagate instead of using zero separation.
 - Matched external approach metadata is also used to parse official missed-climb requirements from `missed_instructions` text (`minimum climb of X feet per NM to Y`), which are included in scene payloads for missed-approach vertical-profile rendering.
 - CIFP-to-minima/plate matching uses runway + type-family scoring.
 - Historical training geometry never participates in current minimums or live plate matching; scene-action payloads expose it as `source: historical` with its captured cycle, and an exact fixture lookup can attach that procedure's preserved historical plate metadata.
@@ -43,9 +46,9 @@
 - Live ADS-B traffic decode/query runs in the Rust runtime service endpoint `/v1/traffic/adsbx`; Next.js route `app/api/traffic/adsbx/route.ts` is now a thin same-origin proxy that preserves binary payloads.
 - The runtime endpoint targets ADSB Exchange tar1090 `binCraft+zstd` (`/re-api/?binCraft&zstd&box=...`), applies tar1090-compatible validity-bit parsing, and normalizes aircraft records before delivery.
 - Runtime traffic data is gathered continuously by a background poller (1s cadence) across four ADS-B Exchange US bounding boxes (CONUS, Alaska, Hawaii, Puerto Rico/USVI) and ingested into a local SQLite store at `RUNTIME_STORAGE_DIR/traffic-store.db`.
-- The store keeps per-aircraft track state plus append-only point history with spatial (`R*Tree`) and time indexes so `/v1/traffic/adsbx` can serve both live targets and departed-trail history directly from disk.
+- The store keeps per-aircraft track state plus append-only point history with spatial (`R*Tree`) and time indexes so `/v1/traffic/adsbx` can serve current tracks and history from memory, with SQLite for persistence/restart recovery. Both storage paths share `merge_track` and its timestamp/field/history-sampling rules. Memory publishes before the SQLite transaction; a failed transaction leaves memory live, and the next ingest merges against each store's own state.
 - The endpoint supports `hideGround` filtering and history responses via `historyMinutes` (`0..60`) plus optional `historyHexes=<hex,hex,...>` scoping; one-hour retention is enforced by periodic DB sweeps during ingest.
-- Response format is selectable via `format=` query param: default JSON payloads, or compact binary payloads (`format=binary`, `application/vnd.approach-viz.traffic.v3`) carrying aircraft, history groups/points, and optional error/source metadata.
+- Response format is selectable via `format=` query param: default JSON payloads, or compact binary payloads (`format=binary`, `application/vnd.approach-viz.traffic.v4`) carrying aircraft, history groups/points, and optional error/source metadata.
 - Client traffic polling issues an initial full-history request on overlay context reset, then uses live-only primary polls with targeted `historyHexes` follow-up backfill while departed trails are enabled.
 - Runtime response freshness/staleness metadata is emitted for traffic queries: headers `x-approach-viz-traffic-stale-current` (`0|1`) and `x-approach-viz-traffic-snapshot-age-ms` (ms since last successful ingest snapshot), with JSON payload mirrors (`staleCurrent`, `snapshotAgeMs`). The same-origin proxy forwards these headers.
 - Runtime target host defaults to `https://globe.adsbexchange.com` and can be overridden with `RUNTIME_ADSBX_TAR1090_BASE_URL`; optional comma-separated fallback hosts can be supplied via `RUNTIME_ADSBX_TAR1090_FALLBACK_BASE_URLS` (legacy `ADSBX_*` env aliases still supported).
@@ -65,6 +68,7 @@
 - Echo-top endpoint (`/v1/weather/echo-tops`, with legacy `/v1/echo-tops` alias) filters direct MRMS echo-top cells (`lat/lon/maxRangeNm`) from in-memory snapshots and returns thresholded top heights for 18/30/50/60 dBZ products (JSON by default, AVET binary when requested via `Accept`).
 - Serialization performs adaptive brick merging (same phase + quantized dBZ + contiguous spans) so broad precip regions ship as fewer records while retaining full area coverage.
 - Next.js routes `app/api/weather/nexrad/route.ts` and `app/api/weather/nexrad/echo-tops/route.ts` are thin proxies to Rust endpoints (`RUNTIME_UPSTREAM_BASE_URL`, legacy alias `MRMS_BINARY_UPSTREAM_BASE_URL`, defaulting to `https://approach-runtime.andyfang.app`).
+- Both weather proxies delegate to `runtime-proxy.ts`: one 8-second deadline spans canonical and legacy requests plus response-body consumption. Invalid numeric parameters return 400; upstream/read failures return 502; deadline expiry returns 504. A canonical 404 still tries the legacy alias within the same deadline.
 - Client overlay decodes binary reflectivity and binary AVET echo-top payloads directly; JSON error payloads are surfaced as worker request failures.
 - Snapshot retention is byte-capped (`RUNTIME_MRMS_RETENTION_BYTES=5 GB`, legacy alias `MRMS_RETENTION_BYTES`) with oldest-first pruning.
 

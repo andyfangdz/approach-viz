@@ -250,7 +250,7 @@ function resolveExternalApproach(
       })
       .sort((a, b) => b.score - a.score);
 
-    return scored[0]?.score ? scored[0].candidate : null;
+    return scored[0] && scored[0].score > 0 ? scored[0].candidate : null;
   }
 
   const runwayCandidates = airportApproaches.filter(
@@ -310,6 +310,7 @@ export function buildApproachOptions(
 
   const matchedMinimaNames = new Set<string>();
   for (const row of approachRows) {
+    if (row.source === 'historical') continue;
     const approach = deserializeApproach(row);
     const matched = resolveExternalApproach(
       minimaApproaches,

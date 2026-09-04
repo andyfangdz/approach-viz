@@ -108,20 +108,20 @@ struct ElevationAirportRecord: Hashable {
     let elevation: Double
 }
 
-struct MinimumsValueSummary: Hashable {
+struct MinimumsValueSummary: Decodable, Hashable {
     let altitude: Double
     let type: String
     let category: String
 }
 
-struct MinimumsSummary: Hashable {
+struct MinimumsSummary: Decodable, Hashable {
     let sourceApproachName: String
     let cycle: String
     let da: MinimumsValueSummary?
     let mda: MinimumsValueSummary?
 }
 
-struct MissedApproachClimbRequirement: Hashable {
+struct MissedApproachClimbRequirement: Decodable, Hashable {
     let feetPerNm: Double
     let targetAltitudeFeet: Double?
 }
@@ -450,4 +450,20 @@ struct ApproachLeg: Codable, Hashable {
     let isInitialFix: Bool
     let isFinalFix: Bool
     let isMissedApproach: Bool
+}
+
+// Required keys may be null for unmatched/historical procedures; missing keys indicate corruption.
+struct ApproachReference: Decodable {
+    let minimumsSummary: MinimumsSummary?
+    let missedApproachClimbRequirement: MissedApproachClimbRequirement?
+
+    private enum CodingKeys: String, CodingKey {
+        case minimumsSummary, missedApproachClimbRequirement
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        minimumsSummary = try container.decode(MinimumsSummary?.self, forKey: .minimumsSummary)
+        missedApproachClimbRequirement = try container.decode(MissedApproachClimbRequirement?.self, forKey: .missedApproachClimbRequirement)
+    }
 }

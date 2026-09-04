@@ -10,7 +10,7 @@ Run in order after any parser/render/data change:
 2. `npm run lint` — ESLint parse/lint checks.
 3. `npm run typecheck` — TypeScript compile checks without emit.
 4. `npm run prepare-data` — download fresh FAA/CIFP + airspace + minimums data and rebuild SQLite.
-5. `npm run test` — full test suite (parser + geometry + layers + MRMS decode helpers).
+5. `npm run test` — parser, geometry, layers/options, MRMS, workers, API routes, and reference-resolution tests. `npm run test:references` checks source validation and database materialization independently.
 6. `npm run test:parser` — especially after `lib/cifp/parser.ts` changes.
 7. `npm run test:geometry` — for path/curve/runway/coordinate geometry changes.
 8. `npm run build` — production build (also refreshes data).
@@ -58,3 +58,11 @@ After a successful build, visually verify at least one procedure exercising each
 
 - Verify at least one minima/plate-only procedure (e.g. `KPOU VOR-A`) appears in the selector list, shows minimums + plate, and indicates geometry is unavailable from CIFP.
 - Verify the legend remains concise for these procedures (geometry-unavailable status shown in the minimums section, not as long legend copy).
+
+## Simplification Regression Coverage
+
+- Weather proxy tests exercise stalled bodies, a shared deadline across legacy retry, query rejection, binary/header forwarding, and HTTP failure statuses.
+- Options tests cover saved-state round trips, legacy layer migration, URL precedence, and malformed values.
+- Reference pipeline tests cover malformed source data, non-positive circling matches, and SQLite enrichment of FAF VDA, minimums, plates, and missed-climb requirements. Rebuild from local sources before validating clients against the new `approach_options` table.
+- Runtime traffic tests cover merge ordering, history thresholds, and an injected SQLite failure followed by persistence recovery while memory remains live.
+- Run native tests on macOS/Xcode after changing the shared SQLite contract; Linux cannot build the SwiftUI/Metal targets.

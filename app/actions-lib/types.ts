@@ -85,7 +85,7 @@ export interface ExternalVerticalProfile {
 
 export interface ExternalApproach {
   name: string;
-  plate_file?: string;
+  plate_file?: string | null;
   types: string[];
   runway: string | null;
   missed_instructions?: string | null;

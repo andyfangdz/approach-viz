@@ -40,21 +40,8 @@ struct SceneRepository {
         let selectedApproach = approaches.first { $0.procedureID == selectedApproachID }
         let isHistoricalApproach = selectedApproach?.source == .historical
 
-        let rawApproach = try loadApproachPayload(airportID: airportID, approachID: selectedApproachID)
-        let minimaRows = try loadMinimaRows(airportID: airportID)
-        let minimaApproaches: [ExternalApproach] = isHistoricalApproach
-            ? []
-            : ApproachReferenceData.minimaApproaches(from: minimaRows)
-        let selectedExternalApproach: ExternalApproach? = isHistoricalApproach
-            ? nil
-            : ApproachReferenceData.findSelectedExternalApproach(
-                airportApproaches: ApproachReferenceData.loadExternalApproaches(airportID: airportID),
-                currentApproach: rawApproach
-            )
-        let currentApproach = ApproachReferenceData.applyExternalVerticalAngle(
-            to: rawApproach,
-            externalApproach: selectedExternalApproach
-        )
+        let currentApproach = try loadApproachPayload(airportID: airportID, approachID: selectedApproachID)
+        let reference = try loadApproachReference(airportID: airportID, approachID: selectedApproachID)
         let runways = try loadRunways(airportID: airportID)
         let waypoints = try loadWaypoints(
             for: currentApproach,
@@ -63,14 +50,6 @@ struct SceneRepository {
         )
         let elevationAirports = try loadElevationAirports(airport: airport)
         let airspace = try loadAirspace(airport: airport)
-        let minimumsSummary = ApproachReferenceData.deriveMinimumsSummary(
-            minimaApproaches: minimaApproaches,
-            selectedExternalApproach: selectedExternalApproach,
-            cycle: minimaRows.first?.cycle ?? ""
-        )
-        let missedApproachClimbRequirement = ApproachReferenceData.extractMissedApproachClimbRequirement(
-            externalApproach: selectedExternalApproach
-        )
         let cycleInfo = try loadCycleInfo()
 
         return NativeSceneData(
@@ -82,8 +61,8 @@ struct SceneRepository {
             waypoints: waypoints,
             elevationAirports: elevationAirports,
             airspace: airspace,
-            minimumsSummary: minimumsSummary,
-            missedApproachClimbRequirement: missedApproachClimbRequirement,
+            minimumsSummary: reference?.minimumsSummary,
+            missedApproachClimbRequirement: reference?.missedApproachClimbRequirement,
             cycleInfo: cycleInfo
         )
     }
@@ -167,21 +146,15 @@ struct SceneRepository {
         }
     }
 
-    private func loadMinimaRows(airportID: String) throws -> [MinimaReferenceRow] {
-        let sql = """
-            SELECT approach_name, runway, types_json, minimums_json, cycle
-            FROM minima
-            WHERE airport_id = ?
-            """
-        return try database.query(sql: sql, bindings: [airportID]) { row in
-            MinimaReferenceRow(
-                approachName: row[0],
-                runway: row[1],
-                typesJSON: row[2],
-                minimumsJSON: row[3],
-                cycle: row[4]
-            )
+    private func loadApproachReference(airportID: String, approachID: String) throws -> ApproachReference? {
+        guard !approachID.isEmpty else { return nil }
+        guard let rawJSON = try database.scalar(
+            sql: "SELECT reference_json FROM approach_options WHERE airport_id = ? AND procedure_id = ?",
+            bindings: [airportID, approachID]
+        ) else {
+            throw SQLiteDatabaseError.invalidData("Missing resolved reference for \(airportID) \(approachID). Run npm run build-db.")
         }
+        return try decoder.decode(ApproachReference.self, from: Data(rawJSON.utf8))
     }
 
     private func loadWaypoints(

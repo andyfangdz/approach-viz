@@ -18,7 +18,7 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 ## Layers Panel
 
-Eight independent layer toggles control visibility of major scene overlays. The layers panel opens from a stacked-layers FAB between the gear and recenter buttons (bottom-right). It is mutually exclusive with the options panel — opening one closes the other.
+Independent layer toggles control visibility of major scene overlays. The layers panel opens from a stacked-layers FAB between the gear and recenter buttons (bottom-right). It is mutually exclusive with the options panel — opening one closes the other.
 
 | Group         | Layer ID     | Label                | Default |
 | ------------- | ------------ | -------------------- | ------- |
@@ -46,12 +46,13 @@ The options (gear) panel contains per-layer configuration controls organized int
 - **MRMS Weather**: `MRMS Phase Detection` (Thermodynamic/Surface Precip Type, default Surface Precip Type), `MRMS Declutter` (All/Low/Mid/High, also cycled with `V` key), `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (5–100%).
 - **Vertical Slice**: `Slice Heading` (0–359°), `Slice Range` (30–140 NM).
 
-All options-panel and layer values are persisted to browser `localStorage` and restored on load, including the selected camera-control mode.
+All options-panel and layer values are held in one `OptionsState` object and persisted through `usePersistedOptions`. The pure `restoreOptions` function validates saved values, migrates legacy layer flags, and applies URL overrides last. Persistence starts only after hydration. Failed reads or writes are reported through console warnings; a failed read still permits URL overrides, and a failed write leaves in-memory controls usable.
 
 ### Last Selection Persistence
 
 - On every airport/approach change, the selection is written to `localStorage` under key `'approach-viz:last-selection'` as `{ airportId, approachId }`.
 - When visiting `/` (no airport/approach in URL), the server initially loads a random entry from `DEFAULT_SELECTIONS` (airport+approach pair). On mount, the client reads `'approach-viz:last-selection'` and, when valid, replaces the initial selection with the remembered value.
+- Saved-selection restoration and user selections use the same request lifecycle. A newer request or route resync invalidates older results, so a slow restore cannot overwrite a user selection. Unmount also invalidates pending requests. Failed scene loads preserve the previous scene and expose an error.
 - The URL is updated via `replaceState` to reflect the restored selection, making it shareable.
 
 ## Runtime Status and Debug UI

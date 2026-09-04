@@ -43,9 +43,66 @@ export function useSceneSelection({
   const [isPending, startTransition] = useTransition();
   const requestCounter = useRef(0);
 
+  const requestSceneData = useCallback(
+    (airportId: string, procedureId: string, onRequestStart?: () => void) => {
+      const nextRequestId = requestCounter.current + 1;
+      requestCounter.current = nextRequestId;
+      setLoading(true);
+      setErrorMessage('');
+      onRequestStart?.();
+
+      startTransition(() => {
+        loadSceneDataAction(airportId, procedureId)
+          .then((nextSceneData) => {
+            if (requestCounter.current !== nextRequestId) return;
+            if (!nextSceneData.airport) throw new Error('Airport not found.');
+            setSceneData(nextSceneData);
+            setSelectedAirport(nextSceneData.airport?.id ?? airportId);
+            setSelectedApproach(nextSceneData.selectedApproachId || '');
+            setLoading(false);
+          })
+          .catch(() => {
+            if (requestCounter.current !== nextRequestId) return;
+            setLoading(false);
+            setErrorMessage('Unable to load airport data.');
+          });
+      });
+    },
+    [startTransition]
+  );
+
+  const initialRoute = useRef({ initialSceneData, initialAirportId, initialApproachId });
+  const navigated = useRef(false);
+  // Navigation and unmount invalidate every request, including saved-selection restore.
+  useEffect(() => {
+    if (
+      initialSceneData !== initialRoute.current.initialSceneData ||
+      initialAirportId !== initialRoute.current.initialAirportId ||
+      initialApproachId !== initialRoute.current.initialApproachId
+    )
+      navigated.current = true;
+    requestCounter.current += 1;
+    setSceneData(initialSceneData);
+    setSelectedAirport(initialSceneData.airport?.id ?? initialAirportId);
+    setSelectedApproach(initialSceneData.selectedApproachId || initialApproachId);
+    setLoading(false);
+    setErrorMessage('');
+    return () => {
+      requestCounter.current += 1;
+    };
+  }, [initialSceneData, initialAirportId, initialApproachId]);
+
   // Restore last-selected airport/approach on the default route.
   useEffect(() => {
-    if (globalThis.window === undefined || !isDefaultRoute) return;
+    if (
+      globalThis.window === undefined ||
+      !isDefaultRoute ||
+      navigated.current ||
+      initialSceneData !== initialRoute.current.initialSceneData ||
+      initialAirportId !== initialRoute.current.initialAirportId ||
+      initialApproachId !== initialRoute.current.initialApproachId
+    )
+      return;
     let target: { airportId: string; approachId: string } | null = null;
     try {
       const raw = window.localStorage.getItem(SELECTION_STORAGE_KEY);
@@ -72,30 +129,8 @@ export function useSceneSelection({
     ) {
       return;
     }
-    setLoading(true);
-    loadSceneDataAction(target.airportId, target.approachId)
-      .then((nextSceneData) => {
-        if (!nextSceneData.airport) {
-          setLoading(false);
-          return;
-        }
-        setSceneData(nextSceneData);
-        setSelectedAirport(nextSceneData.airport?.id ?? target.airportId);
-        setSelectedApproach(nextSceneData.selectedApproachId || target.approachId);
-        setLoading(false);
-      })
-      .catch(() => {
-        setLoading(false);
-      });
-    // Mount-only: mirrors the original single init effect.
-  }, []);
-
-  // Resync when server-provided props change (route navigation).
-  useEffect(() => {
-    setSceneData(initialSceneData);
-    setSelectedAirport(initialSceneData.airport?.id ?? initialAirportId);
-    setSelectedApproach(initialSceneData.selectedApproachId || initialApproachId);
-  }, [initialSceneData, initialAirportId, initialApproachId]);
+    requestSceneData(target.airportId, target.approachId);
+  }, [initialSceneData, initialAirportId, initialApproachId, isDefaultRoute, requestSceneData]);
 
   useEffect(() => {
     if (airportOptions.length > 0) return;
@@ -107,37 +142,11 @@ export function useSceneSelection({
           setAirportOptionsLoading(false);
         })
         .catch(() => {
+          setErrorMessage('Unable to load airport list.');
           setAirportOptionsLoading(false);
         });
     });
   }, [airportOptions.length, startTransition]);
-
-  const requestSceneData = useCallback(
-    (airportId: string, procedureId: string, onRequestStart?: () => void) => {
-      const nextRequestId = requestCounter.current + 1;
-      requestCounter.current = nextRequestId;
-      setLoading(true);
-      setErrorMessage('');
-      onRequestStart?.();
-
-      startTransition(() => {
-        loadSceneDataAction(airportId, procedureId)
-          .then((nextSceneData) => {
-            if (requestCounter.current !== nextRequestId) return;
-            setSceneData(nextSceneData);
-            setSelectedAirport(nextSceneData.airport?.id ?? airportId);
-            setSelectedApproach(nextSceneData.selectedApproachId || '');
-            setLoading(false);
-          })
-          .catch(() => {
-            if (requestCounter.current !== nextRequestId) return;
-            setLoading(false);
-            setErrorMessage('Unable to load airport data.');
-          });
-      });
-    },
-    [startTransition]
-  );
 
   return {
     airportOptions,
