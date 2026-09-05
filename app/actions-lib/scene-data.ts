@@ -17,16 +17,9 @@ interface MetadataValueRow {
   value: string;
 }
 
-interface RunwayPointRow {
-  id: string;
-  lat: number;
-  lon: number;
-}
-
 let _stmts: {
   selectApproaches: Database.Statement;
   selectOptions: Database.Statement;
-  selectRunways: Database.Statement;
 } | null = null;
 
 function stmts() {
@@ -42,8 +35,7 @@ function stmts() {
       `),
       selectOptions: db.prepare(
         'SELECT option_json, reference_json FROM approach_options WHERE airport_id = ? ORDER BY ordinal'
-      ),
-      selectRunways: db.prepare('SELECT id, lat, lon FROM runways WHERE airport_id = ? ORDER BY id')
+      )
     };
   }
   return _stmts;
@@ -136,9 +128,6 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     (entry) => entry.option.procedureId === selectedApproachId
   )?.reference;
 
-  // SAFETY: build-db writes runways (id, lat, lon) as selected by this query.
-  const runways = s.selectRunways.all(airport.id) as RunwayPointRow[];
-
   let waypoints: WaypointRow[] = [];
   if (selectedApproachRow?.source === 'historical') {
     waypoints = deserializeHistoricalWaypoints(selectedApproachRow);
@@ -216,7 +205,7 @@ export function loadSceneData(requestedAirportId: string, requestedProcedureId =
     requestedProcedureNotInCifp,
     currentApproach,
     waypoints,
-    runways: runwayMap.get(airport.id) || runways,
+    runways: runwayMap.get(airport.id) || [],
     nearbyAirports,
     elevationAirports,
     airspace: loadAirspaceForAirport(airport),

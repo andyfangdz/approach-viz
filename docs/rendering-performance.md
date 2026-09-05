@@ -2,7 +2,7 @@
 
 ## General Scene
 
-- Approach altitude-profile resolution and path-geometry assembly are computed through a worker-backed pipeline, reducing main-thread spikes during approach/option changes while avoiding synchronous main-thread fallback.
+- Approach altitude-profile resolution, path geometry, and hold/protected-area geometry are computed through a worker-backed pipeline, reducing main-thread spikes during approach/option changes while avoiding synchronous main-thread fallback.
 - Approach geometry worker responses transfer a flat `Float32Array` point buffer (`pointsFlat`) back to main thread rather than cloning tuple arrays.
 - Vertical reference lines for path points are batched into a single `lineSegments` geometry per path segment (final/transition/missed) to reduce draw-call count.
 - Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized.
@@ -16,13 +16,12 @@
 ## Live ADS-B Traffic
 
 - Polling is throttled to a fixed interval (`5s`) through a same-origin proxy to the Rust runtime endpoint (`/v1/traffic/adsbx`) and bounded by viewport-centric query radius/aircraft limit to avoid full-feed client downloads.
-- Initial history request (default `3 min`) on overlay context/history changes, then live-only primary polls plus targeted incremental `historyHexes` follow-up refreshes for newly seen aircraft when `Show Departed Traffic Trails` is enabled; while enabled, the client also periodically re-runs full history refresh (interval derived from history window, clamped `60..300s`) to discover newly departed aircraft. Runtime serves these history windows from its disk-backed SQLite traffic store (`traffic-store.db`) fed by 1 Hz US-wide polling, so history queries avoid per-request upstream trace fetches and large in-memory history buffers.
-- Traffic poll requests are worker-initiated via `ingest-runtime`; the worker fetches runtime binary wire payloads (`format=binary`, `application/vnd.approach-viz.traffic.v3`) and performs decode+merge fully off main thread.
+- Initial history request (default `3 min`) on overlay context/history changes, then live-only primary polls plus targeted incremental `historyHexes` follow-up refreshes for newly seen aircraft when `Show Departed Traffic Trails` is enabled; while enabled, the client also periodically re-runs full history refresh (interval derived from history window, clamped `60..300s`) to discover newly departed aircraft. Runtime serves these windows from memory fed by 1 Hz US-wide polling, with SQLite (`traffic-store.db`) for persistence and restart recovery.
+- Traffic poll requests are worker-initiated via `ingest-runtime`; the worker fetches runtime binary wire payloads (`format=binary`, `application/vnd.approach-viz.traffic.v4`) and performs decode+merge fully off main thread.
 - Runtime traffic payloads carrying `error` metadata are treated as poll failures by the traffic worker (explicit debug/error path) instead of being merged as empty datasets.
 - Runtime "current aircraft" filtering uses a 60-second staleness window before dropping stale tracks; responses also emit stale/freshness markers (`x-approach-viz-traffic-stale-current`, `x-approach-viz-traffic-snapshot-age-ms`) for client/debug visibility.
-- Track merge/prune/projection compute is offloaded to a dedicated traffic worker and requires SharedArrayBuffer + Atomics transport; worker failures surface as explicit UI/debug errors (no synchronous fallback).
-- Traffic worker render payload transport uses SharedArrayBuffer + Atomics channels via shared utilities (`app/scene/shared/sab-channel-pool.ts`, `app/scene/shared/growable-sab.ts`), starting with two concurrent channels and growing channel count on demand up to a bounded cap. Each channel starts with a larger default shared point capacity (`1,000,000` history points); when an overflow reports required capacities, the client retries on a channel that can fit those capacities and grows that channel in place via growable SAB.
-- Traffic overlay consumes worker output through a buffer-native render frame (`Float32Array`/`Int32Array`/flags) from SAB transport, so trail/heading/marker uploads read directly from flat buffers instead of rebuilding nested `RenderTrafficTrack`/`trailPoints` object graphs on the main thread.
+- Track merge/prune/projection compute is offloaded to a dedicated traffic worker and returns flat buffers through Comlink transferables; worker failures surface as explicit UI/debug errors (no synchronous fallback).
+- Traffic overlay consumes worker output through a buffer-native render frame (`Float32Array`/`Int32Array`/flags) from transferable buffers, so trail/heading/marker uploads read directly from flat buffers instead of rebuilding nested `RenderTrafficTrack`/`trailPoints` object graphs on the main thread.
 - Runtime debug telemetry exposes per-stage ADS-B timings (`poll cycle`, `fetch`, payload parse/inspect, `worker process/recompute/prune`, `worker round-trip/CPU`, and marker instance upload) plus feed transport (`binary`/`json`) to validate offload impact.
 - Trail history is time-pruned by the user-selected retention window (`1..30 minutes`) to cap per-aircraft polyline growth (runtime SQLite store keeps up to 60 minutes available for history queries).
 - Trail rendering can continue for aircraft that are no longer in the current live feed as long as retained history samples are still within the selected window, and this behavior is user-toggleable via `Show Departed Traffic Trails`.
@@ -35,16 +34,14 @@
 ## MRMS Weather Volume
 
 - Binary decode and prepare run in a single worker poll request (`poll-and-prepare`), reducing UI hitching during refreshes while surfacing worker failures as explicit errors (no synchronous fallback).
-- MRMS poll responses keep heavy prepared-volume arrays on SAB transport; decoded volume typed arrays needed for final render upload are returned as transferables.
+- MRMS poll responses transfer prepared-volume, cross-section, echo-top, and decoded payload buffers through Comlink; no shared-memory channels or capacity retries are needed.
 - MRMS volume preprocessing (threshold filter, phase selection, curvature correction, declutter index generation), echo-top surface shaping, and cross-section binning are computed off-main-thread in that same poll path.
-- MRMS prepared-volume worker responses use a SharedArrayBuffer + Atomics channel (shared typed-array views with counts in an atomic control block) and automatically grow SAB voxel capacity with overflow retry.
 - Runtime debug telemetry exposes per-stage MRMS timings (`poll cycle`, volume/echo-top `fetch`, volume/echo-top `decode`, volume/echo-top `prepare`, and voxel/echo-top instance upload) for regression checks.
 - Volume/echo-top metadata signatures are still used to suppress equivalent state replacements, reducing downstream upload churn when upstream poll responses are unchanged.
 - The web MRMS reflectivity volume renders as a single raymarched box over an RG8 3D texture (`NexradVolumeRaymarch`), so its draw cost is per-pixel rather than per-voxel — dense precipitation events no longer multiply GPU instances. Echo-top surface instances use direct `InstancedMesh.instanceMatrix.array` matrix writes (16-element offsets), avoiding `THREE.Object3D` compose overhead.
 - Volume colors come from a small nearest-filtered `(band x phase)` LUT texture built once from the shared band tables; the raymarch shader indexes it by `floor(dbz / 5)` per sample, so no per-voxel color math runs on upload at all.
 - The per-payload phase tally shown in the debug panel (`rain/mixed/snow` counts) is computed in the MRMS worker during poll-and-prepare rather than as an O(voxelCount) main-thread pass.
 - The WASM decoder's FlatBuffers column views (`FbVolumeView`/`FbEchoTopView`) validate column presence and length once at construction, so the per-voxel prepare, cross-section, and payload-conversion loops are free of per-element Option checks; malformed payloads fail the poll with an explicit error instead of silently zero-filling.
-- MRMS base/glow dual-pass volume rendering shares populated instance buffers between passes, avoiding a second per-voxel transform/color upload each refresh.
 - MRMS echo-top instanced capacities grow in buckets instead of resizing every poll, reducing remount/reallocation churn for fluctuating cell counts; the volume texture reallocates only when its grid dimensions change (uploaded once per poll or re-prepare).
 - Declutter-to-payload index mapping reuses grow-only `Int32Array` scratch buffers instead of allocating per-refresh `Array.map(...)` copies.
 - Additional MRMS details (polling cadence, binary transport, server-side brick merging, voxel dimension handling) are documented in [`docs/rendering-weather-volume.md`](rendering-weather-volume.md).

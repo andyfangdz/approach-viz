@@ -5,7 +5,11 @@ import type { ApproachMinimumsDb } from '@/app/actions-lib/types';
 export function parseApproachReferenceSource(raw: string): ApproachMinimumsDb {
   const value = parseJsonValue(raw);
   validateApproachReferenceSource(value);
-  return value;
+  const source: ApproachMinimumsDb = value;
+  for (const airport of Object.values(source.airports)) {
+    for (const approach of airport.approaches) approach.name = approach.name.trim();
+  }
+  return source;
 }
 
 function validateApproachReferenceSource(
@@ -23,6 +27,7 @@ function validateApproachReferenceSource(
     if (!isJsonObject(airport) || !Array.isArray(airport.approaches)) {
       throw new Error(`Invalid approach reference airport: ${airportId}`);
     }
+    const names = new Set<string>();
     for (const approach of airport.approaches) {
       if (
         !isJsonObject(approach) ||
@@ -35,6 +40,12 @@ function validateApproachReferenceSource(
       ) {
         throw new Error(`Invalid approach reference in ${airportId}`);
       }
+      // This identity was previously enforced by the minima table's primary key.
+      const name = approach.name.trim();
+      if (names.has(name)) {
+        throw new Error(`Duplicate approach reference in ${airportId}: ${approach.name}`);
+      }
+      names.add(name);
       for (const key of ['plate_file', 'missed_instructions']) {
         if (approach[key] != null && !isString(approach[key]))
           throw new Error(`Invalid ${key} in ${airportId} ${approach.name}`);

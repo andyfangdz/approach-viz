@@ -1,8 +1,7 @@
 /**
  * Service worker — caches FAA chart tiles, elevation tiles, and FAA plates.
  *
- * Built with Workbox (npm modules bundled via esbuild) because
- * Cross-Origin-Embedder-Policy blocks CDN importScripts().
+ * Bundled locally with Workbox so cache behavior ships with the application.
  */
 
 import { clientsClaim } from 'workbox-core';

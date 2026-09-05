@@ -2,18 +2,6 @@ import * as Comlink from 'comlink';
 
 const TILE_FETCH_CONCURRENCY = 60;
 
-// Must match CHART_TILES_CACHE in sw/service-worker.ts
-const CHART_TILES_CACHE_NAME = 'approach-viz-chart-tiles-v1';
-
-// Lazy singleton — opened once, reused for all tile reads.
-let chartCachePromise: Promise<Cache | null> | null = null;
-function getChartCache(): Promise<Cache | null> {
-  if (!chartCachePromise) {
-    chartCachePromise = caches.open(CHART_TILES_CACHE_NAME).catch(() => null);
-  }
-  return chartCachePromise;
-}
-
 export interface ChartTilesParams {
   baseUrl: string;
   zoom: number;
@@ -34,16 +22,7 @@ export interface ChartStreamSummary {
   failedTiles: number;
 }
 
-interface ComlinkReleaseable {
-  [Comlink.releaseProxy]: () => void;
-}
-
-type ChartTileCallback = (tile: ChartTileReady) => void | Promise<void>;
-type ChartTileCallbackProxy = ChartTileCallback & ComlinkReleaseable;
-
-function hasComlinkReleaseProxy(value: ChartTileCallback): value is ChartTileCallbackProxy {
-  return Comlink.releaseProxy in value;
-}
+type ChartTileCallback = Comlink.Remote<((tile: ChartTileReady) => void) & Comlink.ProxyMarked>;
 
 async function fetchTile(
   baseUrl: string,
@@ -55,19 +34,9 @@ async function fetchTile(
   if (signal?.aborted) return null;
   const url = `${baseUrl}/${z}/${y}/${x}`;
   try {
-    // Try direct cache read first — bypasses service worker fetch event overhead
-    const cache = await getChartCache();
-    let response: Response | undefined;
-    if (cache) {
-      const cached = await cache.match(url);
-      if (cached?.ok) response = cached;
-    }
-
-    if (!response) {
-      // Cache miss — network fetch (service worker will cache it for next time)
-      response = await fetch(url, signal ? { signal } : undefined);
-      if (!response.ok) return null;
-    }
+    // The service worker owns cache lookup, expiration, and network population.
+    const response = await fetch(url, signal ? { signal } : undefined);
+    if (!response.ok) return null;
 
     const blob = await response.blob();
     return await createImageBitmap(blob);
@@ -86,7 +55,7 @@ export class ChartTilesWorkerApi {
 
   async streamTiles(
     params: ChartTilesParams,
-    onTile: (tile: ChartTileReady) => void | Promise<void>
+    onTile: ChartTileCallback
   ): Promise<ChartStreamSummary> {
     // Abort any prior in-flight stream
     this._abortController?.abort();
@@ -128,9 +97,7 @@ export class ChartTilesWorkerApi {
           return;
         }
         if (bitmap) {
-          // Fire-and-forget: tiles are composited by position, not arrival order,
-          // so no need to await the Comlink round-trip before fetching the next tile.
-          onTile(Comlink.transfer({ tileX: s.x, tileY: s.y, bitmap }, [bitmap]));
+          await onTile(Comlink.transfer({ tileX: s.x, tileY: s.y, bitmap }, [bitmap]));
         } else {
           failedTiles += 1;
         }
@@ -141,9 +108,6 @@ export class ChartTilesWorkerApi {
       Array.from({ length: Math.min(TILE_FETCH_CONCURRENCY, specs.length) }, () => worker())
     );
 
-    if (!hasComlinkReleaseProxy(onTile)) {
-      throw new Error('Comlink tile callback is missing releaseProxy.');
-    }
     onTile[Comlink.releaseProxy]();
     return { totalTiles: specs.length, failedTiles };
   }

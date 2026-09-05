@@ -123,15 +123,11 @@ export class ComlinkedWorkerClient<T extends object> {
     this.rejectAll(new WorkerClientError('cancelled', `${this.name} worker request cancelled.`));
   }
 
-  /** Hook for subclass cleanup on dispose. */
-  protected onDispose(): void {}
-
   private teardown(): void {
     this.rawWorker.removeEventListener('error', this.handleWorkerError);
     this.rawWorker.removeEventListener('messageerror', this.handleMessageError);
     this.proxy[Comlink.releaseProxy]();
     this.rawWorker.terminate();
-    this.onDispose();
   }
 
   private rejectAll(error: WorkerClientError): void {

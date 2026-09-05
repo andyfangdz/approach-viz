@@ -1,5 +1,3 @@
-import type { MinimumsCategory } from '@/lib/types';
-
 export interface AirportRow {
   id: string;
   name: string;
@@ -33,15 +31,6 @@ export interface ApproachRow {
   source: 'cifp' | 'historical';
   source_cycle: string;
   historical_waypoints_json: string | null;
-}
-
-export interface MinimaRow {
-  airport_id: string;
-  approach_name: string;
-  runway: string | null;
-  types_json: string;
-  minimums_json: string;
-  cycle: string;
 }
 
 export interface ObstacleRow {
@@ -96,9 +85,4 @@ export interface ExternalApproach {
 export interface ApproachMinimumsDb {
   dtpp_cycle_number: string;
   airports: Record<string, { approaches: ExternalApproach[] }>;
-}
-
-export interface PreferredCategoryMinimum {
-  altitude: number;
-  category: MinimumsCategory;
 }

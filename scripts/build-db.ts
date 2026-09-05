@@ -180,18 +180,6 @@ function main() {
 
     CREATE INDEX idx_approaches_airport ON approaches(airport_id);
 
-    CREATE TABLE minima (
-      airport_id TEXT NOT NULL,
-      approach_name TEXT NOT NULL,
-      runway TEXT,
-      types_json TEXT NOT NULL,
-      minimums_json TEXT NOT NULL,
-      cycle TEXT NOT NULL,
-      PRIMARY KEY (airport_id, approach_name)
-    );
-
-    CREATE INDEX idx_minima_airport_runway ON minima(airport_id, runway);
-
     CREATE TABLE airspace (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       class TEXT NOT NULL,
@@ -246,9 +234,6 @@ function main() {
       `INSERT INTO approaches
       (airport_id, procedure_id, type, runway, data_json, source, source_cycle, historical_waypoints_json)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertMinima = db.prepare(
-      'INSERT INTO minima (airport_id, approach_name, runway, types_json, minimums_json, cycle) VALUES (?, ?, ?, ?, ?, ?)'
     );
     const insertAirspace = db.prepare(
       'INSERT INTO airspace (class, name, lower_alt, upper_alt, coordinates_json) VALUES (?, ?, ?, ?, ?)'
@@ -336,33 +321,6 @@ function main() {
 
     insertCifpData();
 
-    const insertMinimumsData = db.transaction(() => {
-      for (const [airportId, airportData] of Object.entries(minimumsDb.airports || {})) {
-        const approaches = airportData?.approaches || [];
-        for (const approach of approaches) {
-          const name = String(approach.name || '').trim();
-          if (!name) continue;
-          const runway =
-            approach.runway === null || approach.runway === undefined
-              ? null
-              : String(approach.runway);
-          const typesJson = JSON.stringify(Array.isArray(approach.types) ? approach.types : []);
-          const minimumsJson = JSON.stringify(
-            Array.isArray(approach.minimums) ? approach.minimums : []
-          );
-          insertMinima.run(
-            airportId,
-            name,
-            runway,
-            typesJson,
-            minimumsJson,
-            minimumsDb.dtpp_cycle_number
-          );
-        }
-      }
-    });
-
-    insertMinimumsData();
     resolveApproachReferences(db, minimumsDb);
 
     const insertObstacle = db.prepare(`

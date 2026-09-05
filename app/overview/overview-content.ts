@@ -336,8 +336,8 @@ export const SECTIONS: Section[] = [
                 'Full serialized procedure JSON plus source/cycle provenance; current CIFP wins over the versioned KSBS and KCRQ historical training fallbacks'
               ],
               [
-                '`minima`',
-                'Per-approach minimums sets (DA/MDA by category) from the external release'
+                '`approach_options`',
+                'Ordered selector options with resolved minimums, plate metadata, and missed-climb requirements'
               ],
               [
                 '`airspace` + `airspace_rtree`',
@@ -397,17 +397,12 @@ export const SECTIONS: Section[] = [
                 '`/api/faa-plate`',
                 'aeronav.faa.gov d-TPP',
                 'cycle + filename regex-validated; `max-age=43200` + SWR caching; content-hash `ETag` with `304` on `If-None-Match`'
-              ],
-              [
-                '`/api/datadog/rum/*`',
-                'browser-intake Datadog',
-                'CORS-safe RUM relay required under COOP/COEP isolation'
               ]
             ]
           },
           {
             kind: 'p',
-            text: 'The app ships with **cross-origin isolation on by default** (`COOP: same-origin`, `COEP: require-corp`), and a Workbox service worker (`sw/service-worker.ts`, bundled by esbuild) caches Terrarium elevation tiles (800 entries), FAA chart tiles (1,200 entries) and approach plates in **cycle-scoped caches**. Plate requests never trigger eviction, so preserved historical and current plates can coexist; the client-synced official d-TPP cycle is the sole authority that purges expired-cycle caches.'
+            text: 'Worker buffers use **transferable ownership**, without shared-memory isolation headers. Datadog RUM sends directly to its configured intake. A Workbox service worker (`sw/service-worker.ts`, bundled by esbuild) caches Terrarium elevation tiles (800 entries), FAA chart tiles (1,200 entries) and approach plates in **cycle-scoped caches**. Plate requests never trigger eviction, so preserved historical and current plates can coexist; the client-synced official d-TPP cycle is the sole authority that purges expired-cycle caches.'
           },
           {
             kind: 'files',

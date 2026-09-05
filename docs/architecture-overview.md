@@ -11,7 +11,8 @@ flowchart TD
   L --> A["Server Actions Wrapper<br/>app/actions.ts"]
   A --> AL["Actions Lib Modules<br/>app/actions-lib/*"]
   AL --> DB["SQLite<br/>data/approach-viz.sqlite"]
-  AL --> EXT["External Data<br/>CIFP + minima + plate metadata"]
+  SRC["FAA source data"] --> BUILD["Database generation<br/>reference matching + enrichment"]
+  BUILD --> DB
   A --> C["Client Runtime<br/>app/AppClient.tsx"]
   C --> S["Scene Components<br/>app/app-client/* + app/scene/*"]
   C --> PP["FAA Plate Proxy<br/>app/api/faa-plate/route.ts"]

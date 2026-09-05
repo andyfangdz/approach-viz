@@ -106,13 +106,6 @@ export interface TrafficDebugState {
   timingsMs: TrafficTimingDebugState;
 }
 
-export interface RuntimeCapabilities {
-  workerAvailable: boolean;
-  sharedArrayBufferAvailable: boolean;
-  atomicsAvailable: boolean;
-  crossOriginIsolated: boolean;
-}
-
 export interface ServiceWorkerCacheDebugState {
   supported: boolean;
   registered: boolean;

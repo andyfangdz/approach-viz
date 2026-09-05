@@ -3,12 +3,8 @@ import { Html, Line } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { isPresentFiniteNumber } from '@/lib/parse-like';
-import { ensureWasm } from '../shared/wasm-loader';
-import {
-  approach_path_build_hold_points,
-  approach_path_build_hold_protected_area,
-  approach_path_resolve_hold_leg_length_nm
-} from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+import { buildHoldGeometryWithWorker } from './approach-worker-client';
+import type { HoldGeometryResult } from './approach.worker';
 import { formatHoldDistance } from './curves';
 import {
   altToY,
@@ -17,17 +13,6 @@ import {
   normalizeHeading,
   resolveWaypoint
 } from './coordinates';
-
-interface HoldScenePoint {
-  x: number;
-  y: number;
-  z: number;
-}
-
-interface HoldProtectedAreaRings {
-  primary: HoldScenePoint[];
-  secondary: HoldScenePoint[];
-}
 
 export function HoldPattern({
   leg,
@@ -70,66 +55,29 @@ export function HoldPattern({
     return latLonToLocal(wp.lat, wp.lon, refLat, refLon);
   }, [wp, refLat, refLon]);
 
-  const [points, setPoints] = useState<[number, number, number][]>([]);
-  const [protectedArea, setProtectedArea] = useState<{
-    primary: [number, number, number][];
-    secondary: [number, number, number][];
-  } | null>(null);
-  // Straight-leg length resolved by the shared Rust engine: a published
-  // distance as-is, otherwise the published (or standard) holding time flown
-  // at the altitude's maximum holding speed. Starts at the published distance
-  // so label offsets have a value before the WASM module loads.
-  const [holdDistance, setHoldDistance] = useState<number>(publishedDistance ?? 4);
+  const [geometry, setGeometry] = useState<HoldGeometryResult | null>(null);
+  const holdDistance = geometry?.legLengthNm ?? 0;
   useEffect(() => {
     let cancelled = false;
+    setGeometry(null);
     if (!center || altitude <= 0) {
-      setPoints([]);
       return () => {
         cancelled = true;
       };
     }
-    void ensureWasm()
-      .then(() => {
-        const legLengthNm = approach_path_resolve_hold_leg_length_nm(
-          publishedDistance,
-          publishedTimeMinutes,
-          altitude
-        );
-        // SAFETY: wasm-bindgen returns HoldScenePoint[] for approach_path_build_hold_points.
-        const result = approach_path_build_hold_points(
-          center.x,
-          center.z,
-          heading,
-          legLengthNm,
-          altitude,
-          turnDirection,
-          verticalScale
-        ) as HoldScenePoint[];
-        // TERPS-style protected area (primary + secondary rings) from the
-        // shared engine, built only while the layer is enabled.
-        // SAFETY: wasm-bindgen returns HoldProtectedAreaRings for approach_path_build_hold_protected_area.
-        const area = showProtectedArea
-          ? (approach_path_build_hold_protected_area(
-              center.x,
-              center.z,
-              heading,
-              legLengthNm,
-              altitude,
-              turnDirection,
-              verticalScale
-            ) as HoldProtectedAreaRings)
-          : null;
-        if (cancelled) return;
-        setHoldDistance(legLengthNm);
-        setPoints(result.map((point) => [point.x, point.y, point.z]));
-        setProtectedArea(
-          area
-            ? {
-                primary: area.primary.map((point) => [point.x, point.y, point.z]),
-                secondary: area.secondary.map((point) => [point.x, point.y, point.z])
-              }
-            : null
-        );
+    void buildHoldGeometryWithWorker({
+      centerX: center.x,
+      centerZ: center.z,
+      heading,
+      publishedDistance,
+      publishedTimeMinutes,
+      altitude,
+      turnDirection,
+      verticalScale,
+      showProtectedArea
+    })
+      .then((result) => {
+        if (!cancelled) setGeometry(result);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -137,7 +85,7 @@ export function HoldPattern({
           'Failed to build hold geometry in Rust WASM.',
           error instanceof Error ? error : 'hold geometry failed'
         );
-        setPoints([]);
+        setGeometry(null);
       });
     return () => {
       cancelled = true;
@@ -172,7 +120,8 @@ export function HoldPattern({
     ];
   }, [center, heading, holdDistance, turnDirection, altitude, verticalScale]);
 
-  if (!center || points.length === 0) return null;
+  if (!center || !geometry || geometry.points.length === 0) return null;
+  const { points, protectedArea } = geometry;
 
   return (
     <group>

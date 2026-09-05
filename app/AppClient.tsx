@@ -43,7 +43,6 @@ import {
 import type {
   ChartType,
   NexradDebugState,
-  RuntimeCapabilities,
   SurfaceMode,
   TrafficDebugState
 } from '@/app/app-client/types';
@@ -143,13 +142,6 @@ const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
     workerProcessingMs: null
   }
 };
-const EMPTY_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
-  workerAvailable: false,
-  sharedArrayBufferAvailable: false,
-  atomicsAvailable: false,
-  crossOriginIsolated: false
-};
-
 const SURFACE_LEGEND_LABELS = {
   terrain: 'Terrain Wireframe',
   satellite: 'Satellite Surface',
@@ -180,9 +172,7 @@ export function AppClient({
   const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
   const [chartDebug, setChartDebug] = useState<ChartDebugState>(CHART_DEBUG_INITIAL);
   const [obstacleStats, setObstacleStats] = useState<ObstacleStats | null>(null);
-  const [runtimeCapabilities, setRuntimeCapabilities] = useState<RuntimeCapabilities>(
-    EMPTY_RUNTIME_CAPABILITIES
-  );
+  const [workerAvailable, setWorkerAvailable] = useState(false);
 
   const options = usePersistedOptions();
   const surface = useSurfaceState();
@@ -216,12 +206,7 @@ export function AppClient({
   // have been consumed before URL writeback is enabled.
   useEffect(() => {
     if (globalThis.window === undefined) return;
-    setRuntimeCapabilities({
-      workerAvailable: globalThis.Worker !== undefined,
-      sharedArrayBufferAvailable: globalThis.SharedArrayBuffer !== undefined,
-      atomicsAvailable: globalThis.Atomics !== undefined,
-      crossOriginIsolated: window.crossOriginIsolated === true
-    });
+    setWorkerAvailable(globalThis.Worker !== undefined);
     if (isMobileViewport()) {
       setSelectorsCollapsed(true);
       setLegendCollapsed(true);
@@ -519,7 +504,7 @@ export function AppClient({
           airportId={selectedAirport}
           approachId={selectedApproach}
           surfaceMode={surface.surfaceMode}
-          runtimeCapabilities={runtimeCapabilities}
+          workerAvailable={workerAvailable}
           serviceWorkerDebug={serviceWorkerDebug}
           nexradDebug={nexradDebug}
           trafficDebug={trafficDebug}

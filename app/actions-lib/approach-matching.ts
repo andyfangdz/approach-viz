@@ -1,11 +1,6 @@
 import type { ApproachOption, SerializedApproach } from '@/lib/types';
-import type { Approach } from '@/lib/cifp/parser';
-import type { ApproachMinimums, ApproachRow, ExternalApproach, MinimaRow } from './types';
-import {
-  deserializeApproach,
-  rowToApproachOption,
-  serializedApproachToRuntime
-} from './approach-serialization';
+import type { ApproachRow, ExternalApproach } from './types';
+import { deserializeApproach, rowToApproachOption } from './approach-serialization';
 
 function normalizeRunwayKey(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -164,16 +159,6 @@ function buildExternalProcedureId(
   return resolved;
 }
 
-export function parseMinimaRows(rows: MinimaRow[]): ExternalApproach[] {
-  // SAFETY: build-db writes minima.types_json as string[] and minima.minimums_json as ApproachMinimums[].
-  return rows.map((row) => ({
-    name: row.approach_name,
-    runway: row.runway,
-    types: JSON.parse(row.types_json || '[]') as string[],
-    minimums: JSON.parse(row.minimums_json || '[]') as ApproachMinimums[]
-  }));
-}
-
 function getTypeMatchScore(
   currentApproachType: string,
   externalApproach: ExternalApproach
@@ -221,7 +206,7 @@ function getTypeMatchScore(
 
 function resolveExternalApproach(
   airportApproaches: ExternalApproach[],
-  approach: Approach
+  approach: SerializedApproach
 ): ExternalApproach | null {
   const { runwayKey, variant } = parseProcedureRunway(approach.runway);
   if (!runwayKey) {
@@ -295,44 +280,52 @@ export function findSelectedExternalApproach(
   }
   if (selectedApproachOption.source === 'historical') return null;
   if (!currentApproach) return null;
-  return resolveExternalApproach(airportApproaches, serializedApproachToRuntime(currentApproach));
+  return resolveExternalApproach(airportApproaches, currentApproach);
 }
 
-export function buildApproachOptions(
+/** Resolve selector options and minimums using the existing name-order tie-break. */
+export function resolveApproachOptions(
   approachRows: ApproachRow[],
-  minimaRows: MinimaRow[]
-): ApproachOption[] {
-  const cifpOptions = approachRows.map(rowToApproachOption);
-  if (minimaRows.length === 0) return cifpOptions;
-
-  const minimaApproaches = parseMinimaRows(minimaRows);
-  if (minimaApproaches.length === 0) return cifpOptions;
-
-  const matchedMinimaNames = new Set<string>();
-  for (const row of approachRows) {
-    if (row.source === 'historical') continue;
+  airportApproaches: ExternalApproach[],
+  cycle: string
+) {
+  // Preserve the former SQLite ORDER BY approach_name tie-break for selector
+  // identities and minimums, independent of source JSON order.
+  airportApproaches = airportApproaches.toSorted((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+  );
+  const resolved: {
+    option: ApproachOption;
+    approach: SerializedApproach | null;
+    minimumsApproach: ExternalApproach | null;
+  }[] = approachRows.map((row) => {
+    const option = rowToApproachOption(row);
     const approach = deserializeApproach(row);
-    const matched = resolveExternalApproach(
-      minimaApproaches,
-      serializedApproachToRuntime(approach)
-    );
-    if (matched) {
-      matchedMinimaNames.add(matched.name);
-    }
+    return {
+      option,
+      approach,
+      minimumsApproach: findSelectedExternalApproach(airportApproaches, option, approach)
+    };
+  });
+  const matchedNames = new Set(
+    resolved.flatMap(({ minimumsApproach }) => (minimumsApproach ? [minimumsApproach.name] : []))
+  );
+  const usedProcedureIds = new Set(resolved.map(({ option }) => option.procedureId));
+  for (const external of airportApproaches
+    .filter((approach) => !matchedNames.has(approach.name))
+    .toSorted((a, b) => a.name.localeCompare(b.name))) {
+    resolved.push({
+      option: {
+        procedureId: buildExternalProcedureId(external, usedProcedureIds),
+        type: inferExternalApproachType(external),
+        runway: normalizeExternalRunway(external),
+        source: 'external',
+        sourceCycle: cycle,
+        externalApproachName: external.name
+      },
+      approach: null,
+      minimumsApproach: external
+    });
   }
-
-  const usedProcedureIds = new Set(cifpOptions.map((option) => option.procedureId));
-  const externalOnlyOptions = minimaApproaches
-    .filter((approach) => !matchedMinimaNames.has(approach.name))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((approach) => ({
-      procedureId: buildExternalProcedureId(approach, usedProcedureIds),
-      type: inferExternalApproachType(approach),
-      runway: normalizeExternalRunway(approach),
-      source: 'external' as const,
-      sourceCycle: minimaRows[0]?.cycle || undefined,
-      externalApproachName: approach.name
-    }));
-
-  return [...cifpOptions, ...externalOnlyOptions];
+  return resolved;
 }

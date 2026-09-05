@@ -4,16 +4,18 @@ Checklist for verifying parser, render, and data-logic changes.
 
 ## Automated Steps (Local)
 
-Run in order after any parser/render/data change:
+Run the checks relevant to the change:
 
 1. `npm run format:check` — verify repository formatting.
 2. `npm run lint` — ESLint parse/lint checks.
 3. `npm run typecheck` — TypeScript compile checks without emit.
-4. `npm run prepare-data` — download fresh FAA/CIFP + airspace + minimums data and rebuild SQLite.
+4. `npm run build-db` — rebuild SQLite from local sources for data/schema changes. Use `npm run prepare-data` when intentionally refreshing source data.
 5. `npm run test` — parser, geometry, layers/options, MRMS, workers, API routes, and reference-resolution tests. `npm run test:references` checks source validation and database materialization independently.
-6. `npm run test:parser` — especially after `lib/cifp/parser.ts` changes.
-7. `npm run test:geometry` — for path/curve/runway/coordinate geometry changes.
-8. `npm run build` — production build (also refreshes data).
+6. `npx next build` — validate the production build against the database just rebuilt. `npm run build` also downloads sources, so reserve it for a full data refresh/build.
+
+`npm test` already includes the parser and geometry suites. Run those narrow commands while iterating; they need not be repeated after the full suite passes. Shared Rust/runtime changes also require `cargo check --workspace --all-targets` and `cargo test --workspace`.
+
+Use the pinned Node 24 runtime with `better-sqlite3` 12.10.0. The earlier 11.10.0 binding could abort the test runner and production server in `Statement::~Statement()` / `RemoveEnvironmentCleanupHook`; changing test isolation only hid the symptom.
 
 ## CI Pipeline
 
@@ -41,6 +43,8 @@ Notes:
 - The `.agents/skills/runtime-stress-traffic-live` runbook provides a reusable high-concurrency stress profile for `/v1/traffic/adsbx` with percentile and error-rate artifacts.
 
 ## Manual Spot-Checks
+
+Use the `agent-browser` and `agent-browser-verify` skills against the running local server: open the page, take an interactive snapshot and screenshot, exercise relevant controls, and inspect `console` plus `errors`. Close the browser after verification. The former `test:smoke` command referenced absent files under `.tmp`; it and its unused Playwright test dependency have been removed.
 
 After a successful build, visually verify at least one procedure exercising each of these features:
 

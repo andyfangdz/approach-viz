@@ -199,7 +199,7 @@ test('historical scene plate derivation uses the preserved fixture metadata', ()
         sourceCycle: '260806'
       },
       null,
-      { dtpp_cycle_number: 'test', airports: {} }
+      'test'
     ),
     { cycle: '2608', plateFile: '06404RZ32.PDF' }
   );
@@ -214,7 +214,7 @@ test('historical scene plate derivation uses the preserved fixture metadata', ()
         sourceCycle: '251225'
       },
       null,
-      { dtpp_cycle_number: 'test', airports: {} }
+      'test'
     ),
     { cycle: '2512', plateFile: '05310RX24.PDF' }
   );
@@ -229,7 +229,7 @@ test('historical scene plate derivation uses the preserved fixture metadata', ()
         sourceCycle: 'wrong-cycle'
       },
       null,
-      { dtpp_cycle_number: 'test', airports: {} }
+      'test'
     ),
     null
   );

@@ -58,21 +58,17 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-async function fetchWithTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fetch(url, {
-      cache: 'no-store',
-      signal: controller.signal,
-      headers: {
-        accept: '*/*',
-        'user-agent': 'approach-viz/1.0'
-      }
-    });
-  } finally {
-    clearTimeout(timeoutId);
+async function fetchText(url: string, signal: AbortSignal): Promise<string> {
+  const response = await fetch(url, {
+    cache: 'no-store',
+    signal,
+    headers: { accept: '*/*', 'user-agent': 'approach-viz/1.0' }
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`ProbSevere request failed (${response.status}). ${body.slice(0, 256)}`);
   }
+  return body;
 }
 
 function estimateDistanceNm(latA: number, lonA: number, latB: number, lonB: number): number {
@@ -243,28 +239,15 @@ export async function GET(request: NextRequest) {
   );
 
   try {
-    const indexResponse = await fetchWithTimeout(PROBSEVERE_INDEX_URL);
-    if (!indexResponse.ok) {
-      const indexError = await indexResponse.text().catch(() => '');
-      throw new Error(
-        `ProbSevere index request failed (${indexResponse.status}). ${indexError.slice(0, 256)}`
-      );
-    }
-    const indexHtml = await indexResponse.text();
+    const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const indexHtml = await fetchText(PROBSEVERE_INDEX_URL, signal);
     const latestFile = extractLatestProbSevereFile(indexHtml);
     if (!latestFile) {
       throw new Error('ProbSevere index did not include any MRMS_PROBSEVERE JSON files.');
     }
 
     const baseUrl = PROBSEVERE_BASE_URL.replace(/\/$/, '');
-    const fileResponse = await fetchWithTimeout(`${baseUrl}/${latestFile}`);
-    if (!fileResponse.ok) {
-      const fileError = await fileResponse.text().catch(() => '');
-      throw new Error(
-        `ProbSevere file request failed (${fileResponse.status}). ${fileError.slice(0, 256)}`
-      );
-    }
-    const rawPayload = parseJsonValue(await fileResponse.text());
+    const rawPayload = parseJsonValue(await fetchText(`${baseUrl}/${latestFile}`, signal));
     if (!isJsonObject(rawPayload)) {
       throw new Error('ProbSevere file was not a JSON object.');
     }

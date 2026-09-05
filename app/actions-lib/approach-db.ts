@@ -1,13 +1,12 @@
 import { findPreservedHistoricalApproachPlate } from '@/lib/cifp/historical-approaches';
-import type { ApproachOption, SceneData, SerializedApproach } from '@/lib/types';
-import { findSelectedExternalApproach } from './approach-matching';
-import type { ApproachMinimumsDb } from './types';
+import type { ApproachOption, SceneData } from '@/lib/types';
+import type { ExternalApproach } from './types';
 
 export function deriveApproachPlate(
   airportId: string,
   selectedApproachOption: ApproachOption | null,
-  currentApproach: SerializedApproach | null,
-  approachDb: ApproachMinimumsDb
+  externalApproach: ExternalApproach | null,
+  cycle: string
 ): SceneData['approachPlate'] {
   if (!selectedApproachOption) return null;
   if (selectedApproachOption.source === 'historical') {
@@ -18,23 +17,13 @@ export function deriveApproachPlate(
     );
   }
 
-  const airportApproaches = approachDb?.airports?.[airportId]?.approaches;
-  if (!approachDb || !airportApproaches || airportApproaches.length === 0) {
-    return null;
-  }
-
-  const externalApproach = findSelectedExternalApproach(
-    airportApproaches,
-    selectedApproachOption,
-    currentApproach
-  );
   const plateFile = (externalApproach?.plate_file || '').trim().toUpperCase();
   if (!plateFile) {
     return null;
   }
 
   return {
-    cycle: approachDb.dtpp_cycle_number || '',
+    cycle,
     plateFile
   };
 }

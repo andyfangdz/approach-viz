@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run test:parser && npm run test:geometry && npm run test:layers && npm run test:mrms && npm run test:workers && npm run test:routes && npm run test:references",
     "test:references": "node --import tsx --test scripts/resolve-approach-references.test.ts",
-    "test:routes": "node --import tsx --test app/api/traffic/adsbx/route.test.ts app/api/faa-plate/route.test.ts app/api/weather/nexrad/runtime-proxy.test.ts",
+    "test:routes": "node --import tsx --test app/api/traffic/adsbx/route.test.ts app/api/faa-plate/route.test.ts app/api/weather/nexrad/runtime-proxy.test.ts app/api/weather/nexrad/prob-severe/route.test.ts",
     "test:parser": "node --import tsx --test lib/cifp/parser.test.ts lib/dof/parser.test.ts",
     "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts app/scene/approach-path/geometry-rust.test.ts app/scene/terrain/terrarium.test.ts",
     "test:layers": "node --import tsx --test app/app-client/__tests__/layers-url.test.ts app/scene/obstacle-shapes.test.ts lib/obstacles/plate-significance.test.ts app/app-client/__tests__/options-state.test.ts",
@@ -35,7 +35,6 @@
     "dev:ios": "bash scripts/build-ios-app.sh --project-only && open -a Simulator && open -a Xcode ios/ApproachViz.xcodeproj",
     "start": "next start",
     "build:wasm": "PATH=$HOME/.cargo/bin:$PATH wasm-pack build crates/approach-viz-core --target web --out-dir ../../packages/approach-viz-core-wasm -- --features wasm && cp packages/approach-viz-core-wasm/approach_viz_core_bg.wasm public/approach_viz_core_bg.wasm && cp packages/approach-viz-core-wasm/approach_viz_core.js public/approach_viz_core.js",
-    "test:smoke": "npx playwright test pw-wasm-smoke --config .tmp/playwright.config.ts",
     "codegen:flatbuffers": "bash scripts/install-flatc.sh && tools/flatc --rust -o crates/approach-viz-core/src/generated/ schemas/*.fbs"
   },
   "keywords": [
@@ -53,7 +52,7 @@
     "@takram/three-geospatial": "^0.6.0",
     "@vercel/analytics": "^1.6.1",
     "3d-tiles-renderer": "^0.4.21",
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "12.10.0",
     "comlink": "^4.4.2",
     "dd-trace": "^5.85.0",
     "egm96-universal": "^1.1.1",
@@ -66,7 +65,6 @@
   },
   "devDependencies": {
     "@oxlint/plugins": "^1.78.0",
-    "@playwright/test": "^1.58.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "25.2.1",
     "@types/react": "^19.2.13",
@@ -85,5 +83,13 @@
     "workbox-expiration": "^7.4.0",
     "workbox-routing": "^7.4.0",
     "workbox-strategies": "^7.4.0"
+  },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "esbuild": true,
+    "sharp": true
+  },
+  "volta": {
+    "node": "24.20.0"
   }
 }
