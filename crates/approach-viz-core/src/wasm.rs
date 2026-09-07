@@ -22,7 +22,7 @@ fn js_err<E: std::fmt::Display>(context: &str, error: E) -> JsValue {
 /// call, optionally building a cross-section grid.
 ///
 /// Returns a JS object with these top-level keys:
-///   `volumeTexture` — RG8 3D texel grid + placement metadata + altitude-guide
+///   `volumeTexture` — sparse RG8 page table + brick pool + placement metadata + altitude-guide
 ///       extents from `build_volume_texture` (the `prepare_volume` dual index
 ///       space is resolved here in Rust; JS never pairs
 ///       `declutterIndices`/`validIndices` with payload columns), or null when
@@ -108,7 +108,7 @@ pub fn decode_and_prepare_mrms(
     // 5. Build result object
     let root = js_sys::Object::new();
 
-    // -- raymarch volume texture (RG8 texels + placement + guide extents) --
+    // -- raymarch volume texture (RG8 page table + brick pool + placement + guide extents) --
     match &texture {
         None => {
             set_prop(&root, "volumeTexture", &JsValue::NULL)?;
@@ -124,7 +124,21 @@ pub fn decode_and_prepare_mrms(
             set_prop(&tex_obj, "cellSizeZNm", &JsValue::from(tex.cell_size_z_nm))?;
             set_prop(&tex_obj, "baseFeet", &JsValue::from(tex.base_feet))?;
             set_prop(&tex_obj, "binSizeFeet", &JsValue::from(tex.bin_size_feet))?;
-            set_prop(&tex_obj, "texels", &js_sys::Uint8Array::from(&tex.texels[..]).into())?;
+            set_prop(&tex_obj, "coarsenX", &JsValue::from(tex.coarsen_x))?;
+            set_prop(&tex_obj, "coarsenZ", &JsValue::from(tex.coarsen_z))?;
+            set_prop(&tex_obj, "pageWidth", &JsValue::from(tex.page_width))?;
+            set_prop(&tex_obj, "pageHeight", &JsValue::from(tex.page_height))?;
+            set_prop(&tex_obj, "pageDepth", &JsValue::from(tex.page_depth))?;
+            set_prop(
+                &tex_obj,
+                "pageTable",
+                &js_sys::Uint8Array::from(&tex.page_table[..]).into(),
+            )?;
+            set_prop(&tex_obj, "brickCount", &JsValue::from(tex.brick_count))?;
+            set_prop(&tex_obj, "poolBricksX", &JsValue::from(tex.pool_bricks_x))?;
+            set_prop(&tex_obj, "poolBricksY", &JsValue::from(tex.pool_bricks_y))?;
+            set_prop(&tex_obj, "poolBricksZ", &JsValue::from(tex.pool_bricks_z))?;
+            set_prop(&tex_obj, "pool", &js_sys::Uint8Array::from(&tex.pool[..]).into())?;
             set_prop(&tex_obj, "filledTexelCount", &JsValue::from(tex.filled_texel_count))?;
             set_prop(
                 &tex_obj,

@@ -45,6 +45,14 @@ export interface NexradDebugState {
   layerCount: number;
   voxelCount: number;
   renderedVoxelCount: number;
+  /** Resident bricks in the raymarch volume's brick pool. */
+  volumeBrickCount: number;
+  /** Logical texels holding an echo in the raymarch volume. */
+  volumeFilledTexelCount: number;
+  /** Horizontal cell size of the raymarch volume, NM, and the whole
+   *  source-footprint multiple it covers (`1` = full resolution). */
+  volumeCellSizeNm: number | null;
+  volumeCoarsen: number | null;
   phaseMode: string | null;
   phaseDetail: string | null;
   zdrAgeSeconds: number | null;

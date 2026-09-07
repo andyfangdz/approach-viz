@@ -231,7 +231,7 @@ export function decode_and_prepare_echo_top(data, apply_earth_curvature, ref_lat
  * call, optionally building a cross-section grid.
  *
  * Returns a JS object with these top-level keys:
- *   `volumeTexture` — RG8 3D texel grid + placement metadata + altitude-guide
+ *   `volumeTexture` — sparse RG8 page table + brick pool + placement metadata + altitude-guide
  *       extents from `build_volume_texture` (the `prepare_volume` dual index
  *       space is resolved here in Rust; JS never pairs
  *       `declutterIndices`/`validIndices` with payload columns), or null when
