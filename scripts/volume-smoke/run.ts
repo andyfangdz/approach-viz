@@ -390,8 +390,16 @@ async function launchChromium(executable: string): Promise<Browser> {
     ],
     { stdio: ['ignore', 'ignore', 'pipe'] }
   );
-  const url = await waitForDevtoolsUrl(child);
-  return { cdp: await Cdp.connect(url), process: child, profileDir };
+  try {
+    const url = await waitForDevtoolsUrl(child);
+    return { cdp: await Cdp.connect(url), process: child, profileDir };
+  } catch (error) {
+    // A launch that never reaches DevTools must not leave an orphaned
+    // Chromium or its profile behind.
+    child.kill('SIGKILL');
+    await rm(profileDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function closeChromium(browser: Browser): Promise<void> {
