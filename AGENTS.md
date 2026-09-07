@@ -58,6 +58,7 @@
 - Core crate check: `cargo check -p approach-viz-core`
 - Build WASM + copy to `public/`: `npm run build:wasm` (needs `wasm-pack`; if wasm-pack falls back to a system `wasm-opt`, it must be binaryen ≥ 117 — Ubuntu apt's binaryen 108 emits a broken artifact whose externref table cannot grow, trapping at module init)
 - WASM smoke tests (needs localhost:3000): `npm run test:smoke`
+- Raymarch volume GPU smoke test: `npm run test:smoke:volume` (renders the real `NexradVolumeRaymarch` over the shipped WASM decoder in headless Chromium on SwiftShader WebGL2 against `fixtures/mrms/kmia-20260907-volume.avmr`; `--live <lat>,<lon>` fetches a current payload instead, `--chromium <path>` / `APPROACHVIZ_CHROMIUM_PATH` picks the browser when Playwright's bundled one is not installed; asserts the shader compiles, the volume renders at full source resolution inside the brick budget, and terrain occlusion holds under empty-page skipping; screenshots land in `.tmp/volume-smoke/`; not part of CI or `npm run test`)
 
 ### Runtime Ops
 

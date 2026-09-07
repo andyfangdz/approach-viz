@@ -29,6 +29,10 @@ Implement the two VDB ideas that matter here, in the code that already owns the 
 
 **Raise `MAX_RAY_STEPS` with the skipping in place.** Left at 384 so this change only reduces per-pixel work; raising it is a separate one-variable experiment once the skip rate is measured on real weather.
 
+## Validation
+
+`npm run test:smoke:volume` (`scripts/volume-smoke/`) renders the real component through the shipped WASM in headless Chromium on SwiftShader against a captured KMIA payload, and fails on any shader error, on coarsening, or on a broken occlusion invariant (60,000 ft ground must render nothing; a camera under the ground must render nothing). The first run on live KATL weather rendered 460 x 362 x 96 logical texels at 1x with 2,577 bricks (6.25 MB pool) where the dense grid would have coarsened to 230 x 181.
+
 ## Consequences
 
 Full source resolution at 120 NM in the common case (`coarsenX/Z = 1`, visible in the debug panel's `Volume Bricks` row). Upload is `brickCount x 2 KB` rather than a fixed dense grid; the worst case (a storm over about a quarter of the box before coarsening kicks in) is 16.4 MB. Rays spend one iteration per empty page instead of eight samples. The native iOS/macOS renderer is unchanged: it still consumes `build_render_volume` flat columns for its instanced boxes, and the page-table layout is renderer-agnostic if the planned Metal raymarcher wants it.

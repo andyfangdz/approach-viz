@@ -27,6 +27,20 @@ CI (`.github/workflows/parser-tests.yml`) runs on every push/PR:
 
 Runtime integration tests are intentionally excluded from CI (see below).
 
+## Raymarch Volume GPU Smoke (Local Browser)
+
+Use this after any change to the MRMS volume prepare pass (`crates/approach-viz-core/src/mrms_render.rs::build_volume_texture`), the WASM bridge fields it exposes, or the raymarch shader (`app/scene/nexrad/NexradVolumeRaymarch.tsx`):
+
+1. `npm run build:wasm` — the smoke test renders through the WASM in `packages/approach-viz-core-wasm/`, so it must reflect the Rust you changed.
+2. `npm run test:smoke:volume` — bundles `scripts/volume-smoke/harness.tsx` (the real `NexradVolumeRaymarch` in an R3F canvas), serves it locally, and drives headless Chromium on SwiftShader WebGL2 through five scenarios: a wide view with no terrain, a flat ground at 60,000 ft (must render zero pixels), a flat ground at 15,000 ft (must render fewer pixels than the wide view), a close-in view where a seam on an 8-texel page face would show, and a close-in camera under a 15,000 ft ground (zero pixels). Any browser console error or warning fails the run; three.js reports shader compile and link failures there. It also checks the page table and brick pool byte sizes against their reported layouts and that the payload rendered at full source resolution (`coarsen 1x`) inside the brick budget.
+3. Look at the screenshots in `.tmp/volume-smoke/` — the coverage counts prove occlusion and compilation, not appearance.
+
+Notes:
+
+- Default input is `fixtures/mrms/kmia-20260907-volume.avmr`, a live AVMR v5 volume captured at KMIA (25.79, -80.29) so the result is repeatable; `--live <lat>,<lon>` fetches a current payload from the runtime and `--payload <file>` uses another capture. A payload with no echo fails loudly rather than passing an empty render.
+- The browser defaults to Playwright's bundled Chromium (`npx playwright install chromium` once); `--chromium <path>` or `APPROACHVIZ_CHROMIUM_PATH` points at another build.
+- Not part of CI or `npm run test`: it needs a browser with WebGL2 and takes about a minute on SwiftShader.
+
 ## Runtime Integration (Live Network)
 
 Use this when validating deployed runtime service behavior end-to-end:
