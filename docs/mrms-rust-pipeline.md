@@ -171,3 +171,7 @@ NEXT_PUBLIC_MRMS_BINARY_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:
 ```
 
 If `NEXT_PUBLIC_MRMS_BINARY_BASE_URL` is unset, the client uses `/api/weather/nexrad`.
+
+## Runtime entry point
+
+`src/main.rs` initializes Tokio and calls `approach_viz_runtime::run()`. The library owns startup and service modules; the binary does not redeclare those modules. Unit tests therefore run once against the same library used by the executable and benchmarks.

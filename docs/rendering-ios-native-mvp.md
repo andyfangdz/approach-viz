@@ -85,7 +85,7 @@ Current native scene behavior:
 ## Data Inputs
 
 - SQLite source: bundled `approach-viz.sqlite` copied into the app bundle during the Xcode build and read through `GRDB.swift`
-- Bundled external reference source: `public/data/approach-db/approaches.json`, copied into the app bundle during Xcode builds and used to match official minimums/VDA rows against CIFP procedures
+- Reference metadata: `approach_options.reference_json` in the bundled SQLite database supplies the build-resolved minimums and missed-climb requirement. `approaches.data_json` already contains the matched FAF VDA. There is no native reference matcher or separate `approaches.json` bundle; missing/malformed required database data throws into scene-load error handling.
 - The shared SQLite bundle conditionally includes the decommissioned `KSBS / R32-Z` FAA-cycle-`260806` and `KCRQ / R24-X` FAA-cycle-`251225` historical fallbacks when current CIFP omits each exact procedure. Native scene loading uses their approach-specific preserved waypoints, skips current external-reference matching, and marks them `Historical • Decommissioned • Training only` in the selector and scene title. KCRQ remains an option rather than a startup default.
 - Terrain tiles are fetched from the Terrarium public tile service at runtime through `Nuke`; individual tile fetch failures no longer abort the entire wireframe build
 - Queries are read-only and currently cover:
@@ -100,7 +100,7 @@ Current native scene behavior:
 - Native path composition now matches the web renderer more closely:
   - hold legs (`HF`/`HM`/`HA`) are no longer baked into the main transition/final/missed tubes
   - the displayed final path extends through the first missed-approach fix when that fix resolves
-  - matched external approach rows can apply VDA to the FAF leg and expose minimums / parsed missed-climb requirements to the native path builder
+  - database generation applies the matched VDA to the FAF leg and resolves minimums / parsed missed-climb requirements once for both clients
   - the Metal final-path renderer now emits a first-pass DA/MDA split marker and dashed-below-minimums segment when the resolved crossing occurs below the selected threshold
   - dashed hold overlays and below-minimums segments now render as dashed prism geometry instead of single-pixel Metal lines, making them readable on phone-sized simulator frames
   - hold overlays now use the same Rust-resolved leg altitude map as the web renderer instead of raw CIFP leg altitudes, keeping hold vertical placement aligned across platforms
@@ -112,7 +112,7 @@ Current native scene behavior:
 
 The native MVP intentionally does not yet implement:
 
-- MRMS weather
+- MRMS surface mosaic and raymarched volume (native uses voxel boxes)
 - chart/satellite surfaces
 - approach plates
 - full web feature parity for labels, materials, camera choreography, and every procedure edge case

@@ -155,22 +155,7 @@ targets:
           else
             echo "warning: missing $SRC; run npm run prepare-data"
           fi
-      - name: Copy Approach Reference Data
-        inputFiles:
-          - $(PROJECT_DIR)/../public/data/approach-db/approaches.json
-        outputFiles:
-          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/approaches.json
-        script: |
-          set -euo pipefail
-          SRC="$PROJECT_DIR/../public/data/approach-db/approaches.json"
-          DST_DIR="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
-          DST="$DST_DIR/approaches.json"
-          mkdir -p "$DST_DIR"
-          if [[ -f "$SRC" ]]; then
-            cp "$SRC" "$DST"
-          else
-            echo "warning: missing $SRC; run npm run prepare-data"
-          fi
+
   ApproachVizMac:
     type: application
     platform: macOS
@@ -276,22 +261,7 @@ targets:
           else
             echo "warning: missing $SRC; run npm run prepare-data"
           fi
-      - name: Copy Approach Reference Data
-        inputFiles:
-          - $(PROJECT_DIR)/../public/data/approach-db/approaches.json
-        outputFiles:
-          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/approaches.json
-        script: |
-          set -euo pipefail
-          SRC="$PROJECT_DIR/../public/data/approach-db/approaches.json"
-          DST_DIR="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
-          DST="$DST_DIR/approaches.json"
-          mkdir -p "$DST_DIR"
-          if [[ -f "$SRC" ]]; then
-            cp "$SRC" "$DST"
-          else
-            echo "warning: missing $SRC; run npm run prepare-data"
-          fi
+
   ApproachVizMacTests:
     type: bundle.unit-test
     platform: macOS

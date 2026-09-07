@@ -39,3 +39,5 @@ Discrete convective storm-cell objects render as an optional weather overlay.
 - Poll cadence: ~120 seconds.
 - Retry cadence after transient failures: 15 seconds.
 - On transient upstream errors, the overlay preserves the previous successful payload to avoid flicker/disappear behavior.
+
+The ProbSevere proxy uses one 8-second deadline across index discovery, the selected file fetch, and both response-body reads. Failures retain the existing error payload consumed by the overlay.

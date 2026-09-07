@@ -59,3 +59,9 @@ MRMS 3D volumetric weather is a surface-independent overlay (not a surface mode)
 - Satellite/3D plate tile renderers are keyed by airport (not selected approach) so switching procedures does not remount the tileset or churn tile sessions.
 - Plate overlay on tiled modes applies georeferenced plate texturing directly to Google 3D Tiles terrain materials (shader projection in local scene coordinates).
 - 3D Map mode does not fall back to Terrarium wireframe terrain; it keeps the Google 3D Tiles surface active and omits only the plate texture overlay when no plate metadata is available.
+
+## Shared plate preparation and tile caching
+
+Flat and satellite plate surfaces use `app/scene/plate/plate-data.ts` for PDF georeference extraction, bilinear fitting, and cropped PDF rasterization. Their plane/homography rendering stays separate. Chart workers fetch tiles normally; the service worker owns cache lookup and expiration, with no direct Cache API bypass in the tile worker.
+
+Chart streams await tile callbacks before releasing their Comlink proxy, so stream completion includes delivery and permits the next preview/detail pass to begin.

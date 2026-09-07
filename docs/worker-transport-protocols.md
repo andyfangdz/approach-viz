@@ -26,14 +26,14 @@ The chart tiles worker uses `Comlink.wrap()` directly (no `ComlinkedWorkerClient
 
 ## Transport
 
-All workers use `Comlink.transfer()` to zero-copy transfer typed arrays (`ArrayBuffer`, `ImageBitmap`) from worker to main thread. No SharedArrayBuffer is used.
+All workers use `Comlink.transfer()` to zero-copy transfer typed arrays (`ArrayBuffer`, `ImageBitmap`) from worker to main thread. No SharedArrayBuffer or cross-origin isolation is required.
 
 ## Transport Matrix
 
 | Pipeline                                                                  | Transport                | Transferables                                                        | Failure Policy                                     |
 | ------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------- |
 | Filter                                                                    | Comlink proxy            | No                                                                   | Dispose + recreate worker on failure               |
-| Approach altitude/path                                                    | Comlink proxy + transfer | `pointsFlat.buffer`                                                  | Dispose + recreate worker on failure               |
+| Approach altitude/path/hold                                               | Comlink proxy + transfer | Path `pointsFlat.buffer`; structured hold points and protected rings | Dispose + recreate worker on failure               |
 | MRMS `pollAndPrepare`                                                     | Comlink proxy + transfer | Volume payload, prepared volume, cross-section, echo-top SoA buffers | Dispose + recreate worker on failure               |
 | MRMS `rePrepare`                                                          | Comlink proxy + transfer | Prepared volume, cross-section buffers                               | Dispose + recreate worker on failure               |
 | Traffic (`reset`/`ingestBinary`/`ingestRuntime`/`recompute`/`pruneError`) | Comlink proxy + transfer | Render buffers (markers, trails, strings)                            | Transient errors surface without permanent disable |
@@ -92,7 +92,7 @@ Singleton management: module-level `sharedClient` with `activePollPromise` guard
 - `resolveAltitudes(params)` — invokes the shared Rust WASM engine for altitude resolution, then `compose_approach_scene` for FAF-append / MAP-extension / hold listing
 - `buildPathGeometry(params)` — invokes the shared Rust WASM engine for path geometry and transfers `pointsFlat.buffer`
 
-The worker also uses the same Rust engine for hold geometry via direct WASM calls from `HoldPattern.tsx`, so there is no separate TypeScript geometry implementation left in the web app.
+- `buildHoldGeometry(params)` — resolves hold length, racetrack points, and optional protected rings in the worker and returns render-ready tuples. `HoldPattern.tsx` only renders that result; it does not initialize WASM on the main thread.
 
 Failure policy: client disposes the current worker and recreates on next attempt.
 
@@ -118,7 +118,7 @@ Failure policy: client disposes the current worker and recreates on next attempt
 
 ### Operation
 
-- `streamTiles(params, onTile)` — fetches tiles with concurrency pool, streams each `ImageBitmap` back via `Comlink.proxy()` callback with `Comlink.transfer()`, returns `ChartStreamSummary` on completion
+- `streamTiles(params, onTile)` — fetches tiles with a concurrency pool, transfers each `ImageBitmap` through a Comlink callback, and waits for delivery before releasing the callback and returning `ChartStreamSummary`. The callback uses Comlink's remote type; checking `releaseProxy` with `in` is invalid because Comlink supplies it through a proxy getter.
 
 Consumer creates per-use workers (not singleton). Two-pass preview+detail streaming for flat map mode. Workers are terminated on effect cleanup.
 
@@ -126,7 +126,7 @@ Consumer creates per-use workers (not singleton). Two-pass preview+detail stream
 
 Runtime debug panel fields currently expose:
 
-- Capability flags: `Worker`, `crossOriginIsolated`
+- Worker availability: `Worker`
 - MRMS: offload mode, decode transport (`transfer` / `worker-error`), prepare transport (`transfer` / `worker-error`), worker failure diagnostics
 - Traffic: offload mode, feed transport (`binary` / `json`), worker transport (`transfer`), worker error reason, stage timings
 

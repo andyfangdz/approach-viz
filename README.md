@@ -278,9 +278,6 @@ Legacy aliases `/v1/volume` and `/v1/echo-tops` are still supported.
 | `NEXT_PUBLIC_DD_RUM_VERSION`                    | Browser RUM version tag (commit SHA fallback)                                                                                                     |
 | `NEXT_PUBLIC_DD_RUM_SESSION_SAMPLE_RATE`        | Browser RUM session sample rate `0..100` (default: `100`)                                                                                         |
 | `NEXT_PUBLIC_DD_RUM_SESSION_REPLAY_SAMPLE_RATE` | Browser RUM replay sample rate `0..100` (default: `0`)                                                                                            |
-| `NEXT_PUBLIC_DD_RUM_PROXY_PATH`                 | Optional Datadog RUM proxy path override (default: `/api/datadog/rum`)                                                                            |
-| `DISABLE_CROSS_ORIGIN_ISOLATION`                | Set to `1` to disable COOP/COEP headers (disables SAB/Atomics features)                                                                           |
-| `CROSS_ORIGIN_EMBEDDER_POLICY`                  | Optional COEP override (`credentialless` or default `require-corp`)                                                                               |
 
 ## Data Sources
 

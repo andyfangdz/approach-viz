@@ -1,5 +1,4 @@
 import type { ApproachOption, SerializedApproach } from '@/lib/types';
-import type { Approach } from '@/lib/cifp/parser';
 import type { ApproachRow, WaypointRow } from './types';
 
 export function rowToApproachOption(row: ApproachRow): ApproachOption {
@@ -64,18 +63,6 @@ export function deserializeHistoricalWaypoints(row: ApproachRow): WaypointRow[] 
       type: value.type
     };
   });
-}
-
-export function serializedApproachToRuntime(approach: SerializedApproach): Approach {
-  return {
-    airportId: approach.airportId,
-    procedureId: approach.procedureId,
-    type: approach.type,
-    runway: approach.runway,
-    transitions: new Map(approach.transitions),
-    finalLegs: approach.finalLegs,
-    missedLegs: approach.missedLegs
-  };
 }
 
 export function collectWaypointIds(approach: SerializedApproach): string[] {

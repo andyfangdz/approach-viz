@@ -13,9 +13,9 @@ export function latLonDistanceNm(
 }
 
 export function computeGeoidSeparationFeet(lat: number, lon: number): number {
-  try {
-    return meanSeaLevel(lat, lon) * METERS_TO_FEET;
-  } catch {
-    return 0;
+  const separation = meanSeaLevel(lat, lon) * METERS_TO_FEET;
+  if (!Number.isFinite(separation)) {
+    throw new Error(`Invalid geoid separation at ${lat}, ${lon}`);
   }
+  return separation;
 }

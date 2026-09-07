@@ -1,10 +1,10 @@
-import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
-import type { MissedApproachClimbRequirement } from '@/lib/types';
 import { ComlinkedWorkerClient } from '@/app/scene/shared/comlinked-worker-client';
 import type {
   ApproachWorkerApi,
   AltitudeResult,
   BuildPathGeometryParams,
+  BuildHoldGeometryParams,
+  HoldGeometryResult,
   GeometryResult,
   ResolveAltitudesParams
 } from './approach.worker';
@@ -19,6 +19,10 @@ class ApproachWorkerClient extends ComlinkedWorkerClient<ApproachWorkerApi> {
 
   resolveAltitudes(params: ResolveAltitudesParams): Promise<AltitudeResult> {
     return this.withTimeout(() => this.proxy.resolveAltitudes(params));
+  }
+
+  buildHoldGeometry(params: BuildHoldGeometryParams): Promise<HoldGeometryResult> {
+    return this.withTimeout(() => this.proxy.buildHoldGeometry(params));
   }
 
   buildPathGeometry(params: BuildPathGeometryParams): Promise<GeometryResult> {
@@ -42,42 +46,32 @@ function disposeWorkerClient() {
   sharedClient = null;
 }
 
-export async function resolveApproachAltitudesWithWorker(params: {
-  finalLegs: ApproachLeg[];
-  transitionEntries: [string, ApproachLeg[]][];
-  missedLegs: ApproachLeg[];
-  waypoints: [string, Waypoint][];
-  refLat: number;
-  refLon: number;
-  airportElevation: number;
-  missedApproachStartAltitudeFeet?: number;
-  missedApproachClimbRequirement?: MissedApproachClimbRequirement | null;
-}) {
+export async function resolveApproachAltitudesWithWorker(params: ResolveAltitudesParams) {
   const client = getWorkerClient();
   try {
     return await client.resolveAltitudes(params);
   } catch (error) {
-    disposeWorkerClient();
+    if (sharedClient === client) disposeWorkerClient();
     throw error instanceof Error ? error : new Error('Approach altitude worker failed.');
   }
 }
 
-export async function buildPathGeometryWithWorker(params: {
-  legs: ApproachLeg[];
-  waypoints: [string, Waypoint][];
-  resolvedAltitudes: number[];
-  initialAltitudeFeet: number;
-  verticalScale: number;
-  refLat: number;
-  refLon: number;
-  magVar: number;
-  showTurnConstraintLabels?: boolean;
-}) {
+export async function buildPathGeometryWithWorker(params: BuildPathGeometryParams) {
   const client = getWorkerClient();
   try {
     return await client.buildPathGeometry(params);
   } catch (error) {
-    disposeWorkerClient();
+    if (sharedClient === client) disposeWorkerClient();
     throw error instanceof Error ? error : new Error('Approach geometry worker failed.');
+  }
+}
+
+export async function buildHoldGeometryWithWorker(params: BuildHoldGeometryParams) {
+  const client = getWorkerClient();
+  try {
+    return await client.buildHoldGeometry(params);
+  } catch (error) {
+    if (sharedClient === client) disposeWorkerClient();
+    throw error instanceof Error ? error : new Error('Approach hold worker failed.');
   }
 }

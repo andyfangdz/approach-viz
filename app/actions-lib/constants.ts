@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 export const NEARBY_AIRPORT_RADIUS_NM = 80;
 export const ELEVATION_AIRPORT_RADIUS_NM = 80;
 export const AIRSPACE_RADIUS_NM = 30;
@@ -18,11 +16,4 @@ export const OBSTACLE_CHART_DECLUTTER_RADIUS_NM = 1;
 // thousands of rows; the cap keeps payloads bounded while keeping the tallest
 // obstacles. Truncation is surfaced through ObstaclesPayload.totalCount.
 export const MAX_SCENE_OBSTACLES = 2500;
-export const APPROACH_DB_PATH = path.join(
-  process.cwd(),
-  'public',
-  'data',
-  'approach-db',
-  'approaches.json'
-);
 export const METERS_TO_FEET = 3.28084;

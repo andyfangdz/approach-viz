@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import type {
   NexradDebugState,
-  RuntimeCapabilities,
   ServiceWorkerCacheDebugState,
   SurfaceMode,
   TrafficDebugState
@@ -16,7 +15,7 @@ interface DebugPanelProps {
   airportId: string;
   approachId: string;
   surfaceMode: SurfaceMode;
-  runtimeCapabilities: RuntimeCapabilities;
+  workerAvailable: boolean;
   serviceWorkerDebug: ServiceWorkerCacheDebugState;
   nexradDebug: NexradDebugState;
   trafficDebug: TrafficDebugState;
@@ -110,7 +109,7 @@ export function DebugPanel({
   airportId,
   approachId,
   surfaceMode,
-  runtimeCapabilities,
+  workerAvailable,
   serviceWorkerDebug,
   nexradDebug,
   trafficDebug,
@@ -211,19 +210,7 @@ export function DebugPanel({
             </div>
             <div className="debug-row">
               <span>Worker</span>
-              <span>{boolLabel(runtimeCapabilities.workerAvailable)}</span>
-            </div>
-            <div className="debug-row">
-              <span>SharedArrayBuffer</span>
-              <span>{boolLabel(runtimeCapabilities.sharedArrayBufferAvailable)}</span>
-            </div>
-            <div className="debug-row">
-              <span>Atomics</span>
-              <span>{boolLabel(runtimeCapabilities.atomicsAvailable)}</span>
-            </div>
-            <div className="debug-row">
-              <span>Cross-Origin Iso</span>
-              <span>{boolLabel(runtimeCapabilities.crossOriginIsolated)}</span>
+              <span>{boolLabel(workerAvailable)}</span>
             </div>
             <div className="debug-row">
               <span>SW Support</span>

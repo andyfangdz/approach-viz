@@ -5,6 +5,9 @@ import type { TurnConstraintLabel, VerticalLineData } from './types';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   approach_path_build_geometry,
+  approach_path_build_hold_points,
+  approach_path_build_hold_protected_area,
+  approach_path_resolve_hold_leg_length_nm,
   approach_path_compose_scene,
   approach_path_resolve_altitudes
 } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
@@ -57,6 +60,27 @@ export interface GeometryResult {
   pointsFlat: Float32Array;
   verticalLines: VerticalLineData[];
   turnConstraintLabels: TurnConstraintLabel[];
+}
+
+export interface BuildHoldGeometryParams {
+  centerX: number;
+  centerZ: number;
+  heading: number;
+  publishedDistance?: number;
+  publishedTimeMinutes?: number;
+  altitude: number;
+  turnDirection: string;
+  verticalScale: number;
+  showProtectedArea: boolean;
+}
+
+export interface HoldGeometryResult {
+  legLengthNm: number;
+  points: [number, number, number][];
+  protectedArea: {
+    primary: [number, number, number][];
+    secondary: [number, number, number][];
+  } | null;
 }
 
 interface WasmAltitudeResult {
@@ -121,6 +145,38 @@ export class ApproachWorkerApi {
       missedAltitudes: result.missedAltitudes,
       missedPathAltitudes: result.missedPathAltitudes,
       composed
+    };
+  }
+
+  async buildHoldGeometry(params: BuildHoldGeometryParams): Promise<HoldGeometryResult> {
+    await this.ready;
+    const legLengthNm = approach_path_resolve_hold_leg_length_nm(
+      params.publishedDistance,
+      params.publishedTimeMinutes,
+      params.altitude
+    );
+    const args = [
+      params.centerX,
+      params.centerZ,
+      params.heading,
+      legLengthNm,
+      params.altitude,
+      params.turnDirection,
+      params.verticalScale
+    ] as const;
+    // SAFETY: the shared Rust hold exports return ScenePoint arrays and protected rings.
+    const points = approach_path_build_hold_points(...args) as WasmScenePoint[];
+    // SAFETY: the protected-area export returns primary and secondary ScenePoint arrays.
+    const area = (
+      params.showProtectedArea ? approach_path_build_hold_protected_area(...args) : null
+    ) as { primary: WasmScenePoint[]; secondary: WasmScenePoint[] } | null;
+    const toTuple = ({ x, y, z }: WasmScenePoint): [number, number, number] => [x, y, z];
+    return {
+      legLengthNm,
+      points: points.map(toTuple),
+      protectedArea: area
+        ? { primary: area.primary.map(toTuple), secondary: area.secondary.map(toTuple) }
+        : null
     };
   }
 

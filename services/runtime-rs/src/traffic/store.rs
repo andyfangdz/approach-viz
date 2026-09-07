@@ -10,8 +10,8 @@ use super::memory_store::{
     CurrentSnapshot, HistoryPoint, TrackEntry, TrafficMemoryStore, PARTITION_BUCKET_MS,
 };
 use super::types::{
-    distance_nm, is_sqlite_locked_error, now_ms, DbTrackState, PartitionInfo, QueryRequest,
-    QueryResult, RingPartitionCache, TrafficAircraft,
+    distance_nm, is_sqlite_locked_error, now_ms, PartitionInfo, QueryRequest, QueryResult,
+    RingPartitionCache, TrafficAircraft,
 };
 
 const CACHE_RETENTION_MS: i64 = 60 * 60_000;
@@ -220,6 +220,94 @@ pub(crate) async fn wal_maintenance(store: &TrafficStore, now_ms: i64) -> Result
 // Ingest: update memory first, then persist to SQLite
 // ---------------------------------------------------------------------------
 
+fn observed_at(candidate: &TrafficAircraft, polled_at_ms: i64, cutoff_ms: i64) -> i64 {
+    candidate
+        .last_seen_seconds
+        .map(|seconds| (polled_at_ms as f64 - seconds * 1000.0).round() as i64)
+        .unwrap_or(polled_at_ms)
+        .clamp(cutoff_ms, polled_at_ms)
+}
+
+fn new_track(candidate: &TrafficAircraft, polled_at_ms: i64, cutoff_ms: i64) -> TrackEntry {
+    TrackEntry {
+        hex: candidate.hex.clone(),
+        flight: candidate.flight.clone(),
+        lat: candidate.lat,
+        lon: candidate.lon,
+        is_on_ground: candidate.is_on_ground,
+        altitude_feet: candidate.altitude_feet,
+        ground_speed_kt: candidate.ground_speed_kt,
+        track_deg: candidate.track_deg,
+        last_observed_at_ms: observed_at(candidate, polled_at_ms, cutoff_ms),
+        last_point_ts_ms: None,
+        last_point_lat: None,
+        last_point_lon: None,
+        last_point_altitude_feet: None,
+        last_point_is_on_ground: None,
+    }
+}
+
+/// Merge and history sampling policy, independent of memory publication and SQLite commit.
+fn merge_track(
+    track: &mut TrackEntry,
+    candidate: &TrafficAircraft,
+    polled_at_ms: i64,
+    cutoff_ms: i64,
+) -> Option<HistoryPoint> {
+    let observed_at_ms = observed_at(candidate, polled_at_ms, cutoff_ms);
+    if let Some(flight) = &candidate.flight {
+        track.flight = Some(flight.clone());
+    }
+    if observed_at_ms >= track.last_observed_at_ms {
+        track.last_observed_at_ms = observed_at_ms;
+        track.lat = candidate.lat;
+        track.lon = candidate.lon;
+        track.is_on_ground = candidate.is_on_ground;
+        track.altitude_feet = candidate.altitude_feet.or(track.altitude_feet);
+        track.ground_speed_kt = candidate.ground_speed_kt.or(track.ground_speed_kt);
+        track.track_deg = candidate.track_deg.or(track.track_deg);
+    } else {
+        track.altitude_feet = track.altitude_feet.or(candidate.altitude_feet);
+        track.ground_speed_kt = track.ground_speed_kt.or(candidate.ground_speed_kt);
+        track.track_deg = track.track_deg.or(candidate.track_deg);
+    }
+    let altitude_feet = track.altitude_feet.unwrap_or(0.0);
+    let timestamp_ms = track
+        .last_point_ts_ms
+        .map(|last| observed_at_ms.max(last + 1))
+        .unwrap_or(observed_at_ms);
+    let append = match (
+        track.last_point_ts_ms,
+        track.last_point_lat,
+        track.last_point_lon,
+        track.last_point_altitude_feet,
+        track.last_point_is_on_ground,
+    ) {
+        (Some(ts), Some(lat), Some(lon), Some(alt), Some(ground)) => {
+            timestamp_ms - ts >= 900
+                || distance_nm(lat, lon, candidate.lat, candidate.lon) >= 0.02
+                || (alt - altitude_feet).abs() >= 25.0
+                || ground != track.is_on_ground
+        }
+        _ => true,
+    };
+    if !append {
+        return None;
+    }
+    track.last_point_ts_ms = Some(timestamp_ms);
+    track.last_point_lat = Some(candidate.lat);
+    track.last_point_lon = Some(candidate.lon);
+    track.last_point_altitude_feet = Some(altitude_feet);
+    track.last_point_is_on_ground = Some(track.is_on_ground);
+    Some(HistoryPoint {
+        lat: candidate.lat,
+        lon: candidate.lon,
+        altitude_feet,
+        timestamp_ms,
+        is_on_ground: track.is_on_ground,
+    })
+}
+
 fn ingest_snapshot(
     connection: &mut Connection,
     memory: &TrafficMemoryStore,
@@ -248,100 +336,17 @@ fn ingest_snapshot(
 
     // Merge incoming aircraft.
     for candidate in &aircraft {
-        let observed_at_ms = candidate
-            .last_seen_seconds
-            .map(|seconds| (polled_at_ms as f64 - seconds * 1000.0).round() as i64)
-            .unwrap_or(polled_at_ms)
-            .max(retention_cutoff_ms)
-            .min(polled_at_ms);
-
         let track = if let Some(&idx) = new_by_hex.get(&candidate.hex) {
-            let track = &mut new_tracks[idx];
-
-            if let Some(flight) = candidate.flight.clone() {
-                track.flight = Some(flight);
-            }
-
-            if observed_at_ms >= track.last_observed_at_ms {
-                track.last_observed_at_ms = observed_at_ms;
-                track.lat = candidate.lat;
-                track.lon = candidate.lon;
-                track.is_on_ground = candidate.is_on_ground;
-                track.altitude_feet = candidate.altitude_feet.or(track.altitude_feet);
-                track.ground_speed_kt = candidate.ground_speed_kt.or(track.ground_speed_kt);
-                track.track_deg = candidate.track_deg.or(track.track_deg);
-            } else {
-                track.altitude_feet = track.altitude_feet.or(candidate.altitude_feet);
-                track.ground_speed_kt = track.ground_speed_kt.or(candidate.ground_speed_kt);
-                track.track_deg = track.track_deg.or(candidate.track_deg);
-            }
-            track
+            &mut new_tracks[idx]
         } else {
             let idx = new_tracks.len();
             new_by_hex.insert(candidate.hex.clone(), idx);
-            new_tracks.push(TrackEntry {
-                hex: candidate.hex.clone(),
-                flight: candidate.flight.clone(),
-                lat: candidate.lat,
-                lon: candidate.lon,
-                is_on_ground: candidate.is_on_ground,
-                altitude_feet: candidate.altitude_feet,
-                ground_speed_kt: candidate.ground_speed_kt,
-                track_deg: candidate.track_deg,
-                last_observed_at_ms: observed_at_ms,
-                last_point_ts_ms: None,
-                last_point_lat: None,
-                last_point_lon: None,
-                last_point_altitude_feet: None,
-                last_point_is_on_ground: None,
-            });
+            new_tracks.push(new_track(candidate, polled_at_ms, retention_cutoff_ms));
             &mut new_tracks[idx]
         };
 
-        let point_altitude_feet = track.altitude_feet.unwrap_or(0.0);
-        let point_timestamp_ms = track
-            .last_point_ts_ms
-            .map(|last_ts| observed_at_ms.max(last_ts + 1))
-            .unwrap_or(observed_at_ms);
-
-        let should_append = match (
-            track.last_point_ts_ms,
-            track.last_point_lat,
-            track.last_point_lon,
-            track.last_point_altitude_feet,
-            track.last_point_is_on_ground,
-        ) {
-            (
-                Some(last_ts),
-                Some(last_lat),
-                Some(last_lon),
-                Some(last_alt),
-                Some(last_ground),
-            ) => {
-                point_timestamp_ms - last_ts >= 900
-                    || distance_nm(last_lat, last_lon, candidate.lat, candidate.lon) >= 0.02
-                    || (last_alt - point_altitude_feet).abs() >= 25.0
-                    || last_ground != track.is_on_ground
-            }
-            _ => true,
-        };
-
-        if should_append {
-            history_points.push((
-                candidate.hex.clone(),
-                HistoryPoint {
-                    lat: candidate.lat,
-                    lon: candidate.lon,
-                    altitude_feet: point_altitude_feet,
-                    timestamp_ms: point_timestamp_ms,
-                    is_on_ground: track.is_on_ground,
-                },
-            ));
-            track.last_point_ts_ms = Some(point_timestamp_ms);
-            track.last_point_lat = Some(candidate.lat);
-            track.last_point_lon = Some(candidate.lon);
-            track.last_point_altitude_feet = Some(point_altitude_feet);
-            track.last_point_is_on_ground = Some(track.is_on_ground);
+        if let Some(point) = merge_track(track, candidate, polled_at_ms, retention_cutoff_ms) {
+            history_points.push((candidate.hex.clone(), point));
         }
     }
 
@@ -399,82 +404,14 @@ fn persist_to_sqlite(
     let mut last_history_table = String::new();
 
     for candidate in aircraft {
-        let observed_at_ms = candidate
-            .last_seen_seconds
-            .map(|seconds| (polled_at_ms as f64 - seconds * 1000.0).round() as i64)
-            .unwrap_or(polled_at_ms)
-            .max(retention_cutoff_ms)
-            .min(polled_at_ms);
-
         let mut track = existing_tracks
             .remove(&candidate.hex)
-            .unwrap_or(DbTrackState {
-                flight: candidate.flight.clone(),
-                is_on_ground: candidate.is_on_ground,
-                altitude_feet: candidate.altitude_feet,
-                ground_speed_kt: candidate.ground_speed_kt,
-                track_deg: candidate.track_deg,
-                last_observed_at_ms: observed_at_ms,
-                last_lat: candidate.lat,
-                last_lon: candidate.lon,
-                last_point_ts_ms: None,
-                last_point_lat: None,
-                last_point_lon: None,
-                last_point_altitude_feet: None,
-                last_point_is_on_ground: None,
-            });
-
-        if let Some(flight) = candidate.flight.clone() {
-            track.flight = Some(flight);
-        }
-
-        let previous_observed_at_ms = track.last_observed_at_ms;
-        if observed_at_ms >= previous_observed_at_ms {
-            track.last_observed_at_ms = observed_at_ms;
-            track.last_lat = candidate.lat;
-            track.last_lon = candidate.lon;
-            track.is_on_ground = candidate.is_on_ground;
-            track.altitude_feet = candidate.altitude_feet.or(track.altitude_feet);
-            track.ground_speed_kt = candidate.ground_speed_kt.or(track.ground_speed_kt);
-            track.track_deg = candidate.track_deg.or(track.track_deg);
-        } else {
-            track.altitude_feet = track.altitude_feet.or(candidate.altitude_feet);
-            track.ground_speed_kt = track.ground_speed_kt.or(candidate.ground_speed_kt);
-            track.track_deg = track.track_deg.or(candidate.track_deg);
-        }
-
-        let point_altitude_feet = track.altitude_feet.unwrap_or(0.0);
-        let point_timestamp_ms = track
-            .last_point_ts_ms
-            .map(|last_timestamp_ms| observed_at_ms.max(last_timestamp_ms + 1))
-            .unwrap_or(observed_at_ms);
-
-        let should_append = match (
-            track.last_point_ts_ms,
-            track.last_point_lat,
-            track.last_point_lon,
-            track.last_point_altitude_feet,
-            track.last_point_is_on_ground,
-        ) {
-            (
-                Some(last_timestamp_ms),
-                Some(last_lat),
-                Some(last_lon),
-                Some(last_altitude_feet),
-                Some(last_is_on_ground),
-            ) => {
-                point_timestamp_ms - last_timestamp_ms >= 900
-                    || distance_nm(last_lat, last_lon, candidate.lat, candidate.lon) >= 0.02
-                    || (last_altitude_feet - point_altitude_feet).abs() >= 25.0
-                    || last_is_on_ground != track.is_on_ground
-            }
-            _ => true,
-        };
-
-        if should_append {
+            .unwrap_or_else(|| new_track(candidate, polled_at_ms, retention_cutoff_ms));
+        if let Some(point) = merge_track(&mut track, candidate, polled_at_ms, retention_cutoff_ms) {
+            let point_timestamp_ms = point.timestamp_ms;
+            let point_altitude_feet = point.altitude_feet;
             let bkt = bucket_start_ms(point_timestamp_ms);
-            let partition =
-                ensure_partition_for_bucket(&transaction, &mut partition_cache, bkt)?;
+            let partition = ensure_partition_for_bucket(&transaction, &mut partition_cache, bkt)?;
 
             if partition.points_table != last_history_table {
                 let sql = format!(
@@ -503,12 +440,6 @@ fn persist_to_sqlite(
                 ])
                 .map_err(|error| error.to_string())?;
             }
-
-            track.last_point_ts_ms = Some(point_timestamp_ms);
-            track.last_point_lat = Some(candidate.lat);
-            track.last_point_lon = Some(candidate.lon);
-            track.last_point_altitude_feet = Some(point_altitude_feet);
-            track.last_point_is_on_ground = Some(track.is_on_ground);
         }
 
         {
@@ -543,8 +474,8 @@ fn persist_to_sqlite(
                 track.ground_speed_kt,
                 track.track_deg,
                 track.last_observed_at_ms,
-                track.last_lat,
-                track.last_lon,
+                track.lat,
+                track.lon,
                 track.last_point_ts_ms,
                 track.last_point_lat,
                 track.last_point_lon,
@@ -716,7 +647,7 @@ fn partition_schema_sql(points_table: &str) -> String {
 fn load_existing_tracks(
     connection: &Connection,
     hexes: &[String],
-) -> Result<std::collections::HashMap<String, DbTrackState>, String> {
+) -> Result<std::collections::HashMap<String, TrackEntry>, String> {
     let mut tracks = std::collections::HashMap::new();
     if hexes.is_empty() {
         return Ok(tracks);
@@ -745,16 +676,17 @@ fn load_existing_tracks(
                 let is_on_ground: i64 = row.get(2)?;
                 let last_point_is_on_ground: Option<i64> = row.get(13)?;
                 Ok((
-                    hex,
-                    DbTrackState {
+                    hex.clone(),
+                    TrackEntry {
+                        hex,
                         flight: row.get(1)?,
                         is_on_ground: is_on_ground == 1,
                         altitude_feet: row.get(3)?,
                         ground_speed_kt: row.get(4)?,
                         track_deg: row.get(5)?,
                         last_observed_at_ms: row.get(6)?,
-                        last_lat: row.get(7)?,
-                        last_lon: row.get(8)?,
+                        lat: row.get(7)?,
+                        lon: row.get(8)?,
                         last_point_ts_ms: row.get(9)?,
                         last_point_lat: row.get(10)?,
                         last_point_lon: row.get(11)?,
@@ -1149,6 +1081,80 @@ mod tests {
         TrafficStore::new(dir.path().join("traffic-store.db")).expect("store should open")
     }
 
+    #[test]
+    fn merge_preserves_newer_position_and_fills_missing_fields() {
+        let mut candidate = test_aircraft("abc123", 40.0, -74.0, false);
+        candidate.altitude_feet = None;
+        let mut track = new_track(&candidate, NOW_MS, NOW_MS - CACHE_RETENTION_MS);
+        merge_track(&mut track, &candidate, NOW_MS, NOW_MS - CACHE_RETENTION_MS);
+        candidate.lat = 41.0;
+        candidate.last_seen_seconds = Some(10.0);
+        candidate.altitude_feet = Some(12_000.0);
+        merge_track(&mut track, &candidate, NOW_MS, NOW_MS - CACHE_RETENTION_MS);
+        assert_eq!(track.lat, 40.0);
+        assert_eq!(track.altitude_feet, Some(12_000.0));
+        assert_eq!(track.last_observed_at_ms, NOW_MS);
+        assert!(track.last_point_ts_ms.unwrap() > NOW_MS);
+    }
+
+    #[test]
+    fn history_sampling_uses_time_motion_altitude_and_ground_changes() {
+        let mut candidate = test_aircraft("abc123", 40.0, -74.0, false);
+        let cutoff = NOW_MS - CACHE_RETENTION_MS;
+        let mut track = new_track(&candidate, NOW_MS, cutoff);
+        assert!(merge_track(&mut track, &candidate, NOW_MS, cutoff).is_some());
+        assert!(merge_track(&mut track, &candidate, NOW_MS + 899, cutoff).is_none());
+        assert!(merge_track(&mut track, &candidate, NOW_MS + 900, cutoff).is_some());
+        candidate.altitude_feet = Some(10_025.0);
+        assert!(merge_track(&mut track, &candidate, NOW_MS + 901, cutoff).is_some());
+        candidate.is_on_ground = true;
+        assert!(merge_track(&mut track, &candidate, NOW_MS + 902, cutoff).is_some());
+        candidate.lat += 0.001;
+        assert!(merge_track(&mut track, &candidate, NOW_MS + 903, cutoff).is_some());
+    }
+
+    #[test]
+    fn persistence_failure_keeps_memory_live_and_next_ingest_recovers_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = open_traffic_db(&dir.path().join("traffic.db")).unwrap();
+        reconcile_partition_tables(&connection).unwrap();
+        let memory = TrafficMemoryStore::new_empty();
+        connection.execute_batch("CREATE TRIGGER fail_write BEFORE INSERT ON traffic_tracks BEGIN SELECT RAISE(FAIL, 'test disk failure'); END;").unwrap();
+        let aircraft = test_aircraft("abc123", 40.0, -74.0, false);
+        assert!(ingest_snapshot(
+            &mut connection,
+            &memory,
+            "test".into(),
+            vec![aircraft.clone()],
+            NOW_MS,
+            false
+        )
+        .is_err());
+        assert_eq!(memory.current.load().tracks.len(), 1);
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM traffic_tracks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        connection.execute_batch("DROP TRIGGER fail_write").unwrap();
+        ingest_snapshot(
+            &mut connection,
+            &memory,
+            "test".into(),
+            vec![aircraft],
+            NOW_MS + 1000,
+            false,
+        )
+        .unwrap();
+        let reloaded = TrafficMemoryStore::load_from_sqlite(&connection).unwrap();
+        let live = memory.current.load();
+        let disk = reloaded.current.load();
+        assert_eq!(live.tracks[0].lat, disk.tracks[0].lat);
+        assert_eq!(
+            live.tracks[0].last_point_ts_ms,
+            disk.tracks[0].last_point_ts_ms
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn fresh_store_reports_warming() {
         let dir = tempfile::tempdir().unwrap();
@@ -1251,7 +1257,9 @@ mod tests {
             .get("a1b2c3")
             .expect("history should include the requested hex");
         assert!(!points.is_empty());
-        assert!(points.windows(2).all(|w| w[0].timestamp_ms <= w[1].timestamp_ms));
+        assert!(points
+            .windows(2)
+            .all(|w| w[0].timestamp_ms <= w[1].timestamp_ms));
     }
 
     #[tokio::test(flavor = "multi_thread")]

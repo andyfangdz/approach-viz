@@ -1,11 +1,5 @@
-import type {
-  MinimumsCategory,
-  MinimumsSummary,
-  ApproachOption,
-  SerializedApproach
-} from '@/lib/types';
-import type { ApproachMinimums, MinimumsValue, MinimaRow } from './types';
-import { findSelectedExternalApproach, parseMinimaRows } from './approach-matching';
+import type { MinimumsCategory, MinimumsSummary } from '@/lib/types';
+import type { ApproachMinimums, MinimumsValue, ExternalApproach } from './types';
 
 function parseMinimumAltitude(value: MinimumsValue | 'NA' | null): number | null {
   if (!value || value === 'NA') return null;
@@ -48,18 +42,9 @@ function isDecisionAltitudeType(minimumsType: string): boolean {
 }
 
 export function deriveMinimumsSummary(
-  minimaRows: MinimaRow[],
-  selectedApproachOption: ApproachOption | null,
-  currentApproach: SerializedApproach | null
+  externalApproach: ExternalApproach | null,
+  cycle: string
 ): MinimumsSummary | null {
-  if (!selectedApproachOption || minimaRows.length === 0) return null;
-
-  const airportApproaches = parseMinimaRows(minimaRows);
-  const externalApproach = findSelectedExternalApproach(
-    airportApproaches,
-    selectedApproachOption,
-    currentApproach
-  );
   if (!externalApproach) return null;
 
   let bestDaCatA: MinimumsSummary['da'];
@@ -104,7 +89,7 @@ export function deriveMinimumsSummary(
 
   return {
     sourceApproachName: externalApproach.name,
-    cycle: minimaRows[0]?.cycle || '',
+    cycle,
     da: bestDa,
     mda: bestMda
   };

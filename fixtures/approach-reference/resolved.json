@@ -1,0 +1,9 @@
+{
+  "minimumsSummary": {
+    "sourceApproachName": "RNAV (GPS) RWY 09",
+    "cycle": "2609",
+    "da": { "altitude": 350, "category": "A", "type": "LPV" }
+  },
+  "missedApproachClimbRequirement": { "feetPerNm": 300, "targetAltitudeFeet": 4000 },
+  "approachPlate": { "cycle": "2609", "plateFile": "TEST09.PDF" }
+}

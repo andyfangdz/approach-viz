@@ -43,7 +43,6 @@ import {
 import type {
   ChartType,
   NexradDebugState,
-  RuntimeCapabilities,
   SurfaceMode,
   TrafficDebugState
 } from '@/app/app-client/types';
@@ -147,13 +146,6 @@ const EMPTY_TRAFFIC_DEBUG_STATE: TrafficDebugState = {
     workerProcessingMs: null
   }
 };
-const EMPTY_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
-  workerAvailable: false,
-  sharedArrayBufferAvailable: false,
-  atomicsAvailable: false,
-  crossOriginIsolated: false
-};
-
 const SURFACE_LEGEND_LABELS = {
   terrain: 'Terrain Wireframe',
   satellite: 'Satellite Surface',
@@ -184,9 +176,7 @@ export function AppClient({
   const [trafficDebug, setTrafficDebug] = useState<TrafficDebugState>(EMPTY_TRAFFIC_DEBUG_STATE);
   const [chartDebug, setChartDebug] = useState<ChartDebugState>(CHART_DEBUG_INITIAL);
   const [obstacleStats, setObstacleStats] = useState<ObstacleStats | null>(null);
-  const [runtimeCapabilities, setRuntimeCapabilities] = useState<RuntimeCapabilities>(
-    EMPTY_RUNTIME_CAPABILITIES
-  );
+  const [workerAvailable, setWorkerAvailable] = useState(false);
 
   const options = usePersistedOptions();
   const surface = useSurfaceState();
@@ -220,12 +210,7 @@ export function AppClient({
   // have been consumed before URL writeback is enabled.
   useEffect(() => {
     if (globalThis.window === undefined) return;
-    setRuntimeCapabilities({
-      workerAvailable: globalThis.Worker !== undefined,
-      sharedArrayBufferAvailable: globalThis.SharedArrayBuffer !== undefined,
-      atomicsAvailable: globalThis.Atomics !== undefined,
-      crossOriginIsolated: window.crossOriginIsolated === true
-    });
+    setWorkerAvailable(globalThis.Worker !== undefined);
     if (isMobileViewport()) {
       setSelectorsCollapsed(true);
       setLegendCollapsed(true);
@@ -363,7 +348,7 @@ export function AppClient({
     });
   };
 
-  const { setNexradDeclutterMode } = options;
+  const { updateOption } = options;
   useEffect(() => {
     if (globalThis.window === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -382,7 +367,7 @@ export function AppClient({
       }
       if (event.key.toLowerCase() !== 'v') return;
       event.preventDefault();
-      setNexradDeclutterMode((current) => {
+      updateOption('nexradDeclutterMode', (current) => {
         const currentIndex = NEXRAD_DECLUTTER_MODES.indexOf(current);
         const nextIndex = (currentIndex + 1) % NEXRAD_DECLUTTER_MODES.length;
         return NEXRAD_DECLUTTER_MODES[nextIndex];
@@ -391,7 +376,7 @@ export function AppClient({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [nexradVolumeEnabled, setNexradDeclutterMode]);
+  }, [nexradVolumeEnabled, updateOption]);
 
   const mainContentStyle: MainContentStyle = {
     '--controls-overlay-offset': `${controlsOverlayHeight}px`
@@ -523,7 +508,7 @@ export function AppClient({
           airportId={selectedAirport}
           approachId={selectedApproach}
           surfaceMode={surface.surfaceMode}
-          runtimeCapabilities={runtimeCapabilities}
+          workerAvailable={workerAvailable}
           serviceWorkerDebug={serviceWorkerDebug}
           nexradDebug={nexradDebug}
           trafficDebug={trafficDebug}
@@ -557,56 +542,77 @@ export function AppClient({
           onToggleOptions={toggleOptions}
           verticalScale={options.verticalScale}
           onVerticalScaleChange={(scale) =>
-            options.setVerticalScale(clampValue(scale, 1, 15, DEFAULT_VERTICAL_SCALE))
+            options.updateOption('verticalScale', clampValue(scale, 1, 15, DEFAULT_VERTICAL_SCALE))
           }
           terrainRadiusNm={options.terrainRadiusNm}
           onTerrainRadiusNmChange={(radiusNm) =>
-            options.setTerrainRadiusNm(normalizeTerrainRadiusNm(radiusNm))
+            options.updateOption('terrainRadiusNm', normalizeTerrainRadiusNm(radiusNm))
           }
           flattenBathymetry={options.flattenBathymetry}
-          onFlattenBathymetryChange={options.setFlattenBathymetry}
+          onFlattenBathymetryChange={(value) => options.updateOption('flattenBathymetry', value)}
           cameraControlMode={options.cameraControlMode}
-          onCameraControlModeChange={options.setCameraControlMode}
+          onCameraControlModeChange={(value) => options.updateOption('cameraControlMode', value)}
           useParsedMissedClimbGradient={options.useParsedMissedClimbGradient}
           hasParsedMissedClimbRequirement={hasParsedMissedClimbRequirement}
           parsedMissedClimbRequirementLabel={parsedMissedClimbRequirementLabel}
-          onUseParsedMissedClimbGradientChange={options.setUseParsedMissedClimbGradient}
+          onUseParsedMissedClimbGradientChange={(value) =>
+            options.updateOption('useParsedMissedClimbGradient', value)
+          }
           layers={options.layers}
           nexradMinDbz={options.nexradMinDbz}
-          onNexradMinDbzChange={(dbz) => options.setNexradMinDbz(normalizeNexradMinDbz(dbz))}
+          onNexradMinDbzChange={(dbz) =>
+            options.updateOption('nexradMinDbz', normalizeNexradMinDbz(dbz))
+          }
           nexradOpacity={options.nexradOpacity}
           onNexradOpacityChange={(opacity) =>
-            options.setNexradOpacity(normalizeNexradOpacity(opacity))
+            options.updateOption('nexradOpacity', normalizeNexradOpacity(opacity))
           }
           nexradDeclutterMode={options.nexradDeclutterMode}
-          onNexradDeclutterModeChange={options.setNexradDeclutterMode}
+          onNexradDeclutterModeChange={(value) =>
+            options.updateOption('nexradDeclutterMode', value)
+          }
           nexradPhaseMode={options.nexradPhaseMode}
-          onNexradPhaseModeChange={options.setNexradPhaseMode}
+          onNexradPhaseModeChange={(value) => options.updateOption('nexradPhaseMode', value)}
           nexradSurfaceMosaicDrape={options.nexradSurfaceMosaicDrape}
-          onNexradSurfaceMosaicDrapeChange={options.setNexradSurfaceMosaicDrape}
+          onNexradSurfaceMosaicDrapeChange={(value) =>
+            options.updateOption('nexradSurfaceMosaicDrape', value)
+          }
           nexradSurfaceMosaicProduct={options.nexradSurfaceMosaicProduct}
-          onNexradSurfaceMosaicProductChange={options.setNexradSurfaceMosaicProduct}
+          onNexradSurfaceMosaicProductChange={(value) =>
+            options.updateOption('nexradSurfaceMosaicProduct', value)
+          }
           nexradCrossSectionHeadingDeg={options.nexradCrossSectionHeadingDeg}
           onNexradCrossSectionHeadingDegChange={(headingDeg) =>
-            options.setNexradCrossSectionHeadingDeg(
+            options.updateOption(
+              'nexradCrossSectionHeadingDeg',
               normalizeNexradCrossSectionHeadingDeg(headingDeg)
             )
           }
           nexradCrossSectionRangeNm={options.nexradCrossSectionRangeNm}
           onNexradCrossSectionRangeNmChange={(rangeNm) =>
-            options.setNexradCrossSectionRangeNm(normalizeNexradCrossSectionRangeNm(rangeNm))
+            options.updateOption(
+              'nexradCrossSectionRangeNm',
+              normalizeNexradCrossSectionRangeNm(rangeNm)
+            )
           }
           hideGroundTraffic={options.hideGroundTraffic}
-          onHideGroundTrafficChange={options.setHideGroundTraffic}
+          onHideGroundTrafficChange={(value) => options.updateOption('hideGroundTraffic', value)}
           showTrafficCallsigns={options.showTrafficCallsigns}
-          onShowTrafficCallsignsChange={options.setShowTrafficCallsigns}
+          onShowTrafficCallsignsChange={(value) =>
+            options.updateOption('showTrafficCallsigns', value)
+          }
           hideGroundTrafficCallsigns={options.hideGroundTrafficCallsigns}
-          onHideGroundTrafficCallsignsChange={options.setHideGroundTrafficCallsigns}
+          onHideGroundTrafficCallsignsChange={(value) =>
+            options.updateOption('hideGroundTrafficCallsigns', value)
+          }
           showDepartedTrafficTrails={options.showDepartedTrafficTrails}
-          onShowDepartedTrafficTrailsChange={options.setShowDepartedTrafficTrails}
+          onShowDepartedTrafficTrailsChange={(value) =>
+            options.updateOption('showDepartedTrafficTrails', value)
+          }
           trafficHistoryMinutes={options.trafficHistoryMinutes}
           onTrafficHistoryMinutesChange={(minutes) =>
-            options.setTrafficHistoryMinutes(
+            options.updateOption(
+              'trafficHistoryMinutes',
               clampValue(
                 Math.round(minutes),
                 MIN_TRAFFIC_HISTORY_MINUTES,
@@ -616,17 +622,17 @@ export function AppClient({
             )
           }
           retinaRendering={options.retinaRendering}
-          onRetinaRenderingChange={options.setRetinaRendering}
+          onRetinaRenderingChange={(value) => options.updateOption('retinaRendering', value)}
           obstacleRadiusNm={options.obstacleRadiusNm}
           onObstacleRadiusNmChange={(radiusNm) =>
-            options.setObstacleRadiusNm(normalizeObstacleRadiusNm(radiusNm))
+            options.updateOption('obstacleRadiusNm', normalizeObstacleRadiusNm(radiusNm))
           }
           obstacleMinAglFeet={options.obstacleMinAglFeet}
           onObstacleMinAglFeetChange={(minAglFeet) =>
-            options.setObstacleMinAglFeet(normalizeObstacleMinAglFeet(minAglFeet))
+            options.updateOption('obstacleMinAglFeet', normalizeObstacleMinAglFeet(minAglFeet))
           }
           showObstacleLabels={options.showObstacleLabels}
-          onShowObstacleLabelsChange={options.setShowObstacleLabels}
+          onShowObstacleLabelsChange={(value) => options.updateOption('showObstacleLabels', value)}
           obstacleStats={obstacleStats}
         />
 

@@ -18,7 +18,7 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 
 ## Layers Panel
 
-Eight independent layer toggles control visibility of major scene overlays. The layers panel opens from a stacked-layers FAB between the gear and recenter buttons (bottom-right). It is mutually exclusive with the options panel — opening one closes the other.
+Independent layer toggles control visibility of major scene overlays. The layers panel opens from a stacked-layers FAB between the gear and recenter buttons (bottom-right). It is mutually exclusive with the options panel — opening one closes the other.
 
 | Group         | Layer ID     | Label                | Default |
 | ------------- | ------------ | -------------------- | ------- |
@@ -46,12 +46,13 @@ The options (gear) panel contains per-layer configuration controls organized int
 - **MRMS Weather**: `MRMS Phase Detection` (Thermodynamic/Surface Precip Type, default Surface Precip Type), `MRMS Declutter` (All/Low/Mid/High, also cycled with `V` key), `MRMS Threshold` (5–60 dBZ), `MRMS Opacity` (5–100%).
 - **Vertical Slice**: `Slice Heading` (0–359°), `Slice Range` (30–140 NM).
 
-All options-panel and layer values are persisted to browser `localStorage` and restored on load, including the selected camera-control mode.
+All options-panel and layer values are held in one `OptionsState` object and persisted through `usePersistedOptions`. The pure `restoreOptions` function validates saved values, migrates legacy layer flags, and applies URL overrides last. Persistence starts only after hydration. Failed reads or writes are reported through console warnings; a failed read still permits URL overrides, and a failed write leaves in-memory controls usable.
 
 ### Last Selection Persistence
 
 - On every airport/approach change, the selection is written to `localStorage` under key `'approach-viz:last-selection'` as `{ airportId, approachId }`.
 - When visiting `/` (no airport/approach in URL), the server initially loads a random entry from `DEFAULT_SELECTIONS` (airport+approach pair). On mount, the client reads `'approach-viz:last-selection'` and, when valid, replaces the initial selection with the remembered value.
+- Saved-selection restoration and user selections use the same request lifecycle. A newer request or route resync invalidates older results, so a slow restore cannot overwrite a user selection. Unmount also invalidates pending requests. Failed scene loads preserve the previous scene and expose an error.
 - The URL is updated via `replaceState` to reflect the restored selection, making it shareable.
 
 ## Runtime Status and Debug UI
@@ -59,7 +60,7 @@ All options-panel and layer values are persisted to browser `localStorage` and r
 - When MRMS overlay polling is active, a top-right in-scene status chip (`Loading MRMS...`) appears beneath the navbar/selector region.
 - MRMS vertical cross-section mode displays a bottom-center in-scene slice panel with a labeled altitude Y-axis, distance-vs-altitude intensity, and current direct echo-top maxima.
 - MRMS echo tops can remain enabled even when `MRMS 3D Precip` is off, allowing top-height visualization without volumetric fill.
-- A right-side debug FAB expands into a runtime diagnostics panel with current context plus browser runtime capability flags (`Worker`, `SharedArrayBuffer`, `Atomics`, `crossOriginIsolated`), service-worker cache status (`supported`, `registered`, `controlling`, active state/scope, synced plate cache cycle), and MRMS/traffic telemetry (enabled/loading/stale/error, offload mode, worker transport mode telemetry (`sab` for MRMS poll-and-prepare and traffic), traffic feed transport telemetry (`binary`/`json`), explicit traffic worker-error reason messages when worker offload fails, MRMS worker-failure stage/message/timestamp, voxel/track counts, phase mix, MRMS phase-source mode, aux age/timestamp telemetry, poll timestamps, backfill state, and stage timing telemetry in ms for poll/fetch/decode/prep/upload paths).
+- A right-side debug FAB expands into a runtime diagnostics panel with current context plus browser worker availability (`Worker`), service-worker cache status (`supported`, `registered`, `controlling`, active state/scope, synced plate cache cycle), and MRMS/traffic telemetry (enabled/loading/stale/error, offload mode, worker transport mode telemetry (`transfer` for MRMS poll-and-prepare and traffic), traffic feed transport telemetry (`binary`/`json`), explicit traffic worker-error reason messages when worker offload fails, MRMS worker-failure stage/message/timestamp, voxel/track counts, phase mix, MRMS phase-source mode, aux age/timestamp telemetry, poll timestamps, backfill state, and stage timing telemetry in ms for poll/fetch/decode/prep/upload paths).
 - In the debug panel, `Context` and `Traffic` sections are collapsed by default to keep the panel compact; `Procedure` and `MRMS` remain independently expandable.
 - MRMS and traffic debug panel state is fed from scene overlays via callback props, so telemetry reflects the currently rendered overlay state rather than cached UI assumptions.
 

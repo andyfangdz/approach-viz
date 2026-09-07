@@ -91,7 +91,7 @@ MRMS volumetric precipitation rendering as an overlay atop any surface mode.
 - Worker failures are captured with stage + message + timestamp telemetry (`worker-init`, `worker-request`) and shown in the runtime debug panel for diagnosis.
 - Poll/prepare worker requests remain bounded by worker-client timeouts, with explicit failure surfacing in debug telemetry.
 - Volume preprocessing and echo-top shaping remain off-main-thread: threshold filtering, phase-mode selection, curvature compensation, declutter selection, the render-column join, cap surface shaping, and vertical cross-section binning.
-- App responses include cross-origin isolation headers (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` by default) so browser features needed for `SharedArrayBuffer`/`Atomics` are available across Safari and Chromium; this can be disabled with `DISABLE_CROSS_ORIGIN_ISOLATION=1`, and `CROSS_ORIGIN_EMBEDDER_POLICY=credentialless` is available when deployments need broader third-party compatibility.
+- Worker transport uses transferable buffers and does not require COOP/COEP headers, SharedArrayBuffer, or Atomics.
 - Server-side brick merging combines contiguous same-phase / same-surface-phase / similar-dBZ cells into larger records, reducing wire size and native instance counts while preserving full coverage; each merged record ships the true maximum dBZ over its cells, never the quantized grouping bucket.
 - Wire format details: [`docs/mrms-rust-pipeline.md`](mrms-rust-pipeline.md).
 - Polling cadence: ~120 seconds.
