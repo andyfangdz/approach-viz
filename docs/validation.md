@@ -40,7 +40,7 @@ Use this after any change to the MRMS volume prepare pass (`crates/approach-viz-
 Notes:
 
 - Default input is `fixtures/mrms/kmia-20260907-volume.avmr`, a live AVMR v5 volume captured at KMIA (25.79, -80.29) so the result is repeatable; `--live <lat>,<lon>` fetches a current payload from the runtime and `--payload <file>` uses another capture. A payload with no echo fails loudly rather than passing an empty render.
-- The browser defaults to Playwright's bundled Chromium (`npx playwright install chromium` once); `--chromium <path>` or `APPROACHVIZ_CHROMIUM_PATH` points at another build.
+- The browser is driven over the Chrome DevTools Protocol with Node's built-in WebSocket client, so no browser-automation package is needed. The driver uses `--chromium <path>` or `APPROACHVIZ_CHROMIUM_PATH`, else the first of `chromium`, `chromium-browser`, `google-chrome`, or `google-chrome-stable` on `PATH`, and fails loudly when none is found.
 - Not part of CI or `npm run test`: it needs a browser with WebGL2 and takes about a minute on SwiftShader.
 
 ## Runtime Integration (Live Network)

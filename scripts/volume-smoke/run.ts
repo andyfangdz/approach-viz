@@ -3,30 +3,38 @@
 // Bundles `harness.tsx` (which mounts the real `NexradVolumeRaymarch` over
 // the shipped WASM decoder), serves it from a local static server, renders
 // it in headless Chromium on SwiftShader WebGL2, and checks that the shader
-// compiles, that live/fixture weather renders at full source resolution
+// compiles, that fixture/live weather renders at full source resolution
 // inside the brick budget, and that terrain occlusion still holds with
 // empty-page skipping. Screenshots land in the output directory for a human
 // look. Run with `npm run test:smoke:volume`.
 //
+// The browser is driven over the Chrome DevTools Protocol with Node's
+// built-in WebSocket client, so the test adds no browser-automation
+// dependency; it needs a Chromium/Chrome executable.
+//
 //   --payload <file>      AVMR v5 payload (default: the KMIA fixture)
 //   --live <lat>,<lon>    fetch a live payload from the runtime instead
 //   --ref-lat <deg>       reference latitude for curvature (default: fixture's)
-//   --chromium <path>     Chromium executable (default: Playwright's bundled
-//                         browser; also read from APPROACHVIZ_CHROMIUM_PATH)
+//   --chromium <path>     Chromium executable (default: APPROACHVIZ_CHROMIUM_PATH,
+//                         else the first of chromium / chromium-browser /
+//                         google-chrome / google-chrome-stable on PATH)
 //   --out <dir>           output directory (default: .tmp/volume-smoke)
 
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { build } from 'esbuild';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   isFiniteNumber,
+  isJsonArray,
   isJsonObject,
   isString,
   parseJsonValue,
+  type JsonObject,
   type JsonValue
 } from '../../lib/parse-like';
 import { CANVAS_HEIGHT, CANVAS_WIDTH, type SmokeResult, type VolumeTextureStats } from './contract';
@@ -38,20 +46,19 @@ const DEFAULT_PAYLOAD = join(REPO_ROOT, 'fixtures', 'mrms', 'kmia-20260907-volum
 /** Latitude the default fixture was requested at (KMIA). */
 const DEFAULT_REF_LAT = 25.79;
 const DEFAULT_RUNTIME_BASE = 'https://approach-runtime.andyfang.app';
+const CHROMIUM_CANDIDATES = [
+  'chromium',
+  'chromium-browser',
+  'google-chrome',
+  'google-chrome-stable'
+];
+const RESULT_TIMEOUT_MS = 120_000;
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.wasm': 'application/wasm',
   '.avmr': 'application/vnd.approach-viz.mrms.v5'
 } as const;
-
-function contentTypeFor(filePath: string): string {
-  const extension = extname(filePath);
-  for (const [known, type] of Object.entries(CONTENT_TYPES)) {
-    if (known === extension) return type;
-  }
-  return 'application/octet-stream';
-}
 
 interface Scenario {
   name: string;
@@ -75,13 +82,25 @@ const UNDERGROUND: Scenario = {
   query: 'ground=flat&groundFeet=15000&cam=close'
 };
 
+function fail(message: string): never {
+  throw new Error(message);
+}
+
+function contentTypeFor(filePath: string): string {
+  const extension = extname(filePath);
+  for (const [known, type] of Object.entries(CONTENT_TYPES)) {
+    if (known === extension) return type;
+  }
+  return 'application/octet-stream';
+}
+
 function isAddressInfo(address: string | AddressInfo): address is AddressInfo {
   return typeof address !== 'string';
 }
 
-function fail(message: string): never {
-  throw new Error(message);
-}
+// ---------------------------------------------------------------------------
+// Harness result decoding
+// ---------------------------------------------------------------------------
 
 function readStats(value: JsonValue): VolumeTextureStats {
   if (!isJsonObject(value)) fail('stats is not an object');
@@ -136,6 +155,10 @@ function readResult(text: string): SmokeResult {
   }
   fail(`unexpected harness result kind ${JSON.stringify(kind)}`);
 }
+
+// ---------------------------------------------------------------------------
+// Staging and serving
+// ---------------------------------------------------------------------------
 
 async function fetchLivePayload(lat: number, lon: number): Promise<Uint8Array> {
   const base = process.env.NEXT_PUBLIC_MRMS_BINARY_BASE_URL ?? DEFAULT_RUNTIME_BASE;
@@ -197,6 +220,187 @@ function serve(outDir: string): Promise<{ server: Server; origin: string }> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Chromium over the DevTools Protocol
+// ---------------------------------------------------------------------------
+
+async function findChromium(explicit: string | undefined): Promise<string> {
+  const fromEnv = explicit ?? process.env.APPROACHVIZ_CHROMIUM_PATH;
+  if (fromEnv !== undefined) {
+    await access(fromEnv).catch(() => fail(`Chromium executable not found at ${fromEnv}`));
+    return fromEnv;
+  }
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    for (const name of CHROMIUM_CANDIDATES) {
+      const candidate = join(dir, name);
+      const found = await access(candidate).then(
+        () => true,
+        () => false
+      );
+      if (found) return candidate;
+    }
+  }
+  fail(
+    `no Chromium found; pass --chromium <path> or set APPROACHVIZ_CHROMIUM_PATH (looked for ${CHROMIUM_CANDIDATES.join(', ')} on PATH)`
+  );
+}
+
+interface CdpMessage {
+  id: number | null;
+  method: string | null;
+  sessionId: string | null;
+  params: JsonObject;
+  result: JsonObject;
+  error: string | null;
+}
+
+function readCdpMessage(text: string): CdpMessage {
+  const value = parseJsonValue(text);
+  if (!isJsonObject(value)) fail('CDP message is not an object');
+  const { id, method, sessionId, params, result, error } = value;
+  let errorMessage: string | null = null;
+  if (error !== undefined && isJsonObject(error)) {
+    const message = error.message;
+    errorMessage = message !== undefined && isString(message) ? message : 'unknown CDP error';
+  }
+  return {
+    id: id !== undefined && isFiniteNumber(id) ? id : null,
+    method: method !== undefined && isString(method) ? method : null,
+    sessionId: sessionId !== undefined && isString(sessionId) ? sessionId : null,
+    params: params !== undefined && isJsonObject(params) ? params : {},
+    result: result !== undefined && isJsonObject(result) ? result : {},
+    error: errorMessage
+  };
+}
+
+interface Pending {
+  method: string;
+  resolve: (result: JsonObject) => void;
+  reject: (error: Error) => void;
+}
+
+/** Minimal DevTools Protocol client over Node's built-in WebSocket. */
+class Cdp {
+  private nextId = 1;
+  private readonly pending = new Map<number, Pending>();
+  private readonly listeners: Array<(message: CdpMessage) => void> = [];
+
+  private constructor(private readonly socket: WebSocket) {
+    socket.addEventListener('message', (event) => {
+      const message = readCdpMessage(String(event.data));
+      if (message.id !== null) {
+        const entry = this.pending.get(message.id);
+        if (!entry) return;
+        this.pending.delete(message.id);
+        if (message.error !== null) entry.reject(new Error(`${entry.method}: ${message.error}`));
+        else entry.resolve(message.result);
+        return;
+      }
+      for (const listener of this.listeners) listener(message);
+    });
+  }
+
+  static connect(url: string): Promise<Cdp> {
+    return new Promise((resolveClient, reject) => {
+      const socket = new WebSocket(url);
+      socket.addEventListener('open', () => resolveClient(new Cdp(socket)));
+      socket.addEventListener('error', () => reject(new Error(`DevTools socket failed: ${url}`)));
+    });
+  }
+
+  send(method: string, params: JsonObject = {}, sessionId?: string): Promise<JsonObject> {
+    const id = this.nextId;
+    this.nextId += 1;
+    return new Promise((resolveCall, reject) => {
+      this.pending.set(id, { method, resolve: resolveCall, reject });
+      this.socket.send(JSON.stringify({ id, method, params, sessionId }));
+    });
+  }
+
+  on(listener: (message: CdpMessage) => void): void {
+    this.listeners.push(listener);
+  }
+
+  close(): void {
+    this.socket.close();
+  }
+}
+
+function waitForDevtoolsUrl(child: ChildProcess): Promise<string> {
+  return new Promise((resolveUrl, reject) => {
+    let buffer = '';
+    const stderr = child.stderr;
+    if (!stderr) {
+      reject(new Error('chromium has no stderr pipe'));
+      return;
+    }
+    const onData = (chunk: Buffer): void => {
+      buffer += chunk.toString();
+      const match = /DevTools listening on (ws:\/\/\S+)/.exec(buffer);
+      if (match) {
+        stderr.off('data', onData);
+        resolveUrl(match[1]);
+      }
+    };
+    stderr.on('data', onData);
+    child.on('exit', (code) => reject(new Error(`chromium exited early (${code}):\n${buffer}`)));
+    setTimeout(
+      () => reject(new Error(`chromium did not announce DevTools within 30 s:\n${buffer}`)),
+      30_000
+    );
+  });
+}
+
+function stringField(object: JsonObject, key: string): string {
+  const value = object[key];
+  if (value === undefined || !isString(value)) fail(`CDP result has no string ${key}`);
+  return value;
+}
+
+/** Text of a console argument: primitives by value, objects by description. */
+function consoleArgText(argument: JsonValue): string {
+  if (!isJsonObject(argument)) return '';
+  const value = argument.value;
+  if (value !== undefined && (isString(value) || isFiniteNumber(value))) return String(value);
+  const description = argument.description;
+  return description !== undefined && isString(description) ? description : '';
+}
+
+interface Browser {
+  cdp: Cdp;
+  process: ChildProcess;
+  profileDir: string;
+}
+
+async function launchChromium(executable: string): Promise<Browser> {
+  const profileDir = await mkdtemp(join(tmpdir(), 'approach-viz-volume-smoke-'));
+  const child = spawn(
+    executable,
+    [
+      '--headless=new',
+      '--remote-debugging-port=0',
+      '--use-angle=swiftshader',
+      '--enable-unsafe-swiftshader',
+      '--ignore-gpu-blocklist',
+      '--no-sandbox',
+      '--no-first-run',
+      `--window-size=${CANVAS_WIDTH},${CANVAS_HEIGHT}`,
+      `--user-data-dir=${profileDir}`,
+      'about:blank'
+    ],
+    { stdio: ['ignore', 'ignore', 'pipe'] }
+  );
+  const url = await waitForDevtoolsUrl(child);
+  return { cdp: await Cdp.connect(url), process: child, profileDir };
+}
+
+async function closeChromium(browser: Browser): Promise<void> {
+  await browser.cdp.send('Browser.close').catch(() => undefined);
+  browser.cdp.close();
+  browser.process.kill('SIGKILL');
+  await rm(browser.profileDir, { recursive: true, force: true });
+}
+
 interface ScenarioOutcome {
   scenario: Scenario;
   result: SmokeResult;
@@ -211,28 +415,75 @@ async function runScenario(
   scenario: Scenario,
   refLat: number
 ): Promise<ScenarioOutcome> {
-  const page: Page = await browser.newPage({
-    viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }
-  });
+  const { cdp } = browser;
+  const target = await cdp.send('Target.createTarget', { url: 'about:blank' });
+  const targetId = stringField(target, 'targetId');
+  const attached = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+  const sessionId = stringField(attached, 'sessionId');
+
   const problems: string[] = [];
-  page.on('console', (message) => {
-    if (message.type() === 'error' || message.type() === 'warning') {
-      problems.push(`[console.${message.type()}] ${message.text()}`);
+  cdp.on((message) => {
+    if (message.sessionId !== sessionId) return;
+    if (message.method === 'Runtime.consoleAPICalled') {
+      const type = message.params.type;
+      if (type === 'error' || type === 'warning') {
+        const args = message.params.args;
+        const text =
+          args !== undefined && isJsonArray(args) ? args.map(consoleArgText).join(' ') : '';
+        problems.push(`[console.${type}] ${text}`);
+      }
+    } else if (message.method === 'Runtime.exceptionThrown') {
+      const details = message.params.exceptionDetails;
+      const text = details !== undefined && isJsonObject(details) ? details.text : undefined;
+      problems.push(
+        `[exception] ${text !== undefined && isString(text) ? text : 'uncaught exception'}`
+      );
     }
   });
-  page.on('pageerror', (error) => problems.push(`[pageerror] ${error.message}`));
-  await page.goto(`${origin}/index.html?${scenario.query}&lat=${refLat}`);
-  await page.waitForFunction(
-    () => (document.getElementById('result')?.textContent ?? '') !== '',
-    null,
-    { timeout: 120_000 }
+
+  await cdp.send('Runtime.enable', {}, sessionId);
+  await cdp.send('Page.enable', {}, sessionId);
+  await cdp.send(
+    'Emulation.setDeviceMetricsOverride',
+    { width: CANVAS_WIDTH, height: CANVAS_HEIGHT, deviceScaleFactor: 1, mobile: false },
+    sessionId
   );
-  const text = (await page.textContent('#result')) ?? '';
+  await cdp.send(
+    'Page.navigate',
+    { url: `${origin}/index.html?${scenario.query}&lat=${refLat}` },
+    sessionId
+  );
+
+  const deadline = Date.now() + RESULT_TIMEOUT_MS;
+  let text = '';
+  while (text === '' && Date.now() < deadline) {
+    const evaluated = await cdp.send(
+      'Runtime.evaluate',
+      {
+        expression: "document.getElementById('result')?.textContent ?? ''",
+        returnByValue: true
+      },
+      sessionId
+    );
+    const result = evaluated.result;
+    const value = result !== undefined && isJsonObject(result) ? result.value : undefined;
+    text = value !== undefined && isString(value) ? value : '';
+    if (text === '') await new Promise((wake) => setTimeout(wake, 250));
+  }
+  if (text === '') {
+    fail(`${scenario.name}: harness produced no result within ${RESULT_TIMEOUT_MS / 1000} s`);
+  }
+
+  const shot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
   const screenshot = join(outDir, `${scenario.name}.png`);
-  await page.screenshot({ path: screenshot });
-  await page.close();
+  await writeFile(screenshot, Buffer.from(stringField(shot, 'data'), 'base64'));
+  await cdp.send('Target.closeTarget', { targetId });
   return { scenario, result: readResult(text), problems, screenshot };
 }
+
+// ---------------------------------------------------------------------------
+// Checks
+// ---------------------------------------------------------------------------
 
 function rendered(outcome: ScenarioOutcome): Extract<SmokeResult, { kind: 'rendered' }> {
   const { result, scenario } = outcome;
@@ -276,6 +527,10 @@ function checkStats(stats: VolumeTextureStats): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -299,13 +554,10 @@ async function main(): Promise<void> {
   }
   if (!Number.isFinite(refLat)) fail('--ref-lat must be a number');
 
+  const executable = await findChromium(values.chromium);
   await stageOutputDir(outDir, payload);
   const { server, origin } = await serve(outDir);
-  const executablePath = values.chromium ?? process.env.APPROACHVIZ_CHROMIUM_PATH;
-  const browser = await chromium.launch({
-    executablePath,
-    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
-  });
+  const browser = await launchChromium(executable);
 
   try {
     const outcomes: ScenarioOutcome[] = [];
@@ -360,7 +612,7 @@ async function main(): Promise<void> {
       );
     }
   } finally {
-    await browser.close();
+    await closeChromium(browser);
     server.close();
   }
 }
