@@ -33,6 +33,10 @@ Implement the two VDB ideas that matter here, in the code that already owns the 
 
 `npm run test:smoke:volume` (`scripts/volume-smoke/`) renders the real component through the shipped WASM in headless Chromium on SwiftShader against a captured KMIA payload, and fails on any shader error, on coarsening, or on a broken occlusion invariant (60,000 ft ground must render nothing; a camera under the ground must render nothing). The first run on live KATL weather rendered 460 x 362 x 96 logical texels at 1x with 2,577 bricks (6.25 MB pool) where the dense grid would have coarsened to 230 x 181.
 
+## Recalibration
+
+The dense grid's 2x horizontal coarsening max-pooled 0.5 NM source cells into 1 NM texels, which filled the gaps of scattered light echo (50% fill at source resolution reads ~94% filled after pooling) and so gave light precipitation about twice its true optical path. The cubic extinction ramp in `NexradVolumeRaymarch.tsx` had been tuned against that inflated look. At source resolution the same ramp rendered the same scenes 17-28% dimmer (lit-pixel energy, old vs new headless renders of live KATL and KSEA payloads), which read as light precipitation going invisible. Doubling extinction (+24-41%) and a 2.5 power (+20-33%) both overshot because the pooling barely inflated solid heavy echo; a 2.75 power matched the old renderer within 4% on all three scenes and was adopted. The smoke test's fixture renders are the regression guard for the new calibration.
+
 ## Consequences
 
 Full source resolution at 120 NM in the common case (`coarsenX/Z = 1`, visible in the debug panel's `Volume Bricks` row). Upload is `brickCount x 2 KB` rather than a fixed dense grid; the worst case (a storm over about a quarter of the box before coarsening kicks in) is 16.4 MB. Rays spend one iteration per empty page instead of eight samples. The native iOS/macOS renderer is unchanged: it still consumes `build_render_volume` flat columns for its instanced boxes, and the page-table layout is renderer-agnostic if the planned Metal raymarcher wants it.

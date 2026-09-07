@@ -16,9 +16,9 @@ const MAX_RAY_STEPS = 384;
 const MIN_RAY_STEPS = 24;
 /**
  * Extinction (per unscaled NM, at full intensity) at the opacity slider's
- * endpoints. Combined with the cubic dBZ ramp in the shader, the default
- * 35% opacity leaves a 10 NM deep 20 dBZ shell around 10% opaque while a
- * 3 NM 50 dBZ core reads above 50%, so cores stay legible through the
+ * endpoints. Combined with the dBZ ramp in the shader, the default 35%
+ * opacity leaves a solid 10 NM deep 20 dBZ shell around 13% opaque while a
+ * 3 NM 50 dBZ core reads around 60%, so cores stay legible through the
  * light precipitation that surrounds them.
  */
 const DENSITY_MIN = 0.12;
@@ -102,14 +102,20 @@ const FRAGMENT_SHADER = /* glsl */ `
   const float CAP_LIGHT_DBZ = 10.0;
   const float CAP_FULL_DBZ = 60.0;
 
-  // Extinction weight by intensity. Cubic in the 5-65 dBZ span so light
-  // precipitation is nearly transparent and heavy cores dominate the
+  // Extinction weight by intensity: a 2.75 power of the 5-65 dBZ span, so
+  // light precipitation is nearly transparent and heavy cores dominate the
   // integral — a thick 20 dBZ shell must not bury a 50 dBZ core behind it.
-  // Gated to zero below ~5 dBZ so trilinear falloff into empty texels fades
-  // out instead of leaving a floor.
+  // The exponent was cubic while the volume was rasterized onto 1 NM texels
+  // that max-pooled 0.5 NM source cells; that pooling filled the gaps of
+  // scattered light echo and gave it about twice its true optical path. At
+  // source resolution the same cubic read the same scenes 17-28% dimmer,
+  // mostly in light and moderate echo. 2.75 restores the old brightness
+  // within 4% on dense, close-in, and stratiform A/B renders while cores,
+  // which saturate, are unchanged. Gated to zero below ~5 dBZ so trilinear
+  // falloff into empty texels fades out instead of leaving a floor.
   float dbzAlpha(float dbz) {
     float t = clamp((dbz - 5.0) / 60.0, 0.0, 1.0);
-    return t * t * t * smoothstep(3.0, 8.0, dbz);
+    return pow(t, 2.75) * smoothstep(3.0, 8.0, dbz);
   }
 
   // Accumulated opacity a ray may reach while sampling an echo of this
