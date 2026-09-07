@@ -299,12 +299,12 @@ function encodeDeclutterMode(mode: NexradDeclutterMode): number {
   }
 }
 
-/** Collect the transferable texel buffer from the raymarch volume texture
- *  (zero-copy postMessage). */
+/** Collect the transferable page-table and brick-pool buffers from the
+ *  raymarch volume texture (zero-copy postMessage). */
 function volumeTextureTransferables(texture: NexradVolumeTextureData | null): ArrayBuffer[] {
   if (!texture) return [];
-  // SAFETY: the wasm-bindgen texel column is a Uint8Array view over an ArrayBuffer.
-  return [texture.texels.buffer as ArrayBuffer];
+  // SAFETY: the wasm-bindgen columns are Uint8Array views over ArrayBuffers.
+  return [texture.pageTable.buffer as ArrayBuffer, texture.pool.buffer as ArrayBuffer];
 }
 
 /** Collect transferable ArrayBuffers from cross-section data (if present). */

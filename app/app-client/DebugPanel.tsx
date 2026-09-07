@@ -480,6 +480,15 @@ export function DebugPanel({
               <span>{nexradDebug.renderedVoxelCount}</span>
             </div>
             <div className="debug-row">
+              <span>Volume Bricks</span>
+              <span>
+                {nexradDebug.volumeBrickCount} ({nexradDebug.volumeFilledTexelCount} texels)
+                {nexradDebug.volumeCellSizeNm === null || nexradDebug.volumeCoarsen === null
+                  ? ''
+                  : ` · ${nexradDebug.volumeCellSizeNm.toFixed(2)} NM cell, ${nexradDebug.volumeCoarsen}x`}
+              </span>
+            </div>
+            <div className="debug-row">
               <span>Phase R/M/S</span>
               <span>
                 {nexradDebug.phaseCounts.rain}/{nexradDebug.phaseCounts.mixed}/

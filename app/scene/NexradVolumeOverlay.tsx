@@ -639,6 +639,12 @@ export function NexradVolumeOverlay({
     layerCount: payload?.layerSummaries?.length ?? 0,
     voxelCount: payload?.voxelCount ?? 0,
     renderedVoxelCount,
+    volumeBrickCount: volumeTexture?.brickCount ?? 0,
+    volumeFilledTexelCount: volumeTexture?.filledTexelCount ?? 0,
+    volumeCellSizeNm: volumeTexture
+      ? Math.max(volumeTexture.cellSizeXNm, volumeTexture.cellSizeZNm)
+      : null,
+    volumeCoarsen: volumeTexture ? Math.max(volumeTexture.coarsenX, volumeTexture.coarsenZ) : null,
     phaseMode: payload?.phaseMode ?? null,
     phaseDetail: payload?.phaseDetail ?? null,
     zdrAgeSeconds: payload?.zdrAgeSeconds ?? null,
@@ -689,6 +695,10 @@ export function NexradVolumeOverlay({
         layerCount: 0,
         voxelCount: 0,
         renderedVoxelCount: 0,
+        volumeBrickCount: 0,
+        volumeFilledTexelCount: 0,
+        volumeCellSizeNm: null,
+        volumeCoarsen: null,
         phaseMode: null,
         phaseDetail: null,
         zdrAgeSeconds: null,

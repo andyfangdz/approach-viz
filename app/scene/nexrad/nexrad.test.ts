@@ -10,7 +10,7 @@ import { DBZ_LUT_PHASE_ROWS, buildDbzPhaseLutData, dbzToHex } from './nexrad-ren
 import { DBZ_BAND_STEP, DBZ_LUT_MAX_INDEX } from './nexrad-colors';
 import { PHASE_MIXED, PHASE_RAIN, PHASE_SNOW } from './nexrad-types';
 import { COMPOSITE_EMPTY_DBZ_TENTHS, buildCompositeRgba, compositeAlpha } from './nexrad-composite';
-import { buildGroundHeightfield } from './nexrad-ground';
+import { buildGroundHeightfield, buildGroundPageMax } from './nexrad-ground';
 import { earthCurvatureDropNm } from '../approach-path/coordinates';
 
 test('buildNexradRequestUrl returns local API path when MRMS_BINARY_BASE_URL is unset', () => {
@@ -207,4 +207,31 @@ test('buildGroundHeightfield rejects a degenerate grid', () => {
       ),
     /positive grid/
   );
+});
+
+test('buildGroundPageMax takes the max over each 8x8 page block plus a one-column halo', () => {
+  // 10 x 9 columns -> 2 x 2 pages. A single tall column at (8, 0) sits in
+  // page (1, 0); its halo also lifts page (0, 0), whose columns 0-7 border
+  // it, but not page (0, 1), which starts at row 8 and never touches row 0.
+  const width = 10;
+  const height = 9;
+  const heights = new Float32Array(width * height).fill(0.1);
+  heights[0 * width + 8] = 0.9;
+  heights[8 * width + 0] = 0.5;
+  const { pageMax, pageWidth, pageHeight } = buildGroundPageMax(heights, width, height);
+  assert.strictEqual(pageWidth, 2);
+  assert.strictEqual(pageHeight, 2);
+  assert.ok(Math.abs(pageMax[0] - 0.9) < 1e-6, `page (0,0): ${pageMax[0]}`);
+  assert.ok(Math.abs(pageMax[1] - 0.9) < 1e-6, `page (1,0): ${pageMax[1]}`);
+  // Page (0,1) covers row 8, where column 0 is 0.5; its halo reaches row 7
+  // (all 0.1) and column 8 of row 8 (0.1), never row 0.
+  assert.ok(Math.abs(pageMax[2] - 0.5) < 1e-6, `page (0,1): ${pageMax[2]}`);
+  // Page (1,1) covers columns 8-9 of row 8; its halo includes column 7 and
+  // row 7 but not column 0.
+  assert.ok(Math.abs(pageMax[3] - 0.1) < 1e-6, `page (1,1): ${pageMax[3]}`);
+});
+
+test('buildGroundPageMax rejects a heightfield that does not match its grid', () => {
+  assert.throws(() => buildGroundPageMax(new Float32Array(5), 3, 2), /3x2 heightfield/);
+  assert.throws(() => buildGroundPageMax(new Float32Array(0), 0, 2), /0x2 heightfield/);
 });

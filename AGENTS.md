@@ -42,6 +42,7 @@
 | macOS build/launch/test          | `npm run build:macos` / `npm run run:macos` / `npm run test:macos` |
 | Open Xcode / native dev session  | `npm run open:ios` / `npm run dev:ios`                             |
 | Live runtime integration         | `npm run test:integration:runtime`                                 |
+| Raymarch volume GPU smoke        | `npm run test:smoke:volume`                                        |
 
 `npm run build` refreshes source data. Use `npx next build` when validating against an already rebuilt local database. `npm test` includes parser, geometry, layers/options, MRMS, workers, routes, and database reference resolution; it does not run Rust, native, or live-network tests.
 
@@ -50,6 +51,8 @@ Use the pinned Node 24 runtime with `better-sqlite3` 12.10.0. The previous 11.x 
 Anti-slop lint is also available as `npm run lint:anti-slop`. Its TypeScript plugin is loaded through `node --import tsx`; retain the pinned `git+https://` dependency/lockfile URL so CI can clone without SSH. Rules live in `.oxlintrc.json`.
 
 WASM builds require `wasm-pack`. If it uses a system `wasm-opt`, binaryen must be at least 117; binaryen 108 produces a broken externref artifact.
+
+`npm run test:smoke:volume` renders the real `NexradVolumeRaymarch` over the shipped WASM decoder in headless Chromium (SwiftShader WebGL2) against `fixtures/mrms/kmia-20260907-volume.avmr` and fails on shader errors, on budget coarsening, or on a broken terrain-occlusion invariant; `--live <lat>,<lon>` uses current weather and `APPROACHVIZ_CHROMIUM_PATH` picks the browser. Run it after changing the volume prepare pass, its WASM fields, or the raymarch shader; it is not part of CI or `npm test`. See [validation](docs/validation.md).
 
 Native builds require full Xcode and XcodeGen. Scripts cache bridge/spec fingerprints, preserve the development team, and bootstrap missing bindings before Xcode build planning. Pin `APPROACHVIZ_IOS_SIMULATOR_ID` when multiple iPhones are booted; `APPROACHVIZ_IOS_SCHEME` selects the scheme. Prefer `run:ios` for a narrow build/launch check and the iOS debugger skill for deeper simulator interaction. See [native rendering/build details](docs/rendering-ios-native-mvp.md).
 
@@ -61,6 +64,7 @@ Native builds require full Xcode and XcodeGen. Scripts cache bridge/spec fingerp
 - `app/app-client/`: `useSceneSelection` owns selection requests and rejects superseded results, including saved-selection restores and route changes. `usePersistedOptions` owns one typed options object; `options-state.ts` handles validation, legacy migration, and URL precedence. Storage failures are reported without losing in-memory controls.
 - `crates/approach-viz-core/src/approach_path/`: altitude resolution, path/hold geometry, protected areas, and scene composition. Web and native use `compose_approach_scene`; transitions, missed-path extension, hold sizing, and absolute-MSL coordinate contracts are documented in the rendering guides.
 - `services/runtime-rs/`: MRMS ingest/query and ADS-B cache/query. The binary calls the library’s `run()` entry point; service modules and their tests have one compilation owner. Traffic memory and SQLite advance independently but share merge/history-sampling policy. Memory remains live after a failed persistence transaction; later ingests retry persistence.
+- `app/scene/nexrad/` and `crates/approach-viz-core/src/mrms_render.rs`: the web reflectivity volume is one raymarched box over a sparse page table (one entry per `8^3`-texel page) and a pool of apron-padded bricks built in Rust (`build_volume_texture`); full source resolution up to `MAX_VOLUME_BRICKS = 8192`, whole-footprint coarsening past it, empty pages jumped per ray, terrain occlusion gated by a per-page ground maximum. Native still draws instanced boxes from `build_render_volume`. See [volume rendering](docs/rendering-weather-volume.md).
 - Runtime wire contracts: `/v1/weather/volume` uses AVMR v5; `/v1/weather/echo-tops` uses JSON or AVET v3 via `Accept`; `/v1/traffic/adsbx` uses JSON or AVTR v4 via `format=binary`. Legacy weather aliases remain supported.
 - Web weather proxies share an 8-second deadline covering canonical/legacy fetches and body reads; malformed queries return 400, upstream/read failures 502, and deadline expiry 504. FAA PDF proxy limits and ETag semantics are documented separately.
 - `ios/ApproachViz/`: SwiftUI/TCA application and Metal renderer. Static scene buffers are cached separately from dynamic traffic/weather. Native defaults to `KTEB/H06-Z`; terrain and all geometry use the shared absolute-MSL/local-axis conventions. See the native rendering guide for controls, layers, build settings, and parity gaps.

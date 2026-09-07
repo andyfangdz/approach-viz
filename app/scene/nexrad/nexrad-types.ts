@@ -228,13 +228,24 @@ export interface CrossSectionData {
 }
 
 /**
- * Dense RG8 voxel grid from the Rust `build_volume_texture` rasterization,
- * uploaded as a 3D texture and rendered by raymarching a single box instead
- * of per-brick instanced geometry. Texels run `x` fastest, then `z` (row),
- * then altitude bin; `R` is whole dBZ (`0` = empty), `G` is the phase code.
- * Altitudes are corrected feet (earth-curvature drop already applied), and
- * positions are unscaled local-frame NM; the renderer applies vertical scale.
- * The `prepare_volume` dual index space is resolved inside Rust.
+ * Edge length of one raymarch volume brick in logical texels, and the stored
+ * edge with its one-texel apron. Mirrors `VOLUME_BRICK_TEXELS` /
+ * `VOLUME_BRICK_STORED_TEXELS` in `crates/approach-viz-core/src/mrms_render.rs`;
+ * the shader addresses the pool with these.
+ */
+export const VOLUME_BRICK_TEXELS = 8;
+export const VOLUME_BRICK_STORED_TEXELS = VOLUME_BRICK_TEXELS + 2;
+
+/**
+ * Sparse RG8 voxel grid from the Rust `build_volume_texture` rasterization: a
+ * page table over the logical `width x height x depth` grid plus a pool of
+ * resident bricks (the two-level VDB layout), uploaded as two 3D textures and
+ * rendered by raymarching a single box. The logical grid is never
+ * materialized. Logical texels run `x` fastest, then `z` (row), then altitude
+ * bin; `R` is whole dBZ (`0` = empty), `G` is the phase code. Altitudes are
+ * corrected feet (earth-curvature drop already applied), and positions are
+ * unscaled local-frame NM; the renderer applies vertical scale. The
+ * `prepare_volume` dual index space is resolved inside Rust.
  */
 export interface NexradVolumeTextureData {
   width: number;
@@ -248,8 +259,34 @@ export interface NexradVolumeTextureData {
   /** Corrected altitude of the bottom of bin 0, feet. */
   baseFeet: number;
   binSizeFeet: number;
-  /** RG texel pairs, `width * height * depth * 2` bytes. */
-  texels: Uint8Array;
+  /** Whole source-footprint multiple each cell covers (`1` = full resolution). */
+  coarsenX: number;
+  coarsenZ: number;
+  /**
+   * Page table over the logical grid: one RG8 entry per
+   * `VOLUME_BRICK_TEXELS`-cube of texels (`x` fastest, then row, then bin),
+   * holding `slot + 1` little-endian (`R` low byte, `G` high byte) or `0`
+   * when the cube holds no echo. `pageWidth * pageHeight * pageDepth * 2`
+   * bytes.
+   */
+  pageWidth: number;
+  pageHeight: number;
+  pageDepth: number;
+  pageTable: Uint8Array;
+  /** Resident bricks in `pool`. */
+  brickCount: number;
+  /**
+   * Brick pool: `poolBricksX * poolBricksY * poolBricksZ` stored bricks of
+   * `VOLUME_BRICK_STORED_TEXELS` RG8 texels per axis (the 8^3 core wrapped in
+   * a one-texel apron copied from the neighboring logical texels). Slot `s`
+   * sits at brick `(s % poolBricksX, (s / poolBricksX) % poolBricksY,
+   * s / (poolBricksX * poolBricksY))`.
+   */
+  poolBricksX: number;
+  poolBricksY: number;
+  poolBricksZ: number;
+  pool: Uint8Array;
+  /** Logical texels holding an echo (counted once, not once per stored copy). */
   filledTexelCount: number;
   /** Bricks selected by threshold/declutter (debug panel count). */
   renderedVoxelCount: number;
