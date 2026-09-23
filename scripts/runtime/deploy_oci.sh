@@ -152,8 +152,12 @@ sync_source_tree() {
   export COPYFILE_DISABLE=1
   export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
-  local tar_args=(
-    --disable-copyfile
+  local tar_args=()
+  # --disable-copyfile exists only in bsdtar (macOS); GNU tar rejects it.
+  if tar --version 2>/dev/null | grep -q bsdtar; then
+    tar_args+=(--disable-copyfile)
+  fi
+  tar_args+=(
     --no-xattrs
     -czf
     -
@@ -249,7 +253,11 @@ sudo mv /tmp/approach-viz-runtime.service /etc/systemd/system/approach-viz-runti
 sudo systemctl daemon-reload
 sudo systemctl enable approach-viz-runtime.service
 sudo systemctl restart approach-viz-runtime.service
-tailscale funnel --bg --https 8443 --set-path /runtime-v1 http://127.0.0.1:9191 >/dev/null
+# The funnel is persistent config; re-applying it can hang, so bound it and
+# carry on (the health check below verifies the service either way).
+if ! timeout 30 tailscale funnel --bg --https 8443 --set-path /runtime-v1 http://127.0.0.1:9191 >/dev/null; then
+  echo \"Warning: re-applying the Tailscale funnel failed or timed out; check 'tailscale funnel status'.\" >&2
+fi
 
 ready=0
 for attempt in \$(seq 1 60); do
