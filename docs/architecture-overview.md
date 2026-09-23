@@ -1,38 +1,53 @@
 # Architecture Overview
 
-This project uses a server-first data-loading model with a client-side 3D scene runtime, an external Rust runtime service for MRMS volume/echo-top + traffic APIs, and a direct NOAA ProbSevere proxy route for storm-cell objects.
+ApproachViz has three moving parts:
 
-## High-Level Flow
+- **Build-time data pipeline.** `npm run prepare-data` downloads FAA and airspace sources and compiles them into `data/approach-viz.sqlite`. Approach-reference matching and enrichment happen here, once.
+- **Clients.** The Next.js web app reads that database on the server and renders the scene with react-three-fiber. The iOS/macOS app bundles the same database and renders with Metal.
+- **Rust runtime service** (`services/runtime-rs`). It ingests NOAA MRMS weather and ADS-B Exchange traffic continuously and serves compact binary snapshots.
+
+Approach geometry, MRMS preparation, and traffic merging live in one shared crate, `crates/approach-viz-core`. The web client calls it through WASM in workers, the native app through UniFFI, and the runtime links it directly.
+
+## System Flow
 
 ```mermaid
-flowchart TD
-  U["User Browser"] --> R["App Router Pages<br/>app/page.tsx<br/>app/[airportId]/page.tsx<br/>app/[airportId]/[procedureId]/page.tsx"]
-  R --> L["Route Loader<br/>app/route-page.tsx"]
-  L --> A["Server Actions Wrapper<br/>app/actions.ts"]
-  A --> AL["Actions Lib Modules<br/>app/actions-lib/*"]
-  AL --> DB["SQLite<br/>data/approach-viz.sqlite"]
-  SRC["FAA source data"] --> BUILD["Database generation<br/>reference matching + enrichment"]
-  BUILD --> DB
-  A --> C["Client Runtime<br/>app/AppClient.tsx"]
-  C --> S["Scene Components<br/>app/app-client/* + app/scene/*"]
-  C --> PP["FAA Plate Proxy<br/>app/api/faa-plate/route.ts"]
-  S --> G["Path Rendering Modules<br/>app/scene/approach-path/*<br/>Rust path engine via WASM"]
-  S --> TP["Traffic Proxy<br/>app/api/traffic/adsbx/route.ts"]
-  S --> WP["Weather Proxy<br/>app/api/weather/nexrad/route.ts"]
-  S --> EP["Echo-Top Proxy<br/>app/api/weather/nexrad/echo-tops/route.ts"]
-  S --> PS["ProbSevere Proxy<br/>app/api/weather/nexrad/prob-severe/route.ts"]
-  TP --> RS["Rust Runtime Service<br/>services/runtime-rs"]
-  WP --> RS
-  EP --> RS
-  PS --> NPS["NOAA MRMS ProbSevere<br/>mrms.ncep.noaa.gov"]
-  RS --> SQS["AWS SNS/SQS<br/>NOAA MRMS events"]
-  RS --> ADSB["ADSB Exchange<br/>tar1090 feed"]
-  RS --> S3["NOAA S3 Bucket<br/>MRMS GRIB2 data"]
+flowchart LR
+  subgraph build["Build time"]
+    SRC["FAA CIFP, approach references,<br/>airspace GeoJSON, DOF"] --> BDB["npm run build-db<br/>parse, match, enrich"]
+  end
+  BDB --> DB[("approach-viz.sqlite")]
+
+  subgraph web["Web (Next.js)"]
+    PAGES["App Router pages<br/>app/route-page.tsx"] --> ACT["Server actions<br/>app/actions.ts → app/actions-lib/"]
+    CLIENT["AppClient + scene<br/>app/app-client/, app/scene/"] --> WORKERS["Web workers<br/>(WASM core)"]
+    CLIENT --> PROXY["API proxies<br/>app/api/"]
+  end
+  DB --> ACT
+  ACT --> CLIENT
+
+  subgraph native["iOS / macOS"]
+    APP["SwiftUI + TCA shell<br/>Metal renderer"] --> FFI["UniFFI core"]
+  end
+  DB -- bundled --> APP
+
+  subgraph runtime["Rust runtime (services/runtime-rs)"]
+    RS["/v1/weather/volume<br/>/v1/weather/echo-tops<br/>/v1/traffic/adsbx"]
+  end
+  PROXY --> RS
+  APP --> RS
+  PROXY --> FAA["FAA d-TPP plates"]
+  PROXY --> PS["NOAA ProbSevere"]
+  RS --> MRMS["NOAA MRMS<br/>S3 + SNS/SQS"]
+  RS --> ADSB["ADS-B Exchange<br/>tar1090"]
 ```
 
-## Architecture Docs
+The browser also fetches Terrarium elevation tiles, FAA chart tiles, and Google 3D tiles directly; those are omitted above. The in-app `/overview` page has a longer, illustrated tour of the same system.
 
-- [`docs/architecture-data-and-actions.md`](architecture-data-and-actions.md): server data model, action layering, matching/enrichment, proxies, CI/instrumentation.
-- [`docs/architecture-client-and-scene.md`](architecture-client-and-scene.md): client state orchestration, UI section boundaries, scene composition.
-- [`docs/mrms-rust-pipeline.md`](mrms-rust-pipeline.md): Rust runtime service design, wire format, deployment, endpoints.
-- [`docs/mrms-phase-methodology.md`](mrms-phase-methodology.md): thermodynamic-first phase resolver, dual-pol correction, debug telemetry.
+## Where to Read Next
+
+- [Data and actions](architecture-data-and-actions.md): SQLite schema, build-time matching, server actions, and the plate, traffic, and weather proxies.
+- [Client and scene](architecture-client-and-scene.md): client state, UI sections, and scene composition.
+- [Worker transport protocols](worker-transport-protocols.md): worker contracts, transferables, and failure policy.
+- [MRMS Rust pipeline](mrms-rust-pipeline.md): runtime ingest, wire formats, endpoints, and deployment.
+- [MRMS phase methodology](mrms-phase-methodology.md): precipitation-phase resolution and dual-pol correction.
+- [Native rendering](rendering-ios-native-mvp.md): the iOS/macOS app, its build, and parity gaps.

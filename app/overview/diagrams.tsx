@@ -88,7 +88,7 @@ const NODES: SysNode[] = [
     color: '#ff2ea6',
     title: 'NOAA MRMS',
     sub: 'S3 + SNS · GRIB2',
-    desc: '33-level MergedReflectivityQC mosaic plus dual-pol, thermodynamic and echo-top products, announced over SNS and ingested from S3.',
+    desc: '33-level MergedReflectivityQC mosaic plus dual-pol, thermodynamic and echo-top products, announced over SNS and ingested from S3. ProbSevere storm-cell JSON is proxied separately by the Next.js app.',
     jump: 'mrms-ingest'
   },
   {
@@ -100,7 +100,7 @@ const NODES: SysNode[] = [
     color: '#ffb52e',
     title: 'ADS-B Exchange',
     sub: 'binCraft + zstd feed',
-    desc: 'Live aircraft state for CONUS/AK/HI/PR polled from tar1090 re-api endpoints and merged into a SQLite-backed track store.',
+    desc: 'Live aircraft state for CONUS/AK/HI/PR, polled from tar1090 re-api endpoints into an in-memory track store that is persisted to SQLite.',
     jump: 'adsb-ingest'
   },
   {
@@ -112,7 +112,7 @@ const NODES: SysNode[] = [
     color: '#6ea8ff',
     title: 'Data Pipeline',
     sub: 'download-data → build-db',
-    desc: 'Build-time scripts download CIFP, the approach-minimums release and pinned airspace GeoJSON, then compile everything into approach-viz.sqlite with R-tree spatial indexes.',
+    desc: 'Build-time scripts download CIFP, the approach-reference release, pinned airspace GeoJSON and the FAA obstacle file, match approach references once, and compile everything into approach-viz.sqlite with R-tree spatial indexes. Web and native both read this database.',
     jump: 'cifp'
   },
   {
@@ -124,7 +124,7 @@ const NODES: SysNode[] = [
     color: '#45e0c0',
     title: 'Next.js 16 App',
     sub: 'Vercel · SSR + API proxies',
-    desc: 'App Router service: server actions read the SQLite bundle, API routes validate/clamp params and proxy the Rust runtime, FAA plates, ProbSevere and Datadog RUM.',
+    desc: 'App Router service: server actions read the SQLite database, and API routes validate parameters and proxy the Rust runtime, FAA plates and ProbSevere.',
     jump: 'nextjs'
   },
   {
@@ -148,7 +148,7 @@ const NODES: SysNode[] = [
     color: '#ffb52e',
     title: 'approach-viz-core',
     sub: 'one crate · three targets',
-    desc: 'The shared Rust engine: approach-path geometry, WGS84 projection, MRMS prepare/render join, traffic merge, and all wire-format decoders. Compiled to rlib (runtime), WASM (web) and a UniFFI XCFramework (Apple).',
+    desc: 'The shared Rust engine: approach-path geometry, WGS84 projection, MRMS preparation and render outputs, traffic merging, and the wire-format decoders. Built as an rlib (runtime), WASM (web) and a UniFFI XCFramework (Apple).',
     jump: 'core'
   },
   {
@@ -160,7 +160,7 @@ const NODES: SysNode[] = [
     color: '#45e0c0',
     title: 'Web Client',
     sub: 'React Three Fiber · workers',
-    desc: 'Worker-first browser client: Comlink-proxied workers run the WASM core off the main thread; react-three-fiber renders terrain, approaches, airspace, traffic and weather.',
+    desc: 'Browser client: Comlink-proxied workers run the WASM core off the main thread, and react-three-fiber renders terrain, approaches, airspace, traffic and weather.',
     jump: 'frontend'
   },
   {
@@ -172,7 +172,7 @@ const NODES: SysNode[] = [
     color: '#6dff9c',
     title: 'iOS / macOS',
     sub: 'SwiftUI · Metal · TCA',
-    desc: 'Native shell over the same engine: MetalKit renderer, Composable Architecture state, GRDB-read SQLite bundle, direct runtime polling via UniFFI-decoded FlatBuffers.',
+    desc: 'Native shell over the same engine: MetalKit renderer, Composable Architecture state, the bundled SQLite database read through GRDB, and direct runtime polling with FlatBuffers decoded through UniFFI.',
     jump: 'native'
   }
 ];
@@ -181,7 +181,9 @@ const EDGES: SysEdge[] = [
   { from: 'src-faa', to: 'svc-pipeline', color: '#6ea8ff' },
   { from: 'src-faa', to: 'svc-next', color: '#6ea8ff' },
   { from: 'svc-pipeline', to: 'svc-next', color: '#6ea8ff' },
+  { from: 'svc-pipeline', to: 'native', color: '#6ea8ff' },
   { from: 'src-mrms', to: 'svc-runtime', color: '#ff2ea6' },
+  { from: 'src-mrms', to: 'svc-next', color: '#ff2ea6' },
   { from: 'src-adsb', to: 'svc-runtime', color: '#ffb52e' },
   { from: 'svc-runtime', to: 'svc-next', color: '#ffb52e' },
   { from: 'svc-next', to: 'web', color: '#45e0c0' },
@@ -620,7 +622,7 @@ export function PlateProjectionDiagram() {
             onBeforeCompile patch — every tile material
           </text>
           <text className="ov-svg-node-sub" x={652} y={94} fontSize={9.5}>
-            1 · clamp bathymetry to sea level (+ curvature term)
+            1 · optionally clamp bathymetry to sea level (+ curvature)
           </text>
           <text className="ov-svg-node-sub" x={652} y={114} fontSize={9.5}>
             2 · vPlateWorldPos = clamped world position
@@ -638,7 +640,7 @@ export function PlateProjectionDiagram() {
             6 · chart texel overwrites RGB; plate alpha-blends on top
           </text>
           <text className="ov-svg-node-sub" x={652} y={222} fontSize={9.5} fill="#ffb52e">
-            uniforms synced per-frame; cache key |faa-overlay-v5
+            uniforms synced on change; cache key |faa-overlay-v5
           </text>
         </svg>
       </div>

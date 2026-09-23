@@ -31,7 +31,7 @@
 - `app/scene/ProbSevereOverlay.tsx` polls normalized ProbSevere storm-cell payloads, projects cell polygons into local NM space, applies optional curvature compensation to top heights, and renders base outlines for all in-range cells plus optional top caps/labels with movement vectors anchored at polygon-derived centroids.
 - Approach-path altitude resolution, scene composition, path geometry assembly, and hold geometry generation now live in one shared Rust implementation (`crates/approach-viz-core/src/approach_path/`), exercised in Rust tests and in web WASM tests (`app/scene/approach-path/geometry-rust.test.ts`).
 - `app/scene/approach-path/runway-geometry.ts` provides pure runway pairing/reciprocal-stub geometry logic used by `AirportMarker`.
-- `app/app-client/SceneCanvas.tsx` applies an adaptive DPR controller (`0.9..1.5`) based on frame-time EMA to balance visual quality and frame stability, especially on constrained mobile GPUs.
+- `app/app-client/SceneCanvas.tsx` applies an adaptive DPR controller (`1.0..1.5`, pinned at 2.0 when retina rendering is on) based on frame-time EMA to balance visual quality and frame stability, especially on constrained mobile GPUs.
 
 ## Architectural Intent
 
