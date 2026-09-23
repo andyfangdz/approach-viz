@@ -68,7 +68,7 @@
 - Echo-top endpoint (`/v1/weather/echo-tops`) filters direct MRMS echo-top cells (`lat/lon/maxRangeNm`) from in-memory snapshots and returns thresholded top heights for 18/30/50/60 dBZ products (AVET binary, `application/vnd.approach-viz.echo-tops.v3`).
 - Serialization performs adaptive brick merging (same phase + quantized dBZ + contiguous spans) so broad precip regions ship as fewer records while retaining full area coverage.
 - Next.js routes `app/api/weather/nexrad/route.ts` and `app/api/weather/nexrad/echo-tops/route.ts` are thin proxies to Rust endpoints (`RUNTIME_UPSTREAM_BASE_URL`, legacy alias `MRMS_BINARY_UPSTREAM_BASE_URL`, defaulting to `https://approach-runtime.andyfang.app`).
-- Both weather proxies delegate to `runtime-proxy.ts`: one 8-second deadline spans the upstream request plus response-body consumption. Invalid numeric parameters return 400; upstream/read failures return 502; deadline expiry returns 504. A canonical 404 still tries the legacy alias within the same deadline.
+- Both weather proxies delegate to `runtime-proxy.ts`: one 8-second deadline spans the upstream request plus response-body consumption. Invalid numeric parameters return 400; upstream/read failures return 502; deadline expiry returns 504. A canonical 404 is final; there is no legacy-path retry.
 - Client overlay decodes binary reflectivity and binary AVET echo-top payloads directly; JSON error payloads are surfaced as worker request failures.
 - Snapshot retention is byte-capped (`RUNTIME_MRMS_RETENTION_BYTES=5 GB`, legacy alias `MRMS_RETENTION_BYTES`) with oldest-first pruning.
 

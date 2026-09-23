@@ -239,15 +239,15 @@ impl<'a> PackedPngField<'a> {
             .next_frame(&mut samples)
             .map_err(|error| anyhow!("Failed to decode GRIB2 values: PNG decode error: {error}"))?;
 
-        let available = samples.len() / self.sample_bytes;
-        if available < self.point_count {
+        // The image must hold exactly the declared points: a larger image is as
+        // malformed as a smaller one and is rejected rather than truncated.
+        if samples.len() != self.point_count * self.sample_bytes {
             bail!(
                 "Decoded point-count mismatch: expected {}, got {}",
                 self.point_count,
-                available
+                samples.len() / self.sample_bytes
             );
         }
-        samples.truncate(self.point_count * self.sample_bytes);
         Ok(samples)
     }
 
@@ -577,6 +577,23 @@ mod tests {
         // Missing data section.
         let truncated = message(&[&good5, &good6]);
         assert!(PackedPngField::locate(&truncated, points).is_none());
+    }
+
+    #[test]
+    fn packed_decode_rejects_an_image_with_extra_samples() {
+        // 32 declared points, 48 in the image.
+        let raw = samples(48, 2);
+        let sect7 = section7(&png_bytes(8, 6, 2, &raw));
+        let msg = message(&[&section5(32, 41, -3.0, 0, 0, 16), &section6(255), &sect7]);
+        let packed = PackedPngField::locate(&msg, 32).unwrap();
+        for error in [
+            packed.decode_f32().unwrap_err(),
+            packed.decode_packed().unwrap_err(),
+            packed.decode_tenths().unwrap_err(),
+        ] {
+            let error = error.to_string();
+            assert!(error.contains("expected 32, got 48"), "{error}");
+        }
     }
 
     #[test]
