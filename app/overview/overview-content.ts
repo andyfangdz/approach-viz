@@ -497,7 +497,7 @@ export const SECTIONS: Section[] = [
         blocks: [
           {
             kind: 'p',
-            text: 'A cache worker polls ADS-B Exchange tar1090 `re-api` endpoints (fallback: `globe.theairtraffic.com`) every second for four bounding boxes (CONUS, Alaska, Hawaii, Puerto Rico/USVI) in **binCraft + zstd** form. The decoder reads the stride-based records directly: 24-bit ICAO hex, micro-degree lat/lon, 25 ft altitude steps and validity bitfields, after checking the header (stride 112–256 bytes). Queries are answered from an in-memory store with an R-tree and per-hex history. SQLite (`traffic_tracks` plus a 60-minute ring of partitioned point tables) is for persistence and restart recovery; memory stays live if a persistence transaction fails, and the next ingest retries it.'
+            text: 'A cache worker polls ADS-B Exchange tar1090 `re-api` endpoints (fallback: `globe.theairtraffic.com`) every second for four bounding boxes (CONUS, Alaska, Hawaii, Puerto Rico/USVI) in **binCraft + zstd** form. The decoder reads the stride-based records directly: 24-bit ICAO hex, micro-degree lat/lon, 25 ft altitude steps and validity bitfields, after checking the header (stride 112–256 bytes). Queries are answered from an in-memory store that narrows candidates with a 0.5° spatial grid before exact distance checks, and keeps per-hex history. SQLite (`traffic_tracks` plus a 60-minute ring of partitioned point tables) is for persistence and restart recovery; memory stays live if a persistence transaction fails, and the next ingest retries it.'
           },
           {
             kind: 'p',
