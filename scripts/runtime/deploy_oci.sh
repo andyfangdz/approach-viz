@@ -253,10 +253,26 @@ sudo mv /tmp/approach-viz-runtime.service /etc/systemd/system/approach-viz-runti
 sudo systemctl daemon-reload
 sudo systemctl enable approach-viz-runtime.service
 sudo systemctl restart approach-viz-runtime.service
-# The funnel is persistent config; re-applying it can hang, so bound it and
-# carry on (the health check below verifies the service either way).
+# The funnel is persistent config and re-applying it can hang, so bound the
+# call. If it does not succeed, the deploy passes only when the existing config
+# already routes /runtime-v1 publicly; the health checks below are local.
 if ! timeout 30 tailscale funnel --bg --https 8443 --set-path /runtime-v1 http://127.0.0.1:9191 >/dev/null; then
-  echo \"Warning: re-applying the Tailscale funnel failed or timed out; check 'tailscale funnel status'.\" >&2
+  if timeout 15 tailscale serve status --json | python3 -c '
+import json, sys
+config = json.load(sys.stdin)
+funnel_on = any(host.endswith(\":8443\") and on for host, on in config.get(\"AllowFunnel\", {}).items())
+routed = any(
+    host.endswith(\":8443\")
+    and web.get(\"Handlers\", {}).get(\"/runtime-v1\", {}).get(\"Proxy\") == \"http://127.0.0.1:9191\"
+    for host, web in config.get(\"Web\", {}).items()
+)
+sys.exit(0 if funnel_on and routed else 1)
+'; then
+    echo \"Warning: re-applying the Tailscale funnel failed or timed out, but the existing funnel already routes /runtime-v1.\" >&2
+  else
+    echo \"Tailscale funnel for /runtime-v1 is not configured and could not be applied; the runtime is not publicly reachable.\" >&2
+    exit 1
+  fi
 fi
 
 ready=0
