@@ -6,15 +6,19 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 
 - The old path did expensive runtime work per request: S3 key discovery, multi-level object fetch, GRIB parse, PNG decode, and voxel assembly.
 - The Rust runtime service ingests scans once (event-driven), stores compact pre-indexed snapshots, and serves query-time binary subsets.
-- The Rust runtime service decodes GRIB2 via the `grib` crate (including PNG-packed payload templates) instead of custom GRIB section parsing.
+- The Rust runtime service parses GRIB2 structure with the `grib` crate and decodes PNG-packed fields (data representation template 5.41, which every MRMS product uses) through an exact lookup-table/arithmetic path; the crate's own decoder remains the fallback for any other layout.
 - Query-time latency is reduced to in-memory filtering + binary serialization.
 
 ## Runtime Flow
 
 1. NOAA publishes `ObjectCreated` events to SNS topic `arn:aws:sns:us-east-1:123901341784:NewMRMSObject`.
 2. SQS queue receives those messages (`RawMessageDelivery=true`).
-3. Rust runtime service polls SQS, extracts MRMS timestamps, retries pending timestamps in earliest-due order, and ingests GRIB2 fields through `grib` with a shared parse-concurrency limiter while overlapping independent bundles (reflectivity, dual-pol, thermo aux, echo tops). Reflectivity decode maps values directly into `dbz_tenths` in one pass, and gzip payload buffers are pre-sized from the trailer ISIZE hint to reduce allocation churn before snapshot assembly/storage. Scan snapshot assembly (per-level filter/gather/phase passes, the full-grid echo-top scan, and tile grouping) runs on the Tokio blocking pool so it never stalls async workers serving HTTP/SQS; the echo-top scan fast-skips no-signal grid points before unit conversion, and voxels are tile-grouped with a stable counting sort instead of per-tile growing buckets. Query handlers likewise run window filtering + FlatBuffers encoding for volume and echo-top responses on the blocking pool.
-4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the runtime service `v1/weather/volume` endpoint (legacy alias `v1/volume`), and `app/api/weather/nexrad/echo-tops/route.ts` proxies `v1/weather/echo-tops` (legacy alias `v1/echo-tops`).
+3. Rust runtime service polls SQS, extracts MRMS timestamps, and ingests the newest due pending timestamp first (a completed ingest drops every older pending timestamp, so a backlog such as a cold start costs one ingest, not one per missed scan). Each of the 33 reflectivity levels is its own task:
+   - **Waits for publication instead of retrying.** NOAA publishes a scan's objects in waves (base level first, most levels ~30 s later, the highest ~95 s after the key timestamp) while the SQS event fires for the base level. A 404 for an object whose key timestamp is inside the 180 s publication window (or whose ingest began less than 90 s ago, for scans first seen late) is polled every 1.5 s; any other 404 is permanent and skips the scan without re-queueing it. A local mirror in offline mode never polls. Levels are located by the exact key first and, on a 404, by the neighboring key stamped within 10 s (NOAA stamps some levels of ~8% of scans 1-6 s off the base level's; scans are 120 s apart, so a neighbor is the same scan). The lookup is a bounded `start-after` listing per level that runs after the first exact miss and then every third poll (each poll retries the exact key); a listing that fails is retried like a miss while the scan may still be publishing and surfaces as a real, retryable failure otherwise. Dual-pol products (5-minute cadence) stamp all levels identically and use exact keys. Downloads and decodes that already finished are never repeated. Transient network/5xx failures retry per request (250 ms, 750 ms).
+   - **Reduces as it decodes.** The task pairs its level with the level-matched ZDR/RhoHV objects of the selected dual-pol scan, decodes them one grid at a time, and keeps only the voxels at or above the 5 dBZ storage threshold plus the dual-pol values sampled at exactly those voxels. Only a few full CONUS grids are resident at once (the shared parse-concurrency limiter bounds them), giving ~1.3 GB peak RSS instead of ~9.5 GB when every decoded grid was held until assembly.
+   - **Decodes PNG-packed GRIB2 exactly, and cheaply.** 8/16-bit samples map through a lookup table and 24-bit (RhoHV) samples through the same `f32` arithmetic the `grib` crate applies, so results are bit-identical to the crate's per-element iterator at roughly a quarter of the CPU (the iterator cost ~190 ms per 24.5M-point field). Aux products keep their raw integer samples and convert on access instead of materializing a 98 MB `f32` array.
+     Thermodynamic and echo-top products are selected ("latest at or before the scan") once every reflectivity level has been downloaded, because several are published slightly after the base level; their fetch/decode overlaps the tail of level decoding. Scan assembly (base aux sampling, phase scoring, mixed-edge promotion, and scattering straight into tile-grouped order from a counting pass) runs on the Tokio blocking pool so it never stalls async workers serving HTTP/SQS; query handlers likewise run window filtering + FlatBuffers encoding for volume and echo-top responses there. A finished scan replaces the served snapshot immediately; persistence runs on its own worker that keeps only the newest pending scan.
+4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the runtime service `v1/weather/volume` endpoint, and `app/api/weather/nexrad/echo-tops/route.ts` proxies `v1/weather/echo-tops` (legacy alias `v1/echo-tops`).
 5. Client decodes compact binary reflectivity payloads and AVET binary echo-top payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 
 ## Phase Methodology
@@ -26,6 +30,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 ## Data Retention
 
 - Snapshot storage path: `/var/lib/approach-viz-runtime/scans`
+- Snapshot files are bincode-encoded straight into a zstd level-3 stream from the shared in-memory snapshot (no deep clone, no intermediate raw buffer); the format is unchanged. Level 3 costs ~0.8 s CPU per CONUS scan versus ~1.8 s at level 6 for ~12% larger files.
 - Retention cap: `RUNTIME_MRMS_RETENTION_BYTES=5368709120` (5 GB; legacy alias `MRMS_RETENTION_BYTES`)
 - Oldest snapshot files are pruned automatically after each successful ingest.
 - ADS-B traffic store path: `RUNTIME_STORAGE_DIR/traffic-store.db`
@@ -34,6 +39,31 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - ADS-B lock handling: store bootstrap is serialized to avoid concurrent first-hit migration races, and both reader queries and writer ingest path retry transient SQLite lock errors before surfacing failures.
 - ADS-B spatial indexing path: ring-slot and live-track `R*Tree` tables are trigger-maintained (`INSERT`/`UPDATE`/`DELETE`), startup reconciliation backfills any missing index rows, and `/v1/traffic/adsbx` uses `R*Tree` joins for live candidate and history-target discovery.
 - ADS-B WAL maintenance: low-priority writer maintenance runs periodic `wal_checkpoint(PASSIVE)` and only attempts `wal_checkpoint(TRUNCATE)` when WAL size is above threshold and truncate cooldown has elapsed.
+
+## Ingest Performance
+
+Measured on one real CONUS scan (15M voxels), pinned to 2 cores to mimic the production `CPUQuota=200%`, offline from a local mirror:
+
+|               | before  | after  |
+| ------------- | ------- | ------ |
+| wall per scan | 15.3 s  | 4.1 s  |
+| CPU per scan  | ~28.5 s | ~6.3 s |
+| peak RSS      | 9.5 GB  | 1.3 GB |
+
+Before the change, production spent ~2,260 ingest attempts per day to produce ~582 scans: the runtime started on the base-level event and gave up after a 15 s retry window that could not outlast NOAA's ~60-95 s staggered publication, discarding every download and decode each time (and dropping ~19% of scans). About 8% of scans additionally have levels stamped a few seconds off the base level's, which an exact-key lookup can never find. Waiting for publication inside a single ingest and resolving neighbor stamps removes the wasted work and the gaps. Production data age (scan time to availability) measured before the change: p50 150 s, p99 285 s; what a user saw at a random moment: p50 249 s, p99 489 s.
+
+Verify an ingest optimization without changing output: the one-shot profile (see the `runtime-profile-ingestion` skill) logs `Scan fingerprint: voxels=<hash> meta=<hash>`, digests of every voxel, echo-top cell, tile offset and phase-debug field. Record the values on the unmodified build, then require the same values after the change.
+
+## Query Cost
+
+Response compression, not payload construction, dominates a weather query. Server CPU per `/v1/weather/volume` request (x86, pinned to 2 cores, local mirror, client sends `Accept-Encoding: gzip`):
+
+| payload                        | build only | gzip before (miniz, level 6) | gzip now (zlib-rs, level 3) |
+| ------------------------------ | ---------- | ---------------------------- | --------------------------- |
+| heavy: Miami 120 nm, 5.8 MB    | 65 ms      | 259 ms                       | 94 ms                       |
+| typical: Denver 120 nm, 3.4 MB | 35 ms      | 146 ms                       | 52 ms                       |
+
+`flate2` uses the `zlib-rs` backend, roughly twice the deflate/inflate throughput of `miniz_oxide` (it also speeds up the GRIB gunzip). The level lives in `RESPONSE_COMPRESSION_LEVEL` (`services/runtime-rs/src/server/mod.rs`): level 3 sends ~6% more bytes than level 6, level 1 ~70% more for little extra CPU saving. Decompressed bodies are byte-identical.
 
 ## Wire Format (`application/vnd.approach-viz.mrms.v5`, AVMR v5)
 
@@ -66,7 +96,7 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - SoA columns (n = `cell_count`), 6 contiguous vectors:
   - `x_nm:f32[n]`, `z_nm:f32[n]`, `top18_feet:u16[n]`, `top30_feet:u16[n]`, `top50_feet:u16[n]`, `top60_feet:u16[n]`
 - v3 replaced the hand-rolled v2 64-byte binary header with the FlatBuffers table above; column semantics are unchanged from v2.
-- Content negotiation: runtime endpoint returns AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v3` is present, otherwise JSON; Next.js proxy always requests binary and passes it through.
+- No content negotiation: like the volume endpoint, the runtime always returns AVET binary (the earlier JSON variant was removed; nothing in the repo consumed it and production logged 9 echo-top requests in 7 days). Clients still send `Accept: application/vnd.approach-viz.echo-tops.v3`, which the runtime ignores; the Next.js proxy passes the body through.
 - Decoder is the zero-copy `FbEchoTopView` in `crates/approach-viz-core/src/mrms_preprocess.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`. The view uses the same construct-time presence/length validation as the volume view.
 
 ## Deployment
@@ -151,9 +181,7 @@ ps -ef | grep '[d]dprof'
 - `GET /healthz` -> `ok`
 - `GET /v1/meta` -> readiness + scan stats
 - `GET /v1/weather/volume?lat=<deg>&lon=<deg>&minDbz=<5..60>&maxRangeNm=<30..220>` -> binary voxel payload (`application/vnd.approach-viz.mrms.v5`)
-- `GET /v1/volume?...` -> legacy weather alias
-- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> echo-top cells (`EchoTop_18/30/50/60`), JSON by default or AVET binary when `Accept: application/vnd.approach-viz.echo-tops.v3` is provided
-- `GET /v1/echo-tops?...` -> legacy echo-top alias
+- `GET /v1/weather/echo-tops?lat=<deg>&lon=<deg>&maxRangeNm=<30..220>` -> echo-top cells (`EchoTop_18/30/50/60`) as AVET binary (`application/vnd.approach-viz.echo-tops.v3`)
 - `GET /v1/traffic/adsbx?lat=<deg>&lon=<deg>&radiusNm=<5..220>&limit=<1..800>&historyMinutes=<0..60>&historyHexes=<hex,hex,...>&hideGround=<bool>&format=<json|binary>` -> default JSON aircraft + optional trail history, or compact binary payload (`format=binary`, `application/vnd.approach-viz.traffic.v4`) served from runtime SQLite traffic storage (`traffic-store.db`) with one-hour retention and indexed spatial/time lookups.
 
 ## Next.js Configuration

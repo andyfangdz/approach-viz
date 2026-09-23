@@ -28,22 +28,30 @@ for (const product of ['volume', 'echo-tops'] as const) {
     assert.equal(response.status, 504);
   });
 
-  test(`${product}: canonical and legacy endpoints share the deadline`, async () => {
+  test(`${product}: forwards the canonical endpoint once with the deadline`, async () => {
     const controller = new AbortController();
     const paths: string[] = [];
     globalThis.fetch = async (url, init) => {
       assert.equal(init?.signal, controller.signal);
       paths.push(String(url));
-      return paths.length === 1
-        ? new Response(null, { status: 404 })
-        : new Response(new Uint8Array([1, 2, 3]), { headers: { 'x-av-scan-time': 'scan' } });
+      return new Response(new Uint8Array([1, 2, 3]), { headers: { 'x-av-scan-time': 'scan' } });
     };
     const response = await proxyWeather(request(), product, controller.signal);
     assert.equal(response.status, 200);
+    assert.equal(paths.length, 1);
     assert.match(paths[0], new RegExp(`/v1/weather/${product}\\?`));
-    assert.match(paths[1], new RegExp(`/v1/${product}\\?`));
     assert.equal(response.headers.get('x-av-scan-time'), 'scan');
     assert.deepEqual(new Uint8Array(await response.arrayBuffer()), new Uint8Array([1, 2, 3]));
+  });
+
+  test(`${product}: an upstream 404 is final, with no legacy-path retry`, async () => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response(null, { status: 404 });
+    };
+    assert.equal((await proxyWeather(request(), product)).status, 502);
+    assert.equal(calls, 1);
   });
 
   test(`${product}: upstream failure is not a successful empty weather response`, async () => {

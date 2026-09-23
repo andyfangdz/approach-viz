@@ -15,7 +15,7 @@ Options:
   --online                      Set RUNTIME_MRMS_LOCAL_DATA_OFFLINE=false for measured run
   --storage-dir <path>          Set RUNTIME_STORAGE_DIR (default: temp dir)
   --log-file <path>             Log destination (default: .tmp/prof-ingest/...)
-  --binary <path>               Runtime binary path (default: services/runtime-rs/target/release/approach-viz-runtime)
+  --binary <path>               Runtime binary path (default: target/release/approach-viz-runtime)
   --skip-build                  Skip cargo build --release
   --quiet-runtime               Do not stream runtime logs (default)
   --verbose-runtime             Stream runtime logs to stdout
@@ -127,7 +127,7 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 if [[ -z "$binary" ]]; then
-  binary="$ROOT_DIR/services/runtime-rs/target/release/approach-viz-runtime"
+  binary="$ROOT_DIR/target/release/approach-viz-runtime"
 fi
 
 if [[ "$skip_build" -eq 0 ]]; then
@@ -244,5 +244,9 @@ echo "Profile log: $log_file"
 if [[ "$seed_mirror" -eq 1 ]]; then
   echo "Seed log: $seed_log"
 fi
+fingerprint="$(rg -o 'Scan fingerprint: .*' "$log_file" | sort -u | tr '\n' ' ' || true)"
 echo "Config: timestamp=$timestamp repeats=$repeats parse_concurrency=${parse_concurrency:-default} mirror_dir=${mirror_dir:-none} offline=$offline"
 echo "PROFILE_SUMMARY $summary"
+if [[ -n "$fingerprint" ]]; then
+  echo "FINGERPRINT $fingerprint"
+fi

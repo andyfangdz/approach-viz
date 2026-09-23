@@ -94,7 +94,162 @@ pub struct ParsedReflectivityField {
 #[derive(Clone, Debug)]
 pub struct ParsedAuxField {
     pub grid: GridDef,
-    pub values: Vec<f32>,
+    pub values: AuxValues,
+}
+
+/// Values of a decoded GRIB2 field, indexed by flat grid position.
+///
+/// PNG-packed fields keep their raw integer samples and convert on access with
+/// the exact arithmetic the GRIB decoder applies, so a CONUS field costs its
+/// 24-73 MB of samples rather than a 98 MB `f32` copy, and readers that only
+/// need a sparse set of positions never convert the rest.
+#[derive(Clone, Debug)]
+pub enum AuxValues {
+    Dense(Vec<f32>),
+    Packed(PackedSamples),
+}
+
+/// Big-endian fixed-width unsigned samples plus the rule that maps a sample to
+/// its physical value.
+#[derive(Clone)]
+pub struct PackedSamples {
+    samples: Vec<u8>,
+    width: usize,
+    mapping: SampleMapping,
+}
+
+#[derive(Clone, Debug)]
+enum SampleMapping {
+    /// One entry per possible sample value (8/16-bit samples).
+    Table(Box<[f32]>),
+    /// `(ref_val + sample * pow2) * dig_factor`, evaluated per sample (24-bit).
+    Linear {
+        ref_val: f32,
+        pow2: f32,
+        dig_factor: f32,
+    },
+}
+
+/// The GRIB2 simple-packing value of an integer sample, `(R + X * 2^E) * 10^-D`,
+/// with `pow2 = 2^E` and `dig_factor = 10^-D`. Evaluated in `f32` in exactly this
+/// order because the decoder tests pin it bit for bit against the `grib` crate;
+/// every conversion of a packed sample goes through here.
+#[inline(always)]
+pub fn packed_sample_value(ref_val: f32, pow2: f32, dig_factor: f32, sample: u32) -> f32 {
+    (ref_val + sample as f32 * pow2) * dig_factor
+}
+
+impl std::fmt::Debug for PackedSamples {
+    // The sample buffer is tens of megabytes; never print it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PackedSamples")
+            .field("points", &self.len())
+            .field("width", &self.width)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PackedSamples {
+    pub fn with_table(samples: Vec<u8>, width: usize, table: Vec<f32>) -> Self {
+        debug_assert!(matches!(width, 1 | 2) && table.len() == 1 << (width * 8));
+        Self {
+            samples,
+            width,
+            mapping: SampleMapping::Table(table.into_boxed_slice()),
+        }
+    }
+
+    pub fn with_linear(samples: Vec<u8>, width: usize, ref_val: f32, pow2: f32, dig_factor: f32) -> Self {
+        Self {
+            samples,
+            width,
+            mapping: SampleMapping::Linear {
+                ref_val,
+                pow2,
+                dig_factor,
+            },
+        }
+    }
+
+    #[inline(always)]
+    fn sample_at(&self, idx: usize) -> u32 {
+        let bytes = &self.samples[idx * self.width..(idx + 1) * self.width];
+        match self.width {
+            1 => u32::from(bytes[0]),
+            2 => u32::from(u16::from_be_bytes([bytes[0], bytes[1]])),
+            _ => u32::from(bytes[0]) << 16 | u32::from(bytes[1]) << 8 | u32::from(bytes[2]),
+        }
+    }
+
+    #[inline(always)]
+    fn value_of(&self, sample: u32) -> f32 {
+        match &self.mapping {
+            SampleMapping::Table(table) => table[sample as usize],
+            SampleMapping::Linear {
+                ref_val,
+                pow2,
+                dig_factor,
+            } => packed_sample_value(*ref_val, *pow2, *dig_factor, sample),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.samples.len() / self.width
+    }
+}
+
+impl AuxValues {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Dense(values) => values.len(),
+            Self::Packed(packed) => packed.len(),
+        }
+    }
+
+    /// Value at a flat grid position, or `None` when out of range.
+    #[inline]
+    pub fn get(&self, idx: usize) -> Option<f32> {
+        match self {
+            Self::Dense(values) => values.get(idx).copied(),
+            Self::Packed(packed) => (idx < packed.len()).then(|| packed.value_of(packed.sample_at(idx))),
+        }
+    }
+
+    /// Values at `indices`, `NaN` where an index is out of range.
+    pub fn gather(&self, indices: &[u32]) -> Vec<f32> {
+        let mut out = Vec::new();
+        self.gather_into(indices, &mut out);
+        out
+    }
+
+    /// Like `gather`, replacing the contents of `out` (its allocation is reused).
+    pub fn gather_into(&self, indices: &[u32], out: &mut Vec<f32>) {
+        out.clear();
+        out.reserve(indices.len());
+        match self {
+            Self::Dense(values) => out.extend(
+                indices
+                    .iter()
+                    .map(|&idx| values.get(idx as usize).copied().unwrap_or(f32::NAN)),
+            ),
+            Self::Packed(packed) => {
+                let len = packed.len();
+                out.extend(indices.iter().map(|&idx| {
+                    let idx = idx as usize;
+                    if idx < len {
+                        packed.value_of(packed.sample_at(idx))
+                    } else {
+                        f32::NAN
+                    }
+                }));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn to_vec(&self) -> Vec<f32> {
+        (0..self.len()).map(|idx| self.get(idx).unwrap()).collect()
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

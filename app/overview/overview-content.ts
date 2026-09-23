@@ -441,7 +441,10 @@ export const SECTIONS: Section[] = [
                 '`GET /v1/weather/volume`',
                 'AVMR v5 FlatBuffers — `application/vnd.approach-viz.mrms.v5`'
               ],
-              ['`GET /v1/weather/echo-tops`', 'JSON, or AVET v3 via Accept header'],
+              [
+                '`GET /v1/weather/echo-tops`',
+                'AVET v3 FlatBuffers — `application/vnd.approach-viz.echo-tops.v3`'
+              ],
               [
                 '`GET /v1/traffic/adsbx`',
                 'JSON or AVTR v4 (`format=binary`), with staleness headers'

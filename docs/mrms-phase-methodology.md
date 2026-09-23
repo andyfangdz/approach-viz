@@ -69,7 +69,7 @@ The remainder of this document describes the thermodynamic resolver.
 
 ## Debug Telemetry
 
-`/v1/meta` and `/v1/weather/volume` headers expose (legacy weather alias `/v1/volume` is identical):
+`/v1/meta` and `/v1/weather/volume` headers expose:
 
 - `phaseMode`: one of
   - `thermo-primary`

@@ -179,7 +179,8 @@ profile_route() {
 
     if [[ "$name" == "volume" ]]; then
       local magic
-      magic="$(head -c 4 "$body_file" | od -An -t c | tr -d ' \n')"
+      # FlatBuffers file identifier sits at bytes 4-7 (after the root offset).
+      magic="$(od -An -j 4 -N 4 -t c "$body_file" | tr -d ' \n')"
       if [[ "$magic" != "AVMR" ]]; then
         echo "volume payload missing AVMR magic" >&2
         exit 1

@@ -34,7 +34,7 @@ Run deterministic ingestion profiling using the runtime's one-shot mode (`RUNTIM
 1. Build runtime release binary.
 2. Optionally seed a local MRMS mirror (`--seed-mirror`) with one online pass.
 3. Run one-shot ingestion profile for target timestamp.
-4. Parse `elapsed=...ms` log lines and print timing summary (`avg/min/p50/p95/p99/max`).
+4. Parse `elapsed=...ms` log lines and print timing summary (`avg/min/p50/p95/p99/max`) and the `Scan fingerprint` (digests of every voxel/echo-top/tile offset/phase field). Record it on the unmodified build and require the same value after an optimization: a changed fingerprint means the scan changed.
 5. For matrix mode, run multiple parse-concurrency values and produce a sortable TSV report.
 
 ## Bundled Resources

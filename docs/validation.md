@@ -79,8 +79,9 @@ After a successful build, visually verify at least one procedure exercising each
 
 ## Simplification Regression Coverage
 
-- Weather proxy tests exercise stalled bodies, a shared deadline across legacy retry, query rejection, binary/header forwarding, and HTTP failure statuses.
+- Weather proxy tests exercise stalled bodies, a single deadline across the request and body read, 404 without legacy-path retry, query rejection, binary/header forwarding, and HTTP failure statuses.
 - Options tests cover saved-state round trips, legacy layer migration, URL precedence, and malformed values.
 - Reference pipeline tests cover malformed source data, non-positive circling matches, and SQLite enrichment of FAF VDA, minimums, plates, and missed-climb requirements. Rebuild from local sources before validating clients against the new `approach_options` table.
 - Runtime traffic tests cover merge ordering, history thresholds, and an injected SQLite failure followed by persistence recovery while memory remains live.
+- Runtime MRMS tests cover the PNG-packed GRIB2 decoder against the `grib` crate bit for bit (8/16/24-bit samples, negative scale factors, bitmap fallback) and scan ingestion end to end over a local mirror of synthetic scans (`services/runtime-rs/src/weather/testkit.rs`, `pipeline_tests.rs`): dual-pol present/missing/stale/mismatched, missing and corrupt levels, levels stamped off the base level's second, tile grouping. Ingest optimizations are additionally checked on a real scan with the one-shot profile's `Scan fingerprint` (`runtime-profile-ingestion`), which must not change.
 - Run native tests on macOS/Xcode after changing the shared SQLite contract; Linux cannot build the SwiftUI/Metal targets.

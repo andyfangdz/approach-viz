@@ -38,7 +38,7 @@ function errorResponse(message: string, status: number): NextResponse {
   );
 }
 
-// One deadline spans canonical/legacy requests and body consumption.
+// One deadline spans the upstream request and body consumption.
 export async function proxyWeather(
   request: NextRequest,
   product: keyof typeof CONTENT_TYPES,
@@ -74,12 +74,7 @@ export async function proxyWeather(
     headers: { accept: CONTENT_TYPES[product], 'user-agent': 'approach-viz/1.0' }
   };
   try {
-    let upstream = await fetch(url, init);
-    if (upstream.status === 404) {
-      await upstream.body?.cancel();
-      url.pathname = `/v1/${product}`;
-      upstream = await fetch(url, init);
-    }
+    const upstream = await fetch(url, init);
     if (!upstream.ok) {
       await upstream.body?.cancel();
       return errorResponse(`MRMS ${product} upstream request failed (${upstream.status}).`, 502);
