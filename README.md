@@ -235,10 +235,8 @@ The Rust runtime service (`services/runtime-rs`) handles both MRMS weather and A
 | `GET /healthz`              | Health check                                                  |
 | `GET /v1/meta`              | Readiness + scan stats                                        |
 | `GET /v1/weather/volume`    | Binary voxel payload (`application/vnd.approach-viz.mrms.v5`) |
-| `GET /v1/weather/echo-tops` | Echo-top cells (`EchoTop_18/30/50/60`), JSON or AVET binary   |
+| `GET /v1/weather/echo-tops` | Echo-top cells (`EchoTop_18/30/50/60`), AVET v3 binary        |
 | `GET /v1/traffic/adsbx`     | JSON aircraft + optional trail backfill                       |
-
-Legacy aliases `/v1/volume` and `/v1/echo-tops` are still supported.
 
 ### Next.js Proxy Routes
 

@@ -3,7 +3,6 @@ use rustc_hash::FxHashMap;
 use std::cmp::min;
 
 use super::projection::{QueryProjection, QueryWindow};
-use super::EchoTopCellRecord;
 use crate::constants::{
     WIRE_DBZ_QUANT_STEP_TENTHS,
     WIRE_MAX_SPAN_HIGH_DBZ, WIRE_MAX_SPAN_LOW_DBZ, WIRE_MAX_VERTICAL_SPAN,
@@ -78,7 +77,17 @@ struct BrickCandidate {
     max_dbz_tenths: i16,
 }
 
-pub(crate) fn build_echo_top_cells(
+/// One echo-top grid cell inside a query window, in the window's local frame.
+struct EchoTopCellRecord {
+    x_nm: f32,
+    z_nm: f32,
+    top18_feet: u16,
+    top30_feet: u16,
+    top50_feet: u16,
+    top60_feet: u16,
+}
+
+fn build_echo_top_cells(
     scan: &ScanSnapshot,
     window: &QueryWindow,
 ) -> Vec<EchoTopCellRecord> {
@@ -111,14 +120,11 @@ pub(crate) fn build_echo_top_cells(
     cells
 }
 
-/// Build an AVET FlatBuffers payload for echo-top cells.
-pub(crate) fn build_echo_top_wire_fb(
-    scan: &ScanSnapshot,
-    window: &QueryWindow,
-    cells: &[EchoTopCellRecord],
-) -> Vec<u8> {
+/// Build an AVET FlatBuffers payload for the echo-top cells inside `window`.
+pub(crate) fn build_echo_top_wire_fb(scan: &ScanSnapshot, window: &QueryWindow) -> Vec<u8> {
     use approach_viz_core::generated::{EchoTops, EchoTopsArgs};
 
+    let cells = build_echo_top_cells(scan, window);
     let n = cells.len();
     let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(64 + n * 16);
 
@@ -639,7 +645,9 @@ fn build_level_rectangles(cells: &mut [MergeCell]) -> Vec<HorizontalRect> {
 mod tests {
     use super::*;
     use crate::constants::DEFAULT_MIN_DBZ;
-    use crate::types::{EchoTopDebugMetadata, GridDef, LevelBounds, PhaseDebugMetadata};
+    use crate::types::{
+        EchoTopDebugMetadata, GridDef, LevelBounds, PhaseDebugMetadata, StoredEchoTop,
+    };
     use crate::weather::projection::build_query_window;
 
     fn sample_scan_for_projection() -> ScanSnapshot {
@@ -688,6 +696,63 @@ mod tests {
                 assert!((cached_z - direct_z).abs() < 1e-9);
             }
         }
+    }
+
+    #[test]
+    fn echo_top_payload_is_avet_and_holds_only_cells_inside_the_window() {
+        use approach_viz_core::generated::EchoTops;
+
+        let mut scan = sample_scan_for_projection();
+        scan.generated_at_ms = 1_700_000_000_123;
+        scan.scan_time_ms = 1_700_000_000_000;
+        scan.echo_top_debug.max_top18_feet = Some(41_000);
+        // Row 3, column 4 sits under the query origin; row 0, column 0 is ~11 NM away.
+        scan.echo_tops = vec![
+            StoredEchoTop {
+                row: 3,
+                col: 4,
+                top18_feet: 20_000,
+                top30_feet: 15_000,
+                top50_feet: 0,
+                top60_feet: 0,
+            },
+            StoredEchoTop {
+                row: 0,
+                col: 0,
+                top18_feet: 41_000,
+                top30_feet: 0,
+                top50_feet: 0,
+                top60_feet: 0,
+            },
+        ];
+        let window = build_query_window(&scan, 35.15, -109.80, DEFAULT_MIN_DBZ, 2.0);
+
+        let bytes = build_echo_top_wire_fb(&scan, &window);
+
+        // FlatBuffers file identifier sits at bytes 4..8.
+        assert_eq!(&bytes[4..8], b"AVET");
+        let payload = flatbuffers::root::<EchoTops>(&bytes).expect("valid AVET payload");
+        assert_eq!(payload.cell_count(), 1);
+        assert_eq!(payload.source_cell_count(), 2);
+        assert_eq!(payload.max_top18_feet(), 41_000);
+        assert_eq!(payload.scan_time_ms(), 1_700_000_000_000);
+        assert_eq!(payload.generated_at_ms(), 1_700_000_000_123);
+        assert_eq!(payload.top18_feet().unwrap().iter().collect::<Vec<_>>(), vec![20_000]);
+        assert_eq!(payload.top30_feet().unwrap().iter().collect::<Vec<_>>(), vec![15_000]);
+        let (x, z) = (payload.x_nm().unwrap().get(0), payload.z_nm().unwrap().get(0));
+        assert!(x.abs() < 2.0 && z.abs() < 2.0, "cell should sit near the origin: ({x}, {z})");
+    }
+
+    #[test]
+    fn echo_top_payload_for_an_empty_window_is_a_valid_empty_payload() {
+        use approach_viz_core::generated::EchoTops;
+
+        let scan = sample_scan_for_projection();
+        let window = build_query_window(&scan, 35.15, -109.80, DEFAULT_MIN_DBZ, 2.0);
+        let bytes = build_echo_top_wire_fb(&scan, &window);
+        let payload = flatbuffers::root::<EchoTops>(&bytes).expect("valid AVET payload");
+        assert_eq!(payload.cell_count(), 0);
+        assert_eq!(payload.x_nm().map_or(0, |column| column.len()), 0);
     }
 
     fn cell(row: u32, col: u32, key: MergeKey, dbz_tenths: i16) -> MergeCell {

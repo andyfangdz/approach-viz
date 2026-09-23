@@ -20,6 +20,7 @@ const DEFAULT_MRMS_MIN_DBZ = 5;
 const DEFAULT_MRMS_MAX_RANGE_NM = 120;
 
 const FB_FILE_ID_AVMR = 'AVMR';
+const FB_FILE_ID_AVET = 'AVET';
 
 function envNumber(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -271,13 +272,20 @@ test('runtime MRMS meta and wire payload are structurally valid', async () => {
   assert.equal(echoTopResponse.status, 200, `Echo-top endpoint returned ${echoTopResponse.status}`);
   const echoTopContentType = (echoTopResponse.headers.get('content-type') || '').toLowerCase();
   assert.ok(
-    echoTopContentType.includes('application/json'),
+    echoTopContentType.includes('application/vnd.approach-viz.echo-tops.v3'),
     `Unexpected echo-top content-type: ${echoTopContentType || 'none'}`
   );
-  const echoTopPayload = expectJsonObject(await parseJson(echoTopResponse), 'echo-top');
-  assert.ok(isJsonArray(echoTopPayload.cells), 'Echo-top payload should include cells array');
   assert.ok(
-    isFiniteNumber(echoTopPayload.sourceCellCount),
-    'Echo-top payload should include sourceCellCount'
+    Boolean(echoTopResponse.headers.get('x-av-scan-time')),
+    'Echo-top response should include X-AV-SCAN-TIME header'
   );
+  const echoTopPayload = new Uint8Array(await echoTopResponse.arrayBuffer());
+  assert.ok(echoTopPayload.byteLength >= 8, 'Echo-top FlatBuffers payload too small');
+  const echoTopFileId = String.fromCharCode(
+    echoTopPayload[4],
+    echoTopPayload[5],
+    echoTopPayload[6],
+    echoTopPayload[7]
+  );
+  assert.equal(echoTopFileId, FB_FILE_ID_AVET, 'Unexpected echo-top FlatBuffers file identifier');
 });

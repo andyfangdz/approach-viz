@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -8,18 +9,17 @@ use aws_sdk_sqs::Client as SqsClient;
 use chrono::Utc;
 use regex::Regex;
 use serde_json::Value;
+use tokio::sync::watch;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 use super::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
 use super::processor::ingest_timestamp;
 use super::storage::persist_snapshot;
-use crate::constants::{
-    MAX_BASE_KEYS_LOOKUP, MAX_PENDING_ATTEMPTS, NOT_FOUND_INITIAL_RETRY_SECONDS,
-    NOT_FOUND_MAX_ATTEMPTS,
-};
-use crate::http_client::HttpStatusError;
-use crate::types::{AppState, PendingIngest};
+use crate::config::Config;
+use crate::constants::{MAX_BASE_KEYS_LOOKUP, MAX_PENDING_ATTEMPTS};
+use crate::http_client::is_not_found;
+use crate::types::{AppState, PendingIngest, ScanSnapshot};
 
 pub async fn spawn_background_workers(state: AppState) -> Result<()> {
     let worker_state = state.clone();
@@ -73,6 +73,8 @@ pub async fn run_ingest_profile(state: &AppState, timestamp: &str, repeats: u32)
             scan.echo_tops.len(),
             started.elapsed().as_millis(),
         );
+        let (voxel_fp, meta_fp) = scan_fingerprint(&scan);
+        info!("Scan fingerprint: voxels={voxel_fp:016x} meta={meta_fp:016x}");
     }
 
     Ok(())
@@ -269,26 +271,59 @@ async fn enqueue_timestamp(state: &AppState, timestamp: &str) {
         });
 }
 
-async fn ingest_scheduler_loop(state: AppState) {
-    loop {
-        let candidate = {
-            let now = Instant::now();
-            let mut pending = state.pending.lock().await;
-
-            let mut selected: Option<(String, Instant)> = None;
-            for (timestamp, entry) in pending.iter() {
-                if entry.next_attempt_at <= now {
-                    match &selected {
-                        Some((current_timestamp, current_due_at))
-                            if entry.next_attempt_at > *current_due_at
-                                || (entry.next_attempt_at == *current_due_at
-                                    && timestamp >= current_timestamp) => {}
-                        _ => selected = Some((timestamp.clone(), entry.next_attempt_at)),
-                    }
-                }
+/// Persists snapshots on its own task so a new scan is served as soon as it is
+/// assembled instead of after the (multi-second) serialize + compress + write.
+/// The channel keeps only the newest scan: if persisting falls behind, scans it
+/// never got to are superseded rather than queued.
+fn spawn_persist_worker(cfg: Arc<Config>) -> watch::Sender<Option<Arc<ScanSnapshot>>> {
+    let (sender, mut receiver) = watch::channel::<Option<Arc<ScanSnapshot>>>(None);
+    tokio::spawn(async move {
+        while receiver.changed().await.is_ok() {
+            let Some(scan) = receiver.borrow_and_update().clone() else {
+                continue;
+            };
+            if let Err(error) = persist_snapshot(&cfg, scan.clone()).await {
+                error!("Failed to persist scan {}: {error:#}", scan.timestamp);
             }
+        }
+    });
+    sender
+}
 
-            selected.and_then(|(timestamp, _)| {
+async fn mark_handled(state: &AppState, timestamp: &str) {
+    let mut recent = state.recent_timestamps.lock().await;
+    recent.insert(timestamp.to_string());
+    if recent.len() > 512 {
+        if let Some(first) = recent.iter().next().cloned() {
+            recent.remove(&first);
+        }
+    }
+}
+
+/// The pending timestamp to ingest next: the newest one that is due.
+fn next_due_timestamp(
+    pending: &std::collections::HashMap<String, PendingIngest>,
+    now: Instant,
+) -> Option<String> {
+    pending
+        .iter()
+        .filter(|(_, entry)| entry.next_attempt_at <= now)
+        .map(|(timestamp, _)| timestamp)
+        .max()
+        .cloned()
+}
+
+async fn ingest_scheduler_loop(state: AppState) {
+    let persist_sender = spawn_persist_worker(state.cfg.clone());
+    loop {
+        // Newest due timestamp first: a live product only wants the latest scan,
+        // and finishing it drops every older pending timestamp (see below), so
+        // a backlog (cold start, long outage) costs one ingest instead of one
+        // per missed scan.
+        let candidate = {
+            let mut pending = state.pending.lock().await;
+            let selected = next_due_timestamp(&pending, Instant::now());
+            selected.and_then(|timestamp| {
                 let entry = pending.remove(&timestamp)?;
                 Some((timestamp, entry))
             })
@@ -309,10 +344,6 @@ async fn ingest_scheduler_loop(state: AppState) {
                     scan.phase_debug.detail,
                 );
 
-                if let Err(error) = persist_snapshot(&state.cfg, scan.clone()).await {
-                    error!("Failed to persist scan {}: {error:#}", scan.timestamp);
-                }
-
                 {
                     let mut latest = state.latest.write().await;
                     let should_replace = match latest.as_ref() {
@@ -324,49 +355,39 @@ async fn ingest_scheduler_loop(state: AppState) {
                     }
                 }
 
-                {
-                    let mut recent = state.recent_timestamps.lock().await;
-                    recent.insert(scan.timestamp.clone());
-                    if recent.len() > 512 {
-                        if let Some(first) = recent.iter().next().cloned() {
-                            recent.remove(&first);
-                        }
-                    }
-                }
+                mark_handled(&state, &scan.timestamp).await;
 
                 {
                     let mut pending = state.pending.lock().await;
                     pending.retain(|timestamp, _| timestamp > &scan.timestamp);
                 }
+
+                persist_sender.send_replace(Some(scan));
+            }
+            Err(error) if is_not_found(&error) => {
+                // Missing objects are awaited for the whole publication window
+                // inside the ingest, so a 404 that survives is permanent (or the
+                // scan was already past the window). Retrying would re-download
+                // every level that is present for the same result, and the
+                // bootstrap poll must not queue it again.
+                warn!("Skipping MRMS scan {timestamp}: {error:#}");
+                mark_handled(&state, &timestamp).await;
+                state.pending.lock().await.remove(&timestamp);
             }
             Err(error) => {
-                let is_not_found = error.chain().any(|cause| {
-                    cause
-                        .downcast_ref::<HttpStatusError>()
-                        .is_some_and(|e| e.status == 404)
-                });
-                let (max_attempts, retry_delay) = if is_not_found {
-                    // Exponential backoff: 5s, 10s, 20s, … (capped at 3 attempts)
-                    let delay = Duration::from_secs(NOT_FOUND_INITIAL_RETRY_SECONDS)
-                        * 2u32.pow(pending_entry.attempts);
-                    (NOT_FOUND_MAX_ATTEMPTS, delay)
-                } else {
-                    (MAX_PENDING_ATTEMPTS, state.cfg.pending_retry_delay)
-                };
-
                 let next_attempt = pending_entry.attempts + 1;
                 warn!(
                     "Ingest attempt {} failed (attempt {}/{}): {error:#}",
-                    timestamp, next_attempt, max_attempts,
+                    timestamp, next_attempt, MAX_PENDING_ATTEMPTS,
                 );
 
-                if next_attempt < max_attempts {
+                if next_attempt < MAX_PENDING_ATTEMPTS {
                     let mut pending = state.pending.lock().await;
                     pending.insert(
                         timestamp,
                         PendingIngest {
                             attempts: next_attempt,
-                            next_attempt_at: Instant::now() + retry_delay,
+                            next_attempt_at: Instant::now() + state.cfg.pending_retry_delay,
                         },
                     );
                 }
@@ -375,10 +396,109 @@ async fn ingest_scheduler_loop(state: AppState) {
     }
 }
 
+/// Order-sensitive digests of a scan (voxels; everything else) so profiling runs
+/// can prove an optimization left the produced snapshot unchanged.
+fn scan_fingerprint(scan: &crate::types::ScanSnapshot) -> (u64, u64) {
+    use std::hash::Hasher;
+    let mut voxels = rustc_hash::FxHasher::default();
+    for v in &scan.voxels {
+        voxels.write_u16(v.row);
+        voxels.write_u16(v.col);
+        voxels.write_u8(v.level_idx);
+        voxels.write_u8(v.phase);
+        voxels.write_u8(v.surface_phase);
+        voxels.write_i16(v.dbz_tenths);
+    }
+    let mut meta = rustc_hash::FxHasher::default();
+    for e in &scan.echo_tops {
+        meta.write_u16(e.row);
+        meta.write_u16(e.col);
+        meta.write_u16(e.top18_feet);
+        meta.write_u16(e.top30_feet);
+        meta.write_u16(e.top50_feet);
+        meta.write_u16(e.top60_feet);
+    }
+    for o in &scan.tile_offsets {
+        meta.write_u32(*o);
+    }
+    for b in &scan.level_bounds {
+        meta.write_u16(b.bottom_feet);
+        meta.write_u16(b.top_feet);
+    }
+    meta.write(format!("{:?}|{:?}|{:?}|{}|{}|{}", scan.grid, scan.echo_top_debug, scan.phase_debug, scan.tile_size, scan.tile_cols, scan.tile_rows).as_bytes());
+    (voxels.finish(), meta.finish())
+}
+
 fn bool_label(value: bool) -> &'static str {
     if value {
         "yes"
     } else {
         "no"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn pending(entries: &[(&str, Duration)], now: Instant) -> HashMap<String, PendingIngest> {
+        entries
+            .iter()
+            .map(|(timestamp, due_in)| {
+                (
+                    timestamp.to_string(),
+                    PendingIngest {
+                        attempts: 0,
+                        next_attempt_at: now + *due_in,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn newest_due_timestamp_is_ingested_first() {
+        let now = Instant::now();
+        let queue = pending(
+            &[
+                ("20260923-200000", Duration::ZERO),
+                ("20260923-201442", Duration::ZERO),
+                ("20260923-200240", Duration::ZERO),
+            ],
+            now,
+        );
+        assert_eq!(next_due_timestamp(&queue, now).as_deref(), Some("20260923-201442"));
+    }
+
+    #[test]
+    fn timestamps_that_are_not_due_yet_are_skipped() {
+        let now = Instant::now();
+        let queue = pending(
+            &[
+                ("20260923-201442", Duration::from_secs(30)),
+                ("20260923-200240", Duration::ZERO),
+            ],
+            now,
+        );
+        assert_eq!(next_due_timestamp(&queue, now).as_deref(), Some("20260923-200240"));
+        assert_eq!(next_due_timestamp(&queue, now + Duration::from_secs(30)).as_deref(), Some("20260923-201442"));
+    }
+
+    #[test]
+    fn nothing_is_selected_when_nothing_is_due() {
+        let now = Instant::now();
+        assert_eq!(next_due_timestamp(&HashMap::new(), now), None);
+        let queue = pending(&[("20260923-201442", Duration::from_secs(5))], now);
+        assert_eq!(next_due_timestamp(&queue, now), None);
+    }
+
+    #[test]
+    fn sqs_bodies_yield_base_level_timestamps_only() {
+        let regex = Regex::new(r#"MergedReflectivityQC_00\.50[^\s"']*_(\d{8}-\d{6})\.grib2\.gz"#).unwrap();
+        let body = r#"{"Message":"{\"Records\":[{\"s3\":{\"object\":{\"key\":\"CONUS/MergedReflectivityQC_00.50/20260923/MRMS_MergedReflectivityQC_00.50_20260923-201442.grib2.gz\"}}}]}"}"#;
+        assert_eq!(extract_timestamps_from_sqs_body(body, &regex), vec!["20260923-201442"]);
+        let other = r#"{"Message":"CONUS/MergedReflectivityQC_03.00/20260923/MRMS_MergedReflectivityQC_03.00_20260923-201442.grib2.gz"}"#;
+        assert!(extract_timestamps_from_sqs_body(other, &regex).is_empty());
     }
 }

@@ -64,8 +64,28 @@ pub const DEFAULT_BOOTSTRAP_INTERVAL_SECONDS: u64 = 300;
 pub const DEFAULT_SQS_POLL_DELAY_SECONDS: u64 = 3;
 pub const DEFAULT_PENDING_RETRY_SECONDS: u64 = 30;
 pub const MAX_PENDING_ATTEMPTS: u32 = 20;
-pub const NOT_FOUND_INITIAL_RETRY_SECONDS: u64 = 5;
-pub const NOT_FOUND_MAX_ATTEMPTS: u32 = 3;
+/// NOAA publishes a scan's objects in waves: the base level first, most levels
+/// ~30 s later and the highest levels up to ~95 s after the timestamp in the
+/// key. A 404 for an object whose key timestamp is younger than this window
+/// means "not published yet"; an older 404 is permanent.
+pub const PUBLICATION_WINDOW_SECONDS: i64 = 180;
+pub const PUBLICATION_POLL_INTERVAL_MS: u64 = 1500;
+/// A scan first seen after its publication window (late SQS delivery, or a base
+/// level that was itself published late) still gets this long from the start of
+/// its ingest for the remaining levels to appear.
+pub const PUBLICATION_MIN_WAIT_SECONDS: u64 = 90;
+/// While polling for a level, the exact key is tried every poll and a neighbor
+/// listing every this-many polls (listings are the costlier request).
+pub const NEIGHBOR_LOOKUP_EVERY_POLLS: u32 = 3;
+/// Levels of one reflectivity scan are not always stamped with the same second:
+/// on ~8% of scans some levels carry a stamp 1-6 s off the base level's. Scans
+/// are 120 s apart, so the file of a level within this many seconds of the base
+/// stamp belongs to the same scan.
+pub const LEVEL_TIMESTAMP_TOLERANCE_SECONDS: i64 = 10;
+/// Extra wait for a dual-pol level that is missing once the matching
+/// reflectivity level has arrived. The dual-pol scan predates the reflectivity
+/// scan, so a brief grace is enough and a missing level never stalls the ingest.
+pub const DUAL_POL_PUBLICATION_GRACE_SECONDS: u64 = 15;
 pub const STORE_MIN_DBZ_TENTHS: i16 = 50;
 pub const MAX_BASE_KEYS_LOOKUP: usize = 120;
 pub const MAX_BASE_DAY_LOOKBACK: i64 = 1;
@@ -82,3 +102,5 @@ pub const VOLUME_FB_CONTENT_TYPE: &str = "application/vnd.approach-viz.mrms.v5";
 
 pub const SNAPSHOT_MAGIC: [u8; 4] = *b"AVSN";
 pub const SNAPSHOT_VERSION: u16 = 1;
+/// Level 3 halves the CPU of level 6 (0.8 s vs 1.8 s per CONUS scan) for ~12% larger files.
+pub const SNAPSHOT_ZSTD_LEVEL: i32 = 3;

@@ -1,12 +1,16 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
-use tracing::warn;
+use tokio::sync::{OnceCell, Semaphore};
+use tokio::time::Instant;
+use tracing::{info, warn};
 
 use wide::{i16x8, CmpEq, CmpGt};
 
+use super::grib::{parse_aux_grib_gzipped, parse_reflectivity_grib_gzipped};
 use super::phase::{promote_mixed_transition_edges, LevelPhaseVoxel};
 use super::phase_batch::{
     compute_phase_scores_branchless, FLAG_FORCED_PRECIP_SNOW, FLAG_SUPPRESSED_DUAL,
@@ -14,22 +18,21 @@ use super::phase_batch::{
 };
 use super::simd_lut::COMPRESS_LUT;
 use super::sources::{
-    build_level_key, fetch_aux_field_at_timestamp, fetch_level_aux_field_at_timestamp,
-    fetch_mrms_key_bytes, find_latest_aux_timestamp_at_or_before,
-    find_latest_level_timestamp_at_or_before, parse_reflectivity_grib_with_limit,
-    timestamp_age_seconds,
+    build_level_key, fetch_aux_field_at_timestamp, fetch_mrms_key_bytes,
+    fetch_mrms_key_bytes_when_published, fetch_reflectivity_level_bytes,
+    find_latest_aux_timestamp_at_or_before,
+    find_latest_level_timestamp_at_or_before, timestamp_age_seconds,
 };
 use crate::constants::{
-    DUAL_POL_STALE_THRESHOLD_SECONDS, FEET_PER_KM, LEVEL_TAGS, MRMS_BASE_LEVEL_TAG,
-    MRMS_BRIGHT_BAND_BOTTOM_PRODUCT, MRMS_BRIGHT_BAND_TOP_PRODUCT, MRMS_ECHO_TOP_18_PRODUCT,
-    MRMS_ECHO_TOP_30_PRODUCT, MRMS_ECHO_TOP_50_PRODUCT, MRMS_ECHO_TOP_60_PRODUCT,
-    MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_MODEL_SURFACE_TEMP_PRODUCT,
-    MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_PRODUCT_PREFIX,
-    MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX, STORE_MIN_DBZ_TENTHS,
+    DUAL_POL_PUBLICATION_GRACE_SECONDS, DUAL_POL_STALE_THRESHOLD_SECONDS, FEET_PER_KM, LEVEL_TAGS,
+    MRMS_BASE_LEVEL_TAG, MRMS_BRIGHT_BAND_BOTTOM_PRODUCT, MRMS_BRIGHT_BAND_TOP_PRODUCT,
+    MRMS_ECHO_TOP_18_PRODUCT, MRMS_ECHO_TOP_30_PRODUCT, MRMS_ECHO_TOP_50_PRODUCT,
+    MRMS_ECHO_TOP_60_PRODUCT, MRMS_MODEL_FREEZING_HEIGHT_PRODUCT, MRMS_MODEL_SURFACE_TEMP_PRODUCT,
+    MRMS_MODEL_WET_BULB_TEMP_PRODUCT, MRMS_PRECIP_FLAG_PRODUCT, MRMS_RHOHV_PRODUCT_PREFIX, MRMS_RQI_PRODUCT, MRMS_ZDR_PRODUCT_PREFIX, STORE_MIN_DBZ_TENTHS,
 };
 use crate::types::{
-    AppState, EchoTopDebugMetadata, GridDef, LevelBounds, ParsedAuxField, ParsedReflectivityField,
-    PhaseDebugMetadata, ScanSnapshot, StoredEchoTop, StoredVoxel,
+    AppState, AuxValues, EchoTopDebugMetadata, GridDef, LevelBounds, ParsedAuxField,
+    ParsedReflectivityField, PhaseDebugMetadata, ScanSnapshot, StoredEchoTop, StoredVoxel,
 };
 use crate::utils::{parse_timestamp_utc, round_u16, to_lon360};
 
@@ -123,14 +126,11 @@ pub fn filter_voxels_by_threshold(dbz_tenths: &[i16], threshold: i16, nx: u32, o
     }
 }
 
-/// Flat f32 arrays of aux field values for valid voxel indices.
-/// NaN indicates missing/unavailable values.
+/// Base-level aux fields (one 2-D field each, shared by every level) sampled at
+/// the voxels that survive the reflectivity filter. `NaN` marks missing values.
 ///
-/// Designed for reuse across levels: call `resize_and_fill_nan(n)` to
-/// prepare for the next level without re-allocating when n <= previous capacity.
+/// Designed for reuse across levels: the buffers are refilled in place.
 pub(crate) struct GatheredAuxFields {
-    pub(crate) zdr: Vec<f32>,
-    pub(crate) rhohv: Vec<f32>,
     pub(crate) precip_flag: Vec<f32>,
     pub(crate) freezing_level: Vec<f32>,
     pub(crate) wet_bulb: Vec<f32>,
@@ -143,8 +143,6 @@ pub(crate) struct GatheredAuxFields {
 impl GatheredAuxFields {
     fn new() -> Self {
         Self {
-            zdr: Vec::new(),
-            rhohv: Vec::new(),
             precip_flag: Vec::new(),
             freezing_level: Vec::new(),
             wet_bulb: Vec::new(),
@@ -154,135 +152,406 @@ impl GatheredAuxFields {
             rqi: Vec::new(),
         }
     }
-
-    /// Resize all arrays to `n` and fill with NaN.
-    /// When `n <= capacity`, this avoids allocation; only the NaN-fill runs.
-    fn resize_and_fill_nan(&mut self, n: usize) {
-        // Fill with NaN by clearing then resizing (resize only memsets new elements,
-        // so we clear first to ensure all positions are NaN)
-        fn fill_nan(v: &mut Vec<f32>, n: usize) {
-            v.clear();
-            v.resize(n, f32::NAN);
-        }
-        fill_nan(&mut self.zdr, n);
-        fill_nan(&mut self.rhohv, n);
-        fill_nan(&mut self.precip_flag, n);
-        fill_nan(&mut self.freezing_level, n);
-        fill_nan(&mut self.wet_bulb, n);
-        fill_nan(&mut self.surface_temp, n);
-        fill_nan(&mut self.bright_band_top, n);
-        fill_nan(&mut self.bright_band_bottom, n);
-        fill_nan(&mut self.rqi, n);
-    }
 }
 
-/// Pass 2: Gather aux field values for valid voxel indices into flat f32 arrays.
+/// Samplers for the seven base-level aux fields.
+pub(crate) struct BaseAuxSamplers<'a> {
+    precip: AuxFieldSampler<'a>,
+    freezing: AuxFieldSampler<'a>,
+    wet_bulb: AuxFieldSampler<'a>,
+    surface_temp: AuxFieldSampler<'a>,
+    bright_band_top: AuxFieldSampler<'a>,
+    bright_band_bottom: AuxFieldSampler<'a>,
+    rqi: AuxFieldSampler<'a>,
+}
+
+/// Pass 2: Gather base-level aux field values for the filtered voxels into flat
+/// f32 arrays.
 ///
 /// Uses NaN as sentinel for missing values. This separates the Option-chain
 /// indirection (AuxFieldSampler lookup) from the compute pass, so the compute
 /// pass can operate on flat arrays without branches.
 ///
-/// Accepts precomputed row/col arrays from `filter_voxels_by_threshold` to
-/// avoid repeated `idx / nx` and `idx % nx` integer division.
-///
-/// Writes into `out` (caller should pre-allocate and reuse across levels).
+/// Uses the row/col arrays precomputed by `filter_voxels_by_threshold` to avoid
+/// repeated `idx / nx` and `idx % nx` integer division.
 #[inline(never)] // Preserve as named function for LLVM remarks + asm inspection
-fn gather_aux_fields(
+fn gather_base_aux_fields(
     filter: &FilterResult,
-    zdr_values: Option<&[f32]>,
-    rhohv_values: Option<&[f32]>,
-    precip_sampler: &AuxFieldSampler,
-    freezing_sampler: &AuxFieldSampler,
-    wet_bulb_sampler: &AuxFieldSampler,
-    surface_temp_sampler: &AuxFieldSampler,
-    bright_band_top_sampler: &AuxFieldSampler,
-    bright_band_bottom_sampler: &AuxFieldSampler,
-    rqi_sampler: &AuxFieldSampler,
+    samplers: &BaseAuxSamplers,
     out: &mut GatheredAuxFields,
 ) {
-    let n = filter.indices.len();
-    out.resize_and_fill_nan(n);
+    samplers.precip.gather(filter, &mut out.precip_flag);
+    samplers.freezing.gather(filter, &mut out.freezing_level);
+    samplers.wet_bulb.gather(filter, &mut out.wet_bulb);
+    samplers.surface_temp.gather(filter, &mut out.surface_temp);
+    samplers
+        .bright_band_top
+        .gather(filter, &mut out.bright_band_top);
+    samplers
+        .bright_band_bottom
+        .gather(filter, &mut out.bright_band_bottom);
+    samplers.rqi.gather(filter, &mut out.rqi);
+}
 
-    for out_i in 0..n {
-        let value_idx = filter.indices[out_i] as usize;
-        let row = filter.rows[out_i] as usize;
-        let col = filter.cols[out_i] as usize;
+/// One reflectivity level reduced from a full-CONUS grid to the sparse voxels at
+/// or above the storage threshold, together with the dual-pol values sampled at
+/// exactly those voxels. Everything downstream (phase scoring, promotion, tile
+/// packing) needs only this, so the 49-98 MB decoded grids are dropped as soon as
+/// a level is reduced.
+pub(crate) struct LevelInputs {
+    level_idx: u8,
+    level_tag: &'static str,
+    grid: GridDef,
+    filtered: FilterResult,
+    /// Reflectivity (tenths of dBZ) at each filtered voxel.
+    dbz_tenths: Vec<i16>,
+    zdr: DualPolLevel,
+    rhohv: DualPolLevel,
+}
 
-        if let Some(vals) = zdr_values {
-            if let Some(&v) = vals.get(value_idx) {
-                out.zdr[out_i] = v;
-            }
+struct DualPolLevel {
+    /// The level was fetched and decoded, whether or not its grid matched. This
+    /// is what the bundle-completeness check counts.
+    available: bool,
+    /// Values at each filtered voxel; `None` when unavailable or grid-mismatched.
+    values: Option<Vec<f32>>,
+}
+
+/// Dual-pol scan chosen to accompany a reflectivity scan: the exact timestamp
+/// when its base level exists, otherwise the latest earlier one.
+struct DualPolSource {
+    product_prefix: &'static str,
+    selected_timestamp: Option<String>,
+    age_seconds: Option<i64>,
+    /// Compressed base level, already downloaded while probing for the exact
+    /// or latest timestamp; consumed by level 0.
+    base_level_zipped: StdMutex<Option<Vec<u8>>>,
+}
+
+impl DualPolSource {
+    fn take_base_level_zipped(&self) -> Option<Vec<u8>> {
+        self.base_level_zipped
+            .lock()
+            .expect("dual-pol base level mutex poisoned")
+            .take()
+    }
+}
+
+/// Lazily selected once per ingest and shared by all level tasks.
+struct DualPolSources {
+    zdr: OnceCell<DualPolSource>,
+    rhohv: OnceCell<DualPolSource>,
+}
+
+impl DualPolSources {
+    fn new() -> Self {
+        Self {
+            zdr: OnceCell::new(),
+            rhohv: OnceCell::new(),
         }
-        if let Some(vals) = rhohv_values {
-            if let Some(&v) = vals.get(value_idx) {
-                out.rhohv[out_i] = v;
-            }
-        }
-        if let Some(v) = precip_sampler.sample(value_idx, row, col) {
-            out.precip_flag[out_i] = v;
-        }
-        if let Some(v) = freezing_sampler.sample(value_idx, row, col) {
-            out.freezing_level[out_i] = v;
-        }
-        if let Some(v) = wet_bulb_sampler.sample(value_idx, row, col) {
-            out.wet_bulb[out_i] = v;
-        }
-        if let Some(v) = surface_temp_sampler.sample(value_idx, row, col) {
-            out.surface_temp[out_i] = v;
-        }
-        if let Some(v) = bright_band_top_sampler.sample(value_idx, row, col) {
-            out.bright_band_top[out_i] = v;
-        }
-        if let Some(v) = bright_band_bottom_sampler.sample(value_idx, row, col) {
-            out.bright_band_bottom[out_i] = v;
-        }
-        if let Some(v) = rqi_sampler.sample(value_idx, row, col) {
-            out.rqi[out_i] = v;
-        }
+    }
+
+    async fn zdr(&self, state: &AppState, timestamp: &str) -> &DualPolSource {
+        self.zdr
+            .get_or_init(|| select_dual_pol_source(state, MRMS_ZDR_PRODUCT_PREFIX, timestamp))
+            .await
+    }
+
+    async fn rhohv(&self, state: &AppState, timestamp: &str) -> &DualPolSource {
+        self.rhohv
+            .get_or_init(|| select_dual_pol_source(state, MRMS_RHOHV_PRODUCT_PREFIX, timestamp))
+            .await
+    }
+}
+
+/// Selected dual-pol scan metadata carried into the assembled snapshot.
+struct DualPolSummary {
+    zdr_timestamp: Option<String>,
+    zdr_age_seconds: Option<i64>,
+    rhohv_timestamp: Option<String>,
+    rhohv_age_seconds: Option<i64>,
+}
+
+/// Adds a permit when dropped, on every exit path of a level task, so the aux
+/// fetch below never waits on a level that failed or was cancelled.
+struct DownloadedSignal(Arc<Semaphore>);
+
+impl Drop for DownloadedSignal {
+    fn drop(&mut self) {
+        self.0.add_permits(1);
     }
 }
 
 pub(super) async fn ingest_timestamp(state: &AppState, timestamp: &str) -> Result<Arc<ScanSnapshot>> {
-    let date_part = timestamp
-        .split('-')
-        .next()
-        .ok_or_else(|| anyhow!("Invalid timestamp format: {timestamp}"))?;
+    let started = Instant::now();
+    if parse_timestamp_utc(timestamp).is_none() {
+        bail!("Invalid timestamp format: {timestamp}");
+    }
 
-    let (levels_result, zdr_bundle, rhohv_bundle, thermo_aux_bundle, echo_top_bundle) = tokio::join!(
-        parse_reflectivity_levels(state, timestamp, date_part),
-        fetch_dual_pol_bundle(state, MRMS_ZDR_PRODUCT_PREFIX, timestamp),
-        fetch_dual_pol_bundle(state, MRMS_RHOHV_PRODUCT_PREFIX, timestamp),
-        fetch_thermo_aux_bundle(state, timestamp),
-        fetch_echo_top_bundle(state, timestamp),
-    );
-    let levels = levels_result?;
+    // Every level is its own task: it waits for NOAA to publish its reflectivity
+    // object, pairs it with the dual-pol level, and reduces both to sparse voxel
+    // inputs. A level that lands late delays only itself, so nothing already
+    // downloaded or decoded is ever repeated, and only a few full grids are
+    // resident at once (bounded by the parse limiter).
+    let dual_pol = Arc::new(DualPolSources::new());
+    let downloaded = Arc::new(Semaphore::new(0));
+    let mut level_tasks = FuturesUnordered::new();
+    let mut aborts = Vec::with_capacity(LEVEL_TAGS.len());
+    for level_idx in 0..LEVEL_TAGS.len() {
+        let handle = tokio::spawn(ingest_level(
+            state.clone(),
+            timestamp.to_string(),
+            level_idx,
+            dual_pol.clone(),
+            downloaded.clone(),
+            started,
+        ));
+        aborts.push(handle.abort_handle());
+        level_tasks.push(handle);
+    }
+
+    let levels_future = async {
+        let mut levels: Vec<Option<LevelInputs>> = (0..LEVEL_TAGS.len()).map(|_| None).collect();
+        while let Some(joined) = level_tasks.next().await {
+            let level = joined.context("Join error while ingesting MRMS level")??;
+            let slot = level.level_idx as usize;
+            levels[slot] = Some(level);
+        }
+        levels
+            .into_iter()
+            .enumerate()
+            .map(|(idx, level)| level.ok_or_else(|| anyhow!("Missing parsed level {}", LEVEL_TAGS[idx])))
+            .collect::<Result<Vec<_>>>()
+    };
+    // Thermodynamic and echo-top products are picked as "latest at or before
+    // this scan". Several are published a little after the base level, so they
+    // are selected once every level is in, which finds the freshest ones; their
+    // download and decode overlap the tail of the level decoding.
+    let aux_future = async {
+        let _all_downloaded = downloaded
+            .acquire_many(LEVEL_TAGS.len() as u32)
+            .await
+            .context("Level download gate closed")?;
+        let downloaded_at = started.elapsed();
+        let (thermo, echo) = tokio::join!(
+            fetch_thermo_aux_bundle(state, timestamp),
+            fetch_echo_top_bundle(state, timestamp),
+        );
+        Ok::<_, anyhow::Error>((downloaded_at, thermo, echo))
+    };
+
+    let joined = tokio::try_join!(levels_future, aux_future);
+    if joined.is_err() {
+        // Stop levels that have not started decoding; the scan is abandoned.
+        for abort in &aborts {
+            abort.abort();
+        }
+    }
+    let (levels, (downloaded_at, thermo_aux_bundle, echo_top_bundle)) = joined?;
+    let decoded_at = started.elapsed();
+
+    let summary = DualPolSummary {
+        zdr_timestamp: dual_pol
+            .zdr
+            .get()
+            .and_then(|source| source.selected_timestamp.clone()),
+        zdr_age_seconds: dual_pol.zdr.get().and_then(|source| source.age_seconds),
+        rhohv_timestamp: dual_pol
+            .rhohv
+            .get()
+            .and_then(|source| source.selected_timestamp.clone()),
+        rhohv_age_seconds: dual_pol.rhohv.get().and_then(|source| source.age_seconds),
+    };
 
     let tile_size = state.cfg.tile_size.max(16);
-    let timestamp = timestamp.to_string();
+    let timestamp_owned = timestamp.to_string();
     // Scan assembly is heavy synchronous grid compute (33 per-level
-    // filter/gather/score passes plus a full-grid echo-top scan, hundreds of
-    // ms). Run it on the blocking pool so it cannot stall async runtime
-    // workers that are concurrently serving HTTP requests and SQS polling.
-    tokio::task::spawn_blocking(move || {
+    // score/promote passes plus a full-grid echo-top scan). Run it on the
+    // blocking pool so it cannot stall async runtime workers that are
+    // concurrently serving HTTP requests and SQS polling.
+    let scan = tokio::task::spawn_blocking(move || {
         assemble_scan_snapshot(
-            timestamp,
+            timestamp_owned,
             levels,
-            zdr_bundle,
-            rhohv_bundle,
+            summary,
             thermo_aux_bundle,
             echo_top_bundle,
             tile_size,
         )
     })
     .await
-    .context("Join error while assembling MRMS scan snapshot")?
+    .context("Join error while assembling MRMS scan snapshot")??;
+    info!(
+        "Ingest timings for {timestamp}: all levels downloaded after {}ms, decoded after {}ms, assembled after {}ms",
+        downloaded_at.as_millis(),
+        decoded_at.as_millis(),
+        started.elapsed().as_millis(),
+    );
+    Ok(scan)
+}
+
+async fn ingest_level(
+    state: AppState,
+    timestamp: String,
+    level_idx: usize,
+    dual_pol: Arc<DualPolSources>,
+    downloaded: Arc<Semaphore>,
+    ingest_started: Instant,
+) -> Result<LevelInputs> {
+    let level_tag = LEVEL_TAGS[level_idx];
+    let downloaded_signal = DownloadedSignal(downloaded);
+
+    let (reflectivity_zipped, zdr_source, rhohv_source) = tokio::join!(
+        fetch_reflectivity_level_bytes(&state, level_tag, &timestamp, ingest_started),
+        dual_pol.zdr(&state, &timestamp),
+        dual_pol.rhohv(&state, &timestamp),
+    );
+    let reflectivity_zipped = reflectivity_zipped?;
+    drop(downloaded_signal);
+
+    let (zdr_zipped, rhohv_zipped) = tokio::join!(
+        fetch_dual_pol_level_zipped(&state, zdr_source, level_idx),
+        fetch_dual_pol_level_zipped(&state, rhohv_source, level_idx),
+    );
+
+    let permit = state
+        .ingest_parse_limiter
+        .clone()
+        .acquire_owned()
+        .await
+        .context("Failed to acquire ingest parse limiter permit")?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        reduce_level(
+            level_idx,
+            &timestamp,
+            &reflectivity_zipped,
+            zdr_zipped.as_deref(),
+            rhohv_zipped.as_deref(),
+        )
+    })
+    .await
+    .context("Join error while reducing MRMS level")?
+}
+
+/// Decodes one level's reflectivity and dual-pol payloads and keeps only what
+/// scan assembly needs. The grids are decoded one at a time and dropped as soon
+/// as their values are extracted.
+fn reduce_level(
+    level_idx: usize,
+    timestamp: &str,
+    reflectivity_zipped: &[u8],
+    zdr_zipped: Option<&[u8]>,
+    rhohv_zipped: Option<&[u8]>,
+) -> Result<LevelInputs> {
+    let level_tag = LEVEL_TAGS[level_idx];
+    let reflectivity = parse_reflectivity_grib_gzipped(reflectivity_zipped)
+        .with_context(|| format!("Failed to decode reflectivity level {level_tag}"))?;
+    let ParsedReflectivityField {
+        grid,
+        dbz_tenths: full_grid_dbz,
+    } = reflectivity;
+    let point_count = full_grid_dbz.len();
+
+    let mut filtered = FilterResult::new();
+    filter_voxels_by_threshold(&full_grid_dbz, STORE_MIN_DBZ_TENTHS, grid.nx, &mut filtered);
+    let dbz_tenths: Vec<i16> = filtered
+        .indices
+        .iter()
+        .map(|&idx| full_grid_dbz[idx as usize])
+        .collect();
+    drop(full_grid_dbz);
+
+    let zdr = reduce_dual_pol_level(
+        "ZDR",
+        MRMS_ZDR_PRODUCT_PREFIX,
+        zdr_zipped,
+        &grid,
+        point_count,
+        &filtered.indices,
+        level_tag,
+        timestamp,
+    );
+    let rhohv = reduce_dual_pol_level(
+        "RhoHV",
+        MRMS_RHOHV_PRODUCT_PREFIX,
+        rhohv_zipped,
+        &grid,
+        point_count,
+        &filtered.indices,
+        level_tag,
+        timestamp,
+    );
+
+    Ok(LevelInputs {
+        level_idx: level_idx as u8,
+        level_tag,
+        grid,
+        filtered,
+        dbz_tenths,
+        zdr,
+        rhohv,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reduce_dual_pol_level(
+    product_label: &str,
+    product_prefix: &str,
+    zipped: Option<&[u8]>,
+    reflectivity_grid: &GridDef,
+    reflectivity_point_count: usize,
+    indices: &[u32],
+    level_tag: &str,
+    timestamp: &str,
+) -> DualPolLevel {
+    let Some(zipped) = zipped else {
+        return DualPolLevel {
+            available: false,
+            values: None,
+        };
+    };
+    let field = match parse_aux_grib_gzipped(zipped) {
+        Ok(field) => field,
+        Err(error) => {
+            warn!(
+                "{product_prefix} aux unavailable for level {level_tag} at {timestamp}: {error:#}"
+            );
+            return DualPolLevel {
+                available: false,
+                values: None,
+            };
+        }
+    };
+    if !is_same_grid(&field.grid, reflectivity_grid) {
+        warn!(
+            "{product_label} aux grid mismatch for level {level_tag} at {timestamp}; using aux fallback for affected voxels"
+        );
+        return DualPolLevel {
+            available: true,
+            values: None,
+        };
+    }
+    if field.values.len() != reflectivity_point_count {
+        warn!(
+            "{product_label} aux point-count mismatch for level {level_tag} at {timestamp}: expected {reflectivity_point_count}, got {}; using aux fallback for affected voxels",
+            field.values.len()
+        );
+        return DualPolLevel {
+            available: true,
+            values: None,
+        };
+    }
+    DualPolLevel {
+        available: true,
+        values: Some(field.values.gather(indices)),
+    }
 }
 
 fn assemble_scan_snapshot(
     timestamp: String,
-    levels: Vec<(u8, String, ParsedReflectivityField)>,
-    mut zdr_bundle: DualPolBundle,
-    mut rhohv_bundle: DualPolBundle,
+    levels: Vec<LevelInputs>,
+    dual_pol: DualPolSummary,
     thermo_aux_bundle: ThermoAuxBundle,
     echo_top_bundle: EchoTopBundle,
     tile_size: u16,
@@ -290,34 +559,25 @@ fn assemble_scan_snapshot(
     let timestamp = timestamp.as_str();
     let base_grid = levels
         .first()
-        .map(|(_, _, parsed)| parsed.grid.clone())
+        .map(|level| level.grid.clone())
         .ok_or_else(|| anyhow!("No parsed MRMS levels"))?;
 
-    for (_, tag, parsed) in levels.iter().skip(1) {
-        if !is_same_grid(&parsed.grid, &base_grid) {
-            bail!("MRMS grid mismatch for level {tag}");
+    for level in levels.iter().skip(1) {
+        if !is_same_grid(&level.grid, &base_grid) {
+            bail!("MRMS grid mismatch for level {}", level.level_tag);
         }
     }
 
-    if zdr_bundle.fields_by_level.len() != LEVEL_TAGS.len() {
-        zdr_bundle
-            .fields_by_level
-            .resize_with(LEVEL_TAGS.len(), || None);
-    }
-    if rhohv_bundle.fields_by_level.len() != LEVEL_TAGS.len() {
-        rhohv_bundle
-            .fields_by_level
-            .resize_with(LEVEL_TAGS.len(), || None);
-    }
-
-    let dual_pol_stale = zdr_bundle
-        .age_seconds
+    let zdr_available_levels = levels.iter().filter(|level| level.zdr.available).count();
+    let rhohv_available_levels = levels.iter().filter(|level| level.rhohv.available).count();
+    let dual_pol_stale = dual_pol
+        .zdr_age_seconds
         .is_some_and(|age| age > DUAL_POL_STALE_THRESHOLD_SECONDS)
-        || rhohv_bundle
-            .age_seconds
+        || dual_pol
+            .rhohv_age_seconds
             .is_some_and(|age| age > DUAL_POL_STALE_THRESHOLD_SECONDS);
-    let dual_pol_incomplete = zdr_bundle.available_level_count() < LEVEL_TAGS.len()
-        || rhohv_bundle.available_level_count() < LEVEL_TAGS.len();
+    let dual_pol_incomplete =
+        zdr_available_levels < LEVEL_TAGS.len() || rhohv_available_levels < LEVEL_TAGS.len();
     let use_aux_fallback = dual_pol_stale || dual_pol_incomplete;
 
     let level_km: Vec<f64> = LEVEL_TAGS
@@ -379,10 +639,11 @@ fn assemble_scan_snapshot(
     {
         echo_tops.reserve(point_count / 32);
         let nx = base_grid.nx as usize;
-        // Slice lengths are validated against point_count above, so direct
-        // indexing is in bounds for every value_idx below.
-        let sample =
-            |values: Option<&[f32]>, idx: usize| values.map_or(f32::NAN, |slice| slice[idx]);
+        // Value counts are validated against point_count above, so every
+        // value_idx below is in range.
+        let sample = |values: Option<&AuxValues>, idx: usize| {
+            values.map_or(f32::NAN, |values| values.get(idx).unwrap_or(f32::NAN))
+        };
         for value_idx in 0..point_count {
             let raw18 = sample(top18_values, value_idx);
             let raw30 = sample(top30_values, value_idx);
@@ -440,12 +701,32 @@ fn assemble_scan_snapshot(
     let tile_cols = ((base_grid.nx + tile_size as u32 - 1) / tile_size as u32) as u16;
     let tile_rows = ((base_grid.ny + tile_size as u32 - 1) / tile_size as u32) as u16;
     let tile_count = tile_cols as usize * tile_rows as usize;
+    let tile_index = |row: u16, col: u16| -> usize {
+        (row as usize / tile_size as usize) * tile_cols as usize + col as usize / tile_size as usize
+    };
 
-    // Voxels are appended in level/row order with their tile index recorded,
-    // then tile-grouped with a counting sort. This replaces thousands of
-    // independently growing per-tile bucket Vecs with two linear passes.
-    let mut all_voxels: Vec<StoredVoxel> = Vec::new();
-    let mut voxel_tile_indices: Vec<u32> = Vec::new();
+    // Every voxel's tile is known from the filtered positions alone, so tile
+    // offsets come from a counting pass and voxels are scattered straight into
+    // their final tile-grouped slots — no intermediate copy of all voxels.
+    let levels: Vec<LevelInputs> = levels
+        .into_iter()
+        .filter(|level| level_bounds.get(level.level_idx as usize).is_some())
+        .collect();
+    let mut tile_counts = vec![0_u32; tile_count];
+    for level in &levels {
+        for (&row, &col) in level.filtered.rows.iter().zip(&level.filtered.cols) {
+            tile_counts[tile_index(row, col)] += 1;
+        }
+    }
+    let mut tile_offsets = Vec::with_capacity(tile_count + 1);
+    tile_offsets.push(0_u32);
+    let mut running_offset = 0_u32;
+    for &count in &tile_counts {
+        running_offset += count;
+        tile_offsets.push(running_offset);
+    }
+    let mut tile_cursors: Vec<u32> = tile_offsets[..tile_count].to_vec();
+    let mut voxels = vec![StoredVoxel::default(); running_offset as usize];
 
     let precip_field = thermo_aux_bundle
         .precip_flag
@@ -531,24 +812,27 @@ fn assemble_scan_snapshot(
         "RadarQualityIndex",
         timestamp,
     );
-    let precip_sampler = AuxFieldSampler::new(precip_field, precip_values, &base_grid);
-    let freezing_sampler = AuxFieldSampler::new(freezing_field, freezing_values, &base_grid);
-    let wet_bulb_sampler = AuxFieldSampler::new(wet_bulb_field, wet_bulb_values, &base_grid);
-    let surface_temp_sampler =
-        AuxFieldSampler::new(surface_temp_field, surface_temp_values, &base_grid);
-    let bright_band_top_sampler =
-        AuxFieldSampler::new(bright_band_top_field, bright_band_top_values, &base_grid);
-    let bright_band_bottom_sampler = AuxFieldSampler::new(
-        bright_band_bottom_field,
-        bright_band_bottom_values,
-        &base_grid,
-    );
-    let rqi_sampler = AuxFieldSampler::new(rqi_field, rqi_values, &base_grid);
+    let samplers = BaseAuxSamplers {
+        precip: AuxFieldSampler::new(precip_field, precip_values, &base_grid),
+        freezing: AuxFieldSampler::new(freezing_field, freezing_values, &base_grid),
+        wet_bulb: AuxFieldSampler::new(wet_bulb_field, wet_bulb_values, &base_grid),
+        surface_temp: AuxFieldSampler::new(surface_temp_field, surface_temp_values, &base_grid),
+        bright_band_top: AuxFieldSampler::new(
+            bright_band_top_field,
+            bright_band_top_values,
+            &base_grid,
+        ),
+        bright_band_bottom: AuxFieldSampler::new(
+            bright_band_bottom_field,
+            bright_band_bottom_values,
+            &base_grid,
+        ),
+        rqi: AuxFieldSampler::new(rqi_field, rqi_values, &base_grid),
+    };
 
-    // Pre-allocate reusable working buffers for the per-level processing loop.
-    // Cleared and reused each iteration to avoid 33 × ~17 allocations per ingest.
-    let mut filtered = FilterResult::new();
+    // Reusable working buffers for the per-level processing loop.
     let mut gathered = GatheredAuxFields::new();
+    let mut missing_dual_pol: Vec<f32> = Vec::new();
 
     let mut dual_missing_voxel_count: u64 = 0;
     let mut thermo_signal_voxel_count: u64 = 0;
@@ -560,53 +844,32 @@ fn assemble_scan_snapshot(
     let mut mixed_edge_promoted_voxel_count: u64 = 0;
     let mut precip_snow_forced_voxel_count: u64 = 0;
 
-    for (level_idx, level_tag, parsed) in &levels {
-        let level_index = *level_idx as usize;
+    for level in levels {
+        let level_index = level.level_idx as usize;
         let Some(bounds) = level_bounds.get(level_index) else {
             continue;
         };
         let voxel_mid_feet = (bounds.bottom_feet as f64 + bounds.top_feet as f64) / 2.0;
-        let mut level_voxels: Vec<LevelPhaseVoxel> =
-            Vec::with_capacity((parsed.grid.nx as usize * parsed.grid.ny as usize) / 4);
+        let filtered = &level.filtered;
+        let voxel_count = filtered.indices.len();
+        let mut level_voxels: Vec<LevelPhaseVoxel> = Vec::with_capacity(voxel_count);
 
-        let zdr_values = validate_level_aux_values(
-            zdr_bundle.fields_by_level[level_index].as_ref(),
-            parsed,
-            "ZDR",
-            level_tag,
-            timestamp,
-        );
-        let rhohv_values = validate_level_aux_values(
-            rhohv_bundle.fields_by_level[level_index].as_ref(),
-            parsed,
-            "RhoHV",
-            level_tag,
-            timestamp,
-        );
-
-        // Pass 1: Filter (also precomputes row/col for each valid voxel)
-        filtered.clear();
-        filter_voxels_by_threshold(
-            &parsed.dbz_tenths,
-            STORE_MIN_DBZ_TENTHS,
-            parsed.grid.nx,
-            &mut filtered,
-        );
-
-        // Pass 2: Gather aux fields into flat f32 arrays (reuses pre-allocated buffers)
-        gather_aux_fields(
-            &filtered,
-            zdr_values,
-            rhohv_values,
-            &precip_sampler,
-            &freezing_sampler,
-            &wet_bulb_sampler,
-            &surface_temp_sampler,
-            &bright_band_top_sampler,
-            &bright_band_bottom_sampler,
-            &rqi_sampler,
-            &mut gathered,
-        );
+        // Pass 2: Gather base-level aux fields into flat f32 arrays (reuses
+        // pre-allocated buffers). Dual-pol values were gathered with the level.
+        gather_base_aux_fields(filtered, &samplers, &mut gathered);
+        if missing_dual_pol.len() < voxel_count
+            && (level.zdr.values.is_none() || level.rhohv.values.is_none())
+        {
+            missing_dual_pol.resize(voxel_count, f32::NAN);
+        }
+        let zdr_values: &[f32] = match level.zdr.values.as_deref() {
+            Some(values) => values,
+            None => &missing_dual_pol[..voxel_count],
+        };
+        let rhohv_values: &[f32] = match level.rhohv.values.as_deref() {
+            Some(values) => values,
+            None => &missing_dual_pol[..voxel_count],
+        };
 
         // Pass 3: Batch phase scoring
         let voxel_mid_feet_f32 = voxel_mid_feet as f32;
@@ -619,14 +882,13 @@ fn assemble_scan_snapshot(
             &gathered.bright_band_top,
             &gathered.bright_band_bottom,
             &gathered.rqi,
-            &gathered.zdr,
-            &gathered.rhohv,
+            zdr_values,
+            rhohv_values,
             use_aux_fallback,
         );
 
         // Pass 4: Tally + Pack (row/col precomputed in Pass 1)
-        for out_i in 0..filtered.indices.len() {
-            let value_idx = filtered.indices[out_i] as usize;
+        for out_i in 0..voxel_count {
             let row = filtered.rows[out_i];
             let col = filtered.cols[out_i];
 
@@ -663,7 +925,7 @@ fn assemble_scan_snapshot(
             level_voxels.push(LevelPhaseVoxel {
                 row,
                 col,
-                dbz_tenths: parsed.dbz_tenths[value_idx],
+                dbz_tenths: level.dbz_tenths[out_i],
                 phase: batch_result.phase[out_i],
                 surface_phase: batch_result.surface_phase[out_i],
                 transition_candidate: f & FLAG_TRANSITION_CANDIDATE != 0,
@@ -671,44 +933,22 @@ fn assemble_scan_snapshot(
         }
 
         mixed_edge_promoted_voxel_count +=
-            promote_mixed_transition_edges(&mut level_voxels, parsed.grid.nx, parsed.grid.ny);
+            promote_mixed_transition_edges(&mut level_voxels, level.grid.nx, level.grid.ny);
 
-        all_voxels.reserve(level_voxels.len());
-        voxel_tile_indices.reserve(level_voxels.len());
+        // Scatter into tile-grouped order. Levels are visited in order and each
+        // level's voxels in row order, so voxels stay level-major within a tile.
         for voxel in level_voxels {
-            let tile_row = voxel.row as usize / tile_size as usize;
-            let tile_col = voxel.col as usize / tile_size as usize;
-            voxel_tile_indices.push((tile_row * tile_cols as usize + tile_col) as u32);
-            all_voxels.push(StoredVoxel {
+            let cursor = &mut tile_cursors[tile_index(voxel.row, voxel.col)];
+            voxels[*cursor as usize] = StoredVoxel {
                 row: voxel.row,
                 col: voxel.col,
-                level_idx: *level_idx,
+                level_idx: level.level_idx,
                 phase: voxel.phase,
                 surface_phase: voxel.surface_phase,
                 dbz_tenths: voxel.dbz_tenths,
-            });
+            };
+            *cursor += 1;
         }
-    }
-
-    // Counting sort by tile index (stable: forward scan preserves the
-    // level-major insertion order within each tile).
-    let mut tile_counts = vec![0_u32; tile_count];
-    for &tile_idx in &voxel_tile_indices {
-        tile_counts[tile_idx as usize] += 1;
-    }
-    let mut tile_offsets = Vec::with_capacity(tile_count + 1);
-    tile_offsets.push(0_u32);
-    let mut running_offset = 0_u32;
-    for &count in &tile_counts {
-        running_offset += count;
-        tile_offsets.push(running_offset);
-    }
-    let mut tile_cursors: Vec<u32> = tile_offsets[..tile_count].to_vec();
-    let mut voxels = vec![StoredVoxel::default(); all_voxels.len()];
-    for (voxel, &tile_idx) in all_voxels.iter().zip(&voxel_tile_indices) {
-        let cursor = &mut tile_cursors[tile_idx as usize];
-        voxels[*cursor as usize] = *voxel;
-        *cursor += 1;
     }
 
     let scan_time_ms = parse_timestamp_utc(timestamp)
@@ -730,12 +970,12 @@ fn assemble_scan_snapshot(
         "aux_fallback={},aux_any={},zdr_levels={}/{},rhohv_levels={}/{},zdr_age_s={},rhohv_age_s={},aux_precip={},aux_freezing={},aux_wetbulb={},aux_surface_temp={},aux_brightband_pair={},aux_rqi={},thermo_signal_voxels={},thermo_no_signal_voxels={},dual_missing_voxels={},dual_adjusted_voxels={},dual_suppressed_voxels={},stale_dual_adjusted_voxels={},mixed_suppressed_voxels={},mixed_edge_promoted_voxels={},precip_snow_forced_voxels={}",
         bool_label(use_aux_fallback),
         bool_label(aux_context_available),
-        zdr_bundle.available_level_count(),
+        zdr_available_levels,
         LEVEL_TAGS.len(),
-        rhohv_bundle.available_level_count(),
+        rhohv_available_levels,
         LEVEL_TAGS.len(),
-        format_optional_i64(zdr_bundle.age_seconds),
-        format_optional_i64(rhohv_bundle.age_seconds),
+        format_optional_i64(dual_pol.zdr_age_seconds),
+        format_optional_i64(dual_pol.rhohv_age_seconds),
         bool_label(precip_field.is_some()),
         bool_label(freezing_field.is_some()),
         bool_label(wet_bulb_field.is_some()),
@@ -790,8 +1030,8 @@ fn assemble_scan_snapshot(
         phase_debug: PhaseDebugMetadata {
             mode: mode.to_string(),
             detail,
-            zdr_timestamp: zdr_bundle.selected_timestamp,
-            rhohv_timestamp: rhohv_bundle.selected_timestamp,
+            zdr_timestamp: dual_pol.zdr_timestamp,
+            rhohv_timestamp: dual_pol.rhohv_timestamp,
             precip_flag_timestamp: thermo_aux_bundle
                 .precip_flag
                 .as_ref()
@@ -800,48 +1040,10 @@ fn assemble_scan_snapshot(
                 .freezing_level
                 .as_ref()
                 .map(|(ts, _field)| ts.clone()),
-            zdr_age_seconds: zdr_bundle.age_seconds,
-            rhohv_age_seconds: rhohv_bundle.age_seconds,
+            zdr_age_seconds: dual_pol.zdr_age_seconds,
+            rhohv_age_seconds: dual_pol.rhohv_age_seconds,
         },
     }))
-}
-
-async fn parse_reflectivity_levels(
-    state: &AppState,
-    timestamp: &str,
-    date_part: &str,
-) -> Result<Vec<(u8, String, ParsedReflectivityField)>> {
-    let mut futures = FuturesUnordered::new();
-    for (level_idx, level_tag) in LEVEL_TAGS.iter().enumerate() {
-        let state = state.clone();
-        let level_tag = level_tag.to_string();
-        let timestamp = timestamp.to_string();
-        let date_part = date_part.to_string();
-        futures.push(async move {
-            let reflectivity_key =
-                build_level_key(MRMS_PRODUCT_PREFIX, &level_tag, &date_part, &timestamp);
-            let reflectivity_zipped = fetch_mrms_key_bytes(&state, &reflectivity_key).await?;
-            let reflectivity =
-                parse_reflectivity_grib_with_limit(&state, reflectivity_zipped).await?;
-            Ok::<_, anyhow::Error>((level_idx, level_tag, reflectivity))
-        });
-    }
-
-    let mut parsed_levels: Vec<Option<(String, ParsedReflectivityField)>> =
-        vec![None; LEVEL_TAGS.len()];
-    while let Some(result) = futures.next().await {
-        let (level_idx, level_tag, reflectivity) = result?;
-        parsed_levels[level_idx] = Some((level_tag, reflectivity));
-    }
-
-    let mut levels = Vec::with_capacity(parsed_levels.len());
-    for (idx, item) in parsed_levels.into_iter().enumerate() {
-        let (level_tag, reflectivity) =
-            item.ok_or_else(|| anyhow!("Missing parsed level {}", LEVEL_TAGS[idx]))?;
-        levels.push((idx as u8, level_tag, reflectivity));
-    }
-    levels.sort_by_key(|(idx, _, _)| *idx);
-    Ok(levels)
 }
 
 #[derive(Default)]
@@ -865,14 +1067,14 @@ struct EchoTopBundle {
 
 #[derive(Clone, Debug)]
 pub(crate) struct AuxFieldSampler<'a> {
-    direct_values: Option<&'a [f32]>,
+    direct_values: Option<&'a AuxValues>,
     sampled_lookup: Option<AuxFieldLookup<'a>>,
 }
 
 impl<'a> AuxFieldSampler<'a> {
     fn new(
         field: Option<&'a ParsedAuxField>,
-        direct_values: Option<&'a [f32]>,
+        direct_values: Option<&'a AuxValues>,
         base_grid: &GridDef,
     ) -> Self {
         Self {
@@ -885,20 +1087,28 @@ impl<'a> AuxFieldSampler<'a> {
         }
     }
 
-    #[inline]
-    fn sample(&self, value_idx: usize, row: usize, col: usize) -> Option<f32> {
+    /// Samples every filtered voxel into `out` (`NaN` where the field has no
+    /// value for it).
+    fn gather(&self, filter: &FilterResult, out: &mut Vec<f32>) {
         if let Some(values) = self.direct_values {
-            return values.get(value_idx).copied();
+            values.gather_into(&filter.indices, out);
+        } else if let Some(lookup) = &self.sampled_lookup {
+            out.clear();
+            out.extend(filter.rows.iter().zip(&filter.cols).map(|(&row, &col)| {
+                lookup
+                    .sample(row as usize, col as usize)
+                    .unwrap_or(f32::NAN)
+            }));
+        } else {
+            out.clear();
+            out.resize(filter.indices.len(), f32::NAN);
         }
-        self.sampled_lookup
-            .as_ref()
-            .and_then(|lookup| lookup.sample(row, col))
     }
 }
 
 #[derive(Clone, Debug)]
 struct AuxFieldLookup<'a> {
-    values: &'a [f32],
+    values: &'a AuxValues,
     nx: u32,
     row_map: Vec<Option<u32>>,
     col_map: Vec<Option<u32>>,
@@ -939,7 +1149,7 @@ impl<'a> AuxFieldLookup<'a> {
             .collect();
 
         Some(Self {
-            values: field.values.as_slice(),
+            values: &field.values,
             nx: field.grid.nx,
             row_map,
             col_map,
@@ -951,53 +1161,33 @@ impl<'a> AuxFieldLookup<'a> {
         let sample_row = self.row_map.get(row).and_then(|value| *value)?;
         let sample_col = self.col_map.get(col).and_then(|value| *value)?;
         let index = sample_row as usize * self.nx as usize + sample_col as usize;
-        self.values.get(index).copied()
+        self.values.get(index)
     }
 }
 
-struct DualPolBundle {
-    selected_timestamp: Option<String>,
-    age_seconds: Option<i64>,
-    fields_by_level: Vec<Option<ParsedAuxField>>,
-}
-
-impl DualPolBundle {
-    fn available_level_count(&self) -> usize {
-        self.fields_by_level
-            .iter()
-            .filter(|field| field.is_some())
-            .count()
-    }
-}
-
-async fn fetch_dual_pol_bundle(
+/// Picks the dual-pol scan for `target_timestamp`: the exact timestamp when its
+/// base level is published, otherwise the latest earlier one. The base level
+/// fetched while probing is kept for level 0.
+async fn select_dual_pol_source(
     state: &AppState,
     product_prefix: &'static str,
     target_timestamp: &str,
-) -> DualPolBundle {
-    let target_date_part = match target_timestamp.split('-').next() {
-        Some(value) => value,
-        None => {
-            warn!("Invalid timestamp for aux selection: {target_timestamp}");
-            return DualPolBundle {
-                selected_timestamp: None,
-                age_seconds: None,
-                fields_by_level: vec![None; LEVEL_TAGS.len()],
-            };
-        }
+) -> DualPolSource {
+    let unavailable = || DualPolSource {
+        product_prefix,
+        selected_timestamp: None,
+        age_seconds: None,
+        base_level_zipped: StdMutex::new(None),
+    };
+    let level_zipped = |timestamp: String| async move {
+        let date_part = timestamp.split('-').next().unwrap_or_default().to_string();
+        let key = build_level_key(product_prefix, MRMS_BASE_LEVEL_TAG, &date_part, &timestamp);
+        fetch_mrms_key_bytes(state, &key).await
     };
 
     let mut selected_timestamp = Some(target_timestamp.to_string());
-    let mut base_level_field: Option<ParsedAuxField> = match fetch_level_aux_field_at_timestamp(
-        state,
-        product_prefix,
-        MRMS_BASE_LEVEL_TAG,
-        target_date_part,
-        target_timestamp,
-    )
-    .await
-    {
-        Ok(field) => Some(field),
+    let mut base_level_zipped = match level_zipped(target_timestamp.to_string()).await {
+        Ok(zipped) => Some(zipped),
         Err(error) => {
             warn!(
                 "{product_prefix} exact aux unavailable at {target_timestamp}: {error:#}; searching latest available timestamp"
@@ -1006,7 +1196,7 @@ async fn fetch_dual_pol_bundle(
         }
     };
 
-    if base_level_field.is_none() {
+    if base_level_zipped.is_none() {
         selected_timestamp = find_latest_level_timestamp_at_or_before(
             state,
             product_prefix,
@@ -1015,99 +1205,61 @@ async fn fetch_dual_pol_bundle(
         )
         .await;
         if let Some(selected) = selected_timestamp.as_ref() {
-            let date_part = match selected.split('-').next() {
-                Some(value) => value,
-                None => {
+            base_level_zipped = level_zipped(selected.clone())
+                .await
+                .map_err(|error| {
                     warn!(
-                        "Invalid fallback aux timestamp for {product_prefix}: {selected}; skipping aux bundle"
+                        "{product_prefix} fallback aux fetch failed at {selected}: {error:#}; skipping aux bundle"
                     );
-                    return DualPolBundle {
-                        selected_timestamp: None,
-                        age_seconds: None,
-                        fields_by_level: vec![None; LEVEL_TAGS.len()],
-                    };
-                }
-            };
-            base_level_field = fetch_level_aux_field_at_timestamp(
-                state,
-                product_prefix,
-                MRMS_BASE_LEVEL_TAG,
-                date_part,
-                selected,
-            )
-            .await
-            .map_err(|error| {
-                warn!(
-                    "{product_prefix} fallback aux fetch failed at {selected}: {error:#}; skipping aux bundle"
-                );
-                error
-            })
-            .ok();
+                    error
+                })
+                .ok();
         }
     }
 
-    let Some(selected_timestamp_value) = selected_timestamp else {
-        return DualPolBundle {
-            selected_timestamp: None,
-            age_seconds: None,
-            fields_by_level: vec![None; LEVEL_TAGS.len()],
-        };
+    let Some(selected_timestamp) = selected_timestamp else {
+        return unavailable();
     };
-
-    let selected_date_part = match selected_timestamp_value.split('-').next() {
-        Some(value) => value.to_string(),
-        None => {
-            warn!(
-                "Invalid selected aux timestamp for {product_prefix}: {selected_timestamp_value}"
-            );
-            return DualPolBundle {
-                selected_timestamp: None,
-                age_seconds: None,
-                fields_by_level: vec![None; LEVEL_TAGS.len()],
-            };
-        }
-    };
-
-    let mut fields_by_level = vec![None; LEVEL_TAGS.len()];
-    fields_by_level[0] = base_level_field.take();
-    let mut futures = FuturesUnordered::new();
-
-    for (level_idx, level_tag) in LEVEL_TAGS.iter().enumerate().skip(1) {
-        let state = state.clone();
-        let level_tag = level_tag.to_string();
-        let product_prefix = product_prefix.to_string();
-        let date_part = selected_date_part.clone();
-        let selected_timestamp_value = selected_timestamp_value.clone();
-
-        futures.push(async move {
-            let field = fetch_level_aux_field_at_timestamp(
-                &state,
-                &product_prefix,
-                &level_tag,
-                &date_part,
-                &selected_timestamp_value,
-            )
-            .await
-            .map_err(|error| {
-                warn!(
-                    "{product_prefix} aux unavailable for level {level_tag} at {selected_timestamp_value}: {error:#}"
-                );
-                error
-            })
-            .ok();
-            (level_idx, field)
-        });
-    }
-
-    while let Some((level_idx, field)) = futures.next().await {
-        fields_by_level[level_idx] = field;
-    }
-
-    let age_seconds = timestamp_age_seconds(target_timestamp, &selected_timestamp_value);
-    DualPolBundle {
-        selected_timestamp: Some(selected_timestamp_value),
+    let age_seconds = timestamp_age_seconds(target_timestamp, &selected_timestamp);
+    DualPolSource {
+        product_prefix,
+        selected_timestamp: Some(selected_timestamp),
         age_seconds,
-        fields_by_level,
+        base_level_zipped: StdMutex::new(base_level_zipped),
+    }
+}
+
+/// Compressed dual-pol payload for `level_idx` of the selected scan, or `None`
+/// when it is unavailable. A level that is not there yet is awaited briefly,
+/// only while the dual-pol scan is still inside its publication window.
+async fn fetch_dual_pol_level_zipped(
+    state: &AppState,
+    source: &DualPolSource,
+    level_idx: usize,
+) -> Option<Vec<u8>> {
+    let selected = source.selected_timestamp.as_deref()?;
+    if level_idx == 0 {
+        return source.take_base_level_zipped();
+    }
+    let level_tag = LEVEL_TAGS[level_idx];
+    let date_part = selected.split('-').next()?;
+    let key = build_level_key(source.product_prefix, level_tag, date_part, selected);
+    match fetch_mrms_key_bytes_when_published(
+        state,
+        &key,
+        selected,
+        Some(Duration::from_secs(DUAL_POL_PUBLICATION_GRACE_SECONDS)),
+    )
+    .await
+    {
+        Ok(zipped) => Some(zipped),
+        Err(error) => {
+            warn!(
+                "{} aux unavailable for level {level_tag} at {selected}: {error:#}",
+                source.product_prefix
+            );
+            None
+        }
     }
 }
 
@@ -1192,38 +1344,13 @@ async fn fetch_latest_aux_field_at_or_before(
     }
 }
 
-fn validate_level_aux_values<'a>(
-    field: Option<&'a ParsedAuxField>,
-    reflectivity: &ParsedReflectivityField,
-    product_label: &str,
-    level_tag: &str,
-    timestamp: &str,
-) -> Option<&'a [f32]> {
-    let field = field?;
-    if !is_same_grid(&field.grid, &reflectivity.grid) {
-        warn!(
-            "{product_label} aux grid mismatch for level {level_tag} at {timestamp}; using aux fallback for affected voxels"
-        );
-        return None;
-    }
-    if field.values.len() != reflectivity.dbz_tenths.len() {
-        warn!(
-            "{product_label} aux point-count mismatch for level {level_tag} at {timestamp}: expected {}, got {}; using aux fallback for affected voxels",
-            reflectivity.dbz_tenths.len(),
-            field.values.len()
-        );
-        return None;
-    }
-    Some(field.values.as_slice())
-}
-
 fn validate_base_aux_values<'a>(
     field: Option<&'a ParsedAuxField>,
     base_grid: &GridDef,
     point_count: usize,
     product_label: &str,
     timestamp: &str,
-) -> Option<&'a [f32]> {
+) -> Option<&'a AuxValues> {
     let field = field?;
     if !is_same_grid(&field.grid, base_grid) {
         warn!(
@@ -1238,7 +1365,7 @@ fn validate_base_aux_values<'a>(
         );
         return None;
     }
-    Some(field.values.as_slice())
+    Some(&field.values)
 }
 
 fn validate_echo_top_values<'a>(
@@ -1247,7 +1374,7 @@ fn validate_echo_top_values<'a>(
     point_count: usize,
     product_label: &str,
     timestamp: &str,
-) -> Option<&'a [f32]> {
+) -> Option<&'a AuxValues> {
     let field = field?;
     if !is_same_grid(&field.grid, base_grid) {
         warn!(
@@ -1262,7 +1389,7 @@ fn validate_echo_top_values<'a>(
         );
         return None;
     }
-    Some(field.values.as_slice())
+    Some(&field.values)
 }
 
 fn is_same_grid(left: &GridDef, right: &GridDef) -> bool {
@@ -1461,7 +1588,7 @@ mod filter_tests {
 mod gather_tests {
     use super::*;
 
-    /// Build a FilterResult from flat indices for a 1×n grid (single row).
+    /// Build a FilterResult from flat indices for a grid `nx` columns wide.
     fn make_filter(indices: &[u32], nx: u32) -> FilterResult {
         let rows: Vec<u16> = indices.iter().map(|&i| (i as usize / nx as usize) as u16).collect();
         let cols: Vec<u16> = indices.iter().map(|&i| (i as usize % nx as usize) as u16).collect();
@@ -1472,82 +1599,89 @@ mod gather_tests {
         }
     }
 
-    fn run_gather(
-        filter: &FilterResult,
-        zdr: Option<&[f32]>,
-        precip_sampler: &AuxFieldSampler,
-        empty_sampler: &AuxFieldSampler,
-    ) -> GatheredAuxFields {
-        let mut out = GatheredAuxFields::new();
-        gather_aux_fields(
-            filter,
-            zdr,
-            None,
-            precip_sampler,
-            empty_sampler,
-            empty_sampler,
-            empty_sampler,
-            empty_sampler,
-            empty_sampler,
-            empty_sampler,
-            &mut out,
-        );
+    fn empty_sampler<'a>() -> AuxFieldSampler<'a> {
+        AuxFieldSampler {
+            direct_values: None,
+            sampled_lookup: None,
+        }
+    }
+
+    fn gather(sampler: &AuxFieldSampler, filter: &FilterResult) -> Vec<f32> {
+        let mut out = Vec::new();
+        sampler.gather(filter, &mut out);
         out
     }
 
     #[test]
-    fn gather_uses_nan_for_missing_zdr() {
+    fn gather_without_a_field_is_all_nan() {
         let filter = make_filter(&[0, 2, 5], 6);
-        let zdr = vec![1.0_f32, f32::NAN, 2.0, 3.0, 4.0, 5.0];
-        let empty_sampler = AuxFieldSampler {
-            direct_values: None,
-            sampled_lookup: None,
-        };
-
-        let result = run_gather(&filter, Some(&zdr), &empty_sampler, &empty_sampler);
-
-        assert_eq!(result.zdr[0], 1.0);
-        assert_eq!(result.zdr[1], 2.0);
-        assert_eq!(result.zdr[2], 5.0);
-        // All other fields should be NaN
-        assert!(result.rhohv[0].is_nan());
-        assert!(result.precip_flag[0].is_nan());
+        let out = gather(&empty_sampler(), &filter);
+        assert_eq!(out.len(), 3);
+        assert!(out.iter().all(|v| v.is_nan()));
     }
 
     #[test]
-    fn gather_empty_indices_returns_empty_vecs() {
+    fn gather_empty_indices_returns_empty_vec() {
         let filter = make_filter(&[], 6);
-        let empty_sampler = AuxFieldSampler {
-            direct_values: None,
-            sampled_lookup: None,
-        };
-
-        let result = run_gather(&filter, None, &empty_sampler, &empty_sampler);
-
-        assert!(result.zdr.is_empty());
-        assert!(result.rhohv.is_empty());
-        assert!(result.precip_flag.is_empty());
+        assert!(gather(&empty_sampler(), &filter).is_empty());
     }
 
     #[test]
     fn gather_direct_values_sampler() {
-        let precip_data = vec![10.0_f32, 20.0, 30.0, 40.0, 50.0, 60.0];
-        let precip_sampler = AuxFieldSampler {
+        let precip_data = AuxValues::Dense(vec![10.0_f32, 20.0, 30.0, 40.0, 50.0, 60.0]);
+        let sampler = AuxFieldSampler {
             direct_values: Some(&precip_data),
             sampled_lookup: None,
         };
-        let empty_sampler = AuxFieldSampler {
-            direct_values: None,
+        let filter = make_filter(&[1, 3, 5], 6);
+        assert_eq!(gather(&sampler, &filter), vec![20.0, 40.0, 60.0]);
+    }
+
+    #[test]
+    fn gather_marks_out_of_range_indices_missing() {
+        let data = AuxValues::Dense(vec![1.0_f32, 2.0]);
+        let sampler = AuxFieldSampler {
+            direct_values: Some(&data),
             sampled_lookup: None,
         };
+        let filter = make_filter(&[0, 1, 7], 8);
+        let out = gather(&sampler, &filter);
+        assert_eq!(&out[..2], &[1.0, 2.0]);
+        assert!(out[2].is_nan());
+    }
 
-        let filter = make_filter(&[1, 3, 5], 6);
-        let result = run_gather(&filter, None, &precip_sampler, &empty_sampler);
+    #[test]
+    fn gather_reuses_the_output_buffer() {
+        let data = AuxValues::Dense(vec![1.0_f32, 2.0, 3.0, 4.0]);
+        let sampler = AuxFieldSampler {
+            direct_values: Some(&data),
+            sampled_lookup: None,
+        };
+        let mut out = Vec::new();
+        sampler.gather(&make_filter(&[0, 1, 2, 3], 4), &mut out);
+        assert_eq!(out.len(), 4);
+        sampler.gather(&make_filter(&[3], 4), &mut out);
+        assert_eq!(out, vec![4.0]);
+    }
 
-        assert_eq!(result.precip_flag[0], 20.0);
-        assert_eq!(result.precip_flag[1], 40.0);
-        assert_eq!(result.precip_flag[2], 60.0);
-        // zdr should be NaN since no zdr_values provided
-        assert!(result.zdr[0].is_nan());
+    #[test]
+    fn packed_values_gather_like_dense_values() {
+        // 16-bit samples 0..8 mapped through (R + X * 2^E) * 10^-D, R=-3, E=0, D=1.
+        let table: Vec<f32> = (0..=u16::MAX)
+            .map(|sample| (-3.0_f32 + sample as f32 * 1.0) * 0.1)
+            .collect();
+        let samples: Vec<u8> = (0u16..8).flat_map(|s| s.to_be_bytes()).collect();
+        let packed = AuxValues::Packed(crate::types::PackedSamples::with_table(samples, 2, table));
+        let dense = AuxValues::Dense((0u16..8).map(|s| (-3.0_f32 + s as f32) * 0.1).collect());
+
+        assert_eq!(packed.len(), 8);
+        let indices = [7u32, 0, 3, 9, 3];
+        let (from_packed, from_dense) = (packed.gather(&indices), dense.gather(&indices));
+        for (a, b) in from_packed.iter().zip(&from_dense) {
+            assert!(a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan()));
+        }
+        assert!(from_packed[3].is_nan());
+        assert_eq!(packed.get(8), None);
+        assert_eq!(packed.get(2).unwrap().to_bits(), dense.get(2).unwrap().to_bits());
     }
 }

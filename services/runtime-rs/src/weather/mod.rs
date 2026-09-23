@@ -4,11 +4,15 @@ mod grib;
 mod ingest;
 mod phase;
 mod phase_batch;
+#[cfg(test)]
+mod pipeline_tests;
 mod processor;
 mod projection;
 mod simd_lut;
 mod sources;
 mod storage;
+#[cfg(test)]
+mod testkit;
 
 // Re-exports for main.rs
 pub use self::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
@@ -31,7 +35,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use tracing::{field, instrument, warn};
 
-use self::encoding::{build_echo_top_cells, build_echo_top_wire_fb, build_volume_wire_fb};
+use self::encoding::{build_echo_top_wire_fb, build_volume_wire_fb};
 use self::projection::build_query_window;
 use crate::constants::{
     DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, ECHO_TOP_FB_CONTENT_TYPE,
@@ -113,37 +117,6 @@ pub struct MetaResponse {
     retention_bytes: u64,
     #[serde(rename = "sqsEnabled")]
     sqs_enabled: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct EchoTopsResponse {
-    generated_at: Option<String>,
-    scan_time: Option<String>,
-    timestamp: String,
-    source_cell_count: usize,
-    footprint_x_nm: f64,
-    footprint_y_nm: f64,
-    max_top18_feet: Option<u16>,
-    max_top30_feet: Option<u16>,
-    max_top50_feet: Option<u16>,
-    max_top60_feet: Option<u16>,
-    top18_timestamp: Option<String>,
-    top30_timestamp: Option<String>,
-    top50_timestamp: Option<String>,
-    top60_timestamp: Option<String>,
-    cells: Vec<EchoTopCellRecord>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct EchoTopCellRecord {
-    x_nm: f32,
-    z_nm: f32,
-    top18_feet: u16,
-    top30_feet: u16,
-    top50_feet: u16,
-    top60_feet: u16,
 }
 
 #[instrument(name = "runtime.healthz", skip_all)]
@@ -421,19 +394,15 @@ pub(crate) async fn volume(
     }
 }
 
+#[instrument(
+    name = "runtime.echo_tops",
+    skip(state, query),
+    fields(lat = field::Empty, lon = field::Empty, max_range_nm = field::Empty)
+)]
 pub(crate) async fn echo_tops(
     State(state): State<AppState>,
-    req_headers: HeaderMap,
     Query(query): Query<EchoTopsQuery>,
 ) -> Response {
-    let span = tracing::info_span!(
-        "runtime.echo_tops",
-        lat = query.lat,
-        lon = query.lon,
-        max_range_nm = field::Empty
-    );
-    let _guard = span.enter();
-
     // NaN compares false against range bounds, so finiteness must be checked
     // explicitly before the range checks.
     if !query.lat.is_finite()
@@ -466,7 +435,10 @@ pub(crate) async fn echo_tops(
         MIN_ALLOWED_RANGE_NM,
         MAX_ALLOWED_RANGE_NM,
     );
-    tracing::Span::current().record("max_range_nm", &max_range_nm);
+    let span = tracing::Span::current();
+    span.record("lat", &query.lat);
+    span.record("lon", &query.lon);
+    span.record("max_range_nm", &max_range_nm);
 
     // Clone the snapshot Arc and release the read lock before window/cell
     // building and encoding so ingest writers are never blocked on it.
@@ -481,29 +453,23 @@ pub(crate) async fn echo_tops(
             .into_response();
     };
 
-    // Content negotiation: FlatBuffers binary or JSON
-    let accept = req_headers
-        .get("accept")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let wants_binary = accept.contains(ECHO_TOP_FB_CONTENT_TYPE);
-
     // Cell filtering scans every stored echo-top record; run it (plus the
-    // optional binary encode) on the blocking pool to keep async workers free.
-    let build_cells_span = tracing::info_span!("runtime.echo_tops.build_cells");
+    // encode) on the blocking pool to keep async workers free.
+    let build_span = tracing::info_span!("runtime.echo_tops.build_cells");
     let scan_for_build = Arc::clone(&scan);
     let (lat, lon) = (query.lat, query.lon);
     let build_result = tokio::task::spawn_blocking(move || {
-        let window = build_query_window(&scan_for_build, lat, lon, DEFAULT_MIN_DBZ, max_range_nm);
-        let cells = build_cells_span.in_scope(|| build_echo_top_cells(&scan_for_build, &window));
-        let wire_body = wants_binary.then(|| build_echo_top_wire_fb(&scan_for_build, &window, &cells));
-        (window, cells, wire_body)
+        build_span.in_scope(|| {
+            let window =
+                build_query_window(&scan_for_build, lat, lon, DEFAULT_MIN_DBZ, max_range_nm);
+            build_echo_top_wire_fb(&scan_for_build, &window)
+        })
     })
     .await;
-    let (window, cells, wire_body) = match build_result {
-        Ok(value) => value,
+    let body = match build_result {
+        Ok(body) => body,
         Err(error) => {
-            warn!("Failed to build echo-top cells: {error:#}");
+            warn!("Failed to build echo-top payload: {error:#}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -515,6 +481,10 @@ pub(crate) async fn echo_tops(
     };
 
     let mut headers = HeaderMap::new();
+    headers.insert(
+        "Content-Type",
+        HeaderValue::from_static(ECHO_TOP_FB_CONTENT_TYPE),
+    );
     headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
     if let Some(scan_time) = iso_from_ms(scan.scan_time_ms) {
         if let Ok(value) = HeaderValue::from_str(&scan_time) {
@@ -526,31 +496,5 @@ pub(crate) async fn echo_tops(
             headers.insert("X-AV-GENERATED-AT", value);
         }
     }
-
-    if let Some(wire_body) = wire_body {
-        headers.insert(
-            "Content-Type",
-            HeaderValue::from_static(ECHO_TOP_FB_CONTENT_TYPE),
-        );
-        (headers, wire_body).into_response()
-    } else {
-        let body = EchoTopsResponse {
-            generated_at: iso_from_ms(scan.generated_at_ms),
-            scan_time: iso_from_ms(scan.scan_time_ms),
-            timestamp: scan.timestamp.clone(),
-            source_cell_count: scan.echo_tops.len(),
-            footprint_x_nm: f64::from(window.footprint_x_milli) / 1000.0,
-            footprint_y_nm: f64::from(window.footprint_y_milli) / 1000.0,
-            max_top18_feet: scan.echo_top_debug.max_top18_feet,
-            max_top30_feet: scan.echo_top_debug.max_top30_feet,
-            max_top50_feet: scan.echo_top_debug.max_top50_feet,
-            max_top60_feet: scan.echo_top_debug.max_top60_feet,
-            top18_timestamp: scan.echo_top_debug.top18_timestamp.clone(),
-            top30_timestamp: scan.echo_top_debug.top30_timestamp.clone(),
-            top50_timestamp: scan.echo_top_debug.top50_timestamp.clone(),
-            top60_timestamp: scan.echo_top_debug.top60_timestamp.clone(),
-            cells,
-        };
-        (headers, Json(body)).into_response()
-    }
+    (headers, body).into_response()
 }
