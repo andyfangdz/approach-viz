@@ -152,8 +152,12 @@ sync_source_tree() {
   export COPYFILE_DISABLE=1
   export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
-  local tar_args=(
-    --disable-copyfile
+  local tar_args=()
+  # --disable-copyfile exists only in bsdtar (macOS); GNU tar rejects it.
+  if tar --version 2>/dev/null | grep -q bsdtar; then
+    tar_args+=(--disable-copyfile)
+  fi
+  tar_args+=(
     --no-xattrs
     -czf
     -
@@ -249,7 +253,28 @@ sudo mv /tmp/approach-viz-runtime.service /etc/systemd/system/approach-viz-runti
 sudo systemctl daemon-reload
 sudo systemctl enable approach-viz-runtime.service
 sudo systemctl restart approach-viz-runtime.service
-tailscale funnel --bg --https 8443 --set-path /runtime-v1 http://127.0.0.1:9191 >/dev/null
+# The funnel is persistent config and re-applying it can hang, so bound the
+# call. If it does not succeed, the deploy passes only when the existing config
+# already routes /runtime-v1 publicly; the health checks below are local.
+if ! timeout 30 tailscale funnel --bg --https 8443 --set-path /runtime-v1 http://127.0.0.1:9191 >/dev/null; then
+  if timeout 15 tailscale serve status --json | python3 -c '
+import json, sys
+config = json.load(sys.stdin)
+funnel = config.get(\"AllowFunnel\", {})
+public_route = any(
+    host.endswith(\":8443\")
+    and funnel.get(host) is True
+    and web.get(\"Handlers\", {}).get(\"/runtime-v1\", {}).get(\"Proxy\") == \"http://127.0.0.1:9191\"
+    for host, web in config.get(\"Web\", {}).items()
+)
+sys.exit(0 if public_route else 1)
+'; then
+    echo \"Warning: re-applying the Tailscale funnel failed or timed out, but the existing funnel already routes /runtime-v1.\" >&2
+  else
+    echo \"Tailscale funnel for /runtime-v1 is not configured and could not be applied; the runtime is not publicly reachable.\" >&2
+    exit 1
+  fi
+fi
 
 ready=0
 for attempt in \$(seq 1 60); do
