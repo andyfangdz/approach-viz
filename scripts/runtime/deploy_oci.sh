@@ -260,13 +260,14 @@ if ! timeout 30 tailscale funnel --bg --https 8443 --set-path /runtime-v1 http:/
   if timeout 15 tailscale serve status --json | python3 -c '
 import json, sys
 config = json.load(sys.stdin)
-funnel_on = any(host.endswith(\":8443\") and on for host, on in config.get(\"AllowFunnel\", {}).items())
-routed = any(
+funnel = config.get(\"AllowFunnel\", {})
+public_route = any(
     host.endswith(\":8443\")
+    and funnel.get(host) is True
     and web.get(\"Handlers\", {}).get(\"/runtime-v1\", {}).get(\"Proxy\") == \"http://127.0.0.1:9191\"
     for host, web in config.get(\"Web\", {}).items()
 )
-sys.exit(0 if funnel_on and routed else 1)
+sys.exit(0 if public_route else 1)
 '; then
     echo \"Warning: re-applying the Tailscale funnel failed or timed out, but the existing funnel already routes /runtime-v1.\" >&2
   else
