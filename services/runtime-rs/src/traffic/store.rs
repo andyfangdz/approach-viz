@@ -719,14 +719,15 @@ fn partition_schema_sql(points_table: &str) -> String {
 /// used only by removed SQL queries. Only the triggers and track-sized objects go here: startup
 /// must stay fast, and freeing a large table reads every page of it. Each ring slot's R*Tree and
 /// point indexes go when the slot is next recycled (`clear_ring_slot`). Pre-ring
-/// `traffic_points_p*` tables are neither written nor read and are left for offline cleanup.
+/// `traffic_points` and `traffic_points_p*` tables are neither written nor read and are left for
+/// offline cleanup.
 fn drop_obsolete_schema(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare(
             "SELECT type, name FROM sqlite_master
              WHERE (type = 'trigger' AND name GLOB 'trg_traffic_*rtree*')
                 OR (type = 'index' AND name IN ('idx_traffic_tracks_live', 'idx_traffic_tracks_last_seen'))
-                OR (type = 'table' AND name IN ('traffic_tracks_rtree', 'traffic_points_rtree', 'traffic_points'))",
+                OR (type = 'table' AND name = 'traffic_tracks_rtree')",
         )
         .map_err(|error| error.to_string())?;
     let mut objects = statement
