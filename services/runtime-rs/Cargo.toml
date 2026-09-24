@@ -53,3 +53,7 @@ harness = false
 [[bench]]
 name = "traffic_pipeline"
 harness = false
+
+[[bench]]
+name = "traffic_store"
+harness = false

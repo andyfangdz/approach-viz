@@ -47,11 +47,10 @@ impl SpatialPresenceGrid {
     }
 
     pub(crate) fn insert(&mut self, lat: f64, lon: f64, hex: &str) {
-        let key = Self::cell(lat, lon);
-        self.cells
-            .entry(key)
-            .or_default()
-            .insert(hex.to_owned());
+        let hexes = self.cells.entry(Self::cell(lat, lon)).or_default();
+        if !hexes.contains(hex) {
+            hexes.insert(hex.to_owned());
+        }
     }
 
     pub(crate) fn hexes_in_bbox(&self, bounds: &BoundingBox) -> HashSet<String> {
@@ -170,11 +169,12 @@ impl PartitionRing {
 
     pub(crate) fn append_point(&mut self, hex: &str, point: HistoryPoint) {
         self.active.grid.insert(point.lat, point.lon, hex);
-        self.active
-            .points_by_hex
-            .entry(hex.to_owned())
-            .or_default()
-            .push(point);
+        match self.active.points_by_hex.get_mut(hex) {
+            Some(points) => points.push(point),
+            None => {
+                self.active.points_by_hex.insert(hex.to_owned(), vec![point]);
+            }
+        }
     }
 
     pub(crate) fn sweep_retention(&mut self, retention_cutoff_ms: i64) {
@@ -210,7 +210,7 @@ pub(crate) fn bucket_start_ms(timestamp_ms: i64) -> i64 {
 // TrackEntry
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TrackEntry {
     pub hex: String,
     pub flight: Option<String>,
@@ -235,7 +235,6 @@ pub(crate) struct TrackEntry {
 
 pub(crate) struct CurrentSnapshot {
     pub tracks: Vec<TrackEntry>,
-    pub by_hex: HashMap<String, usize>,
     pub source: Option<String>,
     pub fetched_at_ms: i64,
 }
@@ -245,7 +244,6 @@ impl CurrentSnapshot {
     pub(crate) fn empty() -> Self {
         Self {
             tracks: Vec::new(),
-            by_hex: HashMap::new(),
             source: None,
             fetched_at_ms: 0,
         }
@@ -273,48 +271,7 @@ impl TrafficMemoryStore {
     /// Load the in-memory store from an existing SQLite database.
     pub(crate) fn load_from_sqlite(connection: &Connection) -> Result<Self, String> {
         // ── Current tracks ──────────────────────────────────────────
-        let mut tracks = Vec::new();
-        let mut by_hex: HashMap<String, usize> = HashMap::new();
-        {
-            let mut stmt = connection
-                .prepare(
-                    "SELECT hex, flight, is_on_ground, altitude_feet, ground_speed_kt,
-                            track_deg, last_observed_at_ms, last_lat, last_lon,
-                            last_point_ts_ms, last_point_lat, last_point_lon,
-                            last_point_altitude_feet, last_point_is_on_ground
-                     FROM traffic_tracks",
-                )
-                .map_err(|e| e.to_string())?;
-
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok(TrackEntry {
-                        hex: row.get(0)?,
-                        flight: row.get(1)?,
-                        is_on_ground: row.get::<_, i64>(2).map(|v| v == 1).unwrap_or(false),
-                        altitude_feet: row.get(3)?,
-                        ground_speed_kt: row.get(4)?,
-                        track_deg: row.get(5)?,
-                        last_observed_at_ms: row.get(6)?,
-                        lat: row.get(7)?,
-                        lon: row.get(8)?,
-                        last_point_ts_ms: row.get(9)?,
-                        last_point_lat: row.get(10)?,
-                        last_point_lon: row.get(11)?,
-                        last_point_altitude_feet: row.get(12)?,
-                        last_point_is_on_ground: row
-                            .get::<_, Option<i64>>(13)?
-                            .map(|v| v == 1),
-                    })
-                })
-                .map_err(|e| e.to_string())?;
-
-            for row in rows {
-                let entry = row.map_err(|e| e.to_string())?;
-                by_hex.insert(entry.hex.clone(), tracks.len());
-                tracks.push(entry);
-            }
-        }
+        let tracks = load_tracks(connection)?;
         info!(track_count = tracks.len(), "loaded tracks from SQLite");
 
         // ── Metadata ────────────────────────────────────────────────
@@ -325,7 +282,6 @@ impl TrafficMemoryStore {
 
         let snapshot = CurrentSnapshot {
             tracks,
-            by_hex,
             source,
             fetched_at_ms,
         };
@@ -370,7 +326,7 @@ impl TrafficMemoryStore {
                     .prepare(&format!(
                         "SELECT hex, lat, lon, altitude_feet, timestamp_ms, is_on_ground
                          FROM \"{points_table}\"
-                         ORDER BY hex ASC, timestamp_ms ASC"
+                         ORDER BY rowid"
                     ))
                     .map_err(|e| e.to_string())?;
 
@@ -707,6 +663,40 @@ fn load_history_for_hexes(
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Load every persisted track row.
+pub(crate) fn load_tracks(connection: &Connection) -> Result<Vec<TrackEntry>, String> {
+    let mut stmt = connection
+        .prepare(
+            "SELECT hex, flight, is_on_ground, altitude_feet, ground_speed_kt,
+                    track_deg, last_observed_at_ms, last_lat, last_lon,
+                    last_point_ts_ms, last_point_lat, last_point_lon,
+                    last_point_altitude_feet, last_point_is_on_ground
+             FROM traffic_tracks",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(TrackEntry {
+                hex: row.get(0)?,
+                flight: row.get(1)?,
+                is_on_ground: row.get::<_, i64>(2)? == 1,
+                altitude_feet: row.get(3)?,
+                ground_speed_kt: row.get(4)?,
+                track_deg: row.get(5)?,
+                last_observed_at_ms: row.get(6)?,
+                lat: row.get(7)?,
+                lon: row.get(8)?,
+                last_point_ts_ms: row.get(9)?,
+                last_point_lat: row.get(10)?,
+                last_point_lon: row.get(11)?,
+                last_point_altitude_feet: row.get(12)?,
+                last_point_is_on_ground: row.get::<_, Option<i64>>(13)?.map(|v| v == 1),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 fn read_meta(connection: &Connection, key: &str) -> Result<Option<String>, String> {
     connection
         .prepare("SELECT value FROM traffic_meta WHERE key = ?")
@@ -874,14 +864,8 @@ mod tests {
                 last_point_is_on_ground: None,
             },
         ];
-        let by_hex = tracks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.hex.clone(), i))
-            .collect();
         let snapshot = CurrentSnapshot {
             tracks,
-            by_hex,
             source: Some("test".into()),
             fetched_at_ms: now,
         };
