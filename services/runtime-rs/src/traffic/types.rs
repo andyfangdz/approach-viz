@@ -143,7 +143,7 @@ pub(crate) struct PartitionInfo {
     pub rtree_table: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct RingPartitionCache {
     pub by_bucket_start_ms: HashMap<i64, PartitionInfo>,
     pub by_slot: HashMap<i64, PartitionInfo>,

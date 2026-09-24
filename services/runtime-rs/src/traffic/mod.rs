@@ -12,6 +12,8 @@ pub use encoding::encode_traffic_fb;
 #[allow(unused_imports)]
 pub use memory_store::TrafficMemoryStore;
 #[allow(unused_imports)]
+pub use store::{ingest_to_store, query_store, TrafficStore};
+#[allow(unused_imports)]
 pub use types::{
     distance_nm, QueryRequest, TrafficAircraft, TrafficBinaryPayload, TrafficHistoryPoint,
 };
@@ -26,10 +28,8 @@ use tracing::{field, info_span, instrument, Instrument, Span};
 
 #[allow(unused_imports)]
 pub(crate) use cache_worker::spawn_traffic_cache_worker;
-pub(crate) use store::TrafficStore;
 
 use self::encoding::traffic_binary_response;
-use self::store::query_store;
 use self::types::{
     add_traffic_snapshot_headers, clamp, clamp_usize, history_discovery_radius_nm, no_store_headers,
     normalize_lat, normalize_lon, parse_boolean_query_param, parse_history_hexes,

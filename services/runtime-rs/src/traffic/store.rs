@@ -2,15 +2,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, CachedStatement, Connection};
+use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{info, instrument, warn};
+use tracing::{info, instrument};
 
 use super::memory_store::{
-    CurrentSnapshot, HistoryPoint, TrackEntry, TrafficMemoryStore, PARTITION_BUCKET_MS,
+    load_tracks, CurrentSnapshot, HistoryPoint, TrackEntry, TrafficMemoryStore,
+    PARTITION_BUCKET_MS,
 };
 use super::types::{
-    distance_nm, is_sqlite_locked_error, now_ms, PartitionInfo, QueryRequest, QueryResult,
+    distance_nm, is_sqlite_locked_error, PartitionInfo, QueryRequest, QueryResult,
     RingPartitionCache, TrafficAircraft,
 };
 
@@ -32,7 +34,7 @@ pub struct TrafficStore {
 }
 
 impl TrafficStore {
-    pub(crate) fn new(db_path: PathBuf) -> Result<Self, String> {
+    pub fn new(db_path: PathBuf) -> Result<Self, String> {
         let bootstrap_connection = open_traffic_db(&db_path)?;
         reconcile_partition_tables(&bootstrap_connection)?;
 
@@ -127,6 +129,23 @@ fn spawn_writer_worker(
                 return;
             }
         };
+        let mut persisted = match PersistedState::load(&connection) {
+            Ok(persisted) => persisted,
+            Err(error) => {
+                while let Some(command) = receiver.blocking_recv() {
+                    let message = format!("Traffic writer failed to load persisted state: {error}");
+                    match command {
+                        WriteCommand::Ingest { response, .. } => {
+                            let _ = response.send(Err(message));
+                        }
+                        WriteCommand::WalMaintenance { response, .. } => {
+                            let _ = response.send(Err(message));
+                        }
+                    }
+                }
+                return;
+            }
+        };
         let mut last_wal_truncate_at_ms = 0_i64;
 
         while let Some(command) = receiver.blocking_recv() {
@@ -138,28 +157,15 @@ fn spawn_writer_worker(
                     run_retention_sweep,
                     response,
                 } => {
-                    let mut attempts = 0usize;
-                    let result = loop {
-                        let result = ingest_snapshot(
-                            &mut connection,
-                            &memory,
-                            source.clone(),
-                            aircraft.clone(),
-                            polled_at_ms,
-                            run_retention_sweep,
-                        );
-                        if let Err(error) = &result {
-                            if is_sqlite_locked_error(error) && attempts < WRITE_QUERY_LOCK_RETRIES
-                            {
-                                attempts += 1;
-                                std::thread::sleep(Duration::from_millis(
-                                    WRITE_QUERY_LOCK_RETRY_DELAY_MS,
-                                ));
-                                continue;
-                            }
-                        }
-                        break result;
-                    };
+                    let result = ingest_snapshot(
+                        &mut connection,
+                        &memory,
+                        &mut persisted,
+                        &source,
+                        &aircraft,
+                        polled_at_ms,
+                        run_retention_sweep,
+                    );
                     let _ = response.send(result);
                 }
                 WriteCommand::WalMaintenance { now_ms, response } => {
@@ -190,7 +196,7 @@ fn spawn_writer_worker(
         hide_ground_traffic = request.hide_ground_traffic
     )
 )]
-pub(crate) async fn query_store(
+pub async fn query_store(
     store: &TrafficStore,
     request: QueryRequest,
 ) -> Result<QueryResult, String> {
@@ -200,7 +206,7 @@ pub(crate) async fn query_store(
         .map_err(|e| format!("Traffic query task panicked: {e}"))?
 }
 
-pub(crate) async fn ingest_to_store(
+pub async fn ingest_to_store(
     store: &TrafficStore,
     source: String,
     aircraft: Vec<TrafficAircraft>,
@@ -311,81 +317,152 @@ fn merge_track(
 fn ingest_snapshot(
     connection: &mut Connection,
     memory: &TrafficMemoryStore,
-    source: String,
-    aircraft: Vec<TrafficAircraft>,
+    persisted: &mut PersistedState,
+    source: &str,
+    aircraft: &[TrafficAircraft],
     polled_at_ms: i64,
     run_retention_sweep: bool,
 ) -> Result<(), String> {
     let retention_cutoff_ms = polled_at_ms - CACHE_RETENTION_MS;
+    publish_to_memory(
+        memory,
+        source,
+        aircraft,
+        polled_at_ms,
+        run_retention_sweep,
+        retention_cutoff_ms,
+    );
 
+    // ── Persist to SQLite (no readers depend on this; memory stays live on failure) ──
+    let mut attempts = 0usize;
+    loop {
+        let result = persist_to_sqlite(
+            connection,
+            persisted,
+            source,
+            aircraft,
+            polled_at_ms,
+            run_retention_sweep,
+            retention_cutoff_ms,
+        );
+        match &result {
+            Err(error)
+                if is_sqlite_locked_error(error) && attempts < WRITE_QUERY_LOCK_RETRIES =>
+            {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(WRITE_QUERY_LOCK_RETRY_DELAY_MS));
+            }
+            _ => return result,
+        }
+    }
+}
+
+fn publish_to_memory(
+    memory: &TrafficMemoryStore,
+    source: &str,
+    aircraft: &[TrafficAircraft],
+    polled_at_ms: i64,
+    run_retention_sweep: bool,
+    retention_cutoff_ms: i64,
+) {
     // ── Build new in-memory snapshot ────────────────────────────────
     let prev_snapshot = memory.current.load();
 
-    let mut new_tracks = Vec::with_capacity(prev_snapshot.tracks.len());
-    let mut new_by_hex = std::collections::HashMap::with_capacity(prev_snapshot.by_hex.len());
-    let mut history_points: Vec<(String, HistoryPoint)> = Vec::new();
+    let mut new_tracks = Vec::with_capacity(prev_snapshot.tracks.len() + aircraft.len() / 16);
+    let mut new_by_hex: FxHashMap<&str, usize> =
+        FxHashMap::with_capacity_and_hasher(new_tracks.capacity(), Default::default());
+    let mut history_points: Vec<(usize, HistoryPoint)> = Vec::with_capacity(aircraft.len());
 
     // Carry forward all non-expired tracks from previous snapshot.
     for prev_track in &prev_snapshot.tracks {
         if prev_track.last_observed_at_ms < retention_cutoff_ms {
             continue;
         }
-        new_by_hex.insert(prev_track.hex.clone(), new_tracks.len());
+        new_by_hex.insert(&prev_track.hex, new_tracks.len());
         new_tracks.push(prev_track.clone());
     }
 
     // Merge incoming aircraft.
-    for candidate in &aircraft {
-        let track = if let Some(&idx) = new_by_hex.get(&candidate.hex) {
-            &mut new_tracks[idx]
-        } else {
-            let idx = new_tracks.len();
-            new_by_hex.insert(candidate.hex.clone(), idx);
-            new_tracks.push(new_track(candidate, polled_at_ms, retention_cutoff_ms));
-            &mut new_tracks[idx]
+    for candidate in aircraft {
+        let index = match new_by_hex.get(candidate.hex.as_str()) {
+            Some(&index) => index,
+            None => {
+                let index = new_tracks.len();
+                new_by_hex.insert(&candidate.hex, index);
+                new_tracks.push(new_track(candidate, polled_at_ms, retention_cutoff_ms));
+                index
+            }
         };
-
-        if let Some(point) = merge_track(track, candidate, polled_at_ms, retention_cutoff_ms) {
-            history_points.push((candidate.hex.clone(), point));
+        if let Some(point) =
+            merge_track(&mut new_tracks[index], candidate, polled_at_ms, retention_cutoff_ms)
+        {
+            history_points.push((index, point));
         }
     }
 
     // ── Swap current snapshot (readers see this instantly) ───────────
-    let new_snapshot = CurrentSnapshot {
+    let snapshot = Arc::new(CurrentSnapshot {
         tracks: new_tracks,
-        by_hex: new_by_hex,
-        source: Some(source.clone()),
+        source: Some(source.to_string()),
         fetched_at_ms: polled_at_ms,
-    };
-    memory.current.store(Arc::new(new_snapshot));
+    });
+    memory.current.store(Arc::clone(&snapshot));
 
     // ── Append history points (write-lock ~100μs) ───────────────────
-    {
-        let mut ring = memory.history.write().expect("history lock poisoned");
-        ring.rotate_if_needed(polled_at_ms);
-        for (hex, point) in &history_points {
-            ring.append_point(hex, point.clone());
-        }
-        if run_retention_sweep {
-            ring.sweep_retention(retention_cutoff_ms);
-        }
+    let mut ring = memory.history.write().expect("history lock poisoned");
+    ring.rotate_if_needed(polled_at_ms);
+    for (index, point) in history_points {
+        ring.append_point(&snapshot.tracks[index].hex, point);
     }
-
-    // ── Persist to SQLite (background, no readers depend on this) ───
-    persist_to_sqlite(
-        connection,
-        &source,
-        &aircraft,
-        polled_at_ms,
-        run_retention_sweep,
-        retention_cutoff_ms,
-    )?;
-
-    Ok(())
+    if run_retention_sweep {
+        ring.sweep_retention(retention_cutoff_ms);
+    }
 }
+
+/// The writer's copy of what SQLite holds. Each ingest merges against it instead of reading
+/// tracks back, and it advances only after a transaction commits, so after a failed transaction
+/// it still matches the rolled-back database.
+struct PersistedState {
+    tracks: FxHashMap<String, TrackEntry>,
+    partitions: RingPartitionCache,
+}
+
+impl PersistedState {
+    fn load(connection: &Connection) -> Result<Self, String> {
+        let tracks = load_tracks(connection)?
+            .into_iter()
+            .map(|track| (track.hex.clone(), track))
+            .collect();
+        Ok(Self {
+            tracks,
+            partitions: load_partition_cache(connection)?,
+        })
+    }
+}
+
+const UPSERT_TRACK_SQL: &str = "INSERT INTO traffic_tracks (
+        hex, flight, is_on_ground, altitude_feet, ground_speed_kt, track_deg,
+        last_observed_at_ms, last_lat, last_lon,
+        last_point_ts_ms, last_point_lat, last_point_lon, last_point_altitude_feet, last_point_is_on_ground
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(hex) DO UPDATE SET
+        flight = excluded.flight,
+        is_on_ground = excluded.is_on_ground,
+        altitude_feet = excluded.altitude_feet,
+        ground_speed_kt = excluded.ground_speed_kt,
+        track_deg = excluded.track_deg,
+        last_observed_at_ms = excluded.last_observed_at_ms,
+        last_lat = excluded.last_lat,
+        last_lon = excluded.last_lon,
+        last_point_ts_ms = excluded.last_point_ts_ms,
+        last_point_lat = excluded.last_point_lat,
+        last_point_lon = excluded.last_point_lon,
+        last_point_altitude_feet = excluded.last_point_altitude_feet,
+        last_point_is_on_ground = excluded.last_point_is_on_ground";
 
 fn persist_to_sqlite(
     connection: &mut Connection,
+    persisted: &mut PersistedState,
     source: &str,
     aircraft: &[TrafficAircraft],
     polled_at_ms: i64,
@@ -395,101 +472,80 @@ fn persist_to_sqlite(
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
+    let mut partitions = persisted.partitions.clone();
+    let mut merged: FxHashMap<&str, TrackEntry> =
+        FxHashMap::with_capacity_and_hasher(aircraft.len(), Default::default());
 
-    // Load existing tracks from SQLite for the merge (SQLite state tracks persistence).
-    let hexes: Vec<String> = aircraft.iter().map(|a| a.hex.clone()).collect();
-    let mut existing_tracks = load_existing_tracks(&transaction, &hexes)?;
-    let mut partition_cache = load_partition_cache(&transaction)?;
+    {
+        let mut upsert_track = transaction
+            .prepare_cached(UPSERT_TRACK_SQL)
+            .map_err(|error| error.to_string())?;
+        let mut insert_point: Option<(i64, CachedStatement<'_>)> = None;
 
-    let mut last_history_table = String::new();
+        for candidate in aircraft {
+            let stored = persisted.tracks.get(&candidate.hex);
+            let track = merged.entry(candidate.hex.as_str()).or_insert_with(|| {
+                stored.cloned().unwrap_or_else(|| {
+                    new_track(candidate, polled_at_ms, retention_cutoff_ms)
+                })
+            });
 
-    for candidate in aircraft {
-        let mut track = existing_tracks
-            .remove(&candidate.hex)
-            .unwrap_or_else(|| new_track(candidate, polled_at_ms, retention_cutoff_ms));
-        if let Some(point) = merge_track(&mut track, candidate, polled_at_ms, retention_cutoff_ms) {
-            let point_timestamp_ms = point.timestamp_ms;
-            let point_altitude_feet = point.altitude_feet;
-            let bkt = bucket_start_ms(point_timestamp_ms);
-            let partition = ensure_partition_for_bucket(&transaction, &mut partition_cache, bkt)?;
-
-            if partition.points_table != last_history_table {
-                let sql = format!(
-                    "INSERT INTO \"{}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground) VALUES (?, ?, ?, ?, ?, ?)",
-                    partition.points_table
-                );
-                transaction
-                    .prepare_cached(&sql)
-                    .map_err(|error| error.to_string())?;
-                last_history_table = partition.points_table.clone();
-            }
+            if let Some(point) = merge_track(track, candidate, polled_at_ms, retention_cutoff_ms)
             {
-                let mut stmt = transaction
-                    .prepare_cached(&format!(
-                        "INSERT INTO \"{}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground) VALUES (?, ?, ?, ?, ?, ?)",
-                        partition.points_table
-                    ))
+                let bucket = bucket_start_ms(point.timestamp_ms);
+                let statement = match &mut insert_point {
+                    Some((current, statement)) if *current == bucket => statement,
+                    _ => {
+                        let partition =
+                            ensure_partition_for_bucket(&transaction, &mut partitions, bucket)?;
+                        let statement = transaction
+                            .prepare_cached(&format!(
+                                "INSERT INTO \"{}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground) VALUES (?, ?, ?, ?, ?, ?)",
+                                partition.points_table
+                            ))
+                            .map_err(|error| error.to_string())?;
+                        &mut insert_point.insert((bucket, statement)).1
+                    }
+                };
+                statement
+                    .execute(params![
+                        candidate.hex,
+                        point.timestamp_ms,
+                        point.lat,
+                        point.lon,
+                        point.altitude_feet,
+                        point.is_on_ground as i64,
+                    ])
                     .map_err(|error| error.to_string())?;
-                stmt.execute(params![
+            }
+
+            // Parked aircraft whose position report only ages merge to an identical row.
+            if stored == Some(&*track) {
+                continue;
+            }
+            upsert_track
+                .execute(params![
                     candidate.hex,
-                    point_timestamp_ms,
-                    candidate.lat,
-                    candidate.lon,
-                    point_altitude_feet,
-                    if track.is_on_ground { 1_i64 } else { 0_i64 },
+                    track.flight,
+                    track.is_on_ground as i64,
+                    track.altitude_feet,
+                    track.ground_speed_kt,
+                    track.track_deg,
+                    track.last_observed_at_ms,
+                    track.lat,
+                    track.lon,
+                    track.last_point_ts_ms,
+                    track.last_point_lat,
+                    track.last_point_lon,
+                    track.last_point_altitude_feet,
+                    track.last_point_is_on_ground.map(i64::from),
                 ])
                 .map_err(|error| error.to_string())?;
-            }
-        }
-
-        {
-            let mut stmt = transaction
-                .prepare_cached(
-                    "INSERT INTO traffic_tracks (
-                        hex, flight, is_on_ground, altitude_feet, ground_speed_kt, track_deg,
-                        last_observed_at_ms, last_lat, last_lon,
-                        last_point_ts_ms, last_point_lat, last_point_lon, last_point_altitude_feet, last_point_is_on_ground
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(hex) DO UPDATE SET
-                        flight = excluded.flight,
-                        is_on_ground = excluded.is_on_ground,
-                        altitude_feet = excluded.altitude_feet,
-                        ground_speed_kt = excluded.ground_speed_kt,
-                        track_deg = excluded.track_deg,
-                        last_observed_at_ms = excluded.last_observed_at_ms,
-                        last_lat = excluded.last_lat,
-                        last_lon = excluded.last_lon,
-                        last_point_ts_ms = excluded.last_point_ts_ms,
-                        last_point_lat = excluded.last_point_lat,
-                        last_point_lon = excluded.last_point_lon,
-                        last_point_altitude_feet = excluded.last_point_altitude_feet,
-                        last_point_is_on_ground = excluded.last_point_is_on_ground",
-                )
-                .map_err(|error| error.to_string())?;
-            stmt.execute(params![
-                candidate.hex,
-                track.flight,
-                if track.is_on_ground { 1_i64 } else { 0_i64 },
-                track.altitude_feet,
-                track.ground_speed_kt,
-                track.track_deg,
-                track.last_observed_at_ms,
-                track.lat,
-                track.lon,
-                track.last_point_ts_ms,
-                track.last_point_lat,
-                track.last_point_lon,
-                track.last_point_altitude_feet,
-                track
-                    .last_point_is_on_ground
-                    .map(|value| if value { 1_i64 } else { 0_i64 }),
-            ])
-            .map_err(|error| error.to_string())?;
         }
     }
 
     if run_retention_sweep {
-        sweep_expired_partitions(&transaction, retention_cutoff_ms)?;
+        sweep_expired_partitions(&transaction, &mut partitions, retention_cutoff_ms)?;
         {
             let mut stmt = transaction
                 .prepare_cached("DELETE FROM traffic_tracks WHERE last_observed_at_ms < ?")
@@ -512,6 +568,22 @@ fn persist_to_sqlite(
     }
 
     transaction.commit().map_err(|error| error.to_string())?;
+
+    // ── Advance the persisted mirror to the committed state ─────────
+    persisted.partitions = partitions;
+    for (hex, track) in merged {
+        match persisted.tracks.get_mut(hex) {
+            Some(stored) => *stored = track,
+            None => {
+                persisted.tracks.insert(hex.to_string(), track);
+            }
+        }
+    }
+    if run_retention_sweep {
+        persisted
+            .tracks
+            .retain(|_, track| track.last_observed_at_ms >= retention_cutoff_ms);
+    }
 
     Ok(())
 }
@@ -580,6 +652,7 @@ fn reconcile_partition_tables(connection: &Connection) -> Result<(), String> {
     if RING_SLOT_COUNT <= 0 {
         return Err("RING_SLOT_COUNT must be positive".to_string());
     }
+    drop_obsolete_schema(connection)?;
 
     connection
         .execute(
@@ -611,8 +684,6 @@ fn reconcile_partition_tables(connection: &Connection) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     }
 
-    migrate_legacy_partitions_to_ring(connection)?;
-
     Ok(())
 }
 
@@ -627,83 +698,69 @@ fn reconcile_partition_schema(
     Ok(())
 }
 
+/// Points are written in timestamp order per aircraft and read back in rowid order, and every
+/// query is served from memory, so the table needs no secondary indexes.
 fn partition_schema_sql(points_table: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS \"{points_table}\" (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             hex TEXT NOT NULL,
             timestamp_ms INTEGER NOT NULL,
             lat REAL NOT NULL,
             lon REAL NOT NULL,
             altitude_feet REAL NOT NULL,
             is_on_ground INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS \"idx_{points_table}_ts\" ON \"{points_table}\"(timestamp_ms);
-        CREATE INDEX IF NOT EXISTS \"idx_{points_table}_hex_ts\" ON \"{points_table}\"(hex, timestamp_ms);",
-        points_table = points_table,
+        );"
     )
 }
 
-fn load_existing_tracks(
-    connection: &Connection,
-    hexes: &[String],
-) -> Result<std::collections::HashMap<String, TrackEntry>, String> {
-    let mut tracks = std::collections::HashMap::new();
-    if hexes.is_empty() {
-        return Ok(tracks);
+/// Drop objects earlier releases created that nothing reads any more. Long-lived databases still
+/// carry R*Tree mirrors whose triggers fire on every point insert and track update and delete
+/// row by row when a slot is recycled, point and track indexes used only by removed SQL queries,
+/// and expired tables from the pre-ring partition layout. Point tables keep their legacy
+/// AUTOINCREMENT until their slot is next recycled.
+fn drop_obsolete_schema(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT type, name FROM sqlite_master
+             WHERE (type = 'trigger' AND name GLOB 'trg_traffic_*rtree*')
+                OR (type = 'index' AND (name GLOB 'idx_traffic_points_*'
+                    OR name IN ('idx_traffic_tracks_live', 'idx_traffic_tracks_last_seen')))
+                OR (type = 'table' AND NOT name GLOB '*_rtree_*' AND (name GLOB 'traffic_*_rtree'
+                    OR name GLOB 'traffic_points_p[0-9]*'
+                    OR name IN ('traffic_points', 'traffic_partitions')))",
+        )
+        .map_err(|error| error.to_string())?;
+    let mut objects = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if objects.is_empty() {
+        return Ok(());
     }
-
-    for chunk in hexes.chunks(800) {
-        let placeholders = std::iter::repeat("?")
-            .take(chunk.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT
-                hex, flight, is_on_ground, altitude_feet, ground_speed_kt, track_deg,
-                last_observed_at_ms, last_lat, last_lon,
-                last_point_ts_ms, last_point_lat, last_point_lon, last_point_altitude_feet, last_point_is_on_ground
-             FROM traffic_tracks
-             WHERE hex IN ({placeholders})"
-        );
-
-        let mut statement = connection
-            .prepare(&sql)
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map(params_from_iter(chunk.iter()), |row| {
-                let hex: String = row.get(0)?;
-                let is_on_ground: i64 = row.get(2)?;
-                let last_point_is_on_ground: Option<i64> = row.get(13)?;
-                Ok((
-                    hex.clone(),
-                    TrackEntry {
-                        hex,
-                        flight: row.get(1)?,
-                        is_on_ground: is_on_ground == 1,
-                        altitude_feet: row.get(3)?,
-                        ground_speed_kt: row.get(4)?,
-                        track_deg: row.get(5)?,
-                        last_observed_at_ms: row.get(6)?,
-                        lat: row.get(7)?,
-                        lon: row.get(8)?,
-                        last_point_ts_ms: row.get(9)?,
-                        last_point_lat: row.get(10)?,
-                        last_point_lon: row.get(11)?,
-                        last_point_altitude_feet: row.get(12)?,
-                        last_point_is_on_ground: last_point_is_on_ground.map(|value| value == 1),
-                    },
-                ))
-            })
-            .map_err(|error| error.to_string())?;
-
-        for row in rows {
-            let (hex, track) = row.map_err(|error| error.to_string())?;
-            tracks.insert(hex, track);
-        }
+    // Triggers reference the R*Tree tables; R*Tree tables drop their own shadow tables.
+    objects.sort_by_key(|(kind, name)| match kind.as_str() {
+        "trigger" => 0,
+        "index" => 1,
+        _ if name.ends_with("_rtree") => 2,
+        _ => 3,
+    });
+    let mut sql = String::from("BEGIN;");
+    for (kind, name) in &objects {
+        sql.push_str(&format!("DROP {} IF EXISTS \"{name}\";", kind.to_uppercase()));
     }
-
-    Ok(tracks)
+    sql.push_str("COMMIT;");
+    let started = std::time::Instant::now();
+    connection
+        .execute_batch(&sql)
+        .map_err(|error| format!("Dropping obsolete traffic schema failed: {error}"))?;
+    info!(
+        dropped = objects.len(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "dropped obsolete traffic schema objects"
+    );
+    Ok(())
 }
 
 fn load_partition_cache(connection: &Connection) -> Result<RingPartitionCache, String> {
@@ -790,32 +847,16 @@ fn ensure_partition_for_bucket(
 
 fn sweep_expired_partitions(
     connection: &Connection,
+    cache: &mut RingPartitionCache,
     retention_cutoff_ms: i64,
 ) -> Result<(), String> {
     let keep_from_bucket_ms = bucket_start_ms(retention_cutoff_ms);
-
-    let mut statement = connection
-        .prepare(
-            "SELECT slot, bucket_start_ms, points_table, rtree_table
-             FROM traffic_ring_slots
-             WHERE bucket_start_ms >= 0
-               AND bucket_start_ms < ?",
-        )
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map(params![keep_from_bucket_ms], |row| {
-            Ok(PartitionInfo {
-                slot: row.get(0)?,
-                bucket_start_ms: row.get(1)?,
-                points_table: row.get(2)?,
-                rtree_table: row.get(3)?,
-            })
-        })
-        .map_err(|error| error.to_string())?;
-
-    let expired = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+    let expired: Vec<PartitionInfo> = cache
+        .by_bucket_start_ms
+        .values()
+        .filter(|partition| partition.bucket_start_ms < keep_from_bucket_ms)
+        .cloned()
+        .collect();
 
     for partition in expired {
         clear_ring_slot(connection, &partition)?;
@@ -827,20 +868,22 @@ fn sweep_expired_partitions(
                 params![partition.slot],
             )
             .map_err(|error| error.to_string())?;
+        cache.by_bucket_start_ms.remove(&partition.bucket_start_ms);
+        cache.by_slot.remove(&partition.slot);
     }
 
     Ok(())
 }
 
+/// Recreate rather than delete: dropping a table frees its pages in one pass and rebuilds
+/// tables left with an older schema.
 fn clear_ring_slot(connection: &Connection, partition: &PartitionInfo) -> Result<(), String> {
-    // Only clear the points table — R-tree tables are no longer created/maintained.
-    // Tolerate missing R-tree tables from older schemas.
-    let clear_sql = format!(
-        "DELETE FROM \"{points_table}\";",
-        points_table = partition.points_table,
-    );
     connection
-        .execute_batch(&clear_sql)
+        .execute_batch(&format!(
+            "DROP TABLE IF EXISTS \"{points_table}\";{create}",
+            points_table = partition.points_table,
+            create = partition_schema_sql(&partition.points_table),
+        ))
         .map_err(|error| error.to_string())
 }
 
@@ -915,131 +958,17 @@ fn open_traffic_db(path: &Path) -> Result<Connection, String> {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS traffic_partitions (
-                bucket_start_ms INTEGER PRIMARY KEY,
-                points_table TEXT NOT NULL,
-                rtree_table TEXT NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS traffic_ring_slots (
                 slot INTEGER PRIMARY KEY,
                 bucket_start_ms INTEGER NOT NULL,
                 points_table TEXT NOT NULL,
                 rtree_table TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_traffic_tracks_last_seen ON traffic_tracks(last_observed_at_ms);
-            CREATE INDEX IF NOT EXISTS idx_traffic_ring_slots_bucket ON traffic_ring_slots(bucket_start_ms);
-            DROP TABLE IF EXISTS traffic_points;
-            DROP TABLE IF EXISTS traffic_points_rtree;",
+            CREATE INDEX IF NOT EXISTS idx_traffic_ring_slots_bucket ON traffic_ring_slots(bucket_start_ms);",
         )
         .map_err(|error| error.to_string())?;
 
     Ok(connection)
-}
-
-fn migrate_legacy_partitions_to_ring(connection: &Connection) -> Result<(), String> {
-    let ring_rows: i64 = connection
-        .query_row(
-            "SELECT COUNT(1) FROM traffic_ring_slots WHERE bucket_start_ms >= 0",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| error.to_string())?;
-    if ring_rows > 0 {
-        return Ok(());
-    }
-
-    let retention_cutoff_ms = now_ms() - CACHE_RETENTION_MS;
-    let min_bucket_start_ms = bucket_start_ms(retention_cutoff_ms);
-
-    let mut statement = connection
-        .prepare(
-            "SELECT bucket_start_ms, points_table
-             FROM traffic_partitions
-             WHERE bucket_start_ms >= ?
-             ORDER BY bucket_start_ms ASC",
-        )
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map(params![min_bucket_start_ms], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|error| error.to_string())?;
-
-    let legacy_rows = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    if legacy_rows.is_empty() {
-        return Ok(());
-    }
-
-    let mut newest_by_slot: std::collections::HashMap<i64, (i64, String)> =
-        std::collections::HashMap::new();
-    for (bucket_start_ms, points_table) in legacy_rows {
-        if !points_table.starts_with("traffic_points_p") {
-            continue;
-        }
-        let slot = ring_slot_for_bucket(bucket_start_ms);
-        match newest_by_slot.get(&slot) {
-            Some((existing_bucket_start_ms, _)) if *existing_bucket_start_ms >= bucket_start_ms => {
-            }
-            _ => {
-                newest_by_slot.insert(slot, (bucket_start_ms, points_table));
-            }
-        }
-    }
-
-    let mut migrated_slots = 0usize;
-    for (slot, (bucket_start_ms, legacy_points_table)) in newest_by_slot {
-        let ring_points_table = partition_points_table_name(slot);
-
-        let clear_sql = format!("DELETE FROM \"{ring_points_table}\";");
-        if let Err(error) = connection.execute_batch(&clear_sql) {
-            warn!(
-                "Failed clearing ring slot {} before legacy migration: {}",
-                slot, error
-            );
-            continue;
-        }
-
-        let copy_sql = format!(
-            "INSERT INTO \"{ring_points_table}\" (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
-             SELECT hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground
-             FROM \"{legacy_points_table}\"
-             WHERE timestamp_ms >= ?",
-        );
-        if let Err(error) = connection.execute(&copy_sql, params![retention_cutoff_ms]) {
-            warn!(
-                "Failed migrating legacy table {} into ring slot {}: {}",
-                legacy_points_table, slot, error
-            );
-            continue;
-        }
-
-        let ring_rtree_table = partition_rtree_table_name(slot);
-        if let Err(error) = connection.execute(
-            "UPDATE traffic_ring_slots
-             SET bucket_start_ms = ?, points_table = ?, rtree_table = ?
-             WHERE slot = ?",
-            params![bucket_start_ms, ring_points_table, ring_rtree_table, slot,],
-        ) {
-            warn!(
-                "Failed updating ring slot {} metadata during legacy migration: {}",
-                slot, error
-            );
-            continue;
-        }
-
-        migrated_slots += 1;
-    }
-
-    if migrated_slots > 0 {
-        info!(
-            "Migrated {} legacy traffic partition(s) into fixed ring slots.",
-            migrated_slots
-        );
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1119,13 +1048,15 @@ mod tests {
         let mut connection = open_traffic_db(&dir.path().join("traffic.db")).unwrap();
         reconcile_partition_tables(&connection).unwrap();
         let memory = TrafficMemoryStore::new_empty();
+        let mut persisted = PersistedState::load(&connection).unwrap();
         connection.execute_batch("CREATE TRIGGER fail_write BEFORE INSERT ON traffic_tracks BEGIN SELECT RAISE(FAIL, 'test disk failure'); END;").unwrap();
         let aircraft = test_aircraft("abc123", 40.0, -74.0, false);
         assert!(ingest_snapshot(
             &mut connection,
             &memory,
-            "test".into(),
-            vec![aircraft.clone()],
+            &mut persisted,
+            "test",
+            std::slice::from_ref(&aircraft),
             NOW_MS,
             false
         )
@@ -1139,8 +1070,9 @@ mod tests {
         ingest_snapshot(
             &mut connection,
             &memory,
-            "test".into(),
-            vec![aircraft],
+            &mut persisted,
+            "test",
+            &[aircraft],
             NOW_MS + 1000,
             false,
         )
@@ -1153,6 +1085,86 @@ mod tests {
             live.tracks[0].last_point_ts_ms,
             disk.tracks[0].last_point_ts_ms
         );
+    }
+
+    #[test]
+    fn startup_drops_legacy_rtree_and_index_objects_but_keeps_points() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = open_traffic_db(&dir.path().join("traffic.db")).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE traffic_partitions (bucket_start_ms INTEGER PRIMARY KEY, points_table TEXT, rtree_table TEXT);
+                 CREATE TABLE traffic_points_p1771805700000 (id INTEGER PRIMARY KEY, hex TEXT);
+                 CREATE INDEX idx_traffic_tracks_live ON traffic_tracks(last_observed_at_ms, last_lat, last_lon);
+                 CREATE VIRTUAL TABLE traffic_tracks_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+                 CREATE TRIGGER trg_traffic_tracks_rtree_insert AFTER INSERT ON traffic_tracks BEGIN
+                     INSERT INTO traffic_tracks_rtree VALUES (new.rowid, new.last_lat, new.last_lat, new.last_lon, new.last_lon);
+                 END;
+                 CREATE TABLE traffic_points_ring_s0 (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT, hex TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
+                     lat REAL NOT NULL, lon REAL NOT NULL, altitude_feet REAL NOT NULL, is_on_ground INTEGER NOT NULL);
+                 CREATE INDEX idx_traffic_points_ring_s0_hex_ts ON traffic_points_ring_s0(hex, timestamp_ms);
+                 CREATE VIRTUAL TABLE traffic_points_ring_s0_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+                 CREATE TRIGGER trg_traffic_points_ring_s0_rtree_insert AFTER INSERT ON traffic_points_ring_s0 BEGIN
+                     INSERT INTO traffic_points_ring_s0_rtree VALUES (new.id, new.lat, new.lat, new.lon, new.lon);
+                 END;
+                 INSERT INTO traffic_points_ring_s0 (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
+                 VALUES ('abc123', 1, 40.0, -74.0, 1000.0, 0);",
+            )
+            .unwrap();
+
+        reconcile_partition_tables(&connection).unwrap();
+
+        let leftovers: Vec<String> = connection
+            .prepare(
+                "SELECT name FROM sqlite_master
+                 WHERE name GLOB '*rtree*' OR name GLOB 'traffic_points_p*'
+                    OR name = 'traffic_partitions' OR name GLOB 'idx_traffic_points_*'
+                    OR name = 'idx_traffic_tracks_live'",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+        let points: i64 = connection
+            .query_row("SELECT COUNT(*) FROM traffic_points_ring_s0", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(points, 1);
+        // Idempotent on the next start.
+        reconcile_partition_tables(&connection).unwrap();
+    }
+
+    #[test]
+    fn recycled_slot_is_rebuilt_without_autoincrement() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = open_traffic_db(&dir.path().join("traffic.db")).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE traffic_points_ring_s0 (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT, hex TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
+                     lat REAL NOT NULL, lon REAL NOT NULL, altitude_feet REAL NOT NULL, is_on_ground INTEGER NOT NULL);
+                 INSERT INTO traffic_points_ring_s0 (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
+                 VALUES ('abc123', 1, 40.0, -74.0, 1000.0, 0);",
+            )
+            .unwrap();
+        reconcile_partition_tables(&connection).unwrap();
+        let mut cache = load_partition_cache(&connection).unwrap();
+        let first = RING_SLOT_COUNT * PARTITION_BUCKET_MS;
+        ensure_partition_for_bucket(&connection, &mut cache, first).unwrap();
+        ensure_partition_for_bucket(&connection, &mut cache, first * 2).unwrap();
+
+        let (sql, points): (String, i64) = connection
+            .query_row(
+                "SELECT sql, (SELECT COUNT(*) FROM traffic_points_ring_s0)
+                 FROM sqlite_master WHERE name = 'traffic_points_ring_s0'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(!sql.contains("AUTOINCREMENT"));
+        assert_eq!(points, 0);
     }
 
     #[tokio::test(flavor = "multi_thread")]

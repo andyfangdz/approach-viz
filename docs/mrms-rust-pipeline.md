@@ -34,10 +34,8 @@ This project now uses an external Rust runtime service for MRMS instead of decod
 - Retention cap: `RUNTIME_MRMS_RETENTION_BYTES=5368709120` (5 GB; legacy alias `MRMS_RETENTION_BYTES`)
 - Oldest snapshot files are pruned automatically after each successful ingest.
 - ADS-B traffic store path: `RUNTIME_STORAGE_DIR/traffic-store.db`
-- ADS-B retention window: 1 hour retained in SQLite via a fixed 12-slot ring of 5-minute history tables (`traffic_points_ring_s<slot>` + slot-local `R*Tree` tables).
-- ADS-B SQLite access pattern: one persistent writer worker for ingest and a small persistent reader pool for request-time `/v1/traffic/adsbx` queries.
-- ADS-B lock handling: store bootstrap is serialized to avoid concurrent first-hit migration races, and both reader queries and writer ingest path retry transient SQLite lock errors before surfacing failures.
-- ADS-B spatial indexing path: ring-slot and live-track `R*Tree` tables are trigger-maintained (`INSERT`/`UPDATE`/`DELETE`), startup reconciliation backfills any missing index rows, and `/v1/traffic/adsbx` uses `R*Tree` joins for live candidate and history-target discovery.
+- ADS-B retention window: 1 hour retained in SQLite via a fixed 12-slot ring of 5-minute history tables (`traffic_points_ring_s<slot>`, no secondary indexes).
+- ADS-B SQLite access pattern: one writer thread persists each ingest; requests are served from memory and never read SQLite. See [data sources](data-sources.md#live-ads-b-traffic) for the persisted-state mirror and the startup cleanup of legacy `R*Tree`/index objects.
 - ADS-B WAL maintenance: low-priority writer maintenance runs periodic `wal_checkpoint(PASSIVE)` and only attempts `wal_checkpoint(TRUNCATE)` when WAL size is above threshold and truncate cooldown has elapsed.
 
 ## Ingest Performance
