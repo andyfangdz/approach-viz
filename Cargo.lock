@@ -87,6 +87,7 @@ dependencies = [
  "flate2",
  "futures",
  "grib",
+ "libc",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",

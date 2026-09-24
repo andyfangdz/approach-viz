@@ -192,24 +192,28 @@ impl Fleet {
     }
 }
 
-fn process_cpu_seconds() -> f64 {
-    let stat = std::fs::read_to_string("/proc/self/stat").expect("read /proc/self/stat");
-    let after_comm = &stat[stat.rfind(')').expect("stat comm") + 2..];
-    let fields: Vec<&str> = after_comm.split_whitespace().collect();
-    // utime and stime are fields 14 and 15 (1-based); after_comm starts at field 3.
-    let ticks: f64 = fields[11].parse::<f64>().unwrap() + fields[12].parse::<f64>().unwrap();
-    ticks / 100.0
+fn self_usage() -> libc::rusage {
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    let status = unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    assert_eq!(status, 0, "getrusage failed");
+    usage
 }
 
-fn rss_mb() -> f64 {
-    let status = std::fs::read_to_string("/proc/self/status").expect("read status");
-    status
-        .lines()
-        .find(|line| line.starts_with("VmRSS:"))
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|kb| kb.parse::<f64>().ok())
-        .unwrap_or(0.0)
-        / 1024.0
+/// User plus system CPU time of the whole process.
+fn process_cpu_seconds() -> f64 {
+    let usage = self_usage();
+    let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 / 1e6;
+    seconds(usage.ru_utime) + seconds(usage.ru_stime)
+}
+
+/// Peak resident set size; `ru_maxrss` is KiB on Linux and bytes on macOS.
+fn peak_rss_mb() -> f64 {
+    let max_rss = self_usage().ru_maxrss as f64;
+    if cfg!(target_os = "macos") {
+        max_rss / 1_048_576.0
+    } else {
+        max_rss / 1024.0
+    }
 }
 
 fn percentile(sorted: &[f64], q: f64) -> f64 {
@@ -478,10 +482,10 @@ async fn main() {
         summarize("  (bucket rollover ticks)", rollover);
     }
     println!(
-        "CPU per ingest: {:.1} ms  ->  {:.1}% of one core at 1 Hz   RSS {:.0} MB",
+        "CPU per ingest: {:.1} ms  ->  {:.1}% of one core at 1 Hz   peak RSS {:.0} MB",
         cpu_seconds / measure as f64 * 1000.0,
         cpu_seconds / measure as f64 * 100.0,
-        rss_mb()
+        peak_rss_mb()
     );
 
     // Queries as the web client issues them (default scene, live poll + trail discovery).
