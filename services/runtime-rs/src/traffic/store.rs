@@ -714,21 +714,20 @@ fn partition_schema_sql(points_table: &str) -> String {
     )
 }
 
-/// Drop objects earlier releases created that nothing reads any more. Long-lived databases still
-/// carry R*Tree mirrors whose triggers fire on every point insert and track update and delete
-/// row by row when a slot is recycled, point and track indexes used only by removed SQL queries,
-/// and expired tables from the pre-ring partition layout. Point tables keep their legacy
-/// AUTOINCREMENT until their slot is next recycled.
+/// Drop the maintenance earlier releases attached to this database. Long-lived databases carry
+/// R*Tree mirrors whose triggers fire on every point insert and track update, plus track indexes
+/// used only by removed SQL queries. Only the triggers and track-sized objects go here: startup
+/// must stay fast, and freeing a large table reads every page of it. Each ring slot's R*Tree and
+/// point indexes go when the slot is next recycled (`clear_ring_slot`). Pre-ring
+/// `traffic_points` and `traffic_points_p*` tables are neither written nor read and are left for
+/// offline cleanup.
 fn drop_obsolete_schema(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare(
             "SELECT type, name FROM sqlite_master
              WHERE (type = 'trigger' AND name GLOB 'trg_traffic_*rtree*')
-                OR (type = 'index' AND (name GLOB 'idx_traffic_points_*'
-                    OR name IN ('idx_traffic_tracks_live', 'idx_traffic_tracks_last_seen')))
-                OR (type = 'table' AND NOT name GLOB '*_rtree_*' AND (name GLOB 'traffic_*_rtree'
-                    OR name GLOB 'traffic_points_p[0-9]*'
-                    OR name IN ('traffic_points', 'traffic_partitions')))",
+                OR (type = 'index' AND name IN ('idx_traffic_tracks_live', 'idx_traffic_tracks_last_seen'))
+                OR (type = 'table' AND name = 'traffic_tracks_rtree')",
         )
         .map_err(|error| error.to_string())?;
     let mut objects = statement
@@ -875,12 +874,13 @@ fn sweep_expired_partitions(
     Ok(())
 }
 
-/// Recreate rather than delete: dropping a table frees its pages in one pass and rebuilds
-/// tables left with an older schema.
+/// Recreate rather than delete: dropping a table frees its pages in one pass and rebuilds tables
+/// left with an older schema, taking their point indexes and any legacy R*Tree mirror with them.
 fn clear_ring_slot(connection: &Connection, partition: &PartitionInfo) -> Result<(), String> {
     connection
         .execute_batch(&format!(
-            "DROP TABLE IF EXISTS \"{points_table}\";{create}",
+            "DROP TABLE IF EXISTS \"{rtree_table}\";DROP TABLE IF EXISTS \"{points_table}\";{create}",
+            rtree_table = partition.rtree_table,
             points_table = partition.points_table,
             create = partition_schema_sql(&partition.points_table),
         ))
@@ -1087,12 +1087,34 @@ mod tests {
         );
     }
 
+    const LEGACY_RING_SLOT_SQL: &str = "
+        CREATE TABLE traffic_points_ring_s0 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, hex TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
+            lat REAL NOT NULL, lon REAL NOT NULL, altitude_feet REAL NOT NULL, is_on_ground INTEGER NOT NULL);
+        CREATE INDEX idx_traffic_points_ring_s0_hex_ts ON traffic_points_ring_s0(hex, timestamp_ms);
+        CREATE VIRTUAL TABLE traffic_points_ring_s0_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+        CREATE TRIGGER trg_traffic_points_ring_s0_rtree_insert AFTER INSERT ON traffic_points_ring_s0 BEGIN
+            INSERT INTO traffic_points_ring_s0_rtree VALUES (new.id, new.lat, new.lat, new.lon, new.lon);
+        END;
+        INSERT INTO traffic_points_ring_s0 (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
+        VALUES ('abc123', 1, 40.0, -74.0, 1000.0, 0);";
+
+    fn schema_names(connection: &Connection, filter: &str) -> Vec<String> {
+        connection
+            .prepare(&format!("SELECT name FROM sqlite_master WHERE {filter} ORDER BY name"))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
     #[test]
-    fn startup_drops_legacy_rtree_and_index_objects_but_keeps_points() {
+    fn startup_drops_legacy_triggers_and_track_objects_only() {
         let dir = tempfile::tempdir().unwrap();
         let connection = open_traffic_db(&dir.path().join("traffic.db")).unwrap();
         connection
-            .execute_batch(
+            .execute_batch(&format!(
                 "CREATE TABLE traffic_partitions (bucket_start_ms INTEGER PRIMARY KEY, points_table TEXT, rtree_table TEXT);
                  CREATE TABLE traffic_points_p1771805700000 (id INTEGER PRIMARY KEY, hex TEXT);
                  CREATE INDEX idx_traffic_tracks_live ON traffic_tracks(last_observed_at_ms, last_lat, last_lon);
@@ -1100,34 +1122,29 @@ mod tests {
                  CREATE TRIGGER trg_traffic_tracks_rtree_insert AFTER INSERT ON traffic_tracks BEGIN
                      INSERT INTO traffic_tracks_rtree VALUES (new.rowid, new.last_lat, new.last_lat, new.last_lon, new.last_lon);
                  END;
-                 CREATE TABLE traffic_points_ring_s0 (
-                     id INTEGER PRIMARY KEY AUTOINCREMENT, hex TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
-                     lat REAL NOT NULL, lon REAL NOT NULL, altitude_feet REAL NOT NULL, is_on_ground INTEGER NOT NULL);
-                 CREATE INDEX idx_traffic_points_ring_s0_hex_ts ON traffic_points_ring_s0(hex, timestamp_ms);
-                 CREATE VIRTUAL TABLE traffic_points_ring_s0_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
-                 CREATE TRIGGER trg_traffic_points_ring_s0_rtree_insert AFTER INSERT ON traffic_points_ring_s0 BEGIN
-                     INSERT INTO traffic_points_ring_s0_rtree VALUES (new.id, new.lat, new.lat, new.lon, new.lon);
-                 END;
-                 INSERT INTO traffic_points_ring_s0 (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
-                 VALUES ('abc123', 1, 40.0, -74.0, 1000.0, 0);",
-            )
+                 {LEGACY_RING_SLOT_SQL}"
+            ))
             .unwrap();
 
         reconcile_partition_tables(&connection).unwrap();
 
-        let leftovers: Vec<String> = connection
-            .prepare(
-                "SELECT name FROM sqlite_master
-                 WHERE name GLOB '*rtree*' OR name GLOB 'traffic_points_p*'
-                    OR name = 'traffic_partitions' OR name GLOB 'idx_traffic_points_*'
-                    OR name = 'idx_traffic_tracks_live'",
+        assert!(schema_names(&connection, "type = 'trigger'").is_empty());
+        assert!(
+            schema_names(
+                &connection,
+                "name IN ('traffic_tracks_rtree', 'idx_traffic_tracks_live')"
             )
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+            .is_empty()
+        );
+        // Large objects stay until their slot is recycled or an offline cleanup removes them.
+        assert_eq!(
+            schema_names(
+                &connection,
+                "name IN ('traffic_points_ring_s0_rtree', 'idx_traffic_points_ring_s0_hex_ts', 'traffic_points_p1771805700000')"
+            )
+            .len(),
+            3
+        );
         let points: i64 = connection
             .query_row("SELECT COUNT(*) FROM traffic_points_ring_s0", [], |row| row.get(0))
             .unwrap();
@@ -1137,18 +1154,10 @@ mod tests {
     }
 
     #[test]
-    fn recycled_slot_is_rebuilt_without_autoincrement() {
+    fn recycled_slot_drops_legacy_rtree_indexes_and_autoincrement() {
         let dir = tempfile::tempdir().unwrap();
         let connection = open_traffic_db(&dir.path().join("traffic.db")).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE traffic_points_ring_s0 (
-                     id INTEGER PRIMARY KEY AUTOINCREMENT, hex TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
-                     lat REAL NOT NULL, lon REAL NOT NULL, altitude_feet REAL NOT NULL, is_on_ground INTEGER NOT NULL);
-                 INSERT INTO traffic_points_ring_s0 (hex, timestamp_ms, lat, lon, altitude_feet, is_on_ground)
-                 VALUES ('abc123', 1, 40.0, -74.0, 1000.0, 0);",
-            )
-            .unwrap();
+        connection.execute_batch(LEGACY_RING_SLOT_SQL).unwrap();
         reconcile_partition_tables(&connection).unwrap();
         let mut cache = load_partition_cache(&connection).unwrap();
         let first = RING_SLOT_COUNT * PARTITION_BUCKET_MS;
@@ -1165,6 +1174,10 @@ mod tests {
             .unwrap();
         assert!(!sql.contains("AUTOINCREMENT"));
         assert_eq!(points, 0);
+        assert!(
+            schema_names(&connection, "name GLOB 'traffic_points_ring_s0?*'").is_empty()
+                && schema_names(&connection, "name GLOB 'idx_traffic_points_ring_s0_*'").is_empty()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
