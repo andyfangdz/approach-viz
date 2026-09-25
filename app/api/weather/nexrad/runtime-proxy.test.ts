@@ -211,6 +211,27 @@ for (const product of ['volume', 'echo-tops'] as const) {
     assert.deepEqual(new Uint8Array(await response.arrayBuffer()), EXPECTED[product]);
   });
 
+  test(`${product}: a hanging R2 is abandoned within the first share`, async () => {
+    globalThis.fetch = async () => new Response(new Uint8Array([5]));
+    const hanging: PackStorage = {
+      read: (_key, signal) =>
+        new Promise((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        )
+    };
+    const started = Date.now();
+    const response = await proxyWeather(request(PACK_QUERY), product, undefined, {
+      packs: new ScanPackSource(hanging, 'mrms'),
+      runtimeBaseUrl: 'https://runtime.example'
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-av-weather-upstream'), 'runtime');
+    assert.ok(
+      Date.now() - started < 6000,
+      'the runtime must be asked well before the 8 s deadline'
+    );
+  });
+
   test(`${product}: every source failing is a 502`, async () => {
     globalThis.fetch = async () => new Response(null, { status: 500 });
     const { storage, sources } = packSources();

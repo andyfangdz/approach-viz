@@ -154,14 +154,19 @@ export async function proxyWeather(
     return errorResponse(error instanceof Error ? error.message : 'Weather is misconfigured.', 500);
   }
   const { packs, runtimeBaseUrl } = resolved;
-  const order: Source[] = packs ? await sourceOrder(packs, deadline) : ['runtime'];
+  // The pack attempt's share covers its manifest read too, so a hanging R2
+  // cannot consume the whole deadline before the runtime is asked.
+  const packShare = AbortSignal.any([deadline, AbortSignal.timeout(FIRST_ATTEMPT_TIMEOUT_MS)]);
+  const order: Source[] = packs ? await sourceOrder(packs, packShare) : ['runtime'];
 
   let failure = `MRMS ${product} request failed.`;
   for (const [index, source] of order.entries()) {
     const last = index === order.length - 1;
     const signal = last
       ? deadline
-      : AbortSignal.any([deadline, AbortSignal.timeout(FIRST_ATTEMPT_TIMEOUT_MS)]);
+      : source === 'packs'
+        ? packShare
+        : AbortSignal.any([deadline, AbortSignal.timeout(FIRST_ATTEMPT_TIMEOUT_MS)]);
     try {
       if (source === 'packs' && packs) {
         const payload = await packs.build(product, params, signal);
