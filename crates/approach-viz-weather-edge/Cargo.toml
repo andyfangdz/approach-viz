@@ -1,0 +1,17 @@
+[package]
+name = "approach-viz-weather-edge"
+version = "0.1.0"
+edition = "2024"
+description = "WASM query engine for the weather edge Worker (services/weather-edge)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+approach-viz-core = { path = "../approach-viz-core" }
+wasm-bindgen = "0.2"
+# Pure-Rust (miniz_oxide) backend: compiles to wasm32 without a C toolchain.
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

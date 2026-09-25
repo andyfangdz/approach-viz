@@ -1,0 +1,19 @@
+{
+  "name": "approach-viz-weather-edge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cd ../../crates/approach-viz-weather-edge && wasm-pack build --release --target web --out-dir ../../services/weather-edge/pkg",
+    "dev": "npm run build:wasm && wrangler dev",
+    "deploy": "npm run build:wasm && wrangler deploy",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260925.1",
+    "@types/node": "^24.13.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.139.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "approach-viz-weather-edge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "r2_buckets": [
+    {
+      "binding": "WEATHER_BUCKET",
+      "bucket_name": "approach-viz-weather"
+    }
+  ],
+  "vars": {
+    // Must match the runtime's RUNTIME_R2_PREFIX.
+    "WEATHER_PREFIX": "mrms"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

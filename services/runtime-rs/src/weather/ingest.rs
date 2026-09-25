@@ -14,6 +14,7 @@ use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 use super::discovery::{extract_timestamp_from_key, find_recent_base_level_keys};
+use super::edge_publish::spawn_edge_publish_worker;
 use super::processor::ingest_timestamp;
 use super::storage::persist_snapshot;
 use crate::config::Config;
@@ -315,6 +316,18 @@ fn next_due_timestamp(
 
 async fn ingest_scheduler_loop(state: AppState) {
     let persist_sender = spawn_persist_worker(state.cfg.clone());
+    let edge_sender = state
+        .cfg
+        .edge_publish
+        .clone()
+        .map(spawn_edge_publish_worker);
+    if let Some(sender) = &edge_sender {
+        // Publish the snapshot loaded at startup; the publisher skips it when
+        // the bucket already holds the same or a newer scan.
+        if let Some(scan) = state.latest.read().await.clone() {
+            sender.send_replace(Some(scan));
+        }
+    }
     loop {
         // Newest due timestamp first: a live product only wants the latest scan,
         // and finishing it drops every older pending timestamp (see below), so
@@ -362,6 +375,9 @@ async fn ingest_scheduler_loop(state: AppState) {
                     pending.retain(|timestamp, _| timestamp > &scan.timestamp);
                 }
 
+                if let Some(sender) = &edge_sender {
+                    sender.send_replace(Some(scan.clone()));
+                }
                 persist_sender.send_replace(Some(scan));
             }
             Err(error) if is_not_found(&error) => {

@@ -1,4 +1,3 @@
-use std::cmp::{max, min};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
@@ -151,51 +150,7 @@ fn env_bool(name: &str) -> Option<bool> {
     }
 }
 
-pub fn clamp(value: f64, min_value: f64, max_value: f64) -> f64 {
-    value.max(min_value).min(max_value)
-}
-
-pub fn round_i16(value: f64) -> i16 {
-    if !value.is_finite() {
-        return 0;
-    }
-    value.round().clamp(i16::MIN as f64, i16::MAX as f64) as i16
-}
-
-pub fn round_u16(value: f64) -> u16 {
-    if !value.is_finite() {
-        return 0;
-    }
-    value.round().clamp(0.0, u16::MAX as f64) as u16
-}
-
-pub fn to_lon360(lon_deg: f64) -> f64 {
-    let normalized = lon_deg % 360.0;
-    if normalized < 0.0 {
-        normalized + 360.0
-    } else {
-        normalized
-    }
-}
-
-pub fn shortest_lon_delta_degrees(lon_deg360: f64, origin_lon_deg360: f64) -> f64 {
-    let mut delta = lon_deg360 - origin_lon_deg360;
-    if delta > 180.0 {
-        delta -= 360.0;
-    }
-    if delta < -180.0 {
-        delta += 360.0;
-    }
-    delta
-}
-
-pub fn projection_scales_nm_per_degree(lat_deg: f64) -> (f64, f64) {
-    approach_viz_core::coords::projection_scales_nm_per_degree(lat_deg)
-}
-
-pub fn clamp_i64(value: i64, min_value: i64, max_value: i64) -> i64 {
-    min(max(value, min_value), max_value)
-}
+pub use approach_viz_core::mrms_query::{round_u16, to_lon360};
 
 pub fn parse_timestamp_utc(timestamp: &str) -> Option<DateTime<Utc>> {
     let naive = NaiveDateTime::parse_from_str(timestamp, "%Y%m%d-%H%M%S").ok()?;

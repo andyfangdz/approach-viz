@@ -3,7 +3,9 @@ pub mod coords;
 pub mod generated;
 #[cfg(feature = "ios")]
 pub mod ios;
+pub mod mrms_pack;
 pub mod mrms_preprocess;
+pub mod mrms_query;
 pub mod mrms_render;
 pub mod traffic_merge;
 pub mod types;

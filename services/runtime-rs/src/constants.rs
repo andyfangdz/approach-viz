@@ -50,13 +50,6 @@ pub const MIXED_COMPETING_PROMOTION_GAP_MAX: f32 = 1.6;
 pub const MIXED_COMPETING_PROMOTION_MARGIN: f32 = 0.14;
 pub const MIXED_DUAL_SUPPORT_CONFIDENCE_MIN: f32 = 0.5;
 
-pub const DEFAULT_MIN_DBZ: f64 = 5.0;
-pub const DEFAULT_MAX_RANGE_NM: f64 = 120.0;
-pub const MIN_ALLOWED_DBZ: f64 = 5.0;
-pub const MAX_ALLOWED_DBZ: f64 = 60.0;
-pub const MIN_ALLOWED_RANGE_NM: f64 = 30.0;
-pub const MAX_ALLOWED_RANGE_NM: f64 = 220.0;
-
 pub const DEFAULT_TILE_SIZE: u16 = 64;
 pub const DEFAULT_RETENTION_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 pub const DEFAULT_REQUEST_TIMEOUT_SECONDS: u64 = 10;
@@ -89,16 +82,6 @@ pub const DUAL_POL_PUBLICATION_GRACE_SECONDS: u64 = 15;
 pub const STORE_MIN_DBZ_TENTHS: i16 = 50;
 pub const MAX_BASE_KEYS_LOOKUP: usize = 120;
 pub const MAX_BASE_DAY_LOOKBACK: i64 = 1;
-
-// Volume encoding constants (used by brick merge pipeline)
-pub use approach_viz_core::types::MRMS_WIRE_DBZ_QUANT_STEP_TENTHS as WIRE_DBZ_QUANT_STEP_TENTHS;
-pub const WIRE_MAX_SPAN_LOW_DBZ: u16 = 48;
-pub const WIRE_MAX_SPAN_HIGH_DBZ: u16 = 20;
-pub const WIRE_MAX_VERTICAL_SPAN: u16 = 4;
-
-// FlatBuffers content types
-pub const ECHO_TOP_FB_CONTENT_TYPE: &str = "application/vnd.approach-viz.echo-tops.v3";
-pub const VOLUME_FB_CONTENT_TYPE: &str = "application/vnd.approach-viz.mrms.v5";
 
 pub const SNAPSHOT_MAGIC: [u8; 4] = *b"AVSN";
 pub const SNAPSHOT_VERSION: u16 = 1;

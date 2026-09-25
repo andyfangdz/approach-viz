@@ -1,5 +1,5 @@
 mod discovery;
-mod encoding;
+mod edge_publish;
 mod grib;
 mod ingest;
 mod phase;
@@ -7,7 +7,7 @@ mod phase_batch;
 #[cfg(test)]
 mod pipeline_tests;
 mod processor;
-mod projection;
+mod scan_source;
 mod simd_lut;
 mod sources;
 mod storage;
@@ -15,8 +15,9 @@ mod storage;
 mod testkit;
 
 // Re-exports for main.rs
+pub use self::edge_publish::build_scan_pack;
 pub use self::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
-pub use self::storage::load_latest_snapshot;
+pub use self::storage::{load_latest_snapshot, load_snapshot_file};
 
 // Re-exports for benchmarks (not consumed by the binary itself)
 #[allow(unused_imports)]
@@ -35,15 +36,13 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use tracing::{field, instrument, warn};
 
-use self::encoding::{build_echo_top_wire_fb, build_volume_wire_fb};
-use self::projection::build_query_window;
-use crate::constants::{
-    DEFAULT_MAX_RANGE_NM, DEFAULT_MIN_DBZ, ECHO_TOP_FB_CONTENT_TYPE,
-    MAX_ALLOWED_DBZ, MAX_ALLOWED_RANGE_NM, MIN_ALLOWED_DBZ,
-    MIN_ALLOWED_RANGE_NM, VOLUME_FB_CONTENT_TYPE,
+use approach_viz_core::mrms_query::{
+    build_echo_top_wire_fb, build_query_window, build_volume_wire_fb, normalize_echo_top_query,
+    normalize_volume_query, ECHO_TOP_FB_CONTENT_TYPE, VOLUME_FB_CONTENT_TYPE,
 };
-use crate::types::AppState;
-use crate::utils::{clamp, iso_from_ms};
+
+use crate::types::{AppState, ScanSnapshot};
+use crate::utils::iso_from_ms;
 
 #[derive(Debug, Deserialize)]
 pub struct VolumeQuery {
@@ -231,50 +230,22 @@ pub(crate) async fn volume(
     State(state): State<AppState>,
     Query(query): Query<VolumeQuery>,
 ) -> Response {
-    // NaN compares false against range bounds, so finiteness must be checked
-    // explicitly before the range checks.
-    if !query.lat.is_finite()
-        || !query.lon.is_finite()
-        || query.lat < -90.0
-        || query.lat > 90.0
-        || query.lon < -180.0
-        || query.lon > 180.0
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "Invalid lat/lon query parameters."
-            })),
-        )
-            .into_response();
-    }
-    if query.min_dbz.is_some_and(|value| !value.is_finite())
-        || query.max_range_nm.is_some_and(|value| !value.is_finite())
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "Invalid minDbz/maxRangeNm query parameters."
-            })),
-        )
-            .into_response();
-    }
-
-    let min_dbz = clamp(
-        query.min_dbz.unwrap_or(DEFAULT_MIN_DBZ),
-        MIN_ALLOWED_DBZ,
-        MAX_ALLOWED_DBZ,
-    );
-    let max_range_nm = clamp(
-        query.max_range_nm.unwrap_or(DEFAULT_MAX_RANGE_NM),
-        MIN_ALLOWED_RANGE_NM,
-        MAX_ALLOWED_RANGE_NM,
-    );
+    let query =
+        match normalize_volume_query(query.lat, query.lon, query.min_dbz, query.max_range_nm) {
+            Ok(query) => query,
+            Err(message) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": message })),
+                )
+                    .into_response();
+            }
+        };
     let span = tracing::Span::current();
     span.record("lat", &query.lat);
     span.record("lon", &query.lon);
-    span.record("min_dbz", &min_dbz);
-    span.record("max_range_nm", &max_range_nm);
+    span.record("min_dbz", &query.min_dbz);
+    span.record("max_range_nm", &query.max_range_nm);
 
     // Clone the snapshot Arc and release the read lock before the (potentially
     // long) wire-payload encoding so ingest writers are never blocked on it.
@@ -294,13 +265,19 @@ pub(crate) async fn volume(
     // blocking pool so concurrent requests and ingest tasks stay responsive.
     let build_span = tracing::info_span!("runtime.volume.build_wire_payload");
     let scan_for_encode = Arc::clone(&scan);
-    let (lat, lon) = (query.lat, query.lon);
     let encode_result = tokio::task::spawn_blocking(move || {
-        build_span.in_scope(|| build_volume_wire_fb(&scan_for_encode, lat, lon, min_dbz, max_range_nm))
+        build_span.in_scope(|| {
+            let window = build_query_window(
+                scan_for_encode.as_ref(),
+                query.lat,
+                query.lon,
+                query.min_dbz,
+                query.max_range_nm,
+            );
+            build_volume_wire_fb(scan_for_encode.as_ref(), &window)
+        })
     })
-    .await
-    .map_err(anyhow::Error::from)
-    .and_then(|result| result);
+    .await;
     match encode_result {
         Ok(body) => {
             let mut headers = HeaderMap::new();
@@ -309,75 +286,8 @@ pub(crate) async fn volume(
                 HeaderValue::from_static(VOLUME_FB_CONTENT_TYPE),
             );
             headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
-            if let Some(scan_time) = iso_from_ms(scan.scan_time_ms) {
-                if let Ok(value) = HeaderValue::from_str(&scan_time) {
-                    headers.insert("X-AV-SCAN-TIME", value);
-                }
-            }
-            if let Some(generated_at) = iso_from_ms(scan.generated_at_ms) {
-                if let Ok(value) = HeaderValue::from_str(&generated_at) {
-                    headers.insert("X-AV-GENERATED-AT", value);
-                }
-            }
-            if !scan.phase_debug.mode.is_empty() {
-                if let Ok(value) = HeaderValue::from_str(&scan.phase_debug.mode) {
-                    headers.insert("X-AV-PHASE-MODE", value);
-                }
-            }
-            if !scan.phase_debug.detail.is_empty() {
-                if let Ok(value) = HeaderValue::from_str(&scan.phase_debug.detail) {
-                    headers.insert("X-AV-PHASE-DETAIL", value);
-                }
-            }
-            if let Some(value) = scan.phase_debug.zdr_age_seconds {
-                if let Ok(header) = HeaderValue::from_str(&value.to_string()) {
-                    headers.insert("X-AV-ZDR-AGE-SECONDS", header);
-                }
-            }
-            if let Some(value) = scan.phase_debug.rhohv_age_seconds {
-                if let Ok(header) = HeaderValue::from_str(&value.to_string()) {
-                    headers.insert("X-AV-RHOHV-AGE-SECONDS", header);
-                }
-            }
-            if let Some(value) = scan.phase_debug.zdr_timestamp.as_ref() {
-                if let Ok(header) = HeaderValue::from_str(value) {
-                    headers.insert("X-AV-ZDR-TIMESTAMP", header);
-                }
-            }
-            if let Some(value) = scan.phase_debug.rhohv_timestamp.as_ref() {
-                if let Ok(header) = HeaderValue::from_str(value) {
-                    headers.insert("X-AV-RHOHV-TIMESTAMP", header);
-                }
-            }
-            if let Some(value) = scan.phase_debug.precip_flag_timestamp.as_ref() {
-                if let Ok(header) = HeaderValue::from_str(value) {
-                    headers.insert("X-AV-PRECIP-TIMESTAMP", header);
-                }
-            }
-            if let Some(value) = scan.phase_debug.freezing_level_timestamp.as_ref() {
-                if let Ok(header) = HeaderValue::from_str(value) {
-                    headers.insert("X-AV-FREEZING-TIMESTAMP", header);
-                }
-            }
-            if let Some(value) = scan.echo_top_debug.top18_timestamp.as_ref() {
-                if let Ok(header) = HeaderValue::from_str(value) {
-                    headers.insert("X-AV-ECHOTOP18-TIMESTAMP", header);
-                }
-            }
-            if let Some(value) = scan.echo_top_debug.top30_timestamp.as_ref() {
-                if let Ok(header) = HeaderValue::from_str(value) {
-                    headers.insert("X-AV-ECHOTOP30-TIMESTAMP", header);
-                }
-            }
-            if let Some(value) = scan.echo_top_debug.top50_timestamp.as_ref() {
-                if let Ok(header) = HeaderValue::from_str(value) {
-                    headers.insert("X-AV-ECHOTOP50-TIMESTAMP", header);
-                }
-            }
-            if let Some(value) = scan.echo_top_debug.top60_timestamp.as_ref() {
-                if let Ok(header) = HeaderValue::from_str(value) {
-                    headers.insert("X-AV-ECHOTOP60-TIMESTAMP", header);
-                }
+            for (name, value) in volume_response_headers(&scan) {
+                headers.insert(name, value);
             }
             (headers, body).into_response()
         }
@@ -403,42 +313,20 @@ pub(crate) async fn echo_tops(
     State(state): State<AppState>,
     Query(query): Query<EchoTopsQuery>,
 ) -> Response {
-    // NaN compares false against range bounds, so finiteness must be checked
-    // explicitly before the range checks.
-    if !query.lat.is_finite()
-        || !query.lon.is_finite()
-        || query.lat < -90.0
-        || query.lat > 90.0
-        || query.lon < -180.0
-        || query.lon > 180.0
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "Invalid lat/lon query parameters."
-            })),
-        )
-            .into_response();
-    }
-    if query.max_range_nm.is_some_and(|value| !value.is_finite()) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "Invalid maxRangeNm query parameter."
-            })),
-        )
-            .into_response();
-    }
-
-    let max_range_nm = clamp(
-        query.max_range_nm.unwrap_or(DEFAULT_MAX_RANGE_NM),
-        MIN_ALLOWED_RANGE_NM,
-        MAX_ALLOWED_RANGE_NM,
-    );
+    let query = match normalize_echo_top_query(query.lat, query.lon, query.max_range_nm) {
+        Ok(query) => query,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
     let span = tracing::Span::current();
     span.record("lat", &query.lat);
     span.record("lon", &query.lon);
-    span.record("max_range_nm", &max_range_nm);
+    span.record("max_range_nm", &query.max_range_nm);
 
     // Clone the snapshot Arc and release the read lock before window/cell
     // building and encoding so ingest writers are never blocked on it.
@@ -457,12 +345,16 @@ pub(crate) async fn echo_tops(
     // encode) on the blocking pool to keep async workers free.
     let build_span = tracing::info_span!("runtime.echo_tops.build_cells");
     let scan_for_build = Arc::clone(&scan);
-    let (lat, lon) = (query.lat, query.lon);
     let build_result = tokio::task::spawn_blocking(move || {
         build_span.in_scope(|| {
-            let window =
-                build_query_window(&scan_for_build, lat, lon, DEFAULT_MIN_DBZ, max_range_nm);
-            build_echo_top_wire_fb(&scan_for_build, &window)
+            let window = build_query_window(
+                scan_for_build.as_ref(),
+                query.lat,
+                query.lon,
+                query.min_dbz,
+                query.max_range_nm,
+            );
+            build_echo_top_wire_fb(scan_for_build.as_ref(), &window, &scan_for_build.echo_tops)
         })
     })
     .await;
@@ -486,15 +378,72 @@ pub(crate) async fn echo_tops(
         HeaderValue::from_static(ECHO_TOP_FB_CONTENT_TYPE),
     );
     headers.insert("Cache-Control", HeaderValue::from_static("no-store"));
-    if let Some(scan_time) = iso_from_ms(scan.scan_time_ms) {
-        if let Ok(value) = HeaderValue::from_str(&scan_time) {
-            headers.insert("X-AV-SCAN-TIME", value);
-        }
-    }
-    if let Some(generated_at) = iso_from_ms(scan.generated_at_ms) {
-        if let Ok(value) = HeaderValue::from_str(&generated_at) {
-            headers.insert("X-AV-GENERATED-AT", value);
-        }
+    for (name, value) in echo_top_response_headers(&scan) {
+        headers.insert(name, value);
     }
     (headers, body).into_response()
+}
+
+/// Scan metadata headers of a volume response, in insertion order. The scan
+/// pack stores these so the edge Worker returns exactly the same set.
+pub(crate) fn volume_response_headers(scan: &ScanSnapshot) -> Vec<(&'static str, HeaderValue)> {
+    let debug = &scan.phase_debug;
+    let echo = &scan.echo_top_debug;
+    let mut headers = echo_top_response_headers(scan);
+    let optional: [(&'static str, Option<String>); 12] = [
+        (
+            "X-AV-PHASE-MODE",
+            Some(debug.mode.clone()).filter(|value| !value.is_empty()),
+        ),
+        (
+            "X-AV-PHASE-DETAIL",
+            Some(debug.detail.clone()).filter(|value| !value.is_empty()),
+        ),
+        (
+            "X-AV-ZDR-AGE-SECONDS",
+            debug.zdr_age_seconds.map(|value| value.to_string()),
+        ),
+        (
+            "X-AV-RHOHV-AGE-SECONDS",
+            debug.rhohv_age_seconds.map(|value| value.to_string()),
+        ),
+        ("X-AV-ZDR-TIMESTAMP", debug.zdr_timestamp.clone()),
+        ("X-AV-RHOHV-TIMESTAMP", debug.rhohv_timestamp.clone()),
+        ("X-AV-PRECIP-TIMESTAMP", debug.precip_flag_timestamp.clone()),
+        (
+            "X-AV-FREEZING-TIMESTAMP",
+            debug.freezing_level_timestamp.clone(),
+        ),
+        ("X-AV-ECHOTOP18-TIMESTAMP", echo.top18_timestamp.clone()),
+        ("X-AV-ECHOTOP30-TIMESTAMP", echo.top30_timestamp.clone()),
+        ("X-AV-ECHOTOP50-TIMESTAMP", echo.top50_timestamp.clone()),
+        ("X-AV-ECHOTOP60-TIMESTAMP", echo.top60_timestamp.clone()),
+    ];
+    push_valid_headers(&mut headers, optional);
+    headers
+}
+
+/// Scan timing headers carried by both weather responses.
+pub(crate) fn echo_top_response_headers(scan: &ScanSnapshot) -> Vec<(&'static str, HeaderValue)> {
+    let mut headers = Vec::new();
+    push_valid_headers(
+        &mut headers,
+        [
+            ("X-AV-SCAN-TIME", iso_from_ms(scan.scan_time_ms)),
+            ("X-AV-GENERATED-AT", iso_from_ms(scan.generated_at_ms)),
+        ],
+    );
+    headers
+}
+
+/// Values that are not valid header text are dropped rather than failing the response.
+fn push_valid_headers<const N: usize>(
+    headers: &mut Vec<(&'static str, HeaderValue)>,
+    candidates: [(&'static str, Option<String>); N],
+) {
+    for (name, value) in candidates {
+        if let Some(value) = value.and_then(|value| HeaderValue::from_str(&value).ok()) {
+            headers.push((name, value));
+        }
+    }
 }

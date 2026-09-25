@@ -68,7 +68,7 @@ pub async fn load_latest_snapshot(cfg: &Config) -> Result<Option<Arc<ScanSnapsho
     Ok(None)
 }
 
-async fn load_snapshot_file(path: &Path) -> Result<ScanSnapshot> {
+pub async fn load_snapshot_file(path: &Path) -> Result<ScanSnapshot> {
     let compressed = fs::read(path)
         .await
         .with_context(|| format!("Failed to read snapshot file {}", path.display()))?;
