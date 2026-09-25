@@ -90,7 +90,7 @@ On the heaviest window of the reference scan (220 nm, 4.85M decoded voxels, 833k
 
 Moving the traffic code into core changed no runtime behavior. The `traffic_store` bench fingerprints (`c70abf74df697497`, live and reloaded) and the decode/encode fingerprints of a real 512-aircraft binCraft snapshot were identical before and after.
 
-**Risk:** ADS-B Exchange's `re-api` is not an official API. During a runtime outage every open web viewer calls it every 5 s from Vercel's addresses, which may be rate-limited or blocked. This was tested from a residential address (about 250 aircraft per airport in 116–238 ms), not from Vercel; verify from a deployment before relying on it.
+**Risk:** ADS-B Exchange's `re-api` is not an official API, and during a runtime outage every open web viewer calls it every 5 s. On Sep 25 2026 a throwaway preview deployment in Vercel's iad1 region, with the runtime made unreachable, returned about 250 aircraft per airport in 92–253 ms. Both tar1090 hosts answered directly from iad1, and a burst of 40 fallback requests all succeeded. Access and rate limits can still change, so check the route's `X-AV-TRAFFIC-UPSTREAM` header during a real outage.
 
 ## Setup
 
