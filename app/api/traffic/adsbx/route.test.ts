@@ -1,5 +1,8 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { zstdCompressSync } from 'node:zlib';
 import { NextRequest } from 'next/server';
 import { GET } from './route';
 
@@ -162,5 +165,89 @@ describe('traffic adsbx proxy forwarding', () => {
     assert.equal(body.staleCurrent, true);
     assert.deepEqual(body.aircraft, []);
     assert.match(body.error, /unreachable/);
+  });
+});
+
+describe('traffic adsbx direct fallback', () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  // Written by approach-viz-core's `traffic_route_fixture_is_current` test:
+  // a synthetic binCraft snapshot and the AVTR payload it must produce.
+  const fixture = (name: string) =>
+    new Uint8Array(readFileSync(resolve(process.cwd(), 'fixtures/server-wasm', name)));
+  const SNAPSHOT = zstdCompressSync(fixture('sample.bincraft'));
+  const EXPECTED = fixture('sample-traffic.avtr');
+  const POLLED_AT_MS = 1_700_000_000_000;
+  const BINARY_QUERY = { ...VALID_LAT_LON, radiusNm: '80', limit: '250', format: 'binary' };
+
+  function mockUpstreams(runtime: () => Promise<Response>, calls: URL[]) {
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      calls.push(url);
+      if (url.pathname === '/v1/traffic/adsbx') return runtime();
+      assert.equal(new Headers(init?.headers).get('origin'), url.origin);
+      return new Response(SNAPSHOT, { headers: { 'content-type': 'application/zstd' } });
+    };
+    globalThis.fetch = mockFetch;
+  }
+
+  beforeEach(() => {
+    Date.now = () => POLLED_AT_MS;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  });
+
+  for (const [label, runtime] of [
+    ['is unreachable', async () => Promise.reject(new Error('connect ECONNREFUSED'))],
+    ['returns a 5xx', async () => new Response('bad gateway', { status: 502 })]
+  ] as const) {
+    test(`binary requests are answered from ADS-B Exchange when the runtime ${label}`, async () => {
+      const calls: URL[] = [];
+      mockUpstreams(runtime, calls);
+      const response = await GET(makeRequest(BINARY_QUERY));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'application/vnd.approach-viz.traffic.v4');
+      assert.equal(response.headers.get('x-av-traffic-upstream'), 'direct');
+      assert.equal(response.headers.get('x-approach-viz-traffic-stale-current'), '0');
+      assert.deepEqual(new Uint8Array(await response.arrayBuffer()), EXPECTED);
+      const direct = calls[1];
+      assert.equal(direct.origin, 'https://globe.adsbexchange.com');
+      assert.equal(direct.pathname, '/re-api/');
+      // 80 nm around 40.7, -74.1: ±1.3333° latitude, ±1.7587° longitude.
+      assert.equal(direct.search, '?binCraft&zstd&box=39.366667,42.033333,-75.858703,-72.341297');
+    });
+  }
+
+  test('a healthy runtime is never bypassed', async () => {
+    const calls: URL[] = [];
+    mockUpstreams(async () => new Response(new ArrayBuffer(4), { status: 200 }), calls);
+    const response = await GET(makeRequest(BINARY_QUERY));
+    assert.equal(response.headers.get('x-av-traffic-upstream'), null);
+    assert.equal(calls.length, 1);
+  });
+
+  test('JSON requests have no direct fallback', async () => {
+    const calls: URL[] = [];
+    mockUpstreams(async () => Promise.reject(new Error('upstream unreachable')), calls);
+    const response = await GET(makeRequest(VALID_LAT_LON));
+    assert.match((await response.json()).error, /unreachable/);
+    assert.equal(calls.length, 1);
+  });
+
+  test('when both fail the error names both', async () => {
+    globalThis.fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/v1/traffic/adsbx') throw new Error('runtime down');
+      return new Response('blocked', { status: 403, headers: { 'content-type': 'text/html' } });
+    };
+    const response = await GET(makeRequest(BINARY_QUERY));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.aircraft, []);
+    assert.match(body.error, /runtime down/);
+    assert.match(body.error, /HTTP 403/);
   });
 });

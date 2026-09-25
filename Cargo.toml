@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "crates/approach-viz-core",
-    "crates/approach-viz-weather-edge",
+    "crates/approach-viz-server-wasm",
     "services/runtime-rs",
     "tools/uniffi-bindgen-swift",
 ]

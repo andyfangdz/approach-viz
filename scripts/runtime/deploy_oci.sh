@@ -237,10 +237,10 @@ Environment=RUNTIME_MRMS_BOOTSTRAP_INTERVAL_SECONDS=300
 Environment=RUNTIME_MRMS_PENDING_RETRY_SECONDS=30
 Environment=RUNTIME_MRMS_SQS_QUEUE_URL=$QUEUE_URL
 ${parse_concurrency_line}
-# Optional R2 publishing for the weather edge Worker (RUNTIME_R2_*). The file
-# holds the R2 secret, so it lives on the host (root, 0600), never in this
-# world-readable unit or in the deploy environment; see docs/weather-edge.md.
-EnvironmentFile=-/etc/approach-viz-runtime/edge-publish.env
+# Optional R2 publishing of weather scan packs (RUNTIME_R2_*). The file holds
+# the R2 secret, so it lives on the host (root, 0600), never in this
+# world-readable unit or in the deploy environment; see docs/runtime-fallbacks.md.
+EnvironmentFile=-/etc/approach-viz-runtime/r2-publish.env
 ExecStart=/usr/local/bin/approach-viz-runtime
 Restart=always
 RestartSec=5

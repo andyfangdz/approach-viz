@@ -1,5 +1,5 @@
 //! The in-memory snapshot as a `ScanSource`, so queries run through the same
-//! core builders the weather edge Worker uses.
+//! core builders the web weather route uses for R2 scan packs.
 
 use approach_viz_core::mrms_query::{
     EchoTopSummary, GridDef, LevelBounds, ScanMeta, ScanSource, StoredVoxel,

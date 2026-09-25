@@ -16,8 +16,8 @@ use approach_viz_core::mrms_query::{
 };
 use approach_viz_runtime::weather::{build_scan_pack, load_snapshot_file};
 
-/// Tracks the heap high-water mark, the figure that must fit the edge
-/// Worker's 128 MB isolate (WASM linear memory never shrinks).
+/// Tracks the heap high-water mark of a pack query, which the web weather
+/// route pays for in function memory (WASM linear memory never shrinks).
 struct PeakAlloc;
 
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
                 let data = fetch(&ranges);
                 max_ranges = max_ranges.max(ranges.len());
                 max_fetch = max_fetch.max(data.len());
-                // Mirror the edge Worker: the fetched bytes are freed once
+                // Mirror the web route: the fetched bytes are freed once
                 // the tiles are decoded.
                 let data_len = data.len();
                 let (actual_volume, peak) = peak_during(|| -> Result<Vec<u8>> {

@@ -1,7 +1,7 @@
 //! MRMS query-time windowing and wire encoding (AVMR v5 volume, AVET v3 echo tops).
 //!
-//! The runtime serves these from its in-memory snapshot and the weather edge
-//! Worker serves them from a scan pack in R2 (`crate::mrms_pack`). Both go
+//! The runtime serves these from its in-memory snapshot and the web weather
+//! route serves them from a scan pack in R2 (`crate::mrms_pack`). Both go
 //! through the functions here, so a query answered by either is byte-identical.
 //! A source only has to expose the snapshot's grid, tile layout, voxels per
 //! tile, and echo tops through [`ScanSource`].

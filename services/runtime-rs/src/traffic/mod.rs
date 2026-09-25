@@ -30,12 +30,12 @@ use tracing::{field, info_span, instrument, Instrument, Span};
 pub(crate) use cache_worker::spawn_traffic_cache_worker;
 
 use self::encoding::traffic_binary_response;
+use approach_viz_core::traffic_query::{parse_traffic_query, RawTrafficQuery};
+
 use self::types::{
-    add_traffic_snapshot_headers, clamp, clamp_usize, history_discovery_radius_nm, no_store_headers,
-    normalize_lat, normalize_lon, parse_boolean_query_param, parse_history_hexes,
-    parse_traffic_response_format, to_finite_number, now_ms, TrafficErrorPayload, TrafficQuery,
-    TrafficResponseFormat, TrafficSuccessPayload, DEFAULT_HIDE_GROUND_TRAFFIC, DEFAULT_LIMIT,
-    DEFAULT_RADIUS_NM, MAX_HISTORY_MINUTES, MAX_LIMIT, MAX_RADIUS_NM, MIN_RADIUS_NM,
+    add_traffic_snapshot_headers, history_discovery_radius_nm, no_store_headers, now_ms,
+    parse_traffic_response_format, TrafficErrorPayload, TrafficQuery, TrafficResponseFormat,
+    TrafficSuccessPayload,
 };
 use crate::types::AppState;
 
@@ -62,43 +62,17 @@ pub(crate) async fn traffic_adsbx(
     Query(query): Query<TrafficQuery>,
 ) -> Response {
     let response_format = parse_traffic_response_format(query.format.as_deref());
-    let lat = normalize_lat(query.lat.as_deref());
-    let lon = normalize_lon(query.lon.as_deref());
-    if lat.is_none() || lon.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            no_store_headers(),
-            Json(serde_json::json!({
-                "error": "Valid lat/lon query params are required."
-            })),
-        )
-            .into_response();
-    }
-
-    let lat = lat.unwrap_or_default();
-    let lon = lon.unwrap_or_default();
-
-    // Reject present-but-malformed numeric params instead of silently
-    // falling back to defaults (out-of-range finite values are still clamped).
-    fn parse_optional_numeric(raw: Option<&str>, name: &str) -> Result<Option<f64>, String> {
-        match raw.map(str::trim) {
-            None => Ok(None),
-            Some("") => Ok(None),
-            Some(value) => to_finite_number(Some(value))
-                .map(Some)
-                .ok_or_else(|| format!("Invalid numeric query param '{name}'.")),
-        }
-    }
-    let parsed_params = parse_optional_numeric(query.radius_nm.as_deref(), "radiusNm").and_then(
-        |radius_nm| {
-            let limit = parse_optional_numeric(query.limit.as_deref(), "limit")?;
-            let history_minutes =
-                parse_optional_numeric(query.history_minutes.as_deref(), "historyMinutes")?;
-            Ok((radius_nm, limit, history_minutes))
-        },
-    );
-    let (raw_radius_nm, raw_limit, raw_history_minutes) = match parsed_params {
-        Ok(values) => values,
+    let parsed = parse_traffic_query(RawTrafficQuery {
+        lat: query.lat.as_deref(),
+        lon: query.lon.as_deref(),
+        radius_nm: query.radius_nm.as_deref(),
+        limit: query.limit.as_deref(),
+        history_minutes: query.history_minutes.as_deref(),
+        hide_ground: query.hide_ground.as_deref(),
+        history_hexes: query.history_hexes.as_deref(),
+    });
+    let parsed = match parsed {
+        Ok(parsed) => parsed,
         Err(message) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -108,23 +82,15 @@ pub(crate) async fn traffic_adsbx(
                 .into_response();
         }
     };
-
-    let radius_nm = clamp(
-        raw_radius_nm.unwrap_or(DEFAULT_RADIUS_NM),
-        MIN_RADIUS_NM,
-        MAX_RADIUS_NM,
+    let (lat, lon, radius_nm, limit, history_minutes, hide_ground_traffic, history_hexes) = (
+        parsed.lat,
+        parsed.lon,
+        parsed.radius_nm,
+        parsed.limit,
+        parsed.history_minutes,
+        parsed.hide_ground_traffic,
+        parsed.history_hexes,
     );
-    let limit = clamp_usize(
-        raw_limit
-            .map(|value| value.floor() as i64)
-            .unwrap_or(DEFAULT_LIMIT as i64),
-        1,
-        MAX_LIMIT,
-    );
-    let history_minutes = clamp(raw_history_minutes.unwrap_or(0.0), 0.0, MAX_HISTORY_MINUTES);
-    let hide_ground_traffic =
-        parse_boolean_query_param(query.hide_ground.as_deref(), DEFAULT_HIDE_GROUND_TRAFFIC);
-    let history_hexes = parse_history_hexes(query.history_hexes.as_deref());
     let now_ms = now_ms();
     let span = Span::current();
     span.record("lat", lat);

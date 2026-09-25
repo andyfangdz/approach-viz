@@ -8,8 +8,8 @@ next-env.d.ts
 *.sqlite
 *.png
 packages/approach-viz-core-wasm
-services/weather-edge/pkg
-services/weather-edge/.wrangler
+packages/approach-viz-server-wasm
+fixtures/server-wasm
 public/approach_viz_core.js
 test-results
 public/service-worker.js

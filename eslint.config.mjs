@@ -14,8 +14,7 @@ export default tseslint.config(
       'public/approach_viz_core.js',
       'services/runtime-rs/target/**',
       'packages/approach-viz-core-wasm/**',
-      'services/weather-edge/pkg/**',
-      'services/weather-edge/.wrangler/**'
+      'packages/approach-viz-server-wasm/**'
     ]
   },
   ...tseslint.configs.recommended,

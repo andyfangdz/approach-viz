@@ -1,6 +1,6 @@
-//! Publishes each finished scan to R2 as a scan pack for the weather edge
-//! Worker (`services/weather-edge`), which serves `/v1/weather/*` without this
-//! host. See docs/weather-edge.md.
+//! Publishes each finished scan to R2 as a scan pack, from which the web
+//! weather route answers while this service is down. See
+//! docs/runtime-fallbacks.md.
 
 use std::io::Write;
 use std::sync::Arc;
@@ -22,24 +22,24 @@ use tokio::sync::watch;
 use tracing::{error, info};
 
 use super::{echo_top_response_headers, volume_response_headers};
-use crate::config::EdgePublishConfig;
+use crate::config::R2PublishConfig;
 use crate::types::ScanSnapshot;
 use crate::utils::iso_from_ms;
 
-/// Packs kept in the bucket. The Worker only reads the newest; older ones
+/// Packs kept in the bucket. The web route only reads the newest; older ones
 /// cover requests that read the previous manifest just before a publish.
 const RETAINED_PACKS: usize = 5;
 /// On a 21.4M-voxel CONUS scan: level 1 gives 34.0 MB in 0.32 s, level 3
 /// 21.8 MB in 0.55 s, level 6 19.0 MB in 1.25 s. Level 3 takes most of the
-/// size win, which also shrinks every range read the Worker makes.
+/// size win, which also shrinks every range read the web route makes.
 const PACK_DEFLATE_LEVEL: u32 = 3;
 const MANIFEST_VERSION: u32 = 1;
 
-/// `<prefix>/latest.json`: the only mutable object. The Worker reads it to find
+/// `<prefix>/latest.json`: the only mutable object. The web route reads it to find
 /// the newest pack and fetches that pack's header in one range read.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EdgeManifest {
+struct PackManifest {
     version: u32,
     timestamp: String,
     key: String,
@@ -94,11 +94,11 @@ pub fn build_scan_pack(scan: &ScanSnapshot) -> Result<Vec<u8>> {
 
 /// Publishes on its own task, like persistence: the channel keeps only the
 /// newest scan, so a slow upload supersedes scans instead of queueing them.
-pub(crate) fn spawn_edge_publish_worker(
-    cfg: EdgePublishConfig,
+pub(crate) fn spawn_r2_publish_worker(
+    cfg: R2PublishConfig,
 ) -> watch::Sender<Option<Arc<ScanSnapshot>>> {
     let (sender, mut receiver) = watch::channel::<Option<Arc<ScanSnapshot>>>(None);
-    let publisher = EdgePublisher::new(cfg);
+    let publisher = R2Publisher::new(cfg);
     tokio::spawn(async move {
         while receiver.changed().await.is_ok() {
             let Some(scan) = receiver.borrow_and_update().clone() else {
@@ -112,14 +112,14 @@ pub(crate) fn spawn_edge_publish_worker(
     sender
 }
 
-struct EdgePublisher {
+struct R2Publisher {
     client: Client,
     bucket: String,
     prefix: String,
 }
 
-impl EdgePublisher {
-    fn new(cfg: EdgePublishConfig) -> Self {
+impl R2Publisher {
+    fn new(cfg: R2PublishConfig) -> Self {
         let config = aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new("auto"))
@@ -181,7 +181,7 @@ impl EdgePublisher {
             .await
             .with_context(|| format!("Failed to upload {key}"))?;
 
-        let manifest = EdgeManifest {
+        let manifest = PackManifest {
             version: MANIFEST_VERSION,
             timestamp: scan.timestamp.clone(),
             key: key.clone(),
@@ -212,7 +212,7 @@ impl EdgePublisher {
         Ok(())
     }
 
-    async fn read_manifest(&self) -> Result<Option<EdgeManifest>> {
+    async fn read_manifest(&self) -> Result<Option<PackManifest>> {
         let response = match self
             .client
             .get_object()

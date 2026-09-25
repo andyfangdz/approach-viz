@@ -1,5 +1,5 @@
 mod discovery;
-mod edge_publish;
+mod r2_publish;
 mod grib;
 mod ingest;
 mod phase;
@@ -15,7 +15,7 @@ mod storage;
 mod testkit;
 
 // Re-exports for main.rs
-pub use self::edge_publish::build_scan_pack;
+pub use self::r2_publish::build_scan_pack;
 pub use self::ingest::{enqueue_latest_from_s3, run_ingest_profile, spawn_background_workers};
 pub use self::storage::{load_latest_snapshot, load_snapshot_file};
 
@@ -385,7 +385,7 @@ pub(crate) async fn echo_tops(
 }
 
 /// Scan metadata headers of a volume response, in insertion order. The scan
-/// pack stores these so the edge Worker returns exactly the same set.
+/// pack stores these so the web weather route returns exactly the same set.
 pub(crate) fn volume_response_headers(scan: &ScanSnapshot) -> Vec<(&'static str, HeaderValue)> {
     let debug = &scan.phase_debug;
     let echo = &scan.echo_top_debug;

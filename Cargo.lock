@@ -119,11 +119,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "approach-viz-weather-edge"
+name = "approach-viz-server-wasm"
 version = "0.1.0"
 dependencies = [
  "approach-viz-core",
- "flate2",
  "wasm-bindgen",
 ]
 

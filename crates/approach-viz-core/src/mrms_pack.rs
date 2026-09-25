@@ -1,5 +1,5 @@
-//! MRMS scan pack (`AVSP`): one immutable object per scan that the weather
-//! edge Worker range-reads from R2.
+//! MRMS scan pack (`AVSP`): one immutable object per scan that the web
+//! weather route range-reads from R2 when the runtime is unavailable.
 //!
 //! Layout:
 //!
@@ -937,15 +937,15 @@ mod tests {
         assert!(ScanPackIndex::parse(&pack).is_err(), "unknown version");
     }
 
-    /// The weather edge Worker's tests (services/weather-edge/test) serve this
-    /// pack and compare against payloads built from the in-memory scan.
-    /// Regenerate after a format change with `UPDATE_EDGE_FIXTURES=1`.
+    /// The weather route tests (app/api/weather/nexrad/runtime-proxy.test.ts)
+    /// serve this pack and compare against payloads built from the in-memory
+    /// scan. Regenerate after a format change with `UPDATE_SERVER_FIXTURES=1`.
     #[test]
-    fn edge_worker_fixture_is_current() {
+    fn weather_route_fixture_is_current() {
         use crate::mrms_query::normalize_volume_query;
 
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../services/weather-edge/test/fixtures");
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/server-wasm");
         let scan = busy_scan();
         let pack = pack_of(&scan);
         let query = normalize_volume_query(35.15, -109.80, Some(5.0), Some(40.0)).unwrap();
@@ -964,7 +964,7 @@ mod tests {
                 build_echo_top_wire_fb(&scan, &window, &scan.echo_tops),
             ),
         ];
-        let update = std::env::var_os("UPDATE_EDGE_FIXTURES").is_some();
+        let update = std::env::var_os("UPDATE_SERVER_FIXTURES").is_some();
         for (name, bytes) in files {
             let path = dir.join(name);
             if update {
@@ -975,7 +975,7 @@ mod tests {
                     .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
                 assert!(
                     committed == bytes,
-                    "{name} is stale; rerun with UPDATE_EDGE_FIXTURES=1"
+                    "{name} is stale; rerun with UPDATE_SERVER_FIXTURES=1"
                 );
             }
         }

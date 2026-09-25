@@ -28,13 +28,13 @@ pub struct Config {
     pub ingest_local_data_dir: Option<PathBuf>,
     pub ingest_local_data_offline: bool,
     pub ingest_parse_concurrency: u16,
-    pub edge_publish: Option<EdgePublishConfig>,
+    pub r2_publish: Option<R2PublishConfig>,
 }
 
-/// S3-compatible bucket (Cloudflare R2) that finished scans are published to
-/// for the weather edge Worker.
+/// S3-compatible bucket (Cloudflare R2) that finished scans are published to,
+/// so the web weather route can answer while this service is down.
 #[derive(Clone)]
-pub struct EdgePublishConfig {
+pub struct R2PublishConfig {
     /// e.g. `https://<account-id>.r2.cloudflarestorage.com`
     pub endpoint: String,
     pub bucket: String,
@@ -44,7 +44,7 @@ pub struct EdgePublishConfig {
     pub prefix: String,
 }
 
-impl EdgePublishConfig {
+impl R2PublishConfig {
     /// Publishing is off when none of the variables are set; a partial
     /// configuration is an error rather than a silently disabled publisher.
     fn from_env() -> Result<Option<Self>> {
@@ -66,7 +66,7 @@ impl EdgePublishConfig {
             .collect();
         if !missing.is_empty() {
             bail!(
-                "Edge publishing is partially configured; missing {}",
+                "R2 publishing is partially configured; missing {}",
                 missing.join(", ")
             );
         }
@@ -169,7 +169,7 @@ impl Config {
         )?
         .max(1);
 
-        let edge_publish = EdgePublishConfig::from_env()?;
+        let r2_publish = R2PublishConfig::from_env()?;
 
         Ok(Self {
             listen_addr,
@@ -189,7 +189,7 @@ impl Config {
             ingest_local_data_dir,
             ingest_local_data_offline,
             ingest_parse_concurrency,
-            edge_publish,
+            r2_publish,
         })
     }
 

@@ -20,7 +20,7 @@ pub struct AppState {
     pub(crate) traffic_store: Arc<TrafficStore>,
 }
 
-// Stored scan records live in core so the weather edge Worker can decode scan
+// Stored scan records live in core so the web weather route can decode scan
 // packs into the same types; serde derives keep the snapshot format unchanged.
 pub use approach_viz_core::mrms_query::{GridDef, LevelBounds, StoredEchoTop, StoredVoxel};
 

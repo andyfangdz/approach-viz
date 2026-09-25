@@ -127,7 +127,7 @@ pub struct VolumeCollector<'a, S: ScanMeta> {
 
 /// Append-only storage in fixed 64 KiB chunks. Collected cells and bricks
 /// are a query's memory peak: doubling growth would leave up to half of each
-/// as slack, and in the edge Worker's WASM heap the large reallocations
+/// as slack, and in a WASM heap (the web weather route) the large reallocations
 /// fragment memory that never shrinks. Equal-sized chunks instead reuse the
 /// space freed by each other.
 struct Chunked<T> {

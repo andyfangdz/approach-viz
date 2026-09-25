@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { NextRequest } from 'next/server';
-import { proxyWeather, weatherUpstreams, type WeatherUpstream } from './runtime-proxy';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { proxyWeather, weatherSourcesFromEnv, type WeatherSources } from './runtime-proxy';
+import { ScanPackSource, type PackStorage } from './scan-packs';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -9,21 +12,76 @@ afterEach(() => {
 });
 const request = (query = 'lat=40&lon=-74') =>
   new NextRequest(`http://localhost/api/weather/nexrad?${query}`);
-const edgeFirst: WeatherUpstream[] = [
-  { name: 'edge', baseUrl: 'https://edge.example' },
-  { name: 'runtime', baseUrl: 'https://runtime.example' }
-];
 
-test('the edge upstream is tried first only when configured', () => {
-  assert.deepEqual(weatherUpstreams({ RUNTIME_UPSTREAM_BASE_URL: 'https://runtime.example' }), [
-    { name: 'runtime', baseUrl: 'https://runtime.example' }
-  ]);
-  assert.deepEqual(
-    weatherUpstreams({
-      WEATHER_EDGE_BASE_URL: 'https://edge.example',
-      RUNTIME_UPSTREAM_BASE_URL: 'https://runtime.example'
-    }),
-    edgeFirst
+// The sample pack and the payloads its scan produces in memory, written by
+// approach-viz-core's `weather_route_fixture_is_current` test.
+const fixture = (name: string) =>
+  new Uint8Array(readFileSync(resolve(process.cwd(), 'fixtures/server-wasm', name)));
+const PACK = fixture('sample.avsp');
+const EXPECTED = {
+  volume: fixture('sample-volume.avmr'),
+  'echo-tops': fixture('sample-echo-tops.avet')
+};
+const PACK_KEY = 'mrms/scans/20260925-034642.avsp';
+const PACK_QUERY = 'lat=35.15&lon=-109.8&minDbz=5&maxRangeNm=40';
+
+function manifestJson(scanTime: string): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      version: 1,
+      timestamp: '20260925-034642',
+      key: PACK_KEY,
+      headerLength: new DataView(PACK.buffer, PACK.byteOffset).getUint32(8, true),
+      byteLength: PACK.byteLength,
+      scanTime
+    })
+  );
+}
+
+class FakeStorage implements PackStorage {
+  reads: string[] = [];
+  failing = false;
+  constructor(private readonly objects: Map<string, Uint8Array>) {}
+  async read(key: string, _signal: AbortSignal, range?: { offset: number; length: number }) {
+    this.reads.push(range ? `${key}@${range.offset}+${range.length}` : key);
+    if (this.failing) throw new Error('R2 unavailable');
+    const object = this.objects.get(key);
+    if (!object) return null;
+    return range ? object.slice(range.offset, range.offset + range.length) : object;
+  }
+}
+
+function packSources(scanTime = new Date().toISOString()) {
+  const storage = new FakeStorage(
+    new Map([
+      [PACK_KEY, PACK],
+      ['mrms/latest.json', manifestJson(scanTime)]
+    ])
+  );
+  const sources: WeatherSources = {
+    packs: new ScanPackSource(storage, 'mrms'),
+    runtimeBaseUrl: 'https://runtime.example'
+  };
+  return { storage, sources };
+}
+
+test('weather sources: packs only when all of WEATHER_R2_* are set', () => {
+  assert.equal(weatherSourcesFromEnv({}).packs, null);
+  assert.equal(
+    weatherSourcesFromEnv({ RUNTIME_UPSTREAM_BASE_URL: 'https://r.example' }).runtimeBaseUrl,
+    'https://r.example'
+  );
+  assert.throws(
+    () => weatherSourcesFromEnv({ WEATHER_R2_BUCKET: 'b' }),
+    /partially configured; missing WEATHER_R2_ENDPOINT/
+  );
+  assert.ok(
+    weatherSourcesFromEnv({
+      WEATHER_R2_ENDPOINT: 'https://acct.r2.cloudflarestorage.com',
+      WEATHER_R2_BUCKET: 'b',
+      WEATHER_R2_ACCESS_KEY_ID: 'k',
+      WEATHER_R2_SECRET_ACCESS_KEY: 's'
+    }).packs
   );
 });
 
@@ -91,56 +149,79 @@ for (const product of ['volume', 'echo-tops'] as const) {
 }
 
 for (const product of ['volume', 'echo-tops'] as const) {
-  test(`${product}: a healthy edge answers without touching the runtime`, async () => {
-    const hosts: string[] = [];
-    globalThis.fetch = async (url) => {
-      hosts.push(new URL(String(url)).host);
-      return new Response(new Uint8Array([7]), { headers: { 'x-av-scan-time': 'edge-scan' } });
-    };
-    const response = await proxyWeather(request(), product, undefined, edgeFirst);
+  test(`${product}: a current scan pack answers byte-identically without the runtime`, async () => {
+    globalThis.fetch = async () => assert.fail('must not reach the runtime');
+    const { storage, sources } = packSources();
+    const response = await proxyWeather(request(PACK_QUERY), product, undefined, sources);
     assert.equal(response.status, 200);
-    assert.deepEqual(hosts, ['edge.example']);
-    assert.equal(response.headers.get('x-av-weather-upstream'), 'edge');
-    assert.equal(response.headers.get('x-av-scan-time'), 'edge-scan');
+    assert.equal(response.headers.get('x-av-weather-upstream'), 'packs');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('vercel-cdn-cache-control'), 'public, s-maxage=30');
+    assert.equal(response.headers.get('x-av-scan-time'), '2023-11-14T22:13:20+00:00');
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), EXPECTED[product]);
+
+    // The manifest and pack header are cached across requests.
+    await proxyWeather(request(PACK_QUERY), product, undefined, sources);
+    assert.equal(storage.reads.filter((read) => read === 'mrms/latest.json').length, 1);
+    assert.equal(storage.reads.filter((read) => read.startsWith(`${PACK_KEY}@0+`)).length, 1);
   });
 
-  test(`${product}: an edge failure falls back to the runtime with the same query`, async () => {
-    for (const edgeFailure of [
-      async () => new Response(null, { status: 503 }),
-      async () => {
-        throw new Error('edge unreachable');
-      }
-    ]) {
-      const urls: URL[] = [];
-      globalThis.fetch = async (url) => {
-        const parsed = new URL(String(url));
-        urls.push(parsed);
-        if (parsed.host === 'edge.example') return edgeFailure();
-        return new Response(new Uint8Array([9]));
-      };
-      const response = await proxyWeather(request(), product, undefined, edgeFirst);
+  test(`${product}: a pack failure falls back to the runtime with the same query`, async () => {
+    const urls: URL[] = [];
+    globalThis.fetch = async (url) => {
+      urls.push(new URL(String(url)));
+      return new Response(new Uint8Array([9]));
+    };
+    const { storage, sources } = packSources();
+    await proxyWeather(request(PACK_QUERY), product, undefined, sources);
+    storage.failing = true;
+    // Past the manifest TTL, so the manifest is re-read and fails.
+    const later = Date.now() + 10_000;
+    const realNow = Date.now;
+    Date.now = () => later;
+    try {
+      const response = await proxyWeather(request(PACK_QUERY), product, undefined, sources);
       assert.equal(response.status, 200);
-      assert.deepEqual(
-        urls.map((url) => url.host),
-        ['edge.example', 'runtime.example']
-      );
-      assert.equal(urls[0].search, urls[1].search);
       assert.equal(response.headers.get('x-av-weather-upstream'), 'runtime');
       assert.deepEqual(new Uint8Array(await response.arrayBuffer()), new Uint8Array([9]));
+      assert.equal(urls.length, 1);
+      assert.equal(urls[0].host, 'runtime.example');
+      assert.equal(urls[0].searchParams.get('lat'), '35.150000');
+    } finally {
+      Date.now = realNow;
     }
   });
 
-  test(`${product}: both upstreams failing is a 502`, async () => {
-    let calls = 0;
+  test(`${product}: a stale pack is used only after the runtime fails`, async () => {
+    const stale = new Date(Date.now() - 60 * 60_000).toISOString();
+    let runtimeCalls = 0;
     globalThis.fetch = async () => {
-      calls += 1;
-      return new Response(null, { status: 500 });
+      runtimeCalls += 1;
+      return new Response(new Uint8Array([7]));
     };
-    assert.equal((await proxyWeather(request(), product, undefined, edgeFirst)).status, 502);
-    assert.equal(calls, 2);
+    let { sources } = packSources(stale);
+    let response = await proxyWeather(request(PACK_QUERY), product, undefined, sources);
+    assert.equal(response.headers.get('x-av-weather-upstream'), 'runtime');
+    assert.equal(runtimeCalls, 1);
+
+    globalThis.fetch = async () => new Response(null, { status: 502 });
+    ({ sources } = packSources(stale));
+    response = await proxyWeather(request(PACK_QUERY), product, undefined, sources);
+    assert.equal(response.headers.get('x-av-weather-upstream'), 'packs');
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), EXPECTED[product]);
   });
 
-  test(`${product}: an expired overall deadline is a 504 without a runtime attempt`, async () => {
+  test(`${product}: every source failing is a 502`, async () => {
+    globalThis.fetch = async () => new Response(null, { status: 500 });
+    const { storage, sources } = packSources();
+    storage.failing = true;
+    assert.equal(
+      (await proxyWeather(request(PACK_QUERY), product, undefined, sources)).status,
+      502
+    );
+  });
+
+  test(`${product}: an expired overall deadline is a 504 without a second attempt`, async () => {
     const controller = new AbortController();
     let calls = 0;
     globalThis.fetch = async (_url, init) => {
@@ -148,7 +229,10 @@ for (const product of ['volume', 'echo-tops'] as const) {
       controller.abort(new DOMException('Timed out', 'TimeoutError'));
       throw init?.signal?.reason ?? new Error('aborted');
     };
-    const response = await proxyWeather(request(), product, controller.signal, edgeFirst);
+    const response = await proxyWeather(request(), product, controller.signal, {
+      packs: null,
+      runtimeBaseUrl: 'https://runtime.example'
+    });
     assert.equal(response.status, 504);
     assert.equal(calls, 1);
   });
