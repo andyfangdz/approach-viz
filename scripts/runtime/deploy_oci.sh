@@ -163,12 +163,14 @@ sync_source_tree() {
     -
     --exclude='services/runtime-rs/target'
     --exclude='crates/approach-viz-core/target'
+    --exclude='crates/approach-viz-server-wasm/target'
     --exclude='tools/uniffi-bindgen-swift/target'
     --exclude='.git'
     --exclude='.DS_Store'
   )
 
-  tar "${tar_args[@]}" -C "$ROOT_DIR" Cargo.toml Cargo.lock services/runtime-rs crates/approach-viz-core tools/uniffi-bindgen-swift | ssh "$HOST" "
+  # Every workspace member must be present for cargo to load the workspace.
+  tar "${tar_args[@]}" -C "$ROOT_DIR" Cargo.toml Cargo.lock services/runtime-rs crates/approach-viz-core crates/approach-viz-server-wasm tools/uniffi-bindgen-swift | ssh "$HOST" "
 set -euo pipefail
 rm -rf \"$REMOTE_STAGE_DIR\"
 mkdir -p \"\$(dirname \"$REMOTE_STAGE_DIR\")\"
