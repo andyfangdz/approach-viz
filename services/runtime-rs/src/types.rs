@@ -20,44 +20,9 @@ pub struct AppState {
     pub(crate) traffic_store: Arc<TrafficStore>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct LevelBounds {
-    pub bottom_feet: u16,
-    pub top_feet: u16,
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-pub struct StoredVoxel {
-    pub row: u16,
-    pub col: u16,
-    pub level_idx: u8,
-    pub phase: u8,
-    pub surface_phase: u8, // from PrecipFlag_00.00, 0=rain, 1=mixed, 2=snow
-    pub dbz_tenths: i16,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct StoredEchoTop {
-    pub row: u16,
-    pub col: u16,
-    pub top18_feet: u16,
-    pub top30_feet: u16,
-    pub top50_feet: u16,
-    pub top60_feet: u16,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GridDef {
-    pub nx: u32,
-    pub ny: u32,
-    pub la1_deg: f64,
-    pub lo1_deg360: f64,
-    pub di_deg: f64,
-    pub dj_deg: f64,
-    pub scanning_mode: u8,
-    pub lat_step_deg: f64,
-    pub lon_step_deg: f64,
-}
+// Stored scan records live in core so the web weather route can decode scan
+// packs into the same types; serde derives keep the snapshot format unchanged.
+pub use approach_viz_core::mrms_query::{GridDef, LevelBounds, StoredEchoTop, StoredVoxel};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScanSnapshot {

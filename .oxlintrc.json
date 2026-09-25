@@ -27,6 +27,7 @@
     "public/approach_viz_core.js",
     "services/runtime-rs/target/**",
     "packages/approach-viz-core-wasm/**",
+    "packages/approach-viz-server-wasm/**",
     "target/**",
     "ios/**",
     "crates/**"

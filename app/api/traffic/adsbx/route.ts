@@ -1,9 +1,26 @@
+import { zstdDecompressSync } from 'node:zlib';
 import { NextRequest, NextResponse } from 'next/server';
+import { TrafficQuery } from '../../../../packages/approach-viz-server-wasm/approach_viz_server_wasm.js';
+import { ensureServerWasm } from '../../shared/server-wasm';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const REQUEST_TIMEOUT_MS = 6500;
+/** The runtime's share of the deadline when a direct fallback is possible. */
+const RUNTIME_ATTEMPT_TIMEOUT_MS = 3500;
+const TRAFFIC_BINARY_CONTENT_TYPE = 'application/vnd.approach-viz.traffic.v4';
+// Same tar1090 hosts and browser-like request shape as the runtime's poller
+// (services/runtime-rs/src/traffic/cache_worker.rs).
+const DIRECT_BASE_URLS = (
+  process.env.ADSBX_TAR1090_BASE_URLS ||
+  'https://globe.adsbexchange.com,https://globe.theairtraffic.com'
+)
+  .split(',')
+  .map((url) => url.trim().replace(/\/$/, ''))
+  .filter((url) => url !== '');
+const DIRECT_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 const TRAFFIC_PASSTHROUGH_HEADERS = [
   'x-approach-viz-traffic-stale-current',
   'x-approach-viz-traffic-snapshot-age-ms'
@@ -120,20 +137,83 @@ function upstreamTrafficUrl(params: URLSearchParams): string {
   return upstreamUrl.toString();
 }
 
-async function fetchWithTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  return fetch(url, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      accept: '*/*',
+      'user-agent': 'approach-viz/1.0'
+    }
+  });
+}
+
+/**
+ * Answer a binary traffic query without the runtime: fetch the tar1090
+ * binCraft snapshot of the query's own box and select/encode current aircraft
+ * with the runtime's shared Rust code. There is no history; the web client
+ * keeps building trails from its own polls. See docs/runtime-fallbacks.md.
+ */
+async function directTraffic(
+  params: URLSearchParams,
+  deadline: AbortSignal
+): Promise<NextResponse> {
+  ensureServerWasm();
+  const optional = (key: string) => params.get(key) ?? undefined;
+  const query = new TrafficQuery(
+    optional('lat'),
+    optional('lon'),
+    optional('radiusNm'),
+    optional('limit'),
+    optional('historyMinutes'),
+    optional('hideGround'),
+    optional('historyHexes')
+  );
   try {
-    return await fetch(url, {
-      cache: 'no-store',
-      signal: controller.signal,
-      headers: {
-        accept: '*/*',
-        'user-agent': 'approach-viz/1.0'
+    const errors: string[] = [];
+    for (const baseUrl of DIRECT_BASE_URLS) {
+      try {
+        const response = await fetch(`${baseUrl}/re-api/?binCraft&zstd&box=${query.boxParam()}`, {
+          cache: 'no-store',
+          signal: deadline,
+          headers: {
+            accept: '*/*',
+            'accept-language': 'en-US,en;q=0.9',
+            'cache-control': 'no-cache',
+            pragma: 'no-cache',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'user-agent': DIRECT_USER_AGENT,
+            origin: baseUrl,
+            referer: `${baseUrl}/`
+          }
+        });
+        const contentType = response.headers.get('content-type') ?? '';
+        if (!response.ok || !contentType.includes('application/zstd')) {
+          await response.body?.cancel();
+          errors.push(`${baseUrl}: HTTP ${response.status} ${contentType || 'no content-type'}`);
+          continue;
+        }
+        const snapshot = zstdDecompressSync(new Uint8Array(await response.arrayBuffer()));
+        const payload = query.buildDirectPayload(
+          snapshot,
+          Date.now(),
+          `${baseUrl} (direct fallback)`
+        );
+        const headers = noStoreHeaders(TRAFFIC_BINARY_CONTENT_TYPE);
+        headers.set('x-approach-viz-traffic-stale-current', '0');
+        headers.set('x-approach-viz-traffic-snapshot-age-ms', '0');
+        headers.set('x-av-traffic-upstream', 'direct');
+        return new NextResponse(new Uint8Array(payload), { status: 200, headers });
+      } catch (error) {
+        if (deadline.aborted) throw error;
+        errors.push(`${baseUrl}: ${error instanceof Error ? error.message : String(error)}`);
       }
-    });
+    }
+    throw new Error(`Direct traffic fallback failed: ${errors.join(' | ')}`);
   } finally {
-    clearTimeout(timeoutId);
+    query.free();
   }
 }
 
@@ -152,26 +232,49 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: forward.error }, { status: 400, headers: noStoreHeaders() });
   }
 
+  // Only binary (web client) requests have a direct fallback, so only they
+  // leave part of the deadline for it.
+  const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const canFallBack =
+    forward.params.get('format') !== null && forward.params.get('format') !== 'json';
+  let runtimeFailure: string;
   try {
-    const upstreamResponse = await fetchWithTimeout(upstreamTrafficUrl(forward.params));
-    const body = await upstreamResponse.arrayBuffer();
-    const contentType = upstreamResponse.headers.get('content-type') || 'application/json';
-    return new NextResponse(body, {
-      status: upstreamResponse.status,
-      headers: noStoreHeaders(contentType, upstreamResponse.headers)
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to fetch traffic feed.';
-    return NextResponse.json(
-      {
-        source: null,
-        fetchedAtMs: Date.now(),
-        snapshotAgeMs: null,
-        staleCurrent: true,
-        aircraft: [],
-        error: message
-      },
-      { status: 200, headers: noStoreHeaders() }
+    const upstreamResponse = await fetchWithTimeout(
+      upstreamTrafficUrl(forward.params),
+      canFallBack ? RUNTIME_ATTEMPT_TIMEOUT_MS : REQUEST_TIMEOUT_MS
     );
+    if (upstreamResponse.status < 500 || !canFallBack) {
+      const body = await upstreamResponse.arrayBuffer();
+      const contentType = upstreamResponse.headers.get('content-type') || 'application/json';
+      return new NextResponse(body, {
+        status: upstreamResponse.status,
+        headers: noStoreHeaders(contentType, upstreamResponse.headers)
+      });
+    }
+    await upstreamResponse.body?.cancel();
+    runtimeFailure = `Traffic runtime request failed (${upstreamResponse.status}).`;
+  } catch (error) {
+    runtimeFailure = error instanceof Error ? error.message : 'Failed to fetch traffic feed.';
   }
+
+  let message = runtimeFailure;
+  if (canFallBack) {
+    try {
+      return await directTraffic(forward.params, deadline);
+    } catch (error) {
+      console.error('Traffic runtime and direct fallback both failed:', runtimeFailure, error);
+      message = `${runtimeFailure} ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  return NextResponse.json(
+    {
+      source: null,
+      fetchedAtMs: Date.now(),
+      snapshotAgeMs: null,
+      staleCurrent: true,
+      aircraft: [],
+      error: message
+    },
+    { status: 200, headers: noStoreHeaders() }
+  );
 }

@@ -227,11 +227,7 @@ pub(crate) async fn wal_maintenance(store: &TrafficStore, now_ms: i64) -> Result
 // ---------------------------------------------------------------------------
 
 fn observed_at(candidate: &TrafficAircraft, polled_at_ms: i64, cutoff_ms: i64) -> i64 {
-    candidate
-        .last_seen_seconds
-        .map(|seconds| (polled_at_ms as f64 - seconds * 1000.0).round() as i64)
-        .unwrap_or(polled_at_ms)
-        .clamp(cutoff_ms, polled_at_ms)
+    approach_viz_core::traffic_query::observed_at_ms(candidate, polled_at_ms, cutoff_ms)
 }
 
 fn new_track(candidate: &TrafficAircraft, polled_at_ms: i64, cutoff_ms: i64) -> TrackEntry {
@@ -1085,6 +1081,63 @@ mod tests {
             live.tracks[0].last_point_ts_ms,
             disk.tracks[0].last_point_ts_ms
         );
+    }
+
+    /// The web proxy's direct fallback must report the same current aircraft
+    /// this store would after ingesting only that one poll.
+    #[test]
+    fn direct_fallback_matches_a_store_holding_one_poll() {
+        use approach_viz_core::traffic_query::{select_direct_aircraft, TrafficQuery};
+
+        let mut aircraft = vec![
+            test_aircraft("aaa001", 40.0, -74.0, false),
+            test_aircraft("aaa002", 40.5, -74.2, false),
+            test_aircraft("aaa003", 40.1, -73.9, true),
+            test_aircraft("aaa004", 45.0, -74.0, false),
+            test_aircraft("aaa005", 39.8, -74.1, false),
+            test_aircraft("aaa006", 40.2, -74.3, false),
+        ];
+        aircraft[1].last_seen_seconds = Some(30.4);
+        aircraft[4].last_seen_seconds = Some(95.0);
+        aircraft[5].last_seen_seconds = None;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = open_traffic_db(&dir.path().join("traffic.db")).unwrap();
+        reconcile_partition_tables(&connection).unwrap();
+        let memory = TrafficMemoryStore::new_empty();
+        let mut persisted = PersistedState::load(&connection).unwrap();
+        ingest_snapshot(
+            &mut connection,
+            &memory,
+            &mut persisted,
+            "test",
+            &aircraft,
+            NOW_MS,
+            false,
+        )
+        .unwrap();
+
+        for (hide_ground_traffic, limit) in [(false, 250), (true, 250), (false, 2)] {
+            let mut request = test_query(NOW_MS);
+            request.hide_ground_traffic = hide_ground_traffic;
+            request.limit = limit;
+            let from_store = memory.query(&request).aircraft;
+            let direct = select_direct_aircraft(
+                aircraft.clone(),
+                &TrafficQuery {
+                    lat: request.lat,
+                    lon: request.lon,
+                    radius_nm: request.radius_nm,
+                    limit,
+                    history_minutes: 0.0,
+                    hide_ground_traffic,
+                    history_hexes: Vec::new(),
+                },
+                NOW_MS,
+            );
+            assert_eq!(format!("{direct:?}"), format!("{from_store:?}"));
+            assert!(!direct.is_empty());
+        }
     }
 
     const LEGACY_RING_SLOT_SQL: &str = "

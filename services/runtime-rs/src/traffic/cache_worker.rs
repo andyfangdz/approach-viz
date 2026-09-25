@@ -8,20 +8,15 @@ use tokio::time::{interval, MissedTickBehavior};
 use tracing::warn;
 
 use super::store::{ingest_to_store, wal_maintenance};
-use super::types::{
-    box_param, normalize_altitude_feet_value, normalize_callsign, normalize_heading_value,
-    normalize_lat_value, normalize_lon_value, normalize_seen_seconds_value, normalize_speed_kt,
-    now_ms, BoundingBox, TrafficAircraft,
-};
+use approach_viz_core::traffic_query::decode_bincraft_records;
+
+use super::types::{box_param, merge_aircraft_candidate, now_ms, BoundingBox, TrafficAircraft};
 use crate::types::AppState;
 
 const CACHE_POLL_INTERVAL_MS: u64 = 1000;
 const RETENTION_SWEEP_INTERVAL_MS: i64 = 5 * 60_000;
 const WAL_MAINTENANCE_INTERVAL_MS: i64 = 60_000;
 const REQUEST_TIMEOUT_MS: u64 = 5500;
-const BINCRAFT_MIN_STRIDE_BYTES: usize = 112;
-const BINCRAFT_MAX_STRIDE_BYTES: usize = 256;
-const BINCRAFT_S32_SEEN_VERSION: u32 = 20240218;
 
 const USER_AGENT: &str =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
@@ -141,24 +136,6 @@ async fn fetch_us_aircraft_snapshot(
     ))
 }
 
-fn merge_aircraft_candidate(
-    by_hex: &mut HashMap<String, TrafficAircraft>,
-    candidate: TrafficAircraft,
-) {
-    match by_hex.get(&candidate.hex) {
-        Some(current) => {
-            let current_seen = current.last_seen_seconds.unwrap_or(f64::INFINITY);
-            let candidate_seen = candidate.last_seen_seconds.unwrap_or(f64::INFINITY);
-            if candidate_seen < current_seen {
-                by_hex.insert(candidate.hex.clone(), candidate);
-            }
-        }
-        None => {
-            by_hex.insert(candidate.hex.clone(), candidate);
-        }
-    }
-}
-
 async fn fetch_adsbx_traffic(
     state: &AppState,
     bounds: BoundingBox,
@@ -227,161 +204,7 @@ async fn fetch_bincraft(
 pub fn decode_bincraft_aircraft(payload: &[u8]) -> Result<Vec<TrafficAircraft>, String> {
     let decoded = zstd::stream::decode_all(Cursor::new(payload))
         .map_err(|error| format!("binCraft zstd decode failed: {error}"))?;
-
-    if decoded.len() < 44 {
-        return Err("binCraft payload is too small.".to_string());
-    }
-
-    let stride = read_u32_le(&decoded, 8).unwrap_or(0) as usize;
-    if stride < BINCRAFT_MIN_STRIDE_BYTES || stride > BINCRAFT_MAX_STRIDE_BYTES || stride % 4 != 0 {
-        return Err(format!("Unexpected binCraft stride: {stride}"));
-    }
-
-    let version = read_u32_le(&decoded, 40).unwrap_or_default();
-    let max_offset = decoded.len() - (decoded.len() % stride);
-
-    let mut by_hex: HashMap<String, TrafficAircraft> = HashMap::new();
-
-    let mut offset = stride;
-    while offset + stride <= max_offset {
-        let u8 = &decoded[offset..offset + stride];
-        let validity73 = u8[73];
-        if (validity73 & 64) == 0 {
-            offset += stride;
-            continue;
-        }
-
-        let lat = read_i32_le(u8, 12)
-            .map(|value| normalize_lat_value(value as f64 / 1_000_000.0))
-            .flatten();
-        let lon = read_i32_le(u8, 8)
-            .map(|value| normalize_lon_value(value as f64 / 1_000_000.0))
-            .flatten();
-        let (lat, lon) = match (lat, lon) {
-            (Some(lat), Some(lon)) => (lat, lon),
-            _ => {
-                offset += stride;
-                continue;
-            }
-        };
-
-        let raw_hex = read_i32_le(u8, 0).unwrap_or_default() as u32;
-        let hex_base = raw_hex & 0x00ff_ffff;
-        if hex_base == 0 {
-            offset += stride;
-            continue;
-        }
-        let is_temporary = (raw_hex & (1 << 24)) != 0;
-        let hex = if is_temporary {
-            format!("~{hex_base:06x}")
-        } else {
-            format!("{hex_base:06x}")
-        };
-
-        let altitude_feet = if (validity73 & 32) != 0 {
-            normalize_altitude_feet_value(
-                (25_i32 * read_i16_le(u8, 22).unwrap_or_default() as i32) as f64,
-            )
-        } else if (validity73 & 16) != 0 {
-            normalize_altitude_feet_value(
-                (25_i32 * read_i16_le(u8, 20).unwrap_or_default() as i32) as f64,
-            )
-        } else {
-            None
-        };
-
-        let ground_speed_kt = if (validity73 & 128) != 0 {
-            normalize_speed_kt(
-                read_i16_le(u8, 34)
-                    .map(|value| value as f64 / 10.0)
-                    .unwrap_or_default(),
-            )
-        } else {
-            None
-        };
-        let track_deg = if (u8[74] & 8) != 0 {
-            normalize_heading_value(
-                read_i16_le(u8, 40)
-                    .map(|value| value as f64 / 90.0)
-                    .unwrap_or_default(),
-            )
-        } else {
-            None
-        };
-        let flight = if (validity73 & 8) != 0 {
-            decode_flight(u8)
-        } else {
-            None
-        };
-        let airground = u8[68] & 15;
-        let is_on_ground = airground == 1;
-
-        let seen_seconds = if version >= BINCRAFT_S32_SEEN_VERSION {
-            read_i32_le(u8, 4).map(|value| value as f64 / 10.0)
-        } else {
-            read_u16_le(u8, 6).map(|value| value as f64 / 10.0)
-        };
-        let seen_pos_seconds = if version >= BINCRAFT_S32_SEEN_VERSION {
-            read_i32_le(u8, 108).map(|value| value as f64 / 10.0)
-        } else {
-            read_u16_le(u8, 4).map(|value| value as f64 / 10.0)
-        };
-
-        let last_seen_seconds = seen_pos_seconds
-            .and_then(normalize_seen_seconds_value)
-            .or_else(|| seen_seconds.and_then(normalize_seen_seconds_value));
-
-        let aircraft = TrafficAircraft {
-            hex: hex.clone(),
-            flight,
-            lat,
-            lon,
-            is_on_ground,
-            altitude_feet,
-            ground_speed_kt,
-            track_deg,
-            last_seen_seconds,
-        };
-
-        merge_aircraft_candidate(&mut by_hex, aircraft);
-        offset += stride;
-    }
-
-    Ok(by_hex.into_values().collect())
-}
-
-fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset + 2)
-        .map(|slice| u16::from_le_bytes([slice[0], slice[1]]))
-}
-
-fn read_i16_le(data: &[u8], offset: usize) -> Option<i16> {
-    data.get(offset..offset + 2)
-        .map(|slice| i16::from_le_bytes([slice[0], slice[1]]))
-}
-
-fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
-    data.get(offset..offset + 4)
-        .map(|slice| u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
-}
-
-fn read_i32_le(data: &[u8], offset: usize) -> Option<i32> {
-    data.get(offset..offset + 4)
-        .map(|slice| i32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
-}
-
-fn decode_flight(u8: &[u8]) -> Option<String> {
-    let mut bytes = Vec::new();
-    for index in 78..86 {
-        let code = *u8.get(index)?;
-        if code == 0 {
-            break;
-        }
-        bytes.push(code);
-    }
-
-    let text = String::from_utf8_lossy(&bytes);
-    normalize_callsign(Some(text.trim()))
+    decode_bincraft_records(&decoded)
 }
 
 fn build_fetch_headers(base_url: &str) -> HeaderMap {

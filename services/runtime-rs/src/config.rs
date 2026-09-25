@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::constants::{
     DEFAULT_BOOTSTRAP_INTERVAL_SECONDS, DEFAULT_PENDING_RETRY_SECONDS,
@@ -28,6 +28,59 @@ pub struct Config {
     pub ingest_local_data_dir: Option<PathBuf>,
     pub ingest_local_data_offline: bool,
     pub ingest_parse_concurrency: u16,
+    pub r2_publish: Option<R2PublishConfig>,
+}
+
+/// S3-compatible bucket (Cloudflare R2) that finished scans are published to,
+/// so the web weather route can answer while this service is down.
+#[derive(Clone)]
+pub struct R2PublishConfig {
+    /// e.g. `https://<account-id>.r2.cloudflarestorage.com`
+    pub endpoint: String,
+    pub bucket: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    /// Key prefix; packs go to `<prefix>/scans/` and the manifest to `<prefix>/latest.json`.
+    pub prefix: String,
+}
+
+impl R2PublishConfig {
+    /// Publishing is off when none of the variables are set; a partial
+    /// configuration is an error rather than a silently disabled publisher.
+    fn from_env() -> Result<Option<Self>> {
+        let names = [
+            "RUNTIME_R2_ENDPOINT",
+            "RUNTIME_R2_BUCKET",
+            "RUNTIME_R2_ACCESS_KEY_ID",
+            "RUNTIME_R2_SECRET_ACCESS_KEY",
+        ];
+        let values = names.map(env_optional);
+        if values.iter().all(Option::is_none) {
+            return Ok(None);
+        }
+        let missing: Vec<&str> = names
+            .iter()
+            .zip(&values)
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| *name)
+            .collect();
+        if !missing.is_empty() {
+            bail!(
+                "R2 publishing is partially configured; missing {}",
+                missing.join(", ")
+            );
+        }
+        let [endpoint, bucket, access_key_id, secret_access_key] = values.map(Option::unwrap);
+        Ok(Some(Self {
+            endpoint: trim_base_url(&endpoint),
+            bucket,
+            access_key_id,
+            secret_access_key,
+            prefix: env_string("RUNTIME_R2_PREFIX", "mrms")
+                .trim_matches('/')
+                .to_string(),
+        }))
+    }
 }
 
 impl Config {
@@ -116,6 +169,8 @@ impl Config {
         )?
         .max(1);
 
+        let r2_publish = R2PublishConfig::from_env()?;
+
         Ok(Self {
             listen_addr,
             storage_dir,
@@ -134,6 +189,7 @@ impl Config {
             ingest_local_data_dir,
             ingest_local_data_offline,
             ingest_parse_concurrency,
+            r2_publish,
         })
     }
 

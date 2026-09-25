@@ -4,7 +4,7 @@ ApproachViz has three moving parts:
 
 - **Build-time data pipeline.** `npm run prepare-data` downloads FAA and airspace sources and compiles them into `data/approach-viz.sqlite`. Approach-reference matching and enrichment happen here, once.
 - **Clients.** The Next.js web app reads that database on the server and renders the scene with react-three-fiber. The iOS/macOS app bundles the same database and renders with Metal.
-- **Rust runtime service** (`services/runtime-rs`). It ingests NOAA MRMS weather and ADS-B Exchange traffic continuously and serves compact binary snapshots.
+- **Rust runtime service** (`services/runtime-rs`). It ingests NOAA MRMS weather and ADS-B Exchange traffic continuously and serves compact binary snapshots. Each finished weather scan is also published to R2 as a scan pack. The web weather routes answer from those packs, and the web traffic route asks ADS-B Exchange directly, while the runtime host is down.
 
 Approach geometry, MRMS preparation, and traffic merging live in one shared crate, `crates/approach-viz-core`. The web client calls it through WASM in workers, the native app through UniFFI, and the runtime links it directly.
 
@@ -33,6 +33,10 @@ flowchart LR
   subgraph runtime["Rust runtime (services/runtime-rs)"]
     RS["/v1/weather/volume<br/>/v1/weather/echo-tops<br/>/v1/traffic/adsbx"]
   end
+  R2[("R2 scan packs")]
+  RS -- "publish scans" --> R2
+  PROXY -- "weather" --> R2
+  PROXY -- "traffic, runtime down" --> ADSB
   PROXY --> RS
   APP --> RS
   PROXY --> FAA["FAA d-TPP plates"]
@@ -49,5 +53,6 @@ The browser also fetches Terrarium elevation tiles, FAA chart tiles, and Google 
 - [Client and scene](architecture-client-and-scene.md): client state, UI sections, and scene composition.
 - [Worker transport protocols](worker-transport-protocols.md): worker contracts, transferables, and failure policy.
 - [MRMS Rust pipeline](mrms-rust-pipeline.md): runtime ingest, wire formats, endpoints, and deployment.
+- [Runtime fallbacks](runtime-fallbacks.md): weather scan packs in R2 and the direct traffic fallback in the web routes.
 - [MRMS phase methodology](mrms-phase-methodology.md): precipitation-phase resolution and dual-pol correction.
 - [Native rendering](rendering-ios-native-mvp.md): the iOS/macOS app, its build, and parity gaps.

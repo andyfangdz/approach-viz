@@ -6,6 +6,8 @@ use arc_swap::ArcSwap;
 use rusqlite::Connection;
 use tracing::info;
 
+use approach_viz_core::traffic_query::rank_current_aircraft;
+
 use super::types::{
     build_bounding_box, distance_nm, BoundingBox, HistoryTargetCandidate, QueryRequest,
     QueryResult, TrafficAircraft, TrafficHistoryPoint, CACHE_CURRENT_STALE_MS,
@@ -414,22 +416,13 @@ impl TrafficMemoryStore {
         let t_current = t0.elapsed();
 
         // Exact radius filter, sort, truncate.
-        aircraft.retain(|ac| {
-            distance_nm(request.lat, request.lon, ac.lat, ac.lon) <= request.radius_nm
-        });
-        aircraft.sort_by(|left, right| {
-            let left_seen = left.last_seen_seconds.unwrap_or(f64::INFINITY);
-            let right_seen = right.last_seen_seconds.unwrap_or(f64::INFINITY);
-            left_seen
-                .partial_cmp(&right_seen)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| {
-                    let ld = distance_nm(request.lat, request.lon, left.lat, left.lon);
-                    let rd = distance_nm(request.lat, request.lon, right.lat, right.lon);
-                    ld.partial_cmp(&rd).unwrap_or(Ordering::Equal)
-                })
-        });
-        aircraft.truncate(request.limit);
+        rank_current_aircraft(
+            &mut aircraft,
+            request.lat,
+            request.lon,
+            request.radius_nm,
+            request.limit,
+        );
 
         let t_sort = t0.elapsed();
 

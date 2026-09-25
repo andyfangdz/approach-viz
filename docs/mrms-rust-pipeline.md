@@ -18,8 +18,9 @@ This project now uses an external Rust runtime service for MRMS instead of decod
    - **Reduces as it decodes.** The task pairs its level with the level-matched ZDR/RhoHV objects of the selected dual-pol scan, decodes them one grid at a time, and keeps only the voxels at or above the 5 dBZ storage threshold plus the dual-pol values sampled at exactly those voxels. Only a few full CONUS grids are resident at once (the shared parse-concurrency limiter bounds them), giving ~1.3 GB peak RSS instead of ~9.5 GB when every decoded grid was held until assembly.
    - **Decodes PNG-packed GRIB2 exactly, and cheaply.** 8/16-bit samples map through a lookup table and 24-bit (RhoHV) samples through the same `f32` arithmetic the `grib` crate applies, so results are bit-identical to the crate's per-element iterator at roughly a quarter of the CPU (the iterator cost ~190 ms per 24.5M-point field). Aux products keep their raw integer samples and convert on access instead of materializing a 98 MB `f32` array.
      Thermodynamic and echo-top products are selected ("latest at or before the scan") once every reflectivity level has been downloaded, because several are published slightly after the base level; their fetch/decode overlaps the tail of level decoding. Scan assembly (base aux sampling, phase scoring, mixed-edge promotion, and scattering straight into tile-grouped order from a counting pass) runs on the Tokio blocking pool so it never stalls async workers serving HTTP/SQS; query handlers likewise run window filtering + FlatBuffers encoding for volume and echo-top responses there. A finished scan replaces the served snapshot immediately; persistence runs on its own worker that keeps only the newest pending scan.
-4. Next.js route `app/api/weather/nexrad/route.ts` proxies client requests to the runtime service `v1/weather/volume` endpoint, and `app/api/weather/nexrad/echo-tops/route.ts` proxies `v1/weather/echo-tops` (legacy alias `v1/echo-tops`).
-5. Client decodes compact binary reflectivity payloads and AVET binary echo-top payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
+4. When R2 publishing is configured, the finished scan is also published as a scan pack (see [runtime fallbacks](runtime-fallbacks.md)).
+5. Next.js route `app/api/weather/nexrad/route.ts` answers `volume` and `app/api/weather/nexrad/echo-tops/route.ts` answers `echo-tops`, from the R2 scan packs when configured and current, and from the runtime's `v1/weather/*` endpoints otherwise or on failure.
+6. Client decodes compact binary reflectivity payloads and AVET binary echo-top payloads directly in `app/scene/NexradVolumeOverlay.tsx`.
 
 ## Phase Methodology
 
@@ -85,7 +86,7 @@ Response compression, not payload construction, dominates a weather query. Serve
   - `span_z:u16[n]` (merged vertical levels)
 - v5 replaced the hand-rolled v4 binary header/columns with the FlatBuffers table above; column semantics are unchanged from v4.
 - Merge strategy groups contiguous cells sharing `{phase, surface_phase, 5 dBZ-quantized dbz}` into larger prisms and applies adaptive span caps so high-intensity cores keep finer detail while low-intensity fields compress aggressively. `surface_phase` is part of the merge key because the default client phase mode colors by it — merging across a surface rain/snow boundary would paint one cell's surface phase over the whole brick. Each brick ships the true maximum `dbz_tenths` over its merged cells so intensity is never understated.
-- Decoder is the zero-copy `FbVolumeView` in `crates/approach-viz-core/src/mrms_preprocess.rs`; encoder in `services/runtime-rs/src/weather/encoding.rs`. The view validates each column's presence and length once at construction — malformed payloads produce an explicit decode error rather than zero-filled values.
+- Decoder is the zero-copy `FbVolumeView` in `crates/approach-viz-core/src/mrms_preprocess.rs`; windowing, brick merging, and the encoder live in `crates/approach-viz-core/src/mrms_query/`, shared by the runtime and the web weather route (reading R2 scan packs) so both return identical bytes. The view validates each column's presence and length once at construction — malformed payloads produce an explicit decode error rather than zero-filled values.
 
 ## Echo-Top Wire Format (`application/vnd.approach-viz.echo-tops.v3`, AVET v3)
 
@@ -95,7 +96,7 @@ Response compression, not payload construction, dominates a weather query. Serve
   - `x_nm:f32[n]`, `z_nm:f32[n]`, `top18_feet:u16[n]`, `top30_feet:u16[n]`, `top50_feet:u16[n]`, `top60_feet:u16[n]`
 - v3 replaced the hand-rolled v2 64-byte binary header with the FlatBuffers table above; column semantics are unchanged from v2.
 - No content negotiation: like the volume endpoint, the runtime always returns AVET binary (the earlier JSON variant was removed; nothing in the repo consumed it and production logged 9 echo-top requests in 7 days). Clients still send `Accept: application/vnd.approach-viz.echo-tops.v3`, which the runtime ignores; the Next.js proxy passes the body through.
-- Decoder is the zero-copy `FbEchoTopView` in `crates/approach-viz-core/src/mrms_preprocess.rs`, encoder in `services/runtime-rs/src/weather/encoding.rs`. The view uses the same construct-time presence/length validation as the volume view.
+- Decoder is the zero-copy `FbEchoTopView` in `crates/approach-viz-core/src/mrms_preprocess.rs`, encoder in `crates/approach-viz-core/src/mrms_query/echo_tops.rs`. The view uses the same construct-time presence/length validation as the volume view.
 
 ## Deployment
 
