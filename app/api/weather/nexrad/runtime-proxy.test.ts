@@ -220,10 +220,13 @@ for (const product of ['volume', 'echo-tops'] as const) {
         )
     };
     const started = Date.now();
+    // AbortSignal.timeout's timer does not keep the event loop alive, and the
+    // hanging read is the only other pending work.
+    const keepAlive = setInterval(() => {}, 1_000);
     const response = await proxyWeather(request(PACK_QUERY), product, undefined, {
       packs: new ScanPackSource(hanging, 'mrms'),
       runtimeBaseUrl: 'https://runtime.example'
-    });
+    }).finally(() => clearInterval(keepAlive));
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('x-av-weather-upstream'), 'runtime');
     assert.ok(
