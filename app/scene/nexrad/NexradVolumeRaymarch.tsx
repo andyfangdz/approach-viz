@@ -48,6 +48,9 @@ export type VolumeGroundSource = (
   refLat: number
 ) => Promise<GroundHeightfieldResult>;
 
+/** Whether rays are currently clipped by the ground the source provided. */
+export type VolumeGroundStatus = 'pending' | 'ready' | 'failed';
+
 interface NexradVolumeRaymarchProps {
   texture: NexradVolumeTextureData;
   opacity: number;
@@ -57,6 +60,8 @@ interface NexradVolumeRaymarchProps {
   ground: VolumeGroundSource | null;
   applyEarthCurvatureCompensation: boolean;
   refLat: number;
+  /** Heightfield lifecycle for the debug panel; `null` without a ground source or on unmount. */
+  onGroundStatusChange?: (status: VolumeGroundStatus | null) => void;
 }
 
 const VERTEX_SHADER = /* glsl */ `
@@ -454,7 +459,8 @@ export function NexradVolumeRaymarch({
   opacity,
   ground,
   applyEarthCurvatureCompensation,
-  refLat
+  refLat,
+  onGroundStatusChange
 }: NexradVolumeRaymarchProps) {
   const meshRef = useRef<THREE.Mesh | null>(null);
 
@@ -522,12 +528,40 @@ export function NexradVolumeRaymarch({
     pageWidth: number;
     pageHeight: number;
   } | null>(null);
+  const [groundFailure, setGroundFailure] = useState<{
+    grid: GroundHeightfieldGrid;
+    ground: VolumeGroundSource;
+    curvature: boolean;
+    refLat: number;
+  } | null>(null);
+  const groundResultRef = useRef(groundResult);
+  groundResultRef.current = groundResult;
+  // The texture a failed attempt was made with: a failure is retried when
+  // the next poll delivers a new texture, not on every render.
+  const failedGroundTextureRef = useRef<NexradVolumeTextureData | null>(null);
   useEffect(() => {
     if (!ground) return;
+    const matches = (built: {
+      grid: GroundHeightfieldGrid;
+      ground: VolumeGroundSource;
+      curvature: boolean;
+      refLat: number;
+    }) =>
+      built.grid === groundGrid &&
+      built.ground === ground &&
+      built.curvature === applyEarthCurvatureCompensation &&
+      built.refLat === refLat;
+    // The heightfield depends on the grid alone; a new texture on the same
+    // grid keeps the ground it has.
+    const current = groundResultRef.current;
+    if (current && matches(current)) return;
+    if (failedGroundTextureRef.current === texture) return;
     let cancelled = false;
     ground(groundGrid, applyEarthCurvatureCompensation, refLat).then(
       (result) => {
         if (cancelled) return;
+        failedGroundTextureRef.current = null;
+        setGroundFailure(null);
         setGroundResult({
           grid: groundGrid,
           ground,
@@ -542,12 +576,19 @@ export function NexradVolumeRaymarch({
       (error) => {
         if (cancelled) return;
         console.error('Volume ground heightfield worker failed.', error);
+        failedGroundTextureRef.current = texture;
+        setGroundFailure({
+          grid: groundGrid,
+          ground,
+          curvature: applyEarthCurvatureCompensation,
+          refLat
+        });
       }
     );
     return () => {
       cancelled = true;
     };
-  }, [ground, groundGrid, applyEarthCurvatureCompensation, refLat]);
+  }, [ground, groundGrid, applyEarthCurvatureCompensation, refLat, texture]);
   useEffect(
     () => () => {
       groundResult?.heightfield.dispose();
@@ -563,6 +604,23 @@ export function NexradVolumeRaymarch({
     groundResult.refLat === refLat
       ? groundResult
       : null;
+  const groundFailed =
+    groundFailure !== null &&
+    groundFailure.grid === groundGrid &&
+    groundFailure.ground === ground &&
+    groundFailure.curvature === applyEarthCurvatureCompensation &&
+    groundFailure.refLat === refLat;
+  const groundStatus: VolumeGroundStatus | null = !ground
+    ? null
+    : groundTextures
+      ? 'ready'
+      : groundFailed
+        ? 'failed'
+        : 'pending';
+  useEffect(() => {
+    onGroundStatusChange?.(groundStatus);
+  }, [onGroundStatusChange, groundStatus]);
+  useEffect(() => () => onGroundStatusChange?.(null), [onGroundStatusChange]);
   if (
     groundTextures &&
     (groundTextures.pageWidth !== texture.pageWidth ||

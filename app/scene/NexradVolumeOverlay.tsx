@@ -32,7 +32,11 @@ import {
 import { feetToNm, applyConstantColorInstances, feetLabel } from './nexrad/nexrad-render';
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
 import { NexradSurfaceMosaic, type MosaicDrapeStatus } from './nexrad/NexradSurfaceMosaic';
-import { NexradVolumeRaymarch, type VolumeGroundSource } from './nexrad/NexradVolumeRaymarch';
+import {
+  NexradVolumeRaymarch,
+  type VolumeGroundSource,
+  type VolumeGroundStatus
+} from './nexrad/NexradVolumeRaymarch';
 import { buildGroundHeightfieldWithWorker } from './geometry/scene-geometry-client';
 import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
 import { ALTITUDE_GUIDE_LABEL_STYLE } from './labels/label-styles';
@@ -236,13 +240,16 @@ export function NexradVolumeOverlay({
         : null,
     [wantsGround, weatherElevation]
   );
+  // With the raster ready, the heightfield built from it decides: rays are
+  // clipped only once it lands. `null` means no volume is drawn to clip.
+  const [volumeGroundBuild, setVolumeGroundBuild] = useState<VolumeGroundStatus | null>(null);
   const volumeGroundStatus = !wantsGround
     ? 'none'
-    : weatherElevationStatus === 'ready'
-      ? 'terrain'
-      : weatherElevationStatus === 'unavailable'
-        ? 'terrain-unavailable'
-        : 'terrain-loading';
+    : weatherElevationStatus === 'unavailable' || volumeGroundBuild === 'failed'
+      ? 'terrain-unavailable'
+      : weatherElevationStatus !== 'ready' || volumeGroundBuild === 'pending'
+        ? 'terrain-loading'
+        : 'terrain';
   const [echoTop18, setEchoTop18] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop30, setEchoTop30] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop50, setEchoTop50] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
@@ -880,6 +887,7 @@ export function NexradVolumeOverlay({
           ground={volumeGround}
           applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
           refLat={refLat}
+          onGroundStatusChange={setVolumeGroundBuild}
         />
       )}
       {showEchoTops && (

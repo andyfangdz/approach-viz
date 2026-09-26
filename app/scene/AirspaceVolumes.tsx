@@ -55,26 +55,36 @@ export const AirspaceVolumes = memo(function AirspaceVolumes({
   verticalScale,
   airportElevationFeet
 }: AirspaceVolumesProps) {
-  const [meshes, setMeshes] = useState<Array<AirspaceMesh | null>>([]);
+  // Sectors are built in the scene-geometry worker for one set of inputs and
+  // drawn only while those inputs are current: after an airport change the
+  // old sectors sit in the old reference frame, so they are hidden rather
+  // than shown until the new ones arrive.
+  const [built, setBuilt] = useState<{
+    features: AirspaceFeature[];
+    refLat: number;
+    refLon: number;
+    airportElevationFeet: number;
+    meshes: Array<AirspaceMesh | null>;
+  } | null>(null);
 
-  // Extrusion and edge extraction run in the scene-geometry worker; the
-  // previous sectors stay up until the new ones arrive.
   useEffect(() => {
     let cancelled = false;
     const drawable = features.filter((feature) => feature.class in COLORS);
+    const inputs = { features, refLat, refLon, airportElevationFeet };
     buildAirspaceBuffersWithWorker(drawable, refLat, refLon, airportElevationFeet).then(
       (results) => {
         if (cancelled) return;
-        setMeshes(
-          results.map((buffers, index) =>
+        setBuilt({
+          ...inputs,
+          meshes: results.map((buffers, index) =>
             buffers ? toAirspaceMesh(drawable[index], index, buffers) : null
           )
-        );
+        });
       },
       (error) => {
         if (cancelled) return;
         console.error('Airspace geometry worker failed.', error);
-        setMeshes([]);
+        setBuilt({ ...inputs, meshes: [] });
       }
     );
     return () => {
@@ -84,13 +94,22 @@ export const AirspaceVolumes = memo(function AirspaceVolumes({
 
   useEffect(
     () => () => {
-      for (const mesh of meshes) {
+      for (const mesh of built?.meshes ?? []) {
         mesh?.geometry.dispose();
         mesh?.edgesGeometry.dispose();
       }
     },
-    [meshes]
+    [built]
   );
+
+  const meshes =
+    built &&
+    built.features === features &&
+    built.refLat === refLat &&
+    built.refLon === refLon &&
+    built.airportElevationFeet === airportElevationFeet
+      ? built.meshes
+      : [];
 
   return (
     <group scale={[1, verticalScale, 1]}>

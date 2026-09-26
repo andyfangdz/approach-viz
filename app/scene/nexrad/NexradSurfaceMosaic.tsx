@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { NexradSurfaceMosaicDrape } from '@/app/app-client/types';
 import {
@@ -68,18 +68,6 @@ export function NexradSurfaceMosaic({
 }: NexradSurfaceMosaicProps) {
   const wantsDrape = drapeMode === 'terrain';
 
-  const drapeStatus: MosaicDrapeStatus = !wantsDrape
-    ? 'flat'
-    : elevationStatus === 'ready'
-      ? 'terrain'
-      : elevationStatus === 'unavailable'
-        ? 'terrain-unavailable'
-        : 'terrain-loading';
-
-  useEffect(() => {
-    onDrapeStatusChange?.(drapeStatus);
-  }, [onDrapeStatusChange, drapeStatus]);
-
   const texture = useMemo(() => {
     const nextTexture = new THREE.DataTexture(
       composite.rgba,
@@ -139,24 +127,54 @@ export function NexradSurfaceMosaic({
     key: string;
     geometry: THREE.BufferGeometry;
   } | null>(null);
+  const [failedDrapeKey, setFailedDrapeKey] = useState<string | null>(null);
+  const terrainDrapeRef = useRef(terrainDrape);
+  terrainDrapeRef.current = terrainDrape;
+  // The composite a failed build was attempted with: a failure is retried
+  // when the next poll delivers a new one, not on every render.
+  const failedAttemptRef = useRef<{ key: string; composite: NexradCompositeSurface } | null>(null);
   useEffect(() => {
     if (!drapeRaster || !drapeKey) return;
+    // The mesh depends on the grid alone; a new composite on the same grid
+    // keeps the drape it has.
+    if (terrainDrapeRef.current?.key === drapeKey) return;
+    const failed = failedAttemptRef.current;
+    if (failed?.key === drapeKey && failed.composite === composite) return;
     let cancelled = false;
     buildMosaicDrapeWithWorker(drapeRaster, drapeParams).then(
       (mesh) => {
         if (cancelled) return;
+        failedAttemptRef.current = null;
+        setFailedDrapeKey(null);
         setTerrainDrape({ key: drapeKey, geometry: toDrapeGeometry(mesh) });
       },
       (error) => {
         if (cancelled) return;
         console.error('Mosaic terrain drape worker failed.', error);
+        failedAttemptRef.current = { key: drapeKey, composite };
+        setFailedDrapeKey(drapeKey);
       }
     );
     return () => {
       cancelled = true;
     };
-  }, [drapeRaster, drapeKey, drapeParams]);
+  }, [drapeRaster, drapeKey, drapeParams, composite]);
   useEffect(() => () => terrainDrape?.geometry.dispose(), [terrainDrape]);
+
+  const hasTerrainDrape = terrainDrape !== null && terrainDrape.key === drapeKey;
+  // `terrain` only once the draped mesh is on screen: a flat sheet shown
+  // while the drape builds, or after it failed, is not reported as relief.
+  const drapeStatus: MosaicDrapeStatus = !wantsDrape
+    ? 'flat'
+    : elevationStatus === 'unavailable' || (drapeKey !== null && failedDrapeKey === drapeKey)
+      ? 'terrain-unavailable'
+      : hasTerrainDrape
+        ? 'terrain'
+        : 'terrain-loading';
+
+  useEffect(() => {
+    onDrapeStatusChange?.(drapeStatus);
+  }, [onDrapeStatusChange, drapeStatus]);
 
   const flatGeometry = useMemo(
     () => toDrapeGeometry(buildMosaicDrapeMesh(drapeParams, null)),
@@ -165,7 +183,7 @@ export function NexradSurfaceMosaic({
   useEffect(() => () => flatGeometry.dispose(), [flatGeometry]);
 
   const geometry =
-    terrainDrape && terrainDrape.key === drapeKey ? terrainDrape.geometry : flatGeometry;
+    terrainDrape !== null && terrainDrape.key === drapeKey ? terrainDrape.geometry : flatGeometry;
 
   return (
     <mesh geometry={geometry} frustumCulled={false} renderOrder={70}>
