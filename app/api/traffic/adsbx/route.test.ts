@@ -2,6 +2,7 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { zstdCompressSync } from 'node:zlib';
 import { NextRequest } from 'next/server';
 import { GET } from './route';
@@ -235,6 +236,23 @@ describe('traffic adsbx direct fallback', () => {
     const response = await GET(makeRequest(VALID_LAT_LON));
     assert.match((await response.json()).error, /unreachable/);
     assert.equal(calls.length, 1);
+  });
+
+  test('oversized upstream responses are refused instead of decoded', async () => {
+    for (const [label, body] of [
+      ['compressed', randomBytes(5 * 1024 * 1024)],
+      ['decompressed', zstdCompressSync(new Uint8Array(40 * 1024 * 1024))]
+    ] as const) {
+      globalThis.fetch = async (input) => {
+        if (new URL(String(input)).pathname === '/v1/traffic/adsbx')
+          throw new Error('runtime down');
+        return new Response(body, { headers: { 'content-type': 'application/zstd' } });
+      };
+      const response = await GET(makeRequest(BINARY_QUERY));
+      const error = (await response.json()).error;
+      assert.match(error, /runtime down/, label);
+      assert.match(error, /limit|exceed|ERR_BUFFER_TOO_LARGE|larger/i, label);
+    }
   });
 
   test('when both fail the error names both', async () => {

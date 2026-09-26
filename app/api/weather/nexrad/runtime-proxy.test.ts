@@ -148,6 +148,84 @@ for (const product of ['volume', 'echo-tops'] as const) {
   });
 }
 
+/** Resolves reads only when released; rejects when the read's own signal aborts, like fetch. */
+class GatedStorage implements PackStorage {
+  private gates: (() => void)[] = [];
+  constructor(private readonly objects: Map<string, Uint8Array>) {}
+  release() {
+    for (const open of this.gates.splice(0)) open();
+  }
+  read(key: string, signal: AbortSignal, range?: { offset: number; length: number }) {
+    return new Promise<Uint8Array | null>((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      this.gates.push(() => {
+        const object = this.objects.get(key);
+        resolve(
+          !object ? null : range ? object.slice(range.offset, range.offset + range.length) : object
+        );
+      });
+    });
+  }
+}
+
+test('a request that gives up does not abort a shared read another request awaits', async () => {
+  const storage = new GatedStorage(
+    new Map([['mrms/latest.json', manifestJson(new Date().toISOString())]])
+  );
+  const source = new ScanPackSource(storage, 'mrms');
+  const impatient = new AbortController();
+  const first = source.manifest(impatient.signal);
+  const second = source.manifest(new AbortController().signal);
+  impatient.abort(new Error('first request timed out'));
+  await assert.rejects(first, /first request timed out/);
+  storage.release();
+  assert.equal((await second)?.key, PACK_KEY);
+});
+
+test('a pack evicted while a request builds from it stays usable', async () => {
+  const keys = ['a', 'b', 'c'].map((name) => `mrms/scans/${name}.avsp`);
+  let current = keys[0];
+  const storage: PackStorage & { gates: (() => void)[]; held: boolean } = {
+    gates: [],
+    held: true,
+    async read(key, _signal, range) {
+      if (key === 'mrms/latest.json') {
+        const manifest = JSON.parse(
+          new TextDecoder().decode(manifestJson(new Date().toISOString()))
+        );
+        return new TextEncoder().encode(JSON.stringify({ ...manifest, key: current }));
+      }
+      // Hold the first pack's data ranges (not its header) until released.
+      if (key === keys[0] && range && range.offset > 0 && this.held) {
+        await new Promise<void>((resolve) => this.gates.push(resolve));
+      }
+      return range ? PACK.slice(range.offset, range.offset + range.length) : PACK;
+    }
+  };
+  const source = new ScanPackSource(storage, 'mrms');
+  const params = { lat: 35.15, lon: -109.8, maxRangeNm: 40, minDbz: 5 };
+  const signal = new AbortController().signal;
+  const pending = source.build('volume', params, signal);
+  while (storage.gates.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+
+  // Two newer packs are loaded, evicting the first while its build waits.
+  const realNow = Date.now;
+  try {
+    for (const [index, key] of keys.slice(1).entries()) {
+      current = key;
+      Date.now = () => realNow() + (index + 1) * 10_000;
+      const built = await source.build('volume', params, signal);
+      assert.deepEqual(built && new Uint8Array(built.body), EXPECTED.volume);
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  storage.held = false;
+  for (const open of storage.gates) open();
+  const built = await pending;
+  assert.deepEqual(built && new Uint8Array(built.body), EXPECTED.volume);
+});
+
 for (const product of ['volume', 'echo-tops'] as const) {
   test(`${product}: a current scan pack answers byte-identically without the runtime`, async () => {
     globalThis.fetch = async () => assert.fail('must not reach the runtime');

@@ -48,10 +48,11 @@ For the reference scan the pack is 21.8 MB (the zstd snapshot is 58 MB), with a 
 
 `services/runtime-rs/src/weather/r2_publish.rs` publishes on its own task, like persistence. The channel holds only the newest scan, and each publish runs these steps:
 
-1. Read the manifest. If it already names the same or a newer scan, skip. This covers a restart with an older snapshot on disk, and a second ingester.
+1. Read the manifest and its ETag. If it already names the same or a newer scan, skip. This covers a restart with an older snapshot on disk, and a second ingester.
 2. Build the pack on the blocking pool.
-3. PUT the pack (`immutable`), then PUT the manifest (`no-store`).
-4. List `<prefix>/scans/` and delete all but the newest 5 packs.
+3. PUT the pack (`immutable`).
+4. PUT the manifest (`no-store`) conditionally: `If-Match` the ETag read in step 1, or `If-None-Match: *` when there was none. If another publisher wrote it in between (412/409), re-read it; stop if it names the same or a newer scan, otherwise retry (3 attempts). Concurrent publishers therefore can never move the manifest backwards.
+5. List `<prefix>/scans/` and delete all but the newest 5 packs. The manifest always names the newest scan, so its pack is never pruned.
 
 Publishing failures are logged. The next scan retries, and serving from the runtime is unaffected.
 
@@ -65,6 +66,8 @@ On the OCI host these variables go in `/etc/approach-viz-runtime/r2-publish.env`
 
 - **Order:** R2 packs first while the published scan is at most 15 minutes old. Past that, publishing has stalled while the runtime may still be current, so the runtime goes first and the stale pack is the fallback.
 - **Pack reads:** `scan-packs.ts` reads R2 through its S3 API with a read-only token (`aws4fetch`). Per function instance, the manifest is cached for 5 s and parsed pack headers for the 2 newest packs; a pack that disagrees with its manifest is an error. Range reads run in parallel and are concatenated in order.
+- **Shared reads:** concurrent requests share the cached manifest and header reads. Those reads run on their own 8 s timeout, never one request's signal, and each request waits under its own deadline. One request giving up therefore never aborts a read another request is waiting on.
+- **Pack lifetime:** evicted packs are not freed explicitly, because a request may still be building from one. wasm-bindgen's `FinalizationRegistry` releases the WASM memory once nothing references the pack.
 - **Configuration:** all of `WEATHER_R2_ENDPOINT`, `WEATHER_R2_BUCKET`, `WEATHER_R2_ACCESS_KEY_ID`, and `WEATHER_R2_SECRET_ACCESS_KEY`, or none (runtime only). A partial set makes the weather routes return 500. `WEATHER_R2_PREFIX` defaults to `mrms`.
 - **Caching:** successful responses carry `Vercel-CDN-Cache-Control: public, s-maxage=30`, so viewers of the same place share one build, while browsers still see `no-store`. Scans change every ~2 minutes.
 - **Upstream header:** `X-AV-WEATHER-UPSTREAM: packs|runtime` records which source answered.
@@ -84,6 +87,7 @@ On the heaviest window of the reference scan (220 nm, 4.85M decoded voxels, 833k
 `app/api/traffic/adsbx/route.ts` still forwards to the runtime first. For binary requests (`format=binary`, what the web client sends), the runtime gets 3.5 s of the 6.5 s deadline. If it throws, times out, or returns a 5xx, the route asks ADS-B Exchange directly:
 
 - **Request:** the same tar1090 endpoint, hosts, and browser-like headers as the runtime's poller: `/re-api/?binCraft&zstd&box=…`, for the box around the query's radius only. `ADSBX_TAR1090_BASE_URLS` (comma-separated) overrides the hosts; the default is `globe.adsbexchange.com`, then `globe.theairtraffic.com`.
+- **Size limits:** the upstream body is capped at 4 MiB and its decompressed snapshot at 32 MiB (a 220 nm box is well under 1 MB). An oversized response fails the fallback instead of being decoded.
 - **Decoding and selection:** Node decompresses the zstd body. `crates/approach-viz-core/src/traffic_query.rs` decodes binCraft, parses the query, and selects current aircraft, the same functions the runtime uses. The selection matches what the runtime's store reports after ingesting only that one poll: stale reports (over 60 s) and optionally ground traffic dropped, ages measured from the poll, freshest first, radius and limit applied. A runtime test (`direct_fallback_matches_a_store_holding_one_poll`) checks this against the real store.
 - **Response:** an AVTR v4 payload with no history, `X-AV-TRAFFIC-UPSTREAM: direct`, and the snapshot headers set to fresh. The web client keeps building trails from its own polls; only the history backfill is missing until the runtime returns.
 - **JSON requests** have no fallback and keep the existing error payload. If both the runtime and the direct fetch fail, the route returns that error payload naming both failures.

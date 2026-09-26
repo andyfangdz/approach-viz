@@ -34,6 +34,9 @@ const RETAINED_PACKS: usize = 5;
 /// size win, which also shrinks every range read the web route makes.
 const PACK_DEFLATE_LEVEL: u32 = 3;
 const MANIFEST_VERSION: u32 = 1;
+/// Conditional manifest writes attempted before giving up on a scan; each
+/// retry follows losing a race to another publisher.
+const MANIFEST_WRITE_ATTEMPTS: usize = 3;
 
 /// `<prefix>/latest.json`: the only mutable object. The web route reads it to find
 /// the newest pack and fetches that pack's header in one range read.
@@ -48,6 +51,12 @@ struct PackManifest {
     scan_time: Option<String>,
     generated_at: Option<String>,
     published_at: Option<String>,
+}
+
+/// The published manifest and the ETag its next conditional write must match.
+struct CurrentManifest {
+    manifest: PackManifest,
+    etag: String,
 }
 
 /// Serialize `scan` as a scan pack with the response headers the runtime
@@ -153,11 +162,14 @@ impl R2Publisher {
 
     async fn publish(&self, scan: Arc<ScanSnapshot>) -> Result<()> {
         // Never move the manifest backwards: after a restart the loaded
-        // snapshot may be older than what is already published.
-        if let Some(current) = self.read_manifest().await? {
-            if current.timestamp >= scan.timestamp {
-                return Ok(());
-            }
+        // snapshot may be older than what is already published, and a second
+        // ingester may publish to the same bucket.
+        let current = self.read_manifest().await?;
+        if current
+            .as_ref()
+            .is_some_and(|current| current.manifest.timestamp >= scan.timestamp)
+        {
+            return Ok(());
         }
 
         let started = Instant::now();
@@ -191,16 +203,16 @@ impl R2Publisher {
             generated_at: iso_from_ms(scan.generated_at_ms),
             published_at: iso_from_ms(chrono::Utc::now().timestamp_millis()),
         };
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(self.manifest_key())
-            .content_type("application/json")
-            .cache_control("no-store")
-            .body(ByteStream::from(serde_json::to_vec(&manifest)?))
-            .send()
-            .await
-            .context("Failed to upload the edge manifest")?;
+        if !self
+            .write_manifest(&manifest, current.map(|current| current.etag))
+            .await?
+        {
+            info!(
+                "Skipped the R2 manifest for MRMS scan {}: another publisher already published it or a newer scan",
+                scan.timestamp
+            );
+            return Ok(());
+        }
 
         let pruned = self.prune().await?;
         info!(
@@ -212,7 +224,46 @@ impl R2Publisher {
         Ok(())
     }
 
-    async fn read_manifest(&self) -> Result<Option<PackManifest>> {
+    /// Write `manifest` only if the manifest is still the one read (`etag`),
+    /// or still absent when `etag` is `None`. A lost race re-reads the
+    /// manifest and retries unless the winner already names this scan or a
+    /// newer one. Returns whether this scan's manifest was written.
+    async fn write_manifest(
+        &self,
+        manifest: &PackManifest,
+        mut etag: Option<String>,
+    ) -> Result<bool> {
+        let body = serde_json::to_vec(manifest)?;
+        for attempt in 1..=MANIFEST_WRITE_ATTEMPTS {
+            let request = self
+                .client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(self.manifest_key())
+                .content_type("application/json")
+                .cache_control("no-store")
+                .body(ByteStream::from(body.clone()));
+            let request = match &etag {
+                Some(etag) => request.if_match(etag),
+                None => request.if_none_match("*"),
+            };
+            match request.send().await {
+                Ok(_) => return Ok(true),
+                Err(error) if is_write_conflict(&error) && attempt < MANIFEST_WRITE_ATTEMPTS => {
+                    match self.read_manifest().await? {
+                        Some(current) if current.manifest.timestamp >= manifest.timestamp => {
+                            return Ok(false);
+                        }
+                        current => etag = current.map(|current| current.etag),
+                    }
+                }
+                Err(error) => return Err(error).context("Failed to upload the scan pack manifest"),
+            }
+        }
+        unreachable!("the last attempt either succeeds or returns its error")
+    }
+
+    async fn read_manifest(&self) -> Result<Option<CurrentManifest>> {
         let response = match self
             .client
             .get_object()
@@ -224,15 +275,21 @@ impl R2Publisher {
             Ok(response) => response,
             Err(error) if error.code() == Some("NoSuchKey") => return Ok(None),
             Err(error) => {
-                return Err(error).context("Failed to read the edge manifest");
+                return Err(error).context("Failed to read the scan pack manifest");
             }
         };
+        let etag = response
+            .e_tag()
+            .context("The scan pack manifest has no ETag")?
+            .to_string();
         let body = response.body.collect().await?.into_bytes();
-        let manifest = serde_json::from_slice(&body).context("Edge manifest is malformed")?;
-        Ok(Some(manifest))
+        let manifest = serde_json::from_slice(&body).context("Scan pack manifest is malformed")?;
+        Ok(Some(CurrentManifest { manifest, etag }))
     }
 
     /// Delete all but the newest `RETAINED_PACKS` packs (keys sort by scan time).
+    /// The manifest always names the newest published scan, so its pack is
+    /// never pruned.
     async fn prune(&self) -> Result<usize> {
         let mut keys = Vec::new();
         let mut pages = self
@@ -263,4 +320,22 @@ impl R2Publisher {
         }
         Ok(stale)
     }
+}
+
+/// A conditional write lost to a concurrent writer: 412 when the ETag no
+/// longer matches (or the object now exists), 409 when two conditional writes
+/// to the same key overlap.
+fn is_write_conflict<E: ProvideErrorMetadata>(
+    error: &aws_sdk_s3::error::SdkError<E, aws_sdk_s3::config::http::HttpResponse>,
+) -> bool {
+    if let Some(response) = error.raw_response() {
+        let status = response.status().as_u16();
+        if status == 412 || status == 409 {
+            return true;
+        }
+    }
+    matches!(
+        error.code(),
+        Some("PreconditionFailed" | "ConditionalRequestConflict")
+    )
 }
