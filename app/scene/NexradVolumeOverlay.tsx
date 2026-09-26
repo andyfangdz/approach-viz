@@ -240,16 +240,23 @@ export function NexradVolumeOverlay({
         : null,
     [wantsGround, weatherElevation]
   );
-  // With the raster ready, the heightfield built from it decides: rays are
-  // clipped only once it lands. `null` means no volume is drawn to clip.
+  // `terrain` only while a drawn volume is clipped by an uploaded
+  // heightfield. With the raster ready but no volume drawn nothing is being
+  // clipped (`none`); a drawn volume whose heightfield has not reported yet
+  // is still loading.
   const [volumeGroundBuild, setVolumeGroundBuild] = useState<VolumeGroundStatus | null>(null);
+  const volumeDrawn = showVolume && volumeTexture !== null;
   const volumeGroundStatus = !wantsGround
     ? 'none'
-    : weatherElevationStatus === 'unavailable' || volumeGroundBuild === 'failed'
+    : weatherElevationStatus === 'unavailable' || (volumeDrawn && volumeGroundBuild === 'failed')
       ? 'terrain-unavailable'
-      : weatherElevationStatus !== 'ready' || volumeGroundBuild === 'pending'
+      : weatherElevationStatus !== 'ready'
         ? 'terrain-loading'
-        : 'terrain';
+        : !volumeDrawn
+          ? 'none'
+          : volumeGroundBuild === 'ready'
+            ? 'terrain'
+            : 'terrain-loading';
   const [echoTop18, setEchoTop18] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop30, setEchoTop30] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);
   const [echoTop50, setEchoTop50] = useState<EchoTopSoA>(EMPTY_ECHO_TOP_SOA);

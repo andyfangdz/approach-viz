@@ -132,14 +132,24 @@ export function NexradSurfaceMosaic({
   terrainDrapeRef.current = terrainDrape;
   // The composite a failed build was attempted with: a failure is retried
   // when the next poll delivers a new one, not on every render.
-  const failedAttemptRef = useRef<{ key: string; composite: NexradCompositeSurface } | null>(null);
+  const failedAttemptRef = useRef<{
+    key: string;
+    raster: ElevationRasterParams;
+    composite: NexradCompositeSurface;
+  } | null>(null);
   useEffect(() => {
     if (!drapeRaster || !drapeKey) return;
     // The mesh depends on the grid alone; a new composite on the same grid
     // keeps the drape it has.
     if (terrainDrapeRef.current?.key === drapeKey) return;
     const failed = failedAttemptRef.current;
-    if (failed?.key === drapeKey && failed.composite === composite) return;
+    if (
+      failed?.key === drapeKey &&
+      failed.raster === drapeRaster &&
+      failed.composite === composite
+    ) {
+      return;
+    }
     let cancelled = false;
     buildMosaicDrapeWithWorker(drapeRaster, drapeParams).then(
       (mesh) => {
@@ -151,7 +161,7 @@ export function NexradSurfaceMosaic({
       (error) => {
         if (cancelled) return;
         console.error('Mosaic terrain drape worker failed.', error);
-        failedAttemptRef.current = { key: drapeKey, composite };
+        failedAttemptRef.current = { key: drapeKey, raster: drapeRaster, composite };
         setFailedDrapeKey(drapeKey);
       }
     );

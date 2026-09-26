@@ -536,9 +536,16 @@ export function NexradVolumeRaymarch({
   } | null>(null);
   const groundResultRef = useRef(groundResult);
   groundResultRef.current = groundResult;
-  // The texture a failed attempt was made with: a failure is retried when
-  // the next poll delivers a new texture, not on every render.
-  const failedGroundTextureRef = useRef<NexradVolumeTextureData | null>(null);
+  // The inputs of the last failed attempt. The same inputs are not retried
+  // until the next poll delivers a new texture; any other change (grid,
+  // ground source, curvature, reference point) retries at once.
+  const failedGroundAttemptRef = useRef<{
+    texture: NexradVolumeTextureData;
+    grid: GroundHeightfieldGrid;
+    ground: VolumeGroundSource;
+    curvature: boolean;
+    refLat: number;
+  } | null>(null);
   useEffect(() => {
     if (!ground) return;
     const matches = (built: {
@@ -555,12 +562,13 @@ export function NexradVolumeRaymarch({
     // grid keeps the ground it has.
     const current = groundResultRef.current;
     if (current && matches(current)) return;
-    if (failedGroundTextureRef.current === texture) return;
+    const failed = failedGroundAttemptRef.current;
+    if (failed && failed.texture === texture && matches(failed)) return;
     let cancelled = false;
     ground(groundGrid, applyEarthCurvatureCompensation, refLat).then(
       (result) => {
         if (cancelled) return;
-        failedGroundTextureRef.current = null;
+        failedGroundAttemptRef.current = null;
         setGroundFailure(null);
         setGroundResult({
           grid: groundGrid,
@@ -576,7 +584,13 @@ export function NexradVolumeRaymarch({
       (error) => {
         if (cancelled) return;
         console.error('Volume ground heightfield worker failed.', error);
-        failedGroundTextureRef.current = texture;
+        failedGroundAttemptRef.current = {
+          texture,
+          grid: groundGrid,
+          ground,
+          curvature: applyEarthCurvatureCompensation,
+          refLat
+        };
         setGroundFailure({
           grid: groundGrid,
           ground,
