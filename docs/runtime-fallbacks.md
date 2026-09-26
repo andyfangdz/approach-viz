@@ -52,7 +52,7 @@ For the reference scan the pack is 21.8 MB (the zstd snapshot is 58 MB), with a 
 2. Build the pack on the blocking pool.
 3. PUT the pack (`immutable`).
 4. PUT the manifest (`no-store`) conditionally: `If-Match` the ETag read in step 1, or `If-None-Match: *` when there was none. If another publisher wrote it in between (412/409), re-read it; stop if it names the same or a newer scan, otherwise retry (3 attempts). Concurrent publishers therefore can never move the manifest backwards.
-5. List `<prefix>/scans/` and delete all but the newest 5 packs. The manifest always names the newest scan, so its pack is never pruned.
+5. List `<prefix>/scans/` and delete all but the newest 5 packs, never the pack the manifest now names.
 
 Publishing failures are logged. The next scan retries, and serving from the runtime is unaffected.
 

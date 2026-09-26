@@ -214,7 +214,7 @@ impl R2Publisher {
             return Ok(());
         }
 
-        let pruned = self.prune().await?;
+        let pruned = self.prune(&key).await?;
         info!(
             "Published MRMS scan {} to R2: {:.1} MB, packed in {packed_ms} ms, published in {} ms, pruned {pruned}",
             scan.timestamp,
@@ -287,10 +287,11 @@ impl R2Publisher {
         Ok(Some(CurrentManifest { manifest, etag }))
     }
 
-    /// Delete all but the newest `RETAINED_PACKS` packs (keys sort by scan time).
-    /// The manifest always names the newest published scan, so its pack is
-    /// never pruned.
-    async fn prune(&self) -> Result<usize> {
+    /// Delete all but the newest `RETAINED_PACKS` packs (keys sort by scan
+    /// time), never `current`, the pack the manifest was just pointed at:
+    /// several packs of one scan sort by generation time, and the manifest's
+    /// need not be the latest-generated.
+    async fn prune(&self, current: &str) -> Result<usize> {
         let mut keys = Vec::new();
         let mut pages = self
             .client
@@ -308,8 +309,8 @@ impl R2Publisher {
             );
         }
         keys.sort();
-        let stale = keys.len().saturating_sub(RETAINED_PACKS);
-        for key in &keys[..stale] {
+        let stale = stale_pack_keys(&keys, current);
+        for key in stale.iter().copied() {
             self.client
                 .delete_object()
                 .bucket(&self.bucket)
@@ -318,7 +319,7 @@ impl R2Publisher {
                 .await
                 .with_context(|| format!("Failed to delete {key}"))?;
         }
-        Ok(stale)
+        Ok(stale.len())
     }
 }
 
@@ -340,6 +341,12 @@ fn is_write_conflict<E: ProvideErrorMetadata>(
     )
 }
 
+/// The sorted `keys` to delete: all but the newest `RETAINED_PACKS`, never `current`.
+fn stale_pack_keys<'a>(keys: &'a [String], current: &str) -> Vec<&'a String> {
+    let stale = keys.len().saturating_sub(RETAINED_PACKS);
+    keys[..stale].iter().filter(|key| *key != current).collect()
+}
+
 /// `<scans prefix><scan timestamp>-<generated_at_ms>.avsp`. Two ingesters can
 /// build different packs for one scan (each stamps its own generation time),
 /// so the key carries that time: a pack is never overwritten by different
@@ -355,6 +362,23 @@ fn pack_key(scans_prefix: &str, scan: &ScanSnapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pruning_keeps_the_newest_packs_and_the_manifest_pack() {
+        let keys: Vec<String> = (0..8)
+            .map(|i| format!("mrms/scans/20260925-235038-{i}.avsp"))
+            .collect();
+        let stale = stale_pack_keys(&keys, "mrms/scans/20260925-235038-1.avsp");
+        assert_eq!(
+            stale.iter().map(|key| key.as_str()).collect::<Vec<_>>(),
+            vec![
+                "mrms/scans/20260925-235038-0.avsp",
+                "mrms/scans/20260925-235038-2.avsp"
+            ],
+            "the manifest's pack survives even when it sorts among the oldest"
+        );
+        assert_eq!(stale_pack_keys(&keys[..3], "none").len(), 0);
+    }
 
     #[test]
     fn pack_keys_distinguish_packs_of_the_same_scan() {
