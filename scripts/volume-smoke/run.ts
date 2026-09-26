@@ -405,8 +405,14 @@ async function launchChromium(executable: string): Promise<Browser> {
 async function closeChromium(browser: Browser): Promise<void> {
   await browser.cdp.send('Browser.close').catch(() => undefined);
   browser.cdp.close();
-  browser.process.kill('SIGKILL');
-  await rm(browser.profileDir, { recursive: true, force: true });
+  if (browser.process.exitCode === null && browser.process.signalCode === null) {
+    const exited = new Promise((resolve) => browser.process.once('exit', resolve));
+    browser.process.kill('SIGKILL');
+    await exited;
+  }
+  // Chromium's helper processes can still be flushing the profile after the
+  // browser process exits; retry so ENOTEMPTY does not replace the verdict.
+  await rm(browser.profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 interface ScenarioOutcome {

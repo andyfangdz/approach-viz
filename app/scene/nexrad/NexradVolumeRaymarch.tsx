@@ -17,8 +17,9 @@ const MIN_RAY_STEPS = 24;
 /**
  * Extinction (per unscaled NM, at full intensity) at the opacity slider's
  * endpoints. Combined with the dBZ ramp in the shader, the default 35%
- * opacity leaves a solid 10 NM deep 20 dBZ shell around 13% opaque while a
- * 3 NM 50 dBZ core reads around 60%, so cores stay legible through the
+ * opacity makes a 3 NM deep 30 dBZ column about 39% opaque and a 3 NM
+ * 50 dBZ core about 70%; a 10 NM deep 20 dBZ shell would saturate but is
+ * held near 35% by the opacity ceiling, so cores stay legible through the
  * light precipitation that surrounds them.
  */
 const DENSITY_MIN = 0.12;
@@ -29,7 +30,8 @@ const DENSITY_MAX = 2.0;
  * to fully opaque for heavy cores). Widespread stratiform rain around an
  * airport puts the camera inside 100+ NM of 20-40 dBZ; without a ceiling any
  * extinction curve saturates over that path and the approach, terrain, and
- * cores all disappear behind a wall of color.
+ * cores all disappear behind a wall of color. Linear in the slider: about
+ * 0.33 at the default 35%.
  */
 const LIGHT_OPACITY_CAP_MIN = 0.08;
 const LIGHT_OPACITY_CAP_MAX = 0.8;
@@ -101,21 +103,23 @@ const FRAGMENT_SHADER = /* glsl */ `
   // fully opaque at CAP_FULL_DBZ.
   const float CAP_LIGHT_DBZ = 10.0;
   const float CAP_FULL_DBZ = 60.0;
+  // Extinction ramps from zero at the camera to full at this distance, so a
+  // camera flying through rain sees out of it instead of through a veil of
+  // the echo around it. Storms viewed from outside are unaffected.
+  const float NEAR_FADE_NM = 5.0;
 
-  // Extinction weight by intensity: a 2.75 power of the 5-65 dBZ span, so
-  // light precipitation is nearly transparent and heavy cores dominate the
-  // integral — a thick 20 dBZ shell must not bury a 50 dBZ core behind it.
-  // The exponent was cubic while the volume was rasterized onto 1 NM texels
-  // that max-pooled 0.5 NM source cells; that pooling filled the gaps of
-  // scattered light echo and gave it about twice its true optical path. At
-  // source resolution the same cubic read the same scenes 17-28% dimmer,
-  // mostly in light and moderate echo. 2.75 restores the old brightness
-  // within 4% on dense, close-in, and stratiform A/B renders while cores,
-  // which saturate, are unchanged. Gated to zero below ~5 dBZ so trilinear
-  // falloff into empty texels fades out instead of leaving a floor.
+  // Extinction weight by intensity: a 0.1 floor plus a quadratic over the
+  // 5-65 dBZ span, so light and moderate precipitation has a visible body
+  // while a 60 dBZ core is still about five times denser than 20 dBZ echo.
+  // Keeping a thick light shell from burying a core is the opacity ceiling's
+  // job (opacityCap), not this ramp's: a floorless cubic (later a 2.75 power)
+  // did both jobs at once and left 20 dBZ echo around 1/16 and 30 dBZ echo
+  // around 1/5 of the instanced renderer's per-cell opacity. Gated to zero
+  // below ~5 dBZ so trilinear falloff into empty texels fades out instead of
+  // leaving a floor.
   float dbzAlpha(float dbz) {
     float t = clamp((dbz - 5.0) / 60.0, 0.0, 1.0);
-    return pow(t, 2.75) * smoothstep(3.0, 8.0, dbz);
+    return (0.1 + 0.9 * t * t) * smoothstep(3.0, 8.0, dbz);
   }
 
   // Accumulated opacity a ray may reach while sampling an echo of this
@@ -197,7 +201,8 @@ const FRAGMENT_SHADER = /* glsl */ `
     float texelsCrossed = length(dirT * uTexelCounts) * (tEnd - tStart);
     float steps = clamp(ceil(texelsCrossed), float(${MIN_RAY_STEPS}), float(${MAX_RAY_STEPS}));
     float dt = (tEnd - tStart) / steps;
-    float stepNm = length(dir * uBoxSpanNm) * dt;
+    float nmPerT = length(dir * uBoxSpanNm);
+    float stepNm = nmPerT * dt;
 
     float t0 = tStart + dt * startJitter(gl_FragCoord.xy);
     float t = t0;
@@ -245,7 +250,9 @@ const FRAGMENT_SHADER = /* glsl */ `
       vec2 rg = sampleBrick(entry, page, texel);
       float dbz = rg.r * 255.0;
       if (dbz > 0.5) {
-        float sampleAlpha = 1.0 - exp(-uDensity * dbzAlpha(dbz) * stepNm);
+        // t is measured from the camera, so t * nmPerT is its distance in NM.
+        float nearFade = smoothstep(0.0, NEAR_FADE_NM, t * nmPerT);
+        float sampleAlpha = 1.0 - exp(-uDensity * dbzAlpha(dbz) * nearFade * stepNm);
         float band = clamp(floor(dbz / BAND_STEP), 0.0, BAND_MAX_INDEX);
         float phase = rg.g * 255.0;
         vec3 bandColor = texture(
@@ -533,8 +540,7 @@ export function NexradVolumeRaymarch({
   material.uniforms.uDensity.value =
     DENSITY_MIN + (DENSITY_MAX - DENSITY_MIN) * Math.pow(clampedOpacity, 1.2);
   material.uniforms.uLightOpacityCap.value =
-    LIGHT_OPACITY_CAP_MIN +
-    (LIGHT_OPACITY_CAP_MAX - LIGHT_OPACITY_CAP_MIN) * Math.pow(clampedOpacity, 1.5);
+    LIGHT_OPACITY_CAP_MIN + (LIGHT_OPACITY_CAP_MAX - LIGHT_OPACITY_CAP_MIN) * clampedOpacity;
 
   const cameraLocal = useMemo(() => new THREE.Vector3(), []);
   useFrame(({ camera }) => {
