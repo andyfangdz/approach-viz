@@ -103,17 +103,20 @@ const FRAGMENT_SHADER = /* glsl */ `
   // fully opaque at CAP_FULL_DBZ.
   const float CAP_LIGHT_DBZ = 10.0;
   const float CAP_FULL_DBZ = 60.0;
-  // Extinction ramps from zero at the camera to full at this distance, so a
-  // camera flying through rain sees out of it instead of through a veil of
-  // the echo around it. Storms viewed from outside are unaffected.
+  // While the camera sits in echo, extinction ramps from zero at the camera
+  // to full at this distance, so a camera flying through rain sees out of it
+  // instead of through a veil of the echo around it. A camera in clear air
+  // gets no fade, so a storm right beside it keeps its full body.
   const float NEAR_FADE_NM = 5.0;
-  // A sample stronger than any the ray has met so far fades what the ray
-  // accumulated in front of it by (jump / MIDA_RANGE_DBZ): maximum intensity
-  // difference accumulation (Bruckner & Groller 2009). Stratiform columns put
-  // 10-20k ft of 15-25 dBZ over the 30-40 dBZ rain beneath, so viewed from
-  // above plain front-to-back compositing spends the opacity ceiling on the
-  // light canopy and the heavy echo below it never shows.
-  const float MIDA_RANGE_DBZ = 20.0;
+  // A sample stronger than any the ray has met so far fades the color weight
+  // accumulated in front of it by (jump / MIDA_RANGE_DBZ), after maximum
+  // intensity difference accumulation (Bruckner & Groller 2009). Stratiform
+  // columns put 10-20k ft of 15-25 dBZ over the 30-40 dBZ rain beneath, so
+  // viewed from above plain front-to-back compositing colors the pixel with
+  // the light canopy and the heavy echo below it never shows. Only color is
+  // reweighted: opacity keeps its plain accumulation, so a stronger sample can
+  // never make a pixel less opaque than the weaker echo in front of it.
+  const float MIDA_RANGE_DBZ = 10.0;
   // Color weight doubles every this many dBZ, so a pixel's hue follows the
   // strongest echo the ray reached while its opacity still follows how much
   // precipitation it crossed.
@@ -215,6 +218,17 @@ const FRAGMENT_SHADER = /* glsl */ `
     float nmPerT = length(dir * uBoxSpanNm);
     float stepNm = nmPerT * dt;
 
+    // Fly-through fade applies only when the camera itself sits in echo.
+    float camInEcho = 0.0;
+    if (all(greaterThanEqual(uvwStart, vec3(0.0))) && all(lessThanEqual(uvwStart, vec3(1.0)))) {
+      vec3 camTexel = uvwStart * uTexelCounts;
+      ivec3 camPage = clamp(ivec3(floor(camTexel / BRICK)), ivec3(0), ivec3(uPageCounts) - 1);
+      int camEntry = pageEntry(camPage);
+      if (camEntry != 0) {
+        camInEcho = smoothstep(3.0, 8.0, sampleBrick(camEntry, camPage, camTexel).r * 255.0);
+      }
+    }
+
     float t0 = tStart + dt * startJitter(gl_FragCoord.xy);
     float t = t0;
     vec3 accum = vec3(0.0);
@@ -264,7 +278,7 @@ const FRAGMENT_SHADER = /* glsl */ `
       float dbz = rg.r * 255.0;
       if (dbz > 0.5) {
         // t is measured from the camera, so t * nmPerT is its distance in NM.
-        float nearFade = smoothstep(0.0, NEAR_FADE_NM, t * nmPerT);
+        float nearFade = mix(1.0, smoothstep(0.0, NEAR_FADE_NM, t * nmPerT), camInEcho);
         float sampleAlpha = 1.0 - exp(-uDensity * dbzAlpha(dbz) * nearFade * stepNm);
         float band = clamp(floor(dbz / BAND_STEP), 0.0, BAND_MAX_INDEX);
         float phase = rg.g * 255.0;
@@ -272,12 +286,13 @@ const FRAGMENT_SHADER = /* glsl */ `
           uColorLut,
           vec2((band + 0.5) / BAND_COUNT, (phase + 0.5) / PHASE_ROWS)
         ).rgb;
-        // A stronger echo than any in front of it reclaims some of what the
-        // weaker echo accumulated (see MIDA_RANGE_DBZ).
-        float beta = 1.0 - clamp((dbz - maxDbz) / MIDA_RANGE_DBZ, 0.0, 1.0);
+        // A stronger echo than any in front of it takes over some of the
+        // color the weaker echo accumulated (see MIDA_RANGE_DBZ). The floor
+        // keeps the color defined when the stronger sample adds no opacity
+        // (no headroom, or faded out near the camera).
+        float beta = max(1.0 - clamp((dbz - maxDbz) / MIDA_RANGE_DBZ, 0.0, 1.0), 1.0 / 64.0);
         accum *= beta;
         colorWeight *= beta;
-        alpha *= beta;
         maxDbz = max(maxDbz, dbz);
         // Front-to-back compositing, with the sample limited to the opacity
         // headroom its intensity allows (see opacityCap) and its color
