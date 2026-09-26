@@ -48,6 +48,22 @@ export interface PackPayload {
 
 const MANIFEST_TTL_MS = 5_000;
 const RETAINED_PACKS = 2;
+/**
+ * Bound on a cached read shared by concurrent requests. It runs on its own
+ * signal, never a request's, so one request's deadline cannot abort a read
+ * another request is waiting on; each request waits under its own deadline.
+ */
+const SHARED_READ_TIMEOUT_MS = 8_000;
+
+/** Wait for a shared promise, giving up (without cancelling it) when `signal` aborts. */
+function waitFor<T>(shared: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    shared.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
 
 /** Parse `latest.json`; anything but a well-formed v1 manifest throws. */
 export function parseManifest(text: string): Manifest {
@@ -98,7 +114,7 @@ function pairs(flat: string[]): [string, string][] {
 /**
  * Reads the newest pack through `storage`. The manifest is re-read at most
  * every 5 s and parsed pack headers are kept for the 2 newest packs, per
- * function instance.
+ * function instance. Cached reads are shared by concurrent requests.
  */
 export class ScanPackSource {
   private manifestCache: { value: Promise<Manifest | null>; fetchedAt: number } | null = null;
@@ -112,7 +128,7 @@ export class ScanPackSource {
   manifest(signal: AbortSignal, now = Date.now()): Promise<Manifest | null> {
     if (!this.manifestCache || now - this.manifestCache.fetchedAt > MANIFEST_TTL_MS) {
       const value = this.storage
-        .read(`${this.prefix}/latest.json`, signal)
+        .read(`${this.prefix}/latest.json`, AbortSignal.timeout(SHARED_READ_TIMEOUT_MS))
         .then((bytes) => (bytes ? parseManifest(new TextDecoder().decode(bytes)) : null));
       this.manifestCache = { value, fetchedAt: now };
       // A failed read must not be served from the cache for the whole TTL.
@@ -120,7 +136,7 @@ export class ScanPackSource {
         if (this.manifestCache?.value === value) this.manifestCache = null;
       });
     }
-    return this.manifestCache.value;
+    return waitFor(this.manifestCache.value, signal);
   }
 
   private async readExact(
@@ -140,7 +156,8 @@ export class ScanPackSource {
   private pack(manifest: Manifest, signal: AbortSignal): Promise<ScanPack> {
     let pack = this.packs.get(manifest.key);
     if (!pack) {
-      pack = this.readExact(manifest.key, 0, manifest.headerLength, signal).then((header) => {
+      const shared = AbortSignal.timeout(SHARED_READ_TIMEOUT_MS);
+      pack = this.readExact(manifest.key, 0, manifest.headerLength, shared).then((header) => {
         const parsed = new ScanPack(header);
         if (parsed.timestamp !== manifest.timestamp || parsed.totalLength !== manifest.byteLength) {
           parsed.free();
@@ -150,13 +167,14 @@ export class ScanPackSource {
       });
       this.packs.set(manifest.key, pack);
       pack.catch(() => this.packs.delete(manifest.key));
+      // Evicted packs are not freed here: a request may still be building
+      // from one. wasm-bindgen's FinalizationRegistry releases the WASM
+      // memory once no request holds the pack.
       while (this.packs.size > RETAINED_PACKS) {
-        const [oldestKey, oldest] = this.packs.entries().next().value!;
-        this.packs.delete(oldestKey);
-        oldest.then((p) => p.free()).catch(() => {});
+        this.packs.delete(this.packs.keys().next().value!);
       }
     }
-    return pack;
+    return waitFor(pack, signal);
   }
 
   /** Fetch `[offset0, length0, ...]` ranges in parallel and concatenate them in order. */

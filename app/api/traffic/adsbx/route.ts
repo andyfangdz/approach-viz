@@ -19,6 +19,10 @@ const DIRECT_BASE_URLS = (
   .split(',')
   .map((url) => url.trim().replace(/\/$/, ''))
   .filter((url) => url !== '');
+// A 220 nm box holds a few thousand aircraft: well under 1 MB of binCraft.
+// The caps bound what an unexpected upstream response can cost the function.
+const DIRECT_MAX_COMPRESSED_BYTES = 4 * 1024 * 1024;
+const DIRECT_MAX_DECOMPRESSED_BYTES = 32 * 1024 * 1024;
 const DIRECT_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 const TRAFFIC_PASSTHROUGH_HEADERS = [
@@ -148,6 +152,36 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
   });
 }
 
+/** Read a response body, failing as soon as it exceeds `maxBytes`. */
+async function readCapped(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel();
+    throw new Error(`response is ${declared} bytes, over the ${maxBytes}-byte limit`);
+  }
+  if (!response.body) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error(`response exceeds the ${maxBytes}-byte limit`);
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return body;
+}
+
 /**
  * Answer a binary traffic query without the runtime: fetch the tar1090
  * binCraft snapshot of the query's own box and select/encode current aircraft
@@ -195,7 +229,11 @@ async function directTraffic(
           errors.push(`${baseUrl}: HTTP ${response.status} ${contentType || 'no content-type'}`);
           continue;
         }
-        const snapshot = zstdDecompressSync(new Uint8Array(await response.arrayBuffer()));
+        const compressed = await readCapped(response, DIRECT_MAX_COMPRESSED_BYTES);
+        // Throws a RangeError once the output would exceed the cap.
+        const snapshot = zstdDecompressSync(compressed, {
+          maxOutputLength: DIRECT_MAX_DECOMPRESSED_BYTES
+        });
         const payload = query.buildDirectPayload(
           snapshot,
           Date.now(),

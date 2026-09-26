@@ -34,6 +34,9 @@ const RETAINED_PACKS: usize = 5;
 /// size win, which also shrinks every range read the web route makes.
 const PACK_DEFLATE_LEVEL: u32 = 3;
 const MANIFEST_VERSION: u32 = 1;
+/// Conditional manifest writes attempted before giving up on a scan; each
+/// retry follows losing a race to another publisher.
+const MANIFEST_WRITE_ATTEMPTS: usize = 3;
 
 /// `<prefix>/latest.json`: the only mutable object. The web route reads it to find
 /// the newest pack and fetches that pack's header in one range read.
@@ -48,6 +51,12 @@ struct PackManifest {
     scan_time: Option<String>,
     generated_at: Option<String>,
     published_at: Option<String>,
+}
+
+/// The published manifest and the ETag its next conditional write must match.
+struct CurrentManifest {
+    manifest: PackManifest,
+    etag: String,
 }
 
 /// Serialize `scan` as a scan pack with the response headers the runtime
@@ -153,11 +162,14 @@ impl R2Publisher {
 
     async fn publish(&self, scan: Arc<ScanSnapshot>) -> Result<()> {
         // Never move the manifest backwards: after a restart the loaded
-        // snapshot may be older than what is already published.
-        if let Some(current) = self.read_manifest().await? {
-            if current.timestamp >= scan.timestamp {
-                return Ok(());
-            }
+        // snapshot may be older than what is already published, and a second
+        // ingester may publish to the same bucket.
+        let current = self.read_manifest().await?;
+        if current
+            .as_ref()
+            .is_some_and(|current| current.manifest.timestamp >= scan.timestamp)
+        {
+            return Ok(());
         }
 
         let started = Instant::now();
@@ -168,7 +180,7 @@ impl R2Publisher {
         let packed_ms = started.elapsed().as_millis();
         let header_length = approach_viz_core::mrms_pack::read_header_len(&pack)?;
         let byte_length = pack.len() as u64;
-        let key = format!("{}{}.avsp", self.scans_prefix(), scan.timestamp);
+        let key = pack_key(&self.scans_prefix(), &scan);
 
         self.client
             .put_object()
@@ -191,18 +203,18 @@ impl R2Publisher {
             generated_at: iso_from_ms(scan.generated_at_ms),
             published_at: iso_from_ms(chrono::Utc::now().timestamp_millis()),
         };
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(self.manifest_key())
-            .content_type("application/json")
-            .cache_control("no-store")
-            .body(ByteStream::from(serde_json::to_vec(&manifest)?))
-            .send()
-            .await
-            .context("Failed to upload the edge manifest")?;
+        if !self
+            .write_manifest(&manifest, current.map(|current| current.etag))
+            .await?
+        {
+            info!(
+                "Skipped the R2 manifest for MRMS scan {}: another publisher already published it or a newer scan",
+                scan.timestamp
+            );
+            return Ok(());
+        }
 
-        let pruned = self.prune().await?;
+        let pruned = self.prune(&key).await?;
         info!(
             "Published MRMS scan {} to R2: {:.1} MB, packed in {packed_ms} ms, published in {} ms, pruned {pruned}",
             scan.timestamp,
@@ -212,7 +224,46 @@ impl R2Publisher {
         Ok(())
     }
 
-    async fn read_manifest(&self) -> Result<Option<PackManifest>> {
+    /// Write `manifest` only if the manifest is still the one read (`etag`),
+    /// or still absent when `etag` is `None`. A lost race re-reads the
+    /// manifest and retries unless the winner already names this scan or a
+    /// newer one. Returns whether this scan's manifest was written.
+    async fn write_manifest(
+        &self,
+        manifest: &PackManifest,
+        mut etag: Option<String>,
+    ) -> Result<bool> {
+        let body = serde_json::to_vec(manifest)?;
+        for attempt in 1..=MANIFEST_WRITE_ATTEMPTS {
+            let request = self
+                .client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(self.manifest_key())
+                .content_type("application/json")
+                .cache_control("no-store")
+                .body(ByteStream::from(body.clone()));
+            let request = match &etag {
+                Some(etag) => request.if_match(etag),
+                None => request.if_none_match("*"),
+            };
+            match request.send().await {
+                Ok(_) => return Ok(true),
+                Err(error) if is_write_conflict(&error) && attempt < MANIFEST_WRITE_ATTEMPTS => {
+                    match self.read_manifest().await? {
+                        Some(current) if current.manifest.timestamp >= manifest.timestamp => {
+                            return Ok(false);
+                        }
+                        current => etag = current.map(|current| current.etag),
+                    }
+                }
+                Err(error) => return Err(error).context("Failed to upload the scan pack manifest"),
+            }
+        }
+        unreachable!("the last attempt either succeeds or returns its error")
+    }
+
+    async fn read_manifest(&self) -> Result<Option<CurrentManifest>> {
         let response = match self
             .client
             .get_object()
@@ -224,16 +275,23 @@ impl R2Publisher {
             Ok(response) => response,
             Err(error) if error.code() == Some("NoSuchKey") => return Ok(None),
             Err(error) => {
-                return Err(error).context("Failed to read the edge manifest");
+                return Err(error).context("Failed to read the scan pack manifest");
             }
         };
+        let etag = response
+            .e_tag()
+            .context("The scan pack manifest has no ETag")?
+            .to_string();
         let body = response.body.collect().await?.into_bytes();
-        let manifest = serde_json::from_slice(&body).context("Edge manifest is malformed")?;
-        Ok(Some(manifest))
+        let manifest = serde_json::from_slice(&body).context("Scan pack manifest is malformed")?;
+        Ok(Some(CurrentManifest { manifest, etag }))
     }
 
-    /// Delete all but the newest `RETAINED_PACKS` packs (keys sort by scan time).
-    async fn prune(&self) -> Result<usize> {
+    /// Delete all but the newest `RETAINED_PACKS` packs (keys sort by scan
+    /// time), never `current`, the pack the manifest was just pointed at:
+    /// several packs of one scan sort by generation time, and the manifest's
+    /// need not be the latest-generated.
+    async fn prune(&self, current: &str) -> Result<usize> {
         let mut keys = Vec::new();
         let mut pages = self
             .client
@@ -251,8 +309,8 @@ impl R2Publisher {
             );
         }
         keys.sort();
-        let stale = keys.len().saturating_sub(RETAINED_PACKS);
-        for key in &keys[..stale] {
+        let stale = stale_pack_keys(&keys, current);
+        for key in stale.iter().copied() {
             self.client
                 .delete_object()
                 .bucket(&self.bucket)
@@ -261,6 +319,107 @@ impl R2Publisher {
                 .await
                 .with_context(|| format!("Failed to delete {key}"))?;
         }
-        Ok(stale)
+        Ok(stale.len())
+    }
+}
+
+/// A conditional write lost to a concurrent writer: 412 when the ETag no
+/// longer matches (or the object now exists), 409 when two conditional writes
+/// to the same key overlap.
+fn is_write_conflict<E: ProvideErrorMetadata>(
+    error: &aws_sdk_s3::error::SdkError<E, aws_sdk_s3::config::http::HttpResponse>,
+) -> bool {
+    if let Some(response) = error.raw_response() {
+        let status = response.status().as_u16();
+        if status == 412 || status == 409 {
+            return true;
+        }
+    }
+    matches!(
+        error.code(),
+        Some("PreconditionFailed" | "ConditionalRequestConflict")
+    )
+}
+
+/// The sorted `keys` to delete: all but the newest `RETAINED_PACKS`, never `current`.
+fn stale_pack_keys<'a>(keys: &'a [String], current: &str) -> Vec<&'a String> {
+    let stale = keys.len().saturating_sub(RETAINED_PACKS);
+    keys[..stale].iter().filter(|key| *key != current).collect()
+}
+
+/// `<scans prefix><scan timestamp>-<generated_at_ms>.avsp`. Two ingesters can
+/// build different packs for one scan (each stamps its own generation time),
+/// so the key carries that time: a pack is never overwritten by different
+/// bytes after a manifest has described it. Keys still sort by scan time for
+/// pruning.
+fn pack_key(scans_prefix: &str, scan: &ScanSnapshot) -> String {
+    format!(
+        "{scans_prefix}{}-{}.avsp",
+        scan.timestamp, scan.generated_at_ms
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pruning_keeps_the_newest_packs_and_the_manifest_pack() {
+        let keys: Vec<String> = (0..8)
+            .map(|i| format!("mrms/scans/20260925-235038-{i}.avsp"))
+            .collect();
+        let stale = stale_pack_keys(&keys, "mrms/scans/20260925-235038-1.avsp");
+        assert_eq!(
+            stale.iter().map(|key| key.as_str()).collect::<Vec<_>>(),
+            vec![
+                "mrms/scans/20260925-235038-0.avsp",
+                "mrms/scans/20260925-235038-2.avsp"
+            ],
+            "the manifest's pack survives even when it sorts among the oldest"
+        );
+        assert_eq!(stale_pack_keys(&keys[..3], "none").len(), 0);
+    }
+
+    #[test]
+    fn pack_keys_distinguish_packs_of_the_same_scan() {
+        let snapshot = |generated_at_ms| ScanSnapshot {
+            timestamp: "20260925-235038".to_string(),
+            generated_at_ms,
+            scan_time_ms: 0,
+            grid: crate::types::GridDef {
+                nx: 1,
+                ny: 1,
+                la1_deg: 0.0,
+                lo1_deg360: 0.0,
+                di_deg: 0.01,
+                dj_deg: 0.01,
+                scanning_mode: 0,
+                lat_step_deg: 0.01,
+                lon_step_deg: 0.01,
+            },
+            tile_size: 64,
+            tile_cols: 1,
+            tile_rows: 1,
+            level_bounds: Vec::new(),
+            tile_offsets: vec![0, 0],
+            voxels: Vec::new(),
+            echo_tops: Vec::new(),
+            echo_top_debug: Default::default(),
+            phase_debug: Default::default(),
+        };
+        let first = pack_key("mrms/scans/", &snapshot(1_790_380_000_000));
+        let second = pack_key("mrms/scans/", &snapshot(1_790_380_000_001));
+        assert_eq!(first, "mrms/scans/20260925-235038-1790380000000.avsp");
+        assert_ne!(first, second);
+        // Scan time leads, so lexical order is scan order for pruning.
+        assert!(
+            pack_key(
+                "mrms/scans/",
+                &ScanSnapshot {
+                    timestamp: "20260925-235238".to_string(),
+                    ..snapshot(0)
+                }
+            ) > second
+        );
     }
 }
