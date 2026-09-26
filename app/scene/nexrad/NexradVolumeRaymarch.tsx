@@ -107,6 +107,17 @@ const FRAGMENT_SHADER = /* glsl */ `
   // camera flying through rain sees out of it instead of through a veil of
   // the echo around it. Storms viewed from outside are unaffected.
   const float NEAR_FADE_NM = 5.0;
+  // A sample stronger than any the ray has met so far fades what the ray
+  // accumulated in front of it by (jump / MIDA_RANGE_DBZ): maximum intensity
+  // difference accumulation (Bruckner & Groller 2009). Stratiform columns put
+  // 10-20k ft of 15-25 dBZ over the 30-40 dBZ rain beneath, so viewed from
+  // above plain front-to-back compositing spends the opacity ceiling on the
+  // light canopy and the heavy echo below it never shows.
+  const float MIDA_RANGE_DBZ = 20.0;
+  // Color weight doubles every this many dBZ, so a pixel's hue follows the
+  // strongest echo the ray reached while its opacity still follows how much
+  // precipitation it crossed.
+  const float COLOR_DOUBLING_DBZ = 5.0;
 
   // Extinction weight by intensity: a 0.1 floor plus a quadratic over the
   // 5-65 dBZ span, so light and moderate precipitation has a visible body
@@ -207,7 +218,9 @@ const FRAGMENT_SHADER = /* glsl */ `
     float t0 = tStart + dt * startJitter(gl_FragCoord.xy);
     float t = t0;
     vec3 accum = vec3(0.0);
+    float colorWeight = 0.0;
     float alpha = 0.0;
+    float maxDbz = 0.0;
 
     for (int i = 0; i < ${MAX_RAY_STEPS}; i++) {
       if (t > tEnd || alpha > 0.985) break;
@@ -259,18 +272,28 @@ const FRAGMENT_SHADER = /* glsl */ `
           uColorLut,
           vec2((band + 0.5) / BAND_COUNT, (phase + 0.5) / PHASE_ROWS)
         ).rgb;
+        // A stronger echo than any in front of it reclaims some of what the
+        // weaker echo accumulated (see MIDA_RANGE_DBZ).
+        float beta = 1.0 - clamp((dbz - maxDbz) / MIDA_RANGE_DBZ, 0.0, 1.0);
+        accum *= beta;
+        colorWeight *= beta;
+        alpha *= beta;
+        maxDbz = max(maxDbz, dbz);
         // Front-to-back compositing, with the sample limited to the opacity
-        // headroom its intensity allows (see opacityCap).
+        // headroom its intensity allows (see opacityCap) and its color
+        // weighted toward stronger echo (see COLOR_DOUBLING_DBZ).
         float headroom = max(opacityCap(dbz) - alpha, 0.0);
         float weight = min((1.0 - alpha) * sampleAlpha, headroom);
-        accum += bandColor * weight;
+        float importance = weight * exp2((dbz - 20.0) / COLOR_DOUBLING_DBZ);
+        accum += bandColor * importance;
+        colorWeight += importance;
         alpha += weight;
       }
       t += dt;
     }
 
     if (alpha < 0.004) discard;
-    fragColor = vec4(accum / alpha, alpha);
+    fragColor = vec4(accum / colorWeight, alpha);
     fragColor = linearToOutputTexel(fragColor);
   }
 `;
