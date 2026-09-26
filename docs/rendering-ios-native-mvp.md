@@ -105,7 +105,7 @@ Current native scene behavior:
   - dashed hold overlays and below-minimums segments now render as dashed prism geometry instead of single-pixel Metal lines, making them readable on phone-sized simulator frames
   - hold overlays now use the same Rust-resolved leg altitude map as the web renderer instead of raw CIFP leg altitudes, keeping hold vertical placement aligned across platforms
   - the native Metal hold overlay now passes the same absolute altitude contract into the shared Rust hold builder that the web renderer uses; it no longer subtracts airport elevation before calling Rust
-  - waypoint labels now sit closer to their waypoint sprites, closer to the web `Html` marker offset, instead of floating noticeably above the rendered anchor
+  - waypoint labels now sit closer to their waypoint sprites, closer to the web label offset, instead of floating noticeably above the rendered anchor
   - runway depiction now uses brighter, larger runway boxes and runway labels derived from the same segment pairing logic as the web renderer
 
 ## Current Gaps

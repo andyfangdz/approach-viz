@@ -14,7 +14,7 @@
     "test:references": "node --import tsx --test scripts/resolve-approach-references.test.ts",
     "test:routes": "node --import tsx --test app/api/traffic/adsbx/route.test.ts app/api/faa-plate/route.test.ts app/api/weather/nexrad/runtime-proxy.test.ts app/api/weather/nexrad/prob-severe/route.test.ts",
     "test:parser": "node --import tsx --test lib/cifp/parser.test.ts lib/dof/parser.test.ts",
-    "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts app/scene/approach-path/geometry-rust.test.ts app/scene/terrain/terrarium.test.ts",
+    "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts app/scene/approach-path/geometry-rust.test.ts app/scene/terrain/terrarium.test.ts app/scene/scene-offload.test.ts",
     "test:layers": "node --import tsx --test app/app-client/__tests__/layers-url.test.ts app/scene/obstacle-shapes.test.ts lib/obstacles/plate-significance.test.ts app/app-client/__tests__/options-state.test.ts",
     "test:mrms": "node --import tsx --test app/scene/nexrad/nexrad.test.ts",
     "test:workers": "node --import tsx --test app/scene/shared/comlinked-worker-client.test.ts",

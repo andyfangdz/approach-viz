@@ -34,8 +34,8 @@ MRMS 3D volumetric weather is a surface-independent overlay (not a surface mode)
 - Chart type picker (VFR / IFR Low / IFR High) is shown when Map or 3D Map mode is active; default is VFR.
 - Tile sources (public FAA ArcGIS, no API key): VFR Sectional (zoom 8–12), IFR Low Enroute (zoom 7–12), IFR High Enroute (zoom 5–9).
 - Zoom level is selected automatically based on terrain radius setting and chart type zoom range.
-- Chart tiles are fetched in parallel, composited onto a canvas, and rendered as a textured plane at airport elevation.
-- Chart tile uploads to `DataArrayTexture` use sRGB source/destination textures so `copyTextureToTexture` preserves chart color without gamma washout.
+- Chart tiles are fetched in parallel and decoded in the chart worker. Flat-map mode uploads them in raw-RGBA batches into a `DataArrayTexture` and draws one instanced plane per tile at airport elevation; 3D-map mode composites them in the worker into one `ImageBitmap`.
+- The chart `DataArrayTexture` is sRGB, so `copyTextureToTexture` preserves chart color without gamma washout.
 - Flat-map chart tile shader applies Three.js output color-space conversion (`colorspace_fragment`) after sampling so Map and 3D Map chart colors stay aligned.
 - URL state: `?chart=vfr|low|high` (omitted when VFR or not in map mode).
 

@@ -1,15 +1,46 @@
-import { Html } from '@react-three/drei';
+import { useMemo } from 'react';
+import { SceneLabels, type SceneLabel } from '../labels/SceneLabels';
+import { WAYPOINT_LABEL_STYLE } from '../labels/label-styles';
 import { COLORS } from './constants';
+
+/** Height of a waypoint label above its marker, in scene units. */
+const WAYPOINT_LABEL_OFFSET_Y = 0.4;
+const SCREEN_SIZING = { mode: 'screen' } as const;
+
+export function waypointLabel(
+  position: readonly [number, number, number],
+  name: string,
+  altitudeLabel?: number
+): SceneLabel {
+  return {
+    text: altitudeLabel !== undefined ? `${name} ${altitudeLabel}'` : name,
+    position: [position[0], position[1] + WAYPOINT_LABEL_OFFSET_Y, position[2]],
+    style: WAYPOINT_LABEL_STYLE
+  };
+}
+
+/** Labels for many waypoints in one draw call. */
+export function WaypointLabels({ labels }: { labels: readonly SceneLabel[] }) {
+  return <SceneLabels labels={labels} sizing={SCREEN_SIZING} />;
+}
 
 export function WaypointMarker({
   position,
   name,
-  altitudeLabel
+  altitudeLabel,
+  showLabel = true
 }: {
   position: [number, number, number];
   name: string;
   altitudeLabel?: number;
+  /** Off when a parent batches every waypoint label into one {@link WaypointLabels}. */
+  showLabel?: boolean;
 }) {
+  const labels = useMemo(
+    () => (showLabel ? [waypointLabel([0, 0, 0], name, altitudeLabel)] : []),
+    [showLabel, name, altitudeLabel]
+  );
+
   return (
     <group position={position}>
       <mesh>
@@ -20,24 +51,7 @@ export function WaypointMarker({
           emissiveIntensity={0.5}
         />
       </mesh>
-
-      <Html
-        position={[0, 0.4, 0]}
-        center
-        zIndexRange={[9, 0]}
-        style={{
-          color: '#ffffff',
-          fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-          fontSize: '11px',
-          fontWeight: 500,
-          textShadow: '0 0 4px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.6)',
-          whiteSpace: 'nowrap',
-          pointerEvents: 'none'
-        }}
-      >
-        {name}
-        {altitudeLabel !== undefined ? ` ${altitudeLabel}'` : ''}
-      </Html>
+      {showLabel && <WaypointLabels labels={labels} />}
     </group>
   );
 }

@@ -77,7 +77,7 @@ All options-panel and layer values are held in one `OptionsState` object and per
 ## Camera and Scene Controls
 
 - Bottom-right FAB stack (bottom to top): gear (options), layers, recenter. Recenter camera control is the topmost button in the stack.
-- Scene `Html` labels (waypoints, holds, runway text, turn constraints, traffic callsigns) use capped `zIndexRange` so selector/options/legend overlays remain above scene text.
+- Scene labels (waypoints, holds, runway text, turn constraints, traffic callsigns, obstacles) are drawn inside the WebGL canvas, so selector/options/legend overlays remain above scene text.
 - Bottom-right help panel is error-only; static drag/scroll interaction hints are not shown.
 
 ## Mobile Defaults (≤ 900 px)

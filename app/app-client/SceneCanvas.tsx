@@ -1,6 +1,6 @@
 import { Suspense, memo, useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { ArcballControls, Environment, Html, MapControls, OrbitControls } from '@react-three/drei';
+import { ArcballControls, Html, MapControls, OrbitControls } from '@react-three/drei';
 import type {
   ArcballControls as ArcballControlsImpl,
   MapControls as MapControlsImpl,
@@ -14,6 +14,8 @@ import { ApproachPlateSurface } from '@/app/scene/ApproachPlateSurface';
 import { ChartMapSurface } from '@/app/scene/ChartMapSurface';
 import { SatelliteSurface } from '@/app/scene/SatelliteSurface';
 import { SceneErrorBoundary } from '@/app/scene/SceneErrorBoundary';
+import { AsyncShaderCompiler } from '@/app/scene/shared/async-shader-compiler';
+import { SceneEnvironment } from '@/app/scene/environment/SceneEnvironment';
 import { TerrainWireframe } from '@/app/scene/TerrainWireframe';
 import { LiveTrafficOverlay, type SceneAirport } from '@/app/scene/LiveTrafficOverlay';
 import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
@@ -71,6 +73,12 @@ const ADAPTIVE_DPR_STEP = 0.1;
 const ADAPTIVE_DPR_HIGH_FRAME_MS = 22;
 const ADAPTIVE_DPR_LOW_FRAME_MS = 15;
 const ADAPTIVE_DPR_ADJUST_INTERVAL_MS = 1200;
+/**
+ * The canvas renders on demand, so the gap before a frame is idle time
+ * unless frames are arriving back to back (camera motion, fades). Longer
+ * gaps are not frame times and are left out of the average.
+ */
+const ADAPTIVE_DPR_MAX_SAMPLE_GAP_MS = 250;
 
 function hasFiniteComponents(values: number[]): boolean {
   return values.every((value) => Number.isFinite(value));
@@ -254,7 +262,7 @@ function RecenterCamera({
   recenterNonce: number;
   controlsRef: RefObject<RecenterControlsApi | null>;
 }) {
-  const { camera } = useThree();
+  const { camera, invalidate } = useThree();
 
   useEffect(() => {
     if (recenterNonce <= 0) return;
@@ -272,7 +280,8 @@ function RecenterCamera({
       controls.update();
       controls.saveState?.();
     }
-  }, [camera, controlsRef, recenterNonce]);
+    invalidate();
+  }, [camera, controlsRef, recenterNonce, invalidate]);
 
   return null;
 }
@@ -303,6 +312,7 @@ function AdaptiveDprController({ retinaRendering }: { retinaRendering: boolean }
     if (globalThis.document !== undefined && document.visibilityState !== 'visible') return;
 
     const frameMs = Math.max(1, deltaSeconds * 1000);
+    if (frameMs > ADAPTIVE_DPR_MAX_SAMPLE_GAP_MS) return;
     frameMsEmaRef.current = frameMsEmaRef.current * 0.9 + frameMs * 0.1;
     const now = performance.now();
     if (now - lastAdjustAtRef.current < ADAPTIVE_DPR_ADJUST_INTERVAL_MS) {
@@ -419,6 +429,10 @@ export const SceneCanvas = memo(function SceneCanvas({
 
   return (
     <Canvas
+      // Render only when something changed: controls, React prop updates,
+      // and imperative uploads all invalidate. A static scene then costs the
+      // main thread nothing per display refresh.
+      frameloop="demand"
       camera={{ position: CAMERA_POSITION, fov: 60, near: 0.1, far: 500 }}
       dpr={CANVAS_DPR_RANGE}
       gl={{
@@ -437,7 +451,8 @@ export const SceneCanvas = memo(function SceneCanvas({
         <CameraStabilityGuard controlsRef={controlsRef} />
         <ambientLight intensity={0.4} />
         <directionalLight position={DIRECTIONAL_LIGHT_POSITION} intensity={0.8} />
-        <Environment preset="night" />
+        <SceneEnvironment />
+        <AsyncShaderCompiler />
 
         {showTerrainSurface && (
           <TerrainWireframe
@@ -620,7 +635,6 @@ export const SceneCanvas = memo(function SceneCanvas({
             applyEarthCurvatureCompensation={isTiledSurface}
           />
         )}
-
         {cameraControlMode === 'orbit' && (
           <OrbitControls
             key={`orbit-${recenterNonce}`}

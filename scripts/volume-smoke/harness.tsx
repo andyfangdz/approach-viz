@@ -10,9 +10,12 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import initWasm, {
   decode_and_prepare_mrms
 } from '../../packages/approach-viz-core-wasm/approach_viz_core.js';
-import { NexradVolumeRaymarch } from '../../app/scene/nexrad/NexradVolumeRaymarch';
+import {
+  NexradVolumeRaymarch,
+  type VolumeGroundSource
+} from '../../app/scene/nexrad/NexradVolumeRaymarch';
+import { buildGroundHeightfield, buildGroundPageMax } from '../../app/scene/nexrad/nexrad-ground';
 import type { NexradVolumeTextureData } from '../../app/scene/nexrad/nexrad-types';
-import type { ElevationSampler } from '../../app/scene/terrain/terrarium';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -41,21 +44,29 @@ function publish(result: SmokeResult): void {
 /** Synthetic terrain so the ground-occlusion path (heightfield, per-page
  *  maximum, skip gating) runs without Terrarium tiles: a 2,000 ft floor with
  *  a ridge rising to 10,000 ft near (30, -10) NM, or a flat plane. */
-function buildGround(): ElevationSampler | null {
+function buildGroundSampler(): ((xNm: number, zNm: number) => number) | null {
   if (groundMode === 'none') return null;
   if (groundMode === 'flat') {
     if (!(flatGroundFeet > 0)) throw new Error('ground=flat needs a positive groundFeet');
-    return { sampleFeet: () => flatGroundFeet, fallbackRatio: () => 0 };
+    return () => flatGroundFeet;
   }
   if (groundMode === 'ridge') {
-    return {
-      sampleFeet: (xNm, zNm) =>
-        2_000 + 8_000 * Math.max(0, 1 - Math.hypot(xNm - 30, zNm + 10) / 25),
-      fallbackRatio: () => 0
-    };
+    return (xNm, zNm) => 2_000 + 8_000 * Math.max(0, 1 - Math.hypot(xNm - 30, zNm + 10) / 25);
   }
   throw new Error(`unknown ground mode "${groundMode}"`);
 }
+
+/** Samples the synthetic terrain in-page, where the app uses the worker. */
+function buildGround(): VolumeGroundSource | null {
+  const sampleFeet = buildGroundSampler();
+  if (!sampleFeet) return null;
+  return async (grid, applyEarthCurvature, refLat) => {
+    const heights = buildGroundHeightfield(grid, sampleFeet, applyEarthCurvature, refLat);
+    return { heights, ...buildGroundPageMax(heights, grid.width, grid.height) };
+  };
+}
+
+const GROUND = buildGround();
 
 function CoverageProbe({ stats }: { stats: VolumeTextureStats }) {
   const { gl } = useThree();
@@ -105,7 +116,7 @@ function Scene({
         <NexradVolumeRaymarch
           texture={texture}
           opacity={0.35}
-          ground={buildGround()}
+          ground={GROUND}
           applyEarthCurvatureCompensation
           refLat={refLat}
         />

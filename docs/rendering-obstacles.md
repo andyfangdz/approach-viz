@@ -27,8 +27,8 @@ The `Obstacles` layer (web `obstacles`, default off) renders FAA Digital Obstacl
 
 ## Labels
 
-- The 12 tallest obstacles by AMSL get chart-style HTML labels: `<AMSL>′ (<AGL>′ AGL)` (`.obstacle-label`), floated just above the tip. Unverified obstacles (DOF verification status `U`) get the TPP doubtful-accuracy `±` after the elevation.
-- The highest obstacle in range mirrors the TPP "bolder and larger symbol along with larger elevation font size" rule: a 2.4× tip glyph and a bolder, larger label (`.obstacle-label-highest`).
+- The 12 tallest obstacles by AMSL get chart-style chip labels: `<AMSL>′ (<AGL>′ AGL)` (`OBSTACLE_LABEL_STYLE`), floated just above the tip as world-sized sprites. Unverified obstacles (DOF verification status `U`) get the TPP doubtful-accuracy `±` after the elevation.
+- The highest obstacle in range mirrors the TPP "bolder and larger symbol along with larger elevation font size" rule: a 2.4× tip glyph and a bolder, larger label (`OBSTACLE_HIGHEST_LABEL_STYLE`).
 - The `Show Obstacle Labels` toggle in the Options panel (default on) turns them off entirely.
 
 ## Legend / state

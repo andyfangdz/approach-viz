@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Html, Line } from '@react-three/drei';
+import { Line } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import { isPresentFiniteNumber } from '@/lib/parse-like';
@@ -13,6 +13,10 @@ import {
   normalizeHeading,
   resolveWaypoint
 } from './coordinates';
+import { SceneLabels } from '../labels/SceneLabels';
+import { holdLabelStyle } from '../labels/label-styles';
+
+const SCREEN_SIZING = { mode: 'screen' } as const;
 
 export function HoldPattern({
   leg,
@@ -120,6 +124,11 @@ export function HoldPattern({
     ];
   }, [center, heading, holdDistance, turnDirection, altitude, verticalScale]);
 
+  const labels = useMemo(
+    () => [{ text: holdLabel, position: labelPosition, style: holdLabelStyle(color) }],
+    [holdLabel, labelPosition, color]
+  );
+
   if (!center || !geometry || geometry.points.length === 0) return null;
   const { points, protectedArea } = geometry;
 
@@ -147,23 +156,7 @@ export function HoldPattern({
           />
         </>
       )}
-      <Html
-        position={labelPosition}
-        center
-        zIndexRange={[9, 0]}
-        style={{
-          color,
-          fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-          fontSize: '10px',
-          fontWeight: 600,
-          letterSpacing: '0.02em',
-          textShadow: '0 0 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7)',
-          whiteSpace: 'nowrap',
-          pointerEvents: 'none'
-        }}
-      >
-        {holdLabel}
-      </Html>
+      <SceneLabels labels={labels} sizing={SCREEN_SIZING} />
     </group>
   );
 }

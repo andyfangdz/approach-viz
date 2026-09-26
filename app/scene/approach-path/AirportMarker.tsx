@@ -1,8 +1,14 @@
 import { useMemo } from 'react';
-import { Html } from '@react-three/drei';
 import type { Airport, RunwayThreshold } from '@/lib/cifp/parser';
+import { SceneLabels, type SceneLabel } from '../labels/SceneLabels';
+import { airportLabelStyle, runwayLabelStyle } from '../labels/label-styles';
 import { altToY, earthCurvatureDropNm, latLonToLocal } from './coordinates';
 import { buildRunwaySegments } from './runway-geometry';
+
+const SCREEN_SIZING = { mode: 'screen' } as const;
+const RUNWAY_SURFACE_LIFT_NM = 0.01;
+const RUNWAY_LABEL_LIFT_NM = 0.15;
+const AIRPORT_LABEL_LIFT_NM = 0.5;
 
 export function AirportMarker({
   airport,
@@ -41,13 +47,53 @@ export function AirportMarker({
     return buildRunwaySegments(localRunways);
   }, [runways, refLat, refLon]);
 
+  const labels = useMemo(() => {
+    const next: SceneLabel[] = [
+      {
+        text: airport.id,
+        position: [pos.x, airportBaseY + AIRPORT_LABEL_LIFT_NM, pos.z],
+        style: airportLabelStyle(airportLabelColor)
+      }
+    ];
+    if (showRunwayLabels) {
+      const runwayStyle = runwayLabelStyle(airportLabelColor);
+      for (const segment of runwaySegments) {
+        const segmentCurvatureDrop = applyEarthCurvatureCompensation
+          ? earthCurvatureDropNm(segment.x, segment.z, refLat) * verticalScale
+          : 0;
+        next.push({
+          text: segment.label,
+          position: [
+            segment.x,
+            altitudeBaseY - segmentCurvatureDrop + RUNWAY_SURFACE_LIFT_NM + RUNWAY_LABEL_LIFT_NM,
+            segment.z
+          ],
+          style: runwayStyle
+        });
+      }
+    }
+    return next;
+  }, [
+    airport.id,
+    pos.x,
+    pos.z,
+    airportBaseY,
+    airportLabelColor,
+    showRunwayLabels,
+    runwaySegments,
+    applyEarthCurvatureCompensation,
+    refLat,
+    verticalScale,
+    altitudeBaseY
+  ]);
+
   return (
     <group>
       {runwaySegments.map((segment) => {
         const segmentCurvatureDrop = applyEarthCurvatureCompensation
           ? earthCurvatureDropNm(segment.x, segment.z, refLat) * verticalScale
           : 0;
-        const segmentY = altitudeBaseY - segmentCurvatureDrop + 0.01;
+        const segmentY = altitudeBaseY - segmentCurvatureDrop + RUNWAY_SURFACE_LIFT_NM;
         return (
           <group
             key={segment.key}
@@ -68,44 +114,11 @@ export function AirportMarker({
               <boxGeometry args={[0.01, 0.005, segment.length * 0.95]} />
               <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.15} />
             </mesh>
-            {showRunwayLabels && (
-              <Html
-                position={[0, 0.15, 0]}
-                center
-                zIndexRange={[9, 0]}
-                style={{
-                  color: airportLabelColor,
-                  fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-                  fontSize: '10px',
-                  fontWeight: 500,
-                  textShadow: '0 0 4px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.6)',
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none'
-                }}
-              >
-                {segment.label}
-              </Html>
-            )}
           </group>
         );
       })}
 
-      <Html
-        position={[pos.x, airportBaseY + 0.5, pos.z]}
-        center
-        zIndexRange={[9, 0]}
-        style={{
-          color: airportLabelColor,
-          fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-          fontSize: '11px',
-          fontWeight: 500,
-          textShadow: '0 0 4px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.6)',
-          whiteSpace: 'nowrap',
-          pointerEvents: 'none'
-        }}
-      >
-        {airport.id}
-      </Html>
+      <SceneLabels labels={labels} sizing={SCREEN_SIZING} />
     </group>
   );
 }

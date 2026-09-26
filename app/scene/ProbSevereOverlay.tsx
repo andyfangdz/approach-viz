@@ -1,4 +1,3 @@
-import { Html } from '@react-three/drei';
 import { useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
 import {
@@ -10,6 +9,10 @@ import {
   type JsonValue
 } from '@/lib/parse-like';
 import { earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
+import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
+import { STORM_CELL_LABEL_STYLE } from './labels/label-styles';
+
+const STORM_LABEL_SIZING = { mode: 'world', distanceFactor: 8 } as const;
 
 const FEET_PER_NM = 6076.12;
 const POLL_INTERVAL_MS = 120_000;
@@ -346,7 +349,14 @@ export function ProbSevereOverlay({
     const selectedLabels = labels
       .slice()
       .sort((left, right) => right.yNm - left.yNm)
-      .slice(0, MAX_LABEL_COUNT);
+      .slice(0, MAX_LABEL_COUNT)
+      .map(
+        (label): SceneLabel => ({
+          text: label.text,
+          position: [label.x, label.yNm, label.z],
+          style: STORM_CELL_LABEL_STYLE
+        })
+      );
 
     return {
       topGeometry: buildLineGeometry(topSegments),
@@ -433,17 +443,7 @@ export function ProbSevereOverlay({
           />
         </lineSegments>
       )}
-      {geometryBundle.labels.map((label) => (
-        <Html
-          key={`${label.id}:${label.text}`}
-          position={[label.x, label.yNm, label.z]}
-          sprite
-          distanceFactor={8}
-          transform
-        >
-          <div className="storm-cell-label">{label.text}</div>
-        </Html>
-      ))}
+      <SceneLabels labels={geometryBundle.labels} sizing={STORM_LABEL_SIZING} />
     </group>
   );
 }

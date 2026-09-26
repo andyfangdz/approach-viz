@@ -348,23 +348,6 @@ textarea,
   animation: spin 0.8s linear infinite;
 }
 
-.traffic-callsign-label {
-  display: inline-block;
-  color: #c8f9ff;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  line-height: 1.1;
-  white-space: nowrap;
-  text-shadow:
-    0 0 3px rgba(0, 0, 0, 0.95),
-    0 0 7px rgba(0, 0, 0, 0.65);
-  pointer-events: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -929,51 +912,6 @@ textarea,
   font-size: 10px;
   padding: 5px 7px;
   max-width: 170px;
-}
-
-.mrms-altitude-guide-label {
-  color: #d6ecff;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  line-height: 1;
-  padding: 2px 4px;
-  border: 1px solid rgba(124, 188, 255, 0.35);
-  border-radius: var(--radius-xs);
-  background: rgba(8, 14, 28, 0.72);
-  pointer-events: none;
-}
-
-.storm-cell-label {
-  color: #ffe2b0;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  line-height: 1;
-  padding: 2px 4px;
-  border: 1px solid rgba(255, 170, 89, 0.38);
-  border-radius: var(--radius-xs);
-  background: rgba(26, 12, 4, 0.76);
-  pointer-events: none;
-}
-
-.obstacle-label {
-  color: #ffd9a8;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  line-height: 1;
-  padding: 2px 4px;
-  border: 1px solid rgba(255, 170, 89, 0.38);
-  border-radius: var(--radius-xs);
-  background: rgba(26, 16, 4, 0.76);
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-/* TPP convention: the plan view's highest obstacle gets a bolder, larger label. */
-.obstacle-label.obstacle-label-highest {
-  font-size: 11px;
-  font-weight: 700;
-  color: #ffe9c4;
-  border-color: rgba(255, 170, 89, 0.7);
 }
 
 .mrms-cross-section-panel {

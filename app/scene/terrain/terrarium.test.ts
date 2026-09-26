@@ -12,7 +12,7 @@ import {
   wrappedTileColumnSpan
 } from './terrarium';
 import { latLonToLocal, localToLatLon } from '../approach-path/coordinates';
-import { buildTerrainGeometry } from '../TerrainWireframe';
+import { buildTerrainGeometry } from './terrain-mesh';
 
 const METERS_TO_FEET = 3.28084;
 

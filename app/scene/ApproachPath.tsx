@@ -11,7 +11,7 @@ import { COLORS } from './approach-path/constants';
 import { altToY, isHoldLeg } from './approach-path/coordinates';
 import { HoldPattern } from './approach-path/HoldPattern';
 import { PathTube } from './approach-path/PathTube';
-import { WaypointMarker } from './approach-path/WaypointMarker';
+import { WaypointLabels, WaypointMarker, waypointLabel } from './approach-path/WaypointMarker';
 import { collectUniqueWaypoints } from './approach-path/waypointCollection';
 
 interface ApproachPathProps {
@@ -159,6 +159,14 @@ export const ApproachPath = memo(function ApproachPath({
     return altitudes;
   }, [holdLegs, resolvedAltitudes, airport.elevation]);
 
+  const waypointLabels = useMemo(
+    () =>
+      uniqueWaypoints.map((wp) =>
+        waypointLabel([wp.x, altToY(wp.altitude, verticalScale), wp.z], wp.name, wp.altitudeLabel)
+      ),
+    [uniqueWaypoints, verticalScale]
+  );
+
   return (
     <group>
       {uniqueWaypoints.map((wp) => (
@@ -167,8 +175,10 @@ export const ApproachPath = memo(function ApproachPath({
           position={[wp.x, altToY(wp.altitude, verticalScale), wp.z]}
           name={wp.name}
           altitudeLabel={wp.altitudeLabel}
+          showLabel={false}
         />
       ))}
+      <WaypointLabels labels={waypointLabels} />
 
       {pathSegments
         .filter((segment) => segment.kind === 'final')
