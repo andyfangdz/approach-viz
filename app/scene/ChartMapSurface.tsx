@@ -5,8 +5,12 @@ import * as THREE from 'three';
 import * as Comlink from 'comlink';
 import { useThree } from '@react-three/fiber';
 import type { ChartType } from '@/app/app-client/types';
-import type { ChartTilesWorkerApi, ChartTileReady } from '@/app/scene/chart/chart-tiles.worker';
-import { TileLayer } from './chart/TileLayer';
+import type {
+  ChartTilesWorkerApi,
+  ChartTileBatch,
+  ChartTilesParams
+} from '@/app/scene/chart/chart-tiles.worker';
+import { TileLayer, type TilePlacement } from './chart/TileLayer';
 import { ALTITUDE_SCALE } from './approach-path/constants';
 import { latLonToLocal } from './approach-path/coordinates';
 
@@ -234,7 +238,7 @@ export interface ChartTextureCorner {
 }
 
 export interface ChartTextureData {
-  texture: THREE.CanvasTexture;
+  texture: THREE.Texture;
   corners: {
     sw: ChartTextureCorner;
     se: ChartTextureCorner;
@@ -266,6 +270,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
   const onDebugChangeRef = useRef(onDebugChange);
   onDebugChangeRef.current = onDebugChange;
   const renderer = useThree((s) => s.gl);
+  const invalidate = useThree((s) => s.invalidate);
 
   // Warm worker singleton — created once per mount, reused across re-renders
   // so that rapid prop changes (airport switch, slider drag) skip the OS
@@ -302,7 +307,27 @@ export const ChartMapSurface = memo(function ChartMapSurface({
         group.remove(ref.current.mesh);
         ref.current.dispose();
         ref.current = null;
+        invalidate();
       }
+    }
+    function mountLayer(layer: TileLayer) {
+      group.add(layer.mesh);
+      invalidate();
+    }
+    /** Place and upload one worker batch into `layer`. */
+    function applyBatch(
+      layer: TileLayer,
+      batch: ChartTileBatch,
+      zoom: number,
+      surfaceY: number
+    ): number {
+      const placements: TilePlacement[] = [];
+      for (let i = 0; i < batch.tiles.length; i += 2) {
+        placements.push({ ...tileBounds(batch.tiles[i], batch.tiles[i + 1], zoom), surfaceY });
+      }
+      layer.addTiles(batch.pixels, placements, renderer);
+      invalidate();
+      return placements.length;
     }
     disposeLayer(detailLayerRef);
     disposeLayer(previewLayerRef);
@@ -357,7 +382,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
 
         const previewLayer = new TileLayer(previewTileCount, TILE_QUAD, renderer);
         previewLayerRef.current = previewLayer;
-        group.add(previewLayer.mesh);
+        mountLayer(previewLayer);
 
         await api.streamTiles(
           {
@@ -368,21 +393,9 @@ export const ChartMapSurface = memo(function ChartMapSurface({
             minTileY: pMinTileY,
             maxTileY: pMaxTileY
           },
-          Comlink.proxy((tile: ChartTileReady) => {
-            if (cancelled) {
-              tile.bitmap.close();
-              return;
-            }
-            const b = tileBounds(tile.tileX, tile.tileY, previewZoom);
-            previewLayer.addTile(
-              tile.bitmap,
-              b.centerX,
-              b.centerZ,
-              b.width,
-              b.height,
-              surfaceY + PREVIEW_Y_OFFSET,
-              renderer
-            );
+          Comlink.proxy((batch: ChartTileBatch) => {
+            if (cancelled) return;
+            applyBatch(previewLayer, batch, previewZoom, surfaceY + PREVIEW_Y_OFFSET);
           })
         );
       }
@@ -392,7 +405,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       // Detail pass
       const detailLayer = new TileLayer(totalDetailTiles, TILE_QUAD, renderer);
       detailLayerRef.current = detailLayer;
-      group.add(detailLayer.mesh);
+      mountLayer(detailLayer);
 
       // Report progress periodically (not per-tile)
       progressInterval = setInterval(() => {
@@ -417,22 +430,9 @@ export const ChartMapSurface = memo(function ChartMapSurface({
           minTileY: detailRange.minTileY,
           maxTileY: detailRange.maxTileY
         },
-        Comlink.proxy((tile: ChartTileReady) => {
-          if (cancelled) {
-            tile.bitmap.close();
-            return;
-          }
-          const b = tileBounds(tile.tileX, tile.tileY, detailRange.zoom);
-          detailLayer.addTile(
-            tile.bitmap,
-            b.centerX,
-            b.centerZ,
-            b.width,
-            b.height,
-            surfaceY,
-            renderer
-          );
-          detailTilesLoaded += 1;
+        Comlink.proxy((batch: ChartTileBatch) => {
+          if (cancelled) return;
+          detailTilesLoaded += applyBatch(detailLayer, batch, detailRange.zoom, surfaceY);
         })
       );
 
@@ -461,7 +461,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
           transparent: true
         });
         overlayLayerRef.current = overlayLayer;
-        group.add(overlayLayer.mesh);
+        mountLayer(overlayLayer);
 
         await api.streamTiles(
           {
@@ -472,21 +472,9 @@ export const ChartMapSurface = memo(function ChartMapSurface({
             minTileY: oMinTileY,
             maxTileY: oMaxTileY
           },
-          Comlink.proxy((tile: ChartTileReady) => {
-            if (cancelled) {
-              tile.bitmap.close();
-              return;
-            }
-            const b = tileBounds(tile.tileX, tile.tileY, tacZoom);
-            overlayLayer.addTile(
-              tile.bitmap,
-              b.centerX,
-              b.centerZ,
-              b.width,
-              b.height,
-              surfaceY + OVERLAY_Y_OFFSET,
-              renderer
-            );
+          Comlink.proxy((batch: ChartTileBatch) => {
+            if (cancelled) return;
+            applyBatch(overlayLayer, batch, tacZoom, surfaceY + OVERLAY_Y_OFFSET);
           })
         );
       }
@@ -524,7 +512,7 @@ export const ChartMapSurface = memo(function ChartMapSurface({
       disposeLayer(previewLayerRef);
       disposeLayer(overlayLayerRef);
     };
-  }, [refLat, refLon, radiusNm, chartType, airportElevationFeet, renderer]);
+  }, [refLat, refLon, radiusNm, chartType, airportElevationFeet, renderer, invalidate]);
 
   return <group ref={groupRef} scale={[1, verticalScale, 1]} />;
 });
@@ -547,16 +535,12 @@ export function buildChartTexture(
     maxTextureDim
   );
 
-  let cancelled = false;
   let released = false;
   let rejectCancellation: ((reason: Error) => void) | null = null;
   const rawWorker = new Worker(new URL('./chart/chart-tiles.worker.ts', import.meta.url), {
     type: 'module'
   });
   const api = Comlink.wrap<ChartTilesWorkerApi>(rawWorker);
-  const pendingBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
-  const overlayBitmaps: Array<{ tileX: number; tileY: number; bitmap: ImageBitmap }> = [];
-  const isComposite = chartType === 'tac';
 
   function releaseWorker() {
     if (released) return;
@@ -565,7 +549,24 @@ export function buildChartTexture(
     rawWorker.terminate();
   }
 
-  // Race the Comlink stream against an explicit cancellation promise so that
+  // TAC overlay — Terminal Area Chart tiles composited over the sectional.
+  let overlay: ChartTilesParams | null = null;
+  const overlayZoom =
+    chartType === 'tac' ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP) : null;
+  if (overlayZoom != null) {
+    const latRadius = radiusNm / 60;
+    const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
+    overlay = {
+      baseUrl: TAC_OVERLAY_URL,
+      zoom: overlayZoom,
+      minTileX: lonToTileX(refLon - lonRadius, overlayZoom),
+      maxTileX: lonToTileX(refLon + lonRadius, overlayZoom),
+      minTileY: latToTileY(refLat + latRadius, overlayZoom),
+      maxTileY: latToTileY(refLat - latRadius, overlayZoom)
+    };
+  }
+
+  // Race the worker against an explicit cancellation promise so that
   // cancel() always settles the returned promise (worker termination alone
   // orphans the MessageChannel without rejecting).
   const cancellationPromise = new Promise<never>((_resolve, reject) => {
@@ -575,8 +576,8 @@ export function buildChartTexture(
   const promise = Promise.race([
     cancellationPromise,
     (async () => {
-      await api.streamTiles(
-        {
+      const { bitmap } = await api.composeChartTexture({
+        base: {
           baseUrl: range.baseUrl,
           zoom: range.zoom,
           minTileX: range.minTileX,
@@ -584,100 +585,25 @@ export function buildChartTexture(
           minTileY: range.minTileY,
           maxTileY: range.maxTileY
         },
-        Comlink.proxy((tile: ChartTileReady) => {
-          if (cancelled) {
-            tile.bitmap.close();
-            return;
-          }
-          pendingBitmaps.push({
-            tileX: tile.tileX,
-            tileY: tile.tileY,
-            bitmap: tile.bitmap
-          });
-        })
-      );
-      if (cancelled) throw new Error('Cancelled');
+        overlay
+      });
+      releaseWorker();
 
-      // TAC overlay pass — fetch Terminal Area Chart tiles to composite on top
-      const overlayZoomUsed = isComposite
-        ? computeOverlayZoom(refLat, radiusNm, MAX_TILE_COUNT_3DMAP)
-        : null;
-      if (overlayZoomUsed != null) {
-        const latRadius = radiusNm / 60;
-        const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos(refLat * DEG_TO_RAD)));
-        try {
-          await api.streamTiles(
-            {
-              baseUrl: TAC_OVERLAY_URL,
-              zoom: overlayZoomUsed,
-              minTileX: lonToTileX(refLon - lonRadius, overlayZoomUsed),
-              maxTileX: lonToTileX(refLon + lonRadius, overlayZoomUsed),
-              minTileY: latToTileY(refLat + latRadius, overlayZoomUsed),
-              maxTileY: latToTileY(refLat - latRadius, overlayZoomUsed)
-            },
-            Comlink.proxy((tile: ChartTileReady) => {
-              if (cancelled) {
-                tile.bitmap.close();
-                return;
-              }
-              overlayBitmaps.push({
-                tileX: tile.tileX,
-                tileY: tile.tileY,
-                bitmap: tile.bitmap
-              });
-            })
-          );
-        } catch (err) {
-          if (!cancelled) {
-            throw err instanceof Error ? err : new Error('TAC overlay tile stream failed.');
-          }
-        }
-        if (cancelled) throw new Error('Cancelled');
-      }
-
-      const width = range.tilesWide * TILE_SIZE;
-      const height = range.tilesHigh * TILE_SIZE;
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d')!;
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(0, 0, width, height);
-
-      for (const p of pendingBitmaps) {
-        const col = p.tileX - range.minTileX;
-        const row = p.tileY - range.minTileY;
-        ctx.drawImage(p.bitmap, col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        p.bitmap.close();
-      }
-      pendingBitmaps.length = 0;
-
-      // Draw TAC overlay tiles on top of sectionals
-      if (overlayBitmaps.length > 0 && overlayZoomUsed != null) {
-        const scale = Math.pow(2, overlayZoomUsed - range.zoom);
-        const overlayTileSize = TILE_SIZE / scale;
-        for (const p of overlayBitmaps) {
-          const canvasX = Math.round((p.tileX / scale - range.minTileX) * TILE_SIZE);
-          const canvasY = Math.round((p.tileY / scale - range.minTileY) * TILE_SIZE);
-          ctx.drawImage(p.bitmap, canvasX, canvasY, overlayTileSize, overlayTileSize);
-          p.bitmap.close();
-        }
-      }
-      overlayBitmaps.length = 0;
-
-      const texture = new THREE.CanvasTexture(canvas);
+      // The worker composited south-up, so no upload flip is needed; an
+      // ImageBitmap uploads without a main-thread canvas readback.
+      const texture = new THREE.Texture(bitmap);
+      texture.flipY = false;
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.generateMipmaps = false;
       texture.needsUpdate = true;
+      texture.addEventListener('dispose', () => bitmap.close());
 
       const sw = latLonToLocal(range.southLat, range.westLon, refLat, refLon);
       const se = latLonToLocal(range.southLat, range.eastLon, refLat, refLon);
       const ne = latLonToLocal(range.northLat, range.eastLon, refLat, refLon);
       const nw = latLonToLocal(range.northLat, range.westLon, refLat, refLon);
-
-      releaseWorker();
 
       const textureData: ChartTextureData = { texture, corners: { sw, se, ne, nw } };
       return textureData;
@@ -689,13 +615,8 @@ export function buildChartTexture(
   return {
     promise,
     cancel: () => {
-      cancelled = true;
       rejectCancellation?.(new Error('Cancelled'));
       releaseWorker();
-      for (const p of pendingBitmaps) p.bitmap.close();
-      pendingBitmaps.length = 0;
-      for (const p of overlayBitmaps) p.bitmap.close();
-      overlayBitmaps.length = 0;
     }
   };
 }

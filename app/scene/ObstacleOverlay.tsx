@@ -1,10 +1,12 @@
-import { Html } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { useThree } from '@react-three/fiber';
 import { loadObstaclesAction } from '@/app/actions';
 import type { ObstaclesPayload } from '@/lib/types';
 import { earthCurvatureDropNm, latLonToLocal } from './approach-path/coordinates';
 import { OBSTACLE_GLYPH_KINDS, obstacleGlyphKind, type ObstacleGlyphKind } from './obstacle-shapes';
+import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
+import { OBSTACLE_HIGHEST_LABEL_STYLE, OBSTACLE_LABEL_STYLE } from './labels/label-styles';
 
 const FEET_PER_NM = 6076.12;
 // FAA charting draws different glyphs below/above 1000 ft AGL; we scale the
@@ -16,6 +18,7 @@ const HIGH_OBSTACLE_TIP_SCALE = 1.6;
 const HIGHEST_OBSTACLE_TIP_SCALE = 2.4;
 const LABEL_CLEARANCE_NM = 0.045;
 const MAX_LABEL_COUNT = 12;
+const OBSTACLE_LABEL_SIZING = { mode: 'world', distanceFactor: 8 } as const;
 
 const COLOR_TIP_LIT = new THREE.Color('#ff6b6b');
 const COLOR_TIP_UNLIT = new THREE.Color('#ffb84d');
@@ -99,6 +102,7 @@ function TipInstances({
   items: RenderObstacle[];
 }) {
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
+  const invalidate = useThree((state) => state.invalidate);
 
   useEffect(() => {
     const mesh = meshRef.current;
@@ -122,7 +126,8 @@ function TipInstances({
     mesh.count = items.length;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }, [items]);
+    invalidate();
+  }, [items, invalidate]);
 
   return (
     <instancedMesh
@@ -276,15 +281,14 @@ export function ObstacleOverlay({
       .slice()
       .sort((left, right) => right.amslFeet - left.amslFeet)
       .slice(0, MAX_LABEL_COUNT)
-      .map((obstacle) => ({
-        id: obstacle.oasNumber,
-        x: obstacle.x,
-        yNm: obstacle.topYNm + LABEL_CLEARANCE_NM,
-        z: obstacle.z,
-        highest: obstacle.highest,
-        // TPP convention: ± marks an unverified (doubtful accuracy) elevation.
-        text: `${obstacle.amslFeet}′${obstacle.verified ? '' : '±'} (${obstacle.aglFeet}′ AGL)`
-      }));
+      .map(
+        (obstacle): SceneLabel => ({
+          position: [obstacle.x, obstacle.topYNm + LABEL_CLEARANCE_NM, obstacle.z],
+          style: obstacle.highest ? OBSTACLE_HIGHEST_LABEL_STYLE : OBSTACLE_LABEL_STYLE,
+          // TPP convention: ± marks an unverified (doubtful accuracy) elevation.
+          text: `${obstacle.amslFeet}′${obstacle.verified ? '' : '±'} (${obstacle.aglFeet}′ AGL)`
+        })
+      );
   }, [renderObstacles, showLabels]);
 
   if (renderObstacles.length === 0) return null;
@@ -310,21 +314,7 @@ export function ObstacleOverlay({
           <TipInstances key={category} geometry={tipGeometries.get(category)!} items={items} />
         );
       })}
-      {labels.map((label) => (
-        <Html
-          key={label.id}
-          position={[label.x, label.yNm, label.z]}
-          sprite
-          distanceFactor={8}
-          transform
-        >
-          <div
-            className={label.highest ? 'obstacle-label obstacle-label-highest' : 'obstacle-label'}
-          >
-            {label.text}
-          </div>
-        </Html>
-      ))}
+      <SceneLabels labels={labels} sizing={OBSTACLE_LABEL_SIZING} />
     </group>
   );
 }

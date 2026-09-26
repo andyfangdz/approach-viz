@@ -3,6 +3,7 @@ import type { ApproachLeg, Waypoint } from '@/lib/cifp/parser';
 import type { MissedApproachClimbRequirement } from '@/lib/types';
 import type { TurnConstraintLabel, VerticalLineData } from './types';
 import { ensureWasm } from '../shared/wasm-loader';
+import { buildPathTubeBuffers, type PathTubeBuffers } from './path-tube';
 import {
   approach_path_build_geometry,
   approach_path_build_hold_points,
@@ -54,10 +55,11 @@ export interface BuildPathGeometryParams {
   refLon: number;
   magVar: number;
   showTurnConstraintLabels?: boolean;
+  /** Scene Y below which the path is drawn dashed (the minimums), or `null`. */
+  dashedBelowY: number | null;
 }
 
-export interface GeometryResult {
-  pointsFlat: Float32Array;
+export interface GeometryResult extends PathTubeBuffers {
   verticalLines: VerticalLineData[];
   turnConstraintLabels: TurnConstraintLabel[];
 }
@@ -207,14 +209,14 @@ export class ApproachWorkerApi {
         text: label.text
       })
     );
-    // SAFETY: Float32Array.buffer is the ArrayBuffer backing the packed path points.
+    const { tube, dashedPointsFlat } = buildPathTubeBuffers(pointsFlat, params.dashedBelowY);
+    const transferables: ArrayBufferView[] = [];
+    if (tube) transferables.push(tube.positions, tube.normals, tube.uvs, tube.index);
+    if (dashedPointsFlat) transferables.push(dashedPointsFlat);
     return Comlink.transfer(
-      {
-        pointsFlat,
-        verticalLines: result.verticalLines,
-        turnConstraintLabels
-      },
-      [pointsFlat.buffer as ArrayBuffer]
+      { tube, dashedPointsFlat, verticalLines: result.verticalLines, turnConstraintLabels },
+      // SAFETY: every view above was allocated in this worker over its own ArrayBuffer.
+      transferables.map((view) => view.buffer as ArrayBuffer)
     );
   }
 }

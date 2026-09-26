@@ -1,6 +1,7 @@
 import * as Comlink from 'comlink';
 import { ensureWasm } from '../shared/wasm-loader';
 import { WasmTrafficState } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
+import { buildTrafficDrawBuffers } from './traffic-draw-buffers';
 
 export interface SceneAirport {
   lat: number;
@@ -26,12 +27,12 @@ export interface TrafficWorkerResult {
   historyPointCount: number;
   renderHash: number | null;
   markerPositions: Float32Array;
-  headingDeg: Float32Array;
   flags: Uint8Array;
-  trailOffsets: Uint32Array;
-  trailCounts: Uint32Array;
-  points: Float32Array;
   callsignLabels: (string | null)[];
+  trailSegments: Float32Array;
+  activeTrackIndices: Uint32Array;
+  markerMatrices: Float32Array;
+  headingSegments: Float32Array;
   trackedHexes: string[];
   returnedHistoryHexes: string[];
   workerProcessingMs: number;
@@ -232,6 +233,7 @@ export class TrafficWorkerApi {
 
     const soa = unpackWasmSoA(wasmRenderResult);
     const historyPointCount = Math.floor(soa.trailPointsFlat.length / 3);
+    const draw = buildTrafficDrawBuffers(soa);
     const workerProcessingMs = roundMs(performance.now() - startedAt);
 
     const result: TrafficWorkerResult = {
@@ -240,12 +242,12 @@ export class TrafficWorkerApi {
       historyPointCount,
       renderHash: Number.isFinite(soa.hash) ? soa.hash >>> 0 : null,
       markerPositions: soa.markerPositions,
-      headingDeg: soa.headingDeg,
       flags: soa.flags,
-      trailOffsets: soa.trailOffsets,
-      trailCounts: soa.trailCounts,
-      points: soa.trailPointsFlat,
       callsignLabels: soa.callsignLabels,
+      trailSegments: draw.trailSegments,
+      activeTrackIndices: draw.activeTrackIndices,
+      markerMatrices: draw.markerMatrices,
+      headingSegments: draw.headingSegments,
       trackedHexes,
       returnedHistoryHexes,
       workerProcessingMs,
@@ -256,11 +258,11 @@ export class TrafficWorkerApi {
     // SAFETY: wasm-bindgen traffic SoA columns are TypedArray views over ArrayBuffers.
     const transferList: ArrayBuffer[] = [
       soa.markerPositions.buffer as ArrayBuffer,
-      soa.headingDeg.buffer as ArrayBuffer,
       soa.flags.buffer as ArrayBuffer,
-      soa.trailOffsets.buffer as ArrayBuffer,
-      soa.trailCounts.buffer as ArrayBuffer,
-      soa.trailPointsFlat.buffer as ArrayBuffer
+      draw.trailSegments.buffer as ArrayBuffer,
+      draw.activeTrackIndices.buffer as ArrayBuffer,
+      draw.markerMatrices.buffer as ArrayBuffer,
+      draw.headingSegments.buffer as ArrayBuffer
     ];
 
     return Comlink.transfer(result, transferList);

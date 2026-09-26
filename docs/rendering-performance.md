@@ -1,17 +1,26 @@
 # Rendering Performance
 
+## Main-Thread Budget
+
+- The canvas renders on demand (`frameloop="demand"`). Controls, React prop changes, and 3D-tiles loads request frames; code that mutates the scene imperatively (instance uploads, uniforms assigned in render, tile-array uploads, material patches) must call `invalidate()`. A static scene costs the main thread nothing per display refresh.
+- The adaptive DPR controller only averages back-to-back frames (gaps under 250 ms), so idle time between on-demand frames is not mistaken for slow frames.
+- Scene text is drawn by `SceneLabels` (`app/scene/labels/`), not drei `<Html>`. Each `<Html>` updated the camera and rewrote a CSS transform every frame; labels are now instanced quads whose vertex shader billboards and projects them (screen-sized labels snapped to the device-pixel grid, world-sized sprites scaled like `<Html transform sprite distanceFactor>`). Text is rasterized into a premultiplied atlas by the label-atlas worker (`OffscreenCanvas`), so the main thread only uploads the atlas and, when only positions change, one instance attribute. Styles mirror the former CSS in `label-styles.ts`.
+- `AsyncShaderCompiler` hides any object whose material has not been compiled (layer mask 0) and links it with `compileAsync`, which uses `KHR_parallel_shader_compile` so linking happens in the GPU process. The object appears on the next frame after the link completes. Drivers that compile at first draw regardless (Mesa via ANGLE-GL) still pay the cost then.
+- Worker-built geometry: terrain mesh, normals, and wireframe index; Terrarium rasters and every elevation sample (mosaic drape, volume ground heightfield); airspace extrusions and edges; approach path tubes and the minimums split; traffic trail segments, marker matrices, and heading ticks; label atlases; chart tile decode and 3D-map compositing; the HDR environment decode.
+- To check a change, profile an idle scene and an orbit drag in Chrome (Performance panel or a CDP CPU profile): an idle scene should show almost no main-thread activity, and no function should recur per frame beyond three.js rendering and `AsyncShaderCompiler`'s traversal (~0.05 ms per frame).
+
 ## General Scene
 
 - Approach altitude-profile resolution, path geometry, and hold/protected-area geometry are computed through a worker-backed pipeline, reducing main-thread spikes during approach/option changes while avoiding synchronous main-thread fallback.
-- Approach geometry worker responses transfer a flat `Float32Array` point buffer (`pointsFlat`) back to main thread rather than cloning tuple arrays.
+- The approach geometry worker splits the path at the minimums altitude and sweeps the `TubeGeometry` itself, transferring indexed tube buffers and the dashed below-minimums polyline instead of path points.
 - Vertical reference lines for path points are batched into a single `lineSegments` geometry per path segment (final/transition/missed) to reduce draw-call count.
 - Heavy scene primitives (`ApproachPath`, `AirspaceVolumes`, `TerrainWireframe`, `ApproachPlateSurface`, `SatelliteSurface`) are memoized.
 - The top-level scene wrapper (`SceneCanvas`) is memoized so selector typing/collapse state updates in the header do not re-render the Three.js subtree.
 - Airport/approach combobox query text is managed inside `HeaderControls`, keeping high-frequency search keystrokes out of `AppClient` state and preventing avoidable scene updates.
 - The canvas uses adaptive DPR control (`0.9..1.5`) based on frame-time EMA, reducing pixel density under sustained frame pressure and restoring quality when frame budgets recover.
-- In-scene `Html` labels (waypoints/holds/runways/turn constraints/callsigns) use a capped `zIndexRange` so app UI overlays (selectors/options/legend) stay visually on top.
-- Three.js resources allocated imperatively in hooks (`TubeGeometry`, airspace extrusions/edges, traffic marker buffers, plate textures) are explicitly disposed in effect cleanup paths to prevent GPU memory growth across scene updates.
-- Airspace extrusions are built in base altitude units and Y-scaled at the group level, avoiding expensive airspace geometry rebuilds when only `verticalScale` changes.
+- In-scene labels draw inside the canvas after the rest of the scene (depth test off, render order 1000), so app UI overlays (selectors/options/legend) stay on top and labels are never occluded by geometry.
+- Three.js resources allocated imperatively in hooks (path tubes, airspace extrusions/edges, terrain meshes, label atlases, traffic marker buffers, plate textures) are explicitly disposed in effect cleanup paths to prevent GPU memory growth across scene updates.
+- Airspace extrusions are built in base altitude units in the scene-geometry worker and Y-scaled at the group level, avoiding airspace geometry rebuilds when only `verticalScale` changes.
 
 ## Live ADS-B Traffic
 
@@ -25,9 +34,9 @@
 - Runtime debug telemetry exposes per-stage ADS-B timings (`poll cycle`, `fetch`, payload parse/inspect, `worker process/recompute/prune`, `worker round-trip/CPU`, and marker instance upload) plus feed transport (`binary`/`json`) to validate offload impact.
 - Trail history is time-pruned by the user-selected retention window (`1..30 minutes`) to cap per-aircraft polyline growth (runtime SQLite store keeps up to 60 minutes available for history queries).
 - Trail rendering can continue for aircraft that are no longer in the current live feed as long as retained history samples are still within the selected window, and this behavior is user-toggleable via `Show Departed Traffic Trails`.
-- Trail and heading vectors are batched into shared `lineSegments` geometries per frame update, replacing per-track line component trees and reducing draw-call/reconciliation overhead.
+- Trail and heading vectors are batched into shared `lineSegments` geometries, and the worker emits them as upload-ready segment buffers along with the marker instance matrices, so a poll costs the main thread buffer wraps and one `instanceMatrix` copy.
 - Worker responses include render hashes; unchanged hashes skip main-thread render-buffer state updates to avoid redundant line/instance uploads.
-- Callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled.
+- Callsign labels are optional and rendered only when the `Show Traffic Callsigns` toggle is enabled. They reuse the label atlas across polls; only new callsigns trigger a worker rasterization.
 - Marker meshes reuse shared sphere geometry/material instances.
 - Aircraft markers are rendered via a single `InstancedMesh`, reducing per-aircraft React/Three mesh overhead.
 
@@ -45,3 +54,10 @@
 - MRMS echo-top instanced capacities grow in buckets instead of resizing every poll, reducing remount/reallocation churn for fluctuating cell counts; the volume texture reallocates only when its grid dimensions change (uploaded once per poll or re-prepare).
 - Declutter-to-payload index mapping reuses grow-only `Int32Array` scratch buffers instead of allocating per-refresh `Array.map(...)` copies.
 - Additional MRMS details (polling cadence, binary transport, server-side brick merging, voxel dimension handling) are documented in [`docs/rendering-weather-volume.md`](rendering-weather-volume.md).
+- The volume's ground heightfield (and its per-page maximum) and the mosaic's terrain drape are sampled in the scene-geometry worker from a raster that never leaves it. Both are keyed to grid geometry rather than echo data, so polls that keep the same grid reuse them instead of resampling.
+
+## FAA Chart Tiles
+
+- The chart worker decodes each tile to raw RGBA on an `OffscreenCanvas` and sends batches of eight (or whatever arrived within 40 ms). The main thread uploads a batch into consecutive `DataArrayTexture` layers with one `copyTextureToTexture`, instead of one `ImageBitmap` upload per tile that the browser converts on the main thread.
+- Tile-array textures allocate GPU storage without a CPU-side zero buffer (`source.dataReady = false` makes the first upload a bare `texStorage3D`).
+- In 3D-map mode the worker composites the whole range (plus the TAC overlay) on an `OffscreenCanvas`, drawn south-up, and returns one `ImageBitmap`; the main thread only uploads it.

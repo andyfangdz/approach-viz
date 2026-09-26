@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Html } from '@react-three/drei';
 import * as THREE from 'three';
+import { useThree } from '@react-three/fiber';
 import type { NexradDebugState, NexradTimingDebugState } from '@/app/app-client/types';
 import type {
   CrossSectionData,
@@ -32,11 +32,15 @@ import {
 import { feetToNm, applyConstantColorInstances, feetLabel } from './nexrad/nexrad-render';
 import { NexradCrossSection } from './nexrad/NexradCrossSection';
 import { NexradSurfaceMosaic, type MosaicDrapeStatus } from './nexrad/NexradSurfaceMosaic';
-import { NexradVolumeRaymarch } from './nexrad/NexradVolumeRaymarch';
+import { NexradVolumeRaymarch, type VolumeGroundSource } from './nexrad/NexradVolumeRaymarch';
+import { buildGroundHeightfieldWithWorker } from './geometry/scene-geometry-client';
+import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
+import { ALTITUDE_GUIDE_LABEL_STYLE } from './labels/label-styles';
 import { WEATHER_ELEVATION_ZOOM } from './terrain/terrarium';
-import { useElevationSampler } from './terrain/use-elevation-sampler';
+import { useElevationRaster } from './terrain/use-elevation-raster';
 
 const MIN_INSTANCE_CAPACITY = 1;
+const CHIP_LABEL_SIZING = { mode: 'world', distanceFactor: 8 } as const;
 const EMPTY_PHASE_COUNTS = { rain: 0, mixed: 0, snow: 0 };
 
 interface AltitudeGuideLabel {
@@ -143,6 +147,7 @@ export function NexradVolumeOverlay({
   groundOcclusion = 'none',
   onDebugChange
 }: NexradVolumeOverlayProps) {
+  const invalidate = useThree((state) => state.invalidate);
   const [payload, setPayload] = useState<NexradVolumePayload | null>(null);
   const [echoTopPayload, setEchoTopPayload] = useState<EchoTopPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -207,7 +212,7 @@ export function NexradVolumeOverlay({
   // together does not load and decode the ~25 tiles twice.
   const wantsGround = enabled && showVolume && groundOcclusion === 'terrain';
   const wantsMosaicDrape = enabled && showSurfaceMosaic && surfaceMosaicDrape === 'terrain';
-  const { sampler: weatherElevation, status: weatherElevationStatus } = useElevationSampler({
+  const { raster: weatherElevation, status: weatherElevationStatus } = useElevationRaster({
     enabled: wantsGround || wantsMosaicDrape,
     refLat,
     refLon,
@@ -216,6 +221,21 @@ export function NexradVolumeOverlay({
     fallbackFeet: surfaceElevationFeet,
     label: 'MRMS weather terrain'
   });
+  // Only opaque surfaces occlude the volume; the terrain drape alone may have
+  // loaded the raster in terrain mode, where the ground stays see-through.
+  const volumeGround = useMemo<VolumeGroundSource | null>(
+    () =>
+      wantsGround && weatherElevation
+        ? (grid, applyEarthCurvature, groundRefLat) =>
+            buildGroundHeightfieldWithWorker(
+              weatherElevation,
+              grid,
+              applyEarthCurvature,
+              groundRefLat
+            )
+        : null,
+    [wantsGround, weatherElevation]
+  );
   const volumeGroundStatus = !wantsGround
     ? 'none'
     : weatherElevationStatus === 'ready'
@@ -303,7 +323,8 @@ export function NexradVolumeOverlay({
     echoTop18Material.opacity = THREE.MathUtils.lerp(0.08, 0.24, clampedOpacity);
     echoTop30Material.opacity = THREE.MathUtils.lerp(0.11, 0.29, clampedOpacity);
     echoTop50Material.opacity = THREE.MathUtils.lerp(0.14, 0.34, clampedOpacity);
-  }, [echoTop18Material, echoTop30Material, echoTop50Material, opacity]);
+    invalidate();
+  }, [echoTop18Material, echoTop30Material, echoTop50Material, opacity, invalidate]);
 
   useEffect(
     () => () => {
@@ -744,11 +765,12 @@ export function NexradVolumeOverlay({
     applyConstantColorInstances(echo18MeshRef.current, echoTop18);
     applyConstantColorInstances(echo30MeshRef.current, echoTop30);
     applyConstantColorInstances(echo50MeshRef.current, echoTop50);
+    invalidate();
     patchTimings({ instanceUploadMs: roundMs(performance.now() - uploadStartedAt) });
     // showEchoTops: re-run when the sub-layer toggles so freshly mounted
     // meshes get count set to 0 (or the real count if data exists) instead of
     // rendering an uninitialized instance at origin.
-  }, [echoTop18, echoTop30, echoTop50, showEchoTops, patchTimings]);
+  }, [echoTop18, echoTop30, echoTop50, showEchoTops, patchTimings, invalidate]);
 
   const guideData = useMemo((): AltitudeGuideData => {
     if (!showAltitudeGuides || volumeTexture === null) {
@@ -807,6 +829,18 @@ export function NexradVolumeOverlay({
     [guideData.geometry]
   );
 
+  const guideLabels = useMemo(
+    () =>
+      guideData.labels.map(
+        (label): SceneLabel => ({
+          text: `${Math.round(label.feet / 1000)}k`,
+          position: [-label.extentNm, label.yNm, -label.extentNm],
+          style: ALTITUDE_GUIDE_LABEL_STYLE
+        })
+      ),
+    [guideData.labels]
+  );
+
   if (!enabled) {
     return null;
   }
@@ -843,7 +877,7 @@ export function NexradVolumeOverlay({
         <NexradVolumeRaymarch
           texture={volumeTexture}
           opacity={opacity}
-          ground={weatherElevation}
+          ground={volumeGround}
           applyEarthCurvatureCompensation={applyEarthCurvatureCompensation}
           refLat={refLat}
         />
@@ -886,18 +920,7 @@ export function NexradVolumeOverlay({
           />
         </lineSegments>
       )}
-      {showAltitudeGuides &&
-        guideData.labels.map((label) => (
-          <Html
-            key={`mrms-alt-guide-${label.feet}`}
-            position={[-label.extentNm, label.yNm, -label.extentNm]}
-            sprite
-            distanceFactor={8}
-            transform
-          >
-            <div className="mrms-altitude-guide-label">{Math.round(label.feet / 1000)}k</div>
-          </Html>
-        ))}
+      {showAltitudeGuides && <SceneLabels labels={guideLabels} sizing={CHIP_LABEL_SIZING} />}
       {hasCrossSection && (
         <NexradCrossSection
           crossSectionData={crossSectionData}
