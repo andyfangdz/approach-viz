@@ -1,5 +1,6 @@
 // Terrarium elevation-tile access shared by the terrain wireframe and the
-// MRMS ground mosaic's terrain drape.
+// MRMS weather layers (mosaic drape, volume ground occlusion). Everything here
+// runs in the scene-geometry worker.
 //
 // The wireframe reads a dense grid at z10 over a ~50 NM radius; the mosaic
 // needs coarse relief over the full weather range (up to 120 NM), which is a
@@ -185,24 +186,37 @@ export function createElevationSampler(params: ElevationSamplerParams): Elevatio
   };
 }
 
-export interface LoadElevationSamplerParams {
+export interface TerrariumRasterParams {
   refLat: number;
   refLon: number;
   radiusNm: number;
   zoom: number;
-  fallbackFeet: number;
+}
+
+/** Composited Terrarium tiles covering `radiusNm` around a reference point. */
+export interface TerrariumRaster {
+  raster: ElevationRaster;
+  zoom: number;
+  minTileX: number;
+  minTileY: number;
+  /** Unwrapped window the raster was fetched for (see `buildTerrainGeometry`). */
+  minLat: number;
+  maxLat: number;
+  minLon: number;
+  maxLon: number;
 }
 
 /**
  * Fetch and composite the Terrarium tiles covering `radiusNm` around the
- * reference point, then return a sampler over them. Resolves `null` when every
- * tile fails, so callers can report the failure instead of drawing a flat
- * surface that looks like real terrain.
+ * reference point. Resolves `null` when every tile fails, so callers can
+ * report the failure instead of drawing a flat surface that looks like real
+ * terrain. Uses an `OffscreenCanvas`, so it runs in the scene-geometry worker
+ * and never decodes or reads back pixels on the main thread.
  */
-export async function loadElevationSampler(
-  params: LoadElevationSamplerParams
-): Promise<ElevationSampler | null> {
-  const { refLat, refLon, radiusNm, zoom, fallbackFeet } = params;
+export async function loadTerrariumRaster(
+  params: TerrariumRasterParams
+): Promise<TerrariumRaster | null> {
+  const { refLat, refLon, radiusNm, zoom } = params;
   const latRadius = radiusNm / 60;
   const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos((refLat * Math.PI) / 180)));
   const minLat = refLat - latRadius;
@@ -231,13 +245,14 @@ export async function loadElevationSampler(
     return null;
   }
 
-  const canvas = document.createElement('canvas');
-  canvas.width = tilesWide * TERRARIUM_TILE_SIZE;
-  canvas.height = tilesHigh * TERRARIUM_TILE_SIZE;
+  const canvas = new OffscreenCanvas(
+    tilesWide * TERRARIUM_TILE_SIZE,
+    tilesHigh * TERRARIUM_TILE_SIZE
+  );
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) {
     closeTiles();
-    return null;
+    throw new Error('OffscreenCanvas 2D context is unavailable for Terrarium compositing.');
   }
   for (let row = 0; row < tilesHigh; row += 1) {
     for (let col = 0; col < tilesWide; col += 1) {
@@ -254,13 +269,14 @@ export async function loadElevationSampler(
   }
   closeTiles();
 
-  return createElevationSampler({
+  return {
     raster: context.getImageData(0, 0, canvas.width, canvas.height),
     zoom,
     minTileX,
     minTileY,
-    refLat,
-    refLon,
-    fallbackFeet
-  });
+    minLat,
+    maxLat,
+    minLon,
+    maxLon
+  };
 }

@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
-import type { ElevationSampler } from '../terrain/terrarium';
+import { useFrame, useThree } from '@react-three/fiber';
+import type { GroundHeightfieldResult } from '../geometry/scene-geometry.worker';
 import type { NexradVolumeTextureData } from './nexrad-types';
 import { ALTITUDE_SCALE, VOLUME_BRICK_STORED_TEXELS, VOLUME_BRICK_TEXELS } from './nexrad-types';
 import { DBZ_BAND_STEP, DBZ_LUT_MAX_INDEX } from './nexrad-colors';
-import { buildGroundHeightfield, buildGroundPageMax } from './nexrad-ground';
+import type { GroundHeightfieldGrid } from './nexrad-ground';
 import { DBZ_LUT_PHASE_ROWS, buildDbzPhaseLutTexture } from './nexrad-render';
 
 /** Hard ceiling on loop iterations per ray; the shader loop cannot be
@@ -36,13 +36,25 @@ const DENSITY_MAX = 2.0;
 const LIGHT_OPACITY_CAP_MIN = 0.08;
 const LIGHT_OPACITY_CAP_MAX = 0.8;
 
+/**
+ * Produces the ground heightfield for a volume grid. The app samples the
+ * Terrarium raster in the scene-geometry worker; the volume smoke test
+ * supplies synthetic terrain. Keep the function identity stable: a new
+ * source re-samples.
+ */
+export type VolumeGroundSource = (
+  grid: GroundHeightfieldGrid,
+  applyEarthCurvature: boolean,
+  refLat: number
+) => Promise<GroundHeightfieldResult>;
+
 interface NexradVolumeRaymarchProps {
   texture: NexradVolumeTextureData;
   opacity: number;
   /** Terrain under the volume. When present, rays stop where they enter the
    *  ground so opaque terrain occludes the weather behind it; `null` marches
    *  the full box (translucent surfaces, or terrain not yet loaded). */
-  ground: ElevationSampler | null;
+  ground: VolumeGroundSource | null;
   applyEarthCurvatureCompensation: boolean;
   refLat: number;
 }
@@ -472,36 +484,94 @@ export function NexradVolumeRaymarch({
   );
   useEffect(() => () => pageTableTexture.dispose(), [pageTableTexture]);
 
-  const groundTextures = useMemo(() => {
-    if (!ground) return null;
-    const heights = buildGroundHeightfield(
-      texture,
-      (xNm, zNm) => ground.sampleFeet(xNm, zNm),
-      applyEarthCurvatureCompensation,
-      refLat
-    );
-    const { pageMax, pageWidth, pageHeight } = buildGroundPageMax(
-      heights,
+  // The heightfield depends only on the grid geometry, not the echoes, so it
+  // is sampled in the scene-geometry worker once per grid and reused across
+  // polls. Until it lands the ray marches the full box, as it does while the
+  // raster itself is loading.
+  const groundGrid = useMemo<GroundHeightfieldGrid>(
+    () => ({
+      width: texture.width,
+      height: texture.height,
+      depth: texture.depth,
+      originXNm: texture.originXNm,
+      originZNm: texture.originZNm,
+      cellSizeXNm: texture.cellSizeXNm,
+      cellSizeZNm: texture.cellSizeZNm,
+      baseFeet: texture.baseFeet,
+      binSizeFeet: texture.binSizeFeet
+    }),
+    [
       texture.width,
-      texture.height
+      texture.height,
+      texture.depth,
+      texture.originXNm,
+      texture.originZNm,
+      texture.cellSizeXNm,
+      texture.cellSizeZNm,
+      texture.baseFeet,
+      texture.binSizeFeet
+    ]
+  );
+  const [groundResult, setGroundResult] = useState<{
+    grid: GroundHeightfieldGrid;
+    ground: VolumeGroundSource;
+    curvature: boolean;
+    refLat: number;
+    heightfield: THREE.DataTexture;
+    pageMax: THREE.DataTexture;
+    pageWidth: number;
+    pageHeight: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!ground) return;
+    let cancelled = false;
+    ground(groundGrid, applyEarthCurvatureCompensation, refLat).then(
+      (result) => {
+        if (cancelled) return;
+        setGroundResult({
+          grid: groundGrid,
+          ground,
+          curvature: applyEarthCurvatureCompensation,
+          refLat,
+          heightfield: createGroundTexture(result.heights, groundGrid.width, groundGrid.height),
+          pageMax: createGroundPageMaxTexture(result.pageMax, result.pageWidth, result.pageHeight),
+          pageWidth: result.pageWidth,
+          pageHeight: result.pageHeight
+        });
+      },
+      (error) => {
+        if (cancelled) return;
+        console.error('Volume ground heightfield worker failed.', error);
+      }
     );
-    if (pageWidth !== texture.pageWidth || pageHeight !== texture.pageHeight) {
-      throw new Error(
-        `Ground page grid ${pageWidth}x${pageHeight} disagrees with the volume page table ${texture.pageWidth}x${texture.pageHeight}.`
-      );
-    }
-    return {
-      heightfield: createGroundTexture(heights, texture.width, texture.height),
-      pageMax: createGroundPageMaxTexture(pageMax, pageWidth, pageHeight)
+    return () => {
+      cancelled = true;
     };
-  }, [texture, ground, applyEarthCurvatureCompensation, refLat]);
+  }, [ground, groundGrid, applyEarthCurvatureCompensation, refLat]);
   useEffect(
     () => () => {
-      groundTextures?.heightfield.dispose();
-      groundTextures?.pageMax.dispose();
+      groundResult?.heightfield.dispose();
+      groundResult?.pageMax.dispose();
     },
-    [groundTextures]
+    [groundResult]
   );
+  const groundTextures =
+    groundResult &&
+    groundResult.grid === groundGrid &&
+    groundResult.ground === ground &&
+    groundResult.curvature === applyEarthCurvatureCompensation &&
+    groundResult.refLat === refLat
+      ? groundResult
+      : null;
+  if (
+    groundTextures &&
+    (groundTextures.pageWidth !== texture.pageWidth ||
+      groundTextures.pageHeight !== texture.pageHeight)
+  ) {
+    throw new Error(
+      `Ground page grid ${groundTextures.pageWidth}x${groundTextures.pageHeight} disagrees with the volume page table ${texture.pageWidth}x${texture.pageHeight}.`
+    );
+  }
 
   const emptyGroundTexture = useMemo(() => createEmptyGroundTexture(), []);
   useEffect(() => () => emptyGroundTexture.dispose(), [emptyGroundTexture]);
@@ -579,6 +649,13 @@ export function NexradVolumeRaymarch({
     DENSITY_MIN + (DENSITY_MAX - DENSITY_MIN) * Math.pow(clampedOpacity, 1.2);
   material.uniforms.uLightOpacityCap.value =
     LIGHT_OPACITY_CAP_MIN + (LIGHT_OPACITY_CAP_MAX - LIGHT_OPACITY_CAP_MIN) * clampedOpacity;
+
+  // Uniforms above are assigned during render, which r3f cannot see; ask
+  // for a frame whenever this component re-renders with new inputs.
+  const invalidate = useThree((state) => state.invalidate);
+  useEffect(() => {
+    invalidate();
+  });
 
   const cameraLocal = useMemo(() => new THREE.Vector3(), []);
   useFrame(({ camera }) => {

@@ -693,7 +693,7 @@ export const SECTIONS: Section[] = [
           },
           {
             kind: 'files',
-            paths: ['app/scene/TerrainWireframe.tsx']
+            paths: ['app/scene/TerrainWireframe.tsx', 'app/scene/terrain/terrain-mesh.ts']
           }
         ]
       },
@@ -783,7 +783,7 @@ export const SECTIONS: Section[] = [
           },
           {
             kind: 'p',
-            text: 'Flat-map mode draws one instanced plane per tile over a `DataArrayTexture`. Tiles upload with `copyTextureToTexture` using **sRGB source and destination** to avoid double gamma encoding; the vertex shader passes a flat `layerIndex` per instance, and the fragment shader samples the `sampler2DArray` and applies `linearToOutputTexel` so colors match across modes. In 3D-map mode the same tiles are drawn onto a canvas and projected onto Google tiles with the homography from §4.6.'
+            text: 'Flat-map mode draws one instanced plane per tile over a `DataArrayTexture`. The chart worker decodes tiles to raw RGBA and sends them in batches of eight, each uploaded into consecutive layers with one `copyTextureToTexture` into an **sRGB destination** so chart color is not gamma-encoded twice; the vertex shader passes a flat `layerIndex` per instance, and the fragment shader samples the `sampler2DArray` and applies `linearToOutputTexel` so colors match across modes. In 3D-map mode the worker composites the same tiles on an `OffscreenCanvas` and returns one `ImageBitmap`, projected onto Google tiles with the homography from §4.6.'
           },
           {
             kind: 'files',
@@ -802,11 +802,11 @@ export const SECTIONS: Section[] = [
         blocks: [
           {
             kind: 'p',
-            text: 'Each Class B/C/D sector extrudes the outer ring of its GeoJSON polygon between floor and ceiling with `ExtrudeGeometry`, plus `EdgesGeometry` outlines. Colors: **B `#0066ff` · C `#ff00ff` · D `#0099ff`**, at fill opacity 0.15 and edge opacity 0.4, with `depthWrite` off so stacked shelves stay see-through. Floors at or below sea level (surface areas) are raised to field elevation so they do not render underground at high airports, and floors at or below 100 ft drop their bottom caps to avoid z-fighting with the surface.'
+            text: 'Each Class B/C/D sector extrudes the outer ring of its GeoJSON polygon between floor and ceiling with `ExtrudeGeometry`, plus `EdgesGeometry` outlines, built in the scene-geometry worker. Colors: **B `#0066ff` · C `#ff00ff` · D `#0099ff`**, at fill opacity 0.15 and edge opacity 0.4, with `depthWrite` off so stacked shelves stay see-through. Floors at or below sea level (surface areas) are raised to field elevation so they do not render underground at high airports, and floors at or below 100 ft drop their bottom caps to avoid z-fighting with the surface.'
           },
           {
             kind: 'files',
-            paths: ['app/scene/AirspaceVolumes.tsx']
+            paths: ['app/scene/AirspaceVolumes.tsx', 'app/scene/airspace/airspace-geometry.ts']
           }
         ]
       },
@@ -822,7 +822,7 @@ export const SECTIONS: Section[] = [
           },
           {
             kind: 'p',
-            text: "The worker's `WasmTrafficState` returns struct-of-arrays render buffers (marker positions, headings, flags, trail offsets and counts, trail points, callsign labels) as transfers. Markers are one `InstancedMesh` of spheres (0.055 NM, cyan `#67f2ff` with emissive `#3fd3ff`); trails are one `LineSegments` batch (`#15d0ff`, opacity 0.5); callsigns are HTML labels 0.3 NM above each marker, with options to hide them for ground traffic. Aircraft on the ground or without an altitude are placed at the field elevation of the nearest airport within 80 NM of the scene, and satellite modes apply the earth-curvature drop so distant traffic follows the curved surface."
+            text: "The worker's `WasmTrafficState` returns struct-of-arrays render buffers, which the worker turns into upload-ready trail segments, marker matrices, and heading ticks before transferring them. Markers are one `InstancedMesh` of spheres (0.055 NM, cyan `#67f2ff` with emissive `#3fd3ff`); trails are one `LineSegments` batch (`#15d0ff`, opacity 0.5); callsigns are GPU-drawn labels 0.3 NM above each marker, with options to hide them for ground traffic. Aircraft on the ground or without an altitude are placed at the field elevation of the nearest airport within 80 NM of the scene, and satellite modes apply the earth-curvature drop so distant traffic follows the curved surface."
           },
           {
             kind: 'files',

@@ -205,6 +205,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
 }: SatelliteSurfaceProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
   const gl = useThree((s) => s.gl);
+  const invalidate = useThree((s) => s.invalidate);
   const maxTextureDim = useMemo(() => {
     const ctx = gl.getContext();
     const maxTextureSize = Number(ctx.getParameter(ctx.MAX_TEXTURE_SIZE));
@@ -225,7 +226,7 @@ export const SatelliteSurface = memo(function SatelliteSurface({
   const [plateHomography, setPlateHomography] = useState<THREE.Matrix3 | null>(null);
   const [plateLoading, setPlateLoading] = useState(false);
   const [plateError, setPlateError] = useState('');
-  const [chartTexture, setChartTexture] = useState<THREE.CanvasTexture | null>(null);
+  const [chartTexture, setChartTexture] = useState<THREE.Texture | null>(null);
   const [chartHomography, setChartHomography] = useState<THREE.Matrix3 | null>(null);
   const safeLat = Number.isFinite(refLat) ? refLat : 0;
   const safeLon = Number.isFinite(refLon) ? refLon : 0;
@@ -433,7 +434,9 @@ export const SatelliteSurface = memo(function SatelliteSurface({
         state.uniforms.uChartHomography.value.identity();
       }
     }
+    invalidate();
   }, [
+    invalidate,
     overlayEnabled,
     plateTexture,
     plateHomography,

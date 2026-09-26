@@ -8,7 +8,10 @@ This document defines client <-> worker communication for:
 - Approach-path compute (`app/scene/approach-path/approach.worker.ts`)
 - MRMS poll/decode/prepare (`app/scene/nexrad/nexrad.worker.ts`)
 - Traffic merge/render (`app/scene/traffic/traffic.worker.ts`)
-- Chart tile streaming (`app/scene/chart/chart-tiles.worker.ts`)
+- Chart tile streaming and 3D-map compositing (`app/scene/chart/chart-tiles.worker.ts`)
+- Terrain, elevation sampling, and airspace geometry (`app/scene/geometry/scene-geometry.worker.ts`)
+- Scene label atlases (`app/scene/labels/label-atlas.worker.ts`)
+- HDR environment decode (`app/scene/environment/hdr.worker.ts`)
 
 ## Comlink Worker Client
 
@@ -30,14 +33,18 @@ All workers use `Comlink.transfer()` to zero-copy transfer typed arrays (`ArrayB
 
 ## Transport Matrix
 
-| Pipeline                                                                  | Transport                | Transferables                                                        | Failure Policy                                     |
-| ------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------- |
-| Filter                                                                    | Comlink proxy            | No                                                                   | Dispose + recreate worker on failure               |
-| Approach altitude/path/hold                                               | Comlink proxy + transfer | Path `pointsFlat.buffer`; structured hold points and protected rings | Dispose + recreate worker on failure               |
-| MRMS `pollAndPrepare`                                                     | Comlink proxy + transfer | Volume payload, prepared volume, cross-section, echo-top SoA buffers | Dispose + recreate worker on failure               |
-| MRMS `rePrepare`                                                          | Comlink proxy + transfer | Prepared volume, cross-section buffers                               | Dispose + recreate worker on failure               |
-| Traffic (`reset`/`ingestBinary`/`ingestRuntime`/`recompute`/`pruneError`) | Comlink proxy + transfer | Render buffers (markers, trails, strings)                            | Transient errors surface without permanent disable |
-| Chart tiles `streamTiles`                                                 | Comlink proxy + callback | `ImageBitmap` per tile via `Comlink.transfer()` in callback          | Worker terminated on cleanup/cancel                |
+| Pipeline                                                                  | Transport                | Transferables                                                                    | Failure Policy                                     |
+| ------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Filter                                                                    | Comlink proxy            | No                                                                               | Dispose + recreate worker on failure               |
+| Approach altitude/path/hold                                               | Comlink proxy + transfer | Path tube (positions/normals/uvs/index), dashed polyline; structured hold points | Dispose + recreate worker on failure               |
+| MRMS `pollAndPrepare`                                                     | Comlink proxy + transfer | Volume payload, prepared volume, cross-section, echo-top SoA buffers             | Dispose + recreate worker on failure               |
+| MRMS `rePrepare`                                                          | Comlink proxy + transfer | Prepared volume, cross-section buffers                                           | Dispose + recreate worker on failure               |
+| Traffic (`reset`/`ingestBinary`/`ingestRuntime`/`recompute`/`pruneError`) | Comlink proxy + transfer | Marker positions, flags, trail segments, marker matrices, heading segments       | Transient errors surface without permanent disable |
+| Chart tiles `streamTiles`                                                 | Comlink proxy + callback | Raw RGBA tile batches (`ChartTileBatch`) via `Comlink.transfer()` in callback    | Worker terminated on cleanup/cancel                |
+| Chart tiles `composeChartTexture`                                         | Comlink proxy + transfer | One composited `ImageBitmap`                                                     | Worker terminated on cleanup/cancel                |
+| Scene geometry (terrain, elevation, airspace)                             | Comlink proxy + transfer | Mesh/index buffers, heightfield + page max, drape mesh, airspace buffers         | Dispose + recreate worker on failure               |
+| Label atlas `rasterize`                                                   | Comlink proxy + transfer | Premultiplied RGBA atlas + entry table                                           | Dispose + recreate worker on failure               |
+| HDR environment `decode`                                                  | Comlink proxy + transfer | Half-float texels                                                                | One-shot worker; failure retried on remount        |
 
 ## Traffic Runtime Wire Format
 
@@ -62,7 +69,7 @@ All workers use `Comlink.transfer()` to zero-copy transfer typed arrays (`ArrayB
 - `recompute(options)` — recompute render buffers from current state
 - `pruneError(options)` — mark errored aircraft for pruning
 
-All methods return `TrafficWorkerResult` with render buffers transferred via `Comlink.transfer()`. Client wraps result into `TrafficProcessResult` with typed array views.
+All methods return `TrafficWorkerResult` with render buffers transferred via `Comlink.transfer()`. The worker expands the WASM render SoA into upload-ready draw buffers (`buildTrafficDrawBuffers` in `app/scene/traffic/traffic-draw-buffers.ts`): trail line segments, one translation matrix per current aircraft in `InstancedMesh` layout, heading-tick segments, and the active track indices callsign labels read. Client wraps result into `TrafficProcessResult` with typed array views.
 
 ## MRMS Worker Protocol
 
@@ -90,7 +97,7 @@ Singleton management: module-level `sharedClient` with `activePollPromise` guard
 ### Operations
 
 - `resolveAltitudes(params)` — invokes the shared Rust WASM engine for altitude resolution, then `compose_approach_scene` for FAF-append / MAP-extension / hold listing
-- `buildPathGeometry(params)` — invokes the shared Rust WASM engine for path geometry and transfers `pointsFlat.buffer`
+- `buildPathGeometry(params)` — invokes the shared Rust WASM engine for path geometry, splits the path at `dashedBelowY` (the minimums), sweeps the solid part into a `TubeGeometry`, and transfers the indexed tube buffers plus the dashed below-minimums polyline
 
 - `buildHoldGeometry(params)` — resolves hold length, racetrack points, and optional protected rings in the worker and returns render-ready tuples. `HoldPattern.tsx` only renders that result; it does not initialize WASM on the main thread.
 
@@ -116,11 +123,37 @@ Failure policy: client disposes the current worker and recreates on next attempt
 - Worker: `app/scene/chart/chart-tiles.worker.ts`
 - Consumer: `app/scene/ChartMapSurface.tsx`
 
-### Operation
+### Operations
 
-- `streamTiles(params, onTile)` — fetches tiles with a concurrency pool, transfers each `ImageBitmap` through a Comlink callback, and waits for delivery before releasing the callback and returning `ChartStreamSummary`. The callback uses Comlink's remote type; checking `releaseProxy` with `in` is invalid because Comlink supplies it through a proxy getter.
+- `streamTiles(params, onBatch)` — fetches tiles with a concurrency pool, decodes each to raw 256x256 straight-alpha RGBA on an `OffscreenCanvas`, and delivers `ChartTileBatch` (tile coordinates plus the tiles' pixels back to back) through a Comlink callback in batches of 8, or after 40 ms for a partial batch. Batches are delivered in order and awaited before the callback is released and `ChartStreamSummary` returned. The callback uses Comlink's remote type; checking `releaseProxy` with `in` is invalid because Comlink supplies it through a proxy getter.
+- `composeChartTexture({ base, overlay })` — fetches the base range and optional TAC overlay and composites them on one `OffscreenCanvas`, drawn south-up so the returned `ImageBitmap` uploads with `flipY = false`.
 
 Consumer creates per-use workers (not singleton). Two-pass preview+detail streaming for flat map mode. Workers are terminated on effect cleanup.
+
+## Scene Geometry Worker Protocol
+
+### Files
+
+- Client: `app/scene/geometry/scene-geometry-client.ts`
+- Worker: `app/scene/geometry/scene-geometry.worker.ts`
+- Builders: `app/scene/terrain/terrain-mesh.ts`, `app/scene/terrain/terrarium.ts`, `app/scene/nexrad/nexrad-ground.ts`, `app/scene/nexrad/nexrad-drape.ts`, `app/scene/airspace/airspace-geometry.ts`
+
+### Operations
+
+- `buildTerrainMesh({ refLat, refLon, radiusNm })` — z10 Terrarium raster to positions, normals, triangle index, and a wireframe edge index over the same vertices; `null` when every tile failed.
+- `loadElevation(raster)` — loads (or reuses) an elevation raster and reports `ready` / `unavailable`. The raster stays in the worker (LRU of 4; failed or empty loads are not cached); `useElevationRaster` holds the request as a handle.
+- `buildGroundHeightfield(raster, grid, applyEarthCurvature, refLat)` — the volume's ground heightfield and per-page maximum.
+- `buildMosaicDrape(raster, params)` — the surface mosaic's terrain-draped mesh.
+- `buildAirspace(features, refLat, refLon, airportElevationFeet)` — extruded sector triangles and edge segments per feature, `null` for sectors without volume.
+
+## Label Atlas Worker Protocol
+
+- Client: `app/scene/labels/label-atlas-client.ts`; worker: `app/scene/labels/label-atlas.worker.ts`; layout math: `app/scene/labels/label-atlas.ts`.
+- `rasterize(entries, pixelRatio)` — measures and draws every `(text, style)` entry (font, text-shadow glow, optional chip box) into one shelf-packed `OffscreenCanvas`, premultiplies it, and returns the pixels with a per-entry table of UVs and CSS size. `SceneLabels` requests a new atlas only when a label's text or style is missing from the current one.
+
+## HDR Environment Worker Protocol
+
+- `app/scene/environment/hdr.worker.ts` `decode(url)` fetches drei's `night` preset HDR and parses it with the same `RGBELoader`, returning half-float texels. `SceneEnvironment` suspends on it exactly as `<Environment preset="night">` did.
 
 ## Runtime and Debug Telemetry
 

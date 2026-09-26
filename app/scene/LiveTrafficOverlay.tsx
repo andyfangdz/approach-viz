@@ -1,22 +1,26 @@
-import { Html } from '@react-three/drei';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { useThree } from '@react-three/fiber';
 import type { TrafficDebugState, TrafficTimingDebugState } from '@/app/app-client/types';
 import { isPresentFiniteNumber } from '@/lib/parse-like';
 import {
   EMPTY_TRAFFIC_RENDER_BUFFERS,
   TrafficWorkerClient,
-  TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
   TRAFFIC_FLAG_IS_ON_GROUND,
   type TrafficProcessResult,
   type TrafficRenderBuffers
 } from './traffic/traffic-worker-client';
 import { WorkerClientError } from './shared/worker-errors';
+import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
+import { CALLSIGN_LABEL_STYLE } from './labels/label-styles';
 import type { SceneAirport } from './traffic/traffic-worker-client';
 export type { SceneAirport } from './traffic/traffic-worker-client';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
+/** Callsign height above its marker, in scene units. */
+const CALLSIGN_LABEL_LIFT_NM = 0.3;
+const CALLSIGN_LABEL_SIZING = { mode: 'world', distanceFactor: 14 } as const;
 const MAX_HISTORY_MINUTES = 30;
 const MAX_HISTORY_BACKFILL_HEXES = 80;
 const MIN_FULL_BACKFILL_INTERVAL_MS = 60_000;
@@ -70,16 +74,6 @@ interface LiveTrafficOverlayProps {
   onDebugChange?: (debug: TrafficDebugState) => void;
 }
 
-interface ActiveTrackRenderEntry {
-  trackIndex: number;
-  markerX: number;
-  markerY: number;
-  markerZ: number;
-  headingDeg: number;
-  isOnGround: boolean;
-  callsignLabel: string | null;
-}
-
 function normalizeHistoryMinutes(historyMinutes: number): number {
   if (!Number.isFinite(historyMinutes)) return 3;
   return Math.min(MAX_HISTORY_MINUTES, Math.max(1, historyMinutes));
@@ -103,8 +97,8 @@ export function LiveTrafficOverlay({
   onDebugChange
 }: LiveTrafficOverlayProps) {
   const normalizedHistoryMinutes = normalizeHistoryMinutes(historyMinutes);
+  const invalidate = useThree((state) => state.invalidate);
   const markerMeshRef = useRef<THREE.InstancedMesh | null>(null);
-  const markerDummy = useMemo(() => new THREE.Object3D(), []);
   const markerGeometry = useMemo(() => new THREE.SphereGeometry(0.055, 10, 10), []);
   const markerMaterial = useMemo(
     () =>
@@ -623,83 +617,41 @@ export function LiveTrafficOverlay({
   }, []);
 
   const trailLinesGeometry = useMemo(() => {
-    const renderedTrackCount = renderBuffers.renderedTrackCount;
-    if (renderedTrackCount === 0) return null;
-    const trailCounts = renderBuffers.trailCounts;
-    const trailOffsets = renderBuffers.trailOffsets;
-    const points = renderBuffers.points;
-    let segmentCount = 0;
-    for (let trackIndex = 0; trackIndex < renderedTrackCount; trackIndex += 1) {
-      const pointCount = trailCounts[trackIndex];
-      if (pointCount > 1) segmentCount += pointCount - 1;
-    }
-    if (segmentCount === 0) return null;
-    const positions = new Float32Array(segmentCount * 6);
-    let offset = 0;
-    for (let trackIndex = 0; trackIndex < renderedTrackCount; trackIndex += 1) {
-      const trailOffset = trailOffsets[trackIndex];
-      const pointCount = trailCounts[trackIndex];
-      for (let pointIndex = 1; pointIndex < pointCount; pointIndex += 1) {
-        const sourceA = (trailOffset + pointIndex - 1) * 3;
-        const sourceB = (trailOffset + pointIndex) * 3;
-        positions[offset++] = points[sourceA];
-        positions[offset++] = points[sourceA + 1];
-        positions[offset++] = points[sourceA + 2];
-        positions[offset++] = points[sourceB];
-        positions[offset++] = points[sourceB + 1];
-        positions[offset++] = points[sourceB + 2];
-      }
-    }
+    if (renderBuffers.trailSegments.length === 0) return null;
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('position', new THREE.BufferAttribute(renderBuffers.trailSegments, 3));
     return geometry;
-  }, [renderBuffers]);
-
-  const activeRenderTracks = useMemo<ActiveTrackRenderEntry[]>(() => {
-    const renderedTrackCount = renderBuffers.renderedTrackCount;
-    if (renderedTrackCount === 0) return [];
-    const markerPositions = renderBuffers.markerPositions;
-    const headingDeg = renderBuffers.headingDeg;
-    const flags = renderBuffers.flags;
-    const callsignLabels = renderBuffers.callsignLabels;
-    const activeTracks: ActiveTrackRenderEntry[] = [];
-    for (let trackIndex = 0; trackIndex < renderedTrackCount; trackIndex += 1) {
-      const trackFlags = flags[trackIndex];
-      if ((trackFlags & TRAFFIC_FLAG_IS_CURRENTLY_PRESENT) === 0) continue;
-      const markerOffset = trackIndex * 3;
-      activeTracks.push({
-        trackIndex,
-        markerX: markerPositions[markerOffset],
-        markerY: markerPositions[markerOffset + 1],
-        markerZ: markerPositions[markerOffset + 2],
-        headingDeg: headingDeg[trackIndex],
-        isOnGround: (trackFlags & TRAFFIC_FLAG_IS_ON_GROUND) !== 0,
-        callsignLabel: callsignLabels[trackIndex] ?? null
-      });
-    }
-    return activeTracks;
   }, [renderBuffers]);
 
   const headingLinesGeometry = useMemo(() => {
-    if (activeRenderTracks.length === 0) return null;
-    const positions = new Float32Array(activeRenderTracks.length * 6);
-    let offset = 0;
-    for (const track of activeRenderTracks) {
-      const headingRad = (track.headingDeg * Math.PI) / 180;
-      const headingTipX = track.markerX + Math.sin(headingRad) * 0.2;
-      const headingTipY = track.markerY;
-      const headingTipZ = track.markerZ - Math.cos(headingRad) * 0.2;
-      positions[offset++] = track.markerX;
-      positions[offset++] = track.markerY;
-      positions[offset++] = track.markerZ;
-      positions[offset++] = headingTipX;
-      positions[offset++] = headingTipY;
-      positions[offset++] = headingTipZ;
-    }
+    if (renderBuffers.headingSegments.length === 0) return null;
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('position', new THREE.BufferAttribute(renderBuffers.headingSegments, 3));
     return geometry;
-  }, [activeRenderTracks]);
+  }, [renderBuffers]);
+
+  const callsignLabels = useMemo<SceneLabel[]>(() => {
+    if (!showCallsignLabels) return [];
+    const { activeTrackIndices, markerPositions, flags } = renderBuffers;
+    const labels: SceneLabel[] = [];
+    for (const trackIndex of activeTrackIndices) {
+      if (hideGroundCallsignLabels && (flags[trackIndex] & TRAFFIC_FLAG_IS_ON_GROUND) !== 0) {
+        continue;
+      }
+      const text = renderBuffers.callsignLabels[trackIndex];
+      if (!text) continue;
+      labels.push({
+        text,
+        position: [
+          markerPositions[trackIndex * 3],
+          markerPositions[trackIndex * 3 + 1] + CALLSIGN_LABEL_LIFT_NM,
+          markerPositions[trackIndex * 3 + 2]
+        ],
+        style: CALLSIGN_LABEL_STYLE
+      });
+    }
+    return labels;
+  }, [renderBuffers, showCallsignLabels, hideGroundCallsignLabels]);
 
   useEffect(
     () => () => {
@@ -790,17 +742,15 @@ export function LiveTrafficOverlay({
     const markerMesh = markerMeshRef.current;
     if (!markerMesh) return;
     const uploadStartedAt = performance.now();
-    const nextCount = Math.min(limit, activeRenderTracks.length);
-    for (let index = 0; index < nextCount; index += 1) {
-      const track = activeRenderTracks[index];
-      markerDummy.position.set(track.markerX, track.markerY, track.markerZ);
-      markerDummy.updateMatrix();
-      markerMesh.setMatrixAt(index, markerDummy.matrix);
-    }
+    const nextCount = Math.min(limit, renderBuffers.activeTrackIndices.length);
+    markerMesh.instanceMatrix.array.set(renderBuffers.markerMatrices.subarray(0, nextCount * 16));
+    markerMesh.instanceMatrix.clearUpdateRanges();
+    markerMesh.instanceMatrix.addUpdateRange(0, nextCount * 16);
     markerMesh.count = nextCount;
     markerMesh.instanceMatrix.needsUpdate = true;
+    invalidate();
     patchTimings({ markerUploadMs: roundMs(performance.now() - uploadStartedAt) });
-  }, [activeRenderTracks, markerDummy, limit, patchTimings]);
+  }, [renderBuffers, limit, patchTimings, invalidate]);
 
   return (
     <group>
@@ -820,28 +770,7 @@ export function LiveTrafficOverlay({
           renderOrder={83}
         />
       )}
-      {showCallsignLabels &&
-        activeRenderTracks.map((track) => {
-          if (hideGroundCallsignLabels && track.isOnGround) return null;
-          if (!track.callsignLabel) return null;
-          return (
-            <group
-              key={`label-${track.trackIndex}`}
-              position={[track.markerX, track.markerY, track.markerZ]}
-            >
-              <Html
-                position={[0, 0.3, 0]}
-                center
-                distanceFactor={14}
-                transform
-                sprite
-                zIndexRange={[9, 0]}
-              >
-                <span className="traffic-callsign-label">{track.callsignLabel}</span>
-              </Html>
-            </group>
-          );
-        })}
+      <SceneLabels labels={callsignLabels} sizing={CALLSIGN_LABEL_SIZING} />
       <instancedMesh
         ref={markerMeshRef}
         args={[markerGeometry, markerMaterial, Math.max(1, limit)]}
