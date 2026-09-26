@@ -180,7 +180,7 @@ impl R2Publisher {
         let packed_ms = started.elapsed().as_millis();
         let header_length = approach_viz_core::mrms_pack::read_header_len(&pack)?;
         let byte_length = pack.len() as u64;
-        let key = format!("{}{}.avsp", self.scans_prefix(), scan.timestamp);
+        let key = pack_key(&self.scans_prefix(), &scan);
 
         self.client
             .put_object()
@@ -338,4 +338,64 @@ fn is_write_conflict<E: ProvideErrorMetadata>(
         error.code(),
         Some("PreconditionFailed" | "ConditionalRequestConflict")
     )
+}
+
+/// `<scans prefix><scan timestamp>-<generated_at_ms>.avsp`. Two ingesters can
+/// build different packs for one scan (each stamps its own generation time),
+/// so the key carries that time: a pack is never overwritten by different
+/// bytes after a manifest has described it. Keys still sort by scan time for
+/// pruning.
+fn pack_key(scans_prefix: &str, scan: &ScanSnapshot) -> String {
+    format!(
+        "{scans_prefix}{}-{}.avsp",
+        scan.timestamp, scan.generated_at_ms
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pack_keys_distinguish_packs_of_the_same_scan() {
+        let snapshot = |generated_at_ms| ScanSnapshot {
+            timestamp: "20260925-235038".to_string(),
+            generated_at_ms,
+            scan_time_ms: 0,
+            grid: crate::types::GridDef {
+                nx: 1,
+                ny: 1,
+                la1_deg: 0.0,
+                lo1_deg360: 0.0,
+                di_deg: 0.01,
+                dj_deg: 0.01,
+                scanning_mode: 0,
+                lat_step_deg: 0.01,
+                lon_step_deg: 0.01,
+            },
+            tile_size: 64,
+            tile_cols: 1,
+            tile_rows: 1,
+            level_bounds: Vec::new(),
+            tile_offsets: vec![0, 0],
+            voxels: Vec::new(),
+            echo_tops: Vec::new(),
+            echo_top_debug: Default::default(),
+            phase_debug: Default::default(),
+        };
+        let first = pack_key("mrms/scans/", &snapshot(1_790_380_000_000));
+        let second = pack_key("mrms/scans/", &snapshot(1_790_380_000_001));
+        assert_eq!(first, "mrms/scans/20260925-235038-1790380000000.avsp");
+        assert_ne!(first, second);
+        // Scan time leads, so lexical order is scan order for pruning.
+        assert!(
+            pack_key(
+                "mrms/scans/",
+                &ScanSnapshot {
+                    timestamp: "20260925-235238".to_string(),
+                    ..snapshot(0)
+                }
+            ) > second
+        );
+    }
 }

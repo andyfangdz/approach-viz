@@ -33,7 +33,7 @@ Checked against a production scan (`20260925-034642`, 21.4M voxels):
 
 ### Scan pack (`AVSP` v1)
 
-`crates/approach-viz-core/src/mrms_pack.rs` owns the format. It is one object per scan, `<prefix>/scans/<timestamp>.avsp`:
+`crates/approach-viz-core/src/mrms_pack.rs` owns the format. It is one object per scan, `<prefix>/scans/<timestamp>-<generated_at_ms>.avsp` (the generation time keeps two ingesters' packs for one scan from sharing a key):
 
 - **Header:** scan metadata, grid, tile layout, level bounds, the echo-top summary, and the response headers of both endpoints. It ends with two directories: `(record_count, byte_len)` per row-major tile and per tile-row echo-top band.
 - **Data:** each tile's voxels as columnar records, then each tile row's echo tops. Every chunk is an independent raw-deflate stream.
