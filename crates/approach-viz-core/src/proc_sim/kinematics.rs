@@ -58,7 +58,13 @@ pub fn turn_toward_heading(current: f64, target: f64, max_rate_dps: f64, dt_s: f
 }
 
 /// Advance a lat/lon along a rhumb line at `track_deg` and `gs_kts`.
-pub fn step_position(lat_deg: f64, lon_deg: f64, track_deg: f64, gs_kts: f64, dt_s: f64) -> (f64, f64) {
+pub fn step_position(
+    lat_deg: f64,
+    lon_deg: f64,
+    track_deg: f64,
+    gs_kts: f64,
+    dt_s: f64,
+) -> (f64, f64) {
     let dist_nm = gs_kts * dt_s / 3600.0;
     let track = track_deg * DEG_TO_RAD;
     let lat1 = lat_deg * DEG_TO_RAD;

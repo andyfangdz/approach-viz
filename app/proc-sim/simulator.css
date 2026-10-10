@@ -1,0 +1,91 @@
+.simulator {
+  position: absolute;
+  top: calc(52px + var(--controls-overlay-offset, 0px));
+  left: 12px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - 64px - var(--controls-overlay-offset, 0px));
+  width: min(390px, calc(100vw - 24px));
+  color: #edf2ff;
+  background: #111a2b;
+  border: 1px solid #47556d;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.simulator button,
+.simulator input,
+.simulator select {
+  font: inherit;
+  color: inherit;
+  background: #202d44;
+  border: 1px solid #59677f;
+  border-radius: 4px;
+  padding: 6px;
+}
+.simulator button {
+  cursor: pointer;
+}
+.simulator button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sim-toggle {
+  flex-shrink: 0;
+  width: 100%;
+  text-align: left;
+}
+.sim-body {
+  padding: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sim-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.sim-body input,
+.sim-body select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.sim-grid,
+.sim-instruments {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.sim-instruments {
+  background: #080d17;
+  color: #ffcf40;
+  padding: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.sim-playback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.sim-playback label {
+  margin: 0;
+}
+.sim-note {
+  color: #b4c0d5;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.sim-error {
+  color: #ffadb0;
+}
+.sim-cdi {
+  width: 100%;
+}
+.sim-body article {
+  border-left: 3px solid #ffcf40;
+  padding-left: 8px;
+  margin: 12px 0;
+}

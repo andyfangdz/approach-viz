@@ -653,6 +653,94 @@ pub fn approach_path_build_hold_points(
 }
 
 // ---------------------------------------------------------------------------
+// Procedure simulator (client-side flight model + grading)
+// ---------------------------------------------------------------------------
+
+/// Client-side instrument procedure simulator.
+///
+/// The host creates one `ProcSim` per session, drives it with `step()` at a
+/// fixed timestep, and reads `snapshot()` for rendering. All flight logic
+/// runs in Rust/WASM; no network involved.
+#[wasm_bindgen]
+pub struct ProcSim {
+    inner: crate::proc_sim::ProcSimSession,
+}
+
+#[wasm_bindgen]
+impl ProcSim {
+    /// Create a session from a JSON `SimConfig` (camelCase, per core types).
+    #[wasm_bindgen(constructor)]
+    pub fn new(config: JsValue) -> Result<ProcSim, JsValue> {
+        let config: crate::proc_sim::SimConfig = serde_wasm_bindgen::from_value(config)
+            .map_err(|e| js_err("proc_sim: bad config", e))?;
+        let inner = crate::proc_sim::ProcSimSession::new(config)
+            .map_err(|e| js_err("proc_sim: invalid config", e))?;
+        Ok(ProcSim { inner })
+    }
+
+    /// Start a trainer using real FAA approach-path legs and user-selected altitude/speed.
+    pub fn from_procedure(
+        input: JsValue,
+        altitude_ft: f64,
+        speed_kts: f64,
+    ) -> Result<ProcSim, JsValue> {
+        let input = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| js_err("proc_sim: procedure input", e))?;
+        let config = crate::proc_sim::cifp::procedure_config(input, altitude_ft, speed_kts)
+            .map_err(|e| js_err("proc_sim: procedure", e))?;
+        let inner = crate::proc_sim::ProcSimSession::new(config)
+            .map_err(|e| js_err("proc_sim: invalid config", e))?;
+        Ok(ProcSim { inner })
+    }
+
+    /// Advance one fixed timestep. Returns the step's events as a JS array
+    /// (waypoint sequencing, new mistakes, procedure completion).
+    pub fn step(&mut self) -> Result<JsValue, JsValue> {
+        let events = self.inner.step();
+        serde_wasm_bindgen::to_value(&events).map_err(|e| js_err("proc_sim: step encode", e))
+    }
+
+    /// Advance by `delta_s` wall seconds, quantized to the fixed timestep.
+    /// Returns the accumulated events as a JS array.
+    pub fn advance(&mut self, delta_s: f64) -> Result<JsValue, JsValue> {
+        let events = self.inner.advance(delta_s);
+        serde_wasm_bindgen::to_value(&events).map_err(|e| js_err("proc_sim: advance encode", e))
+    }
+
+    /// Update autopilot modes and bugs from a JSON `AutopilotSettings`.
+    pub fn set_autopilot(&mut self, settings: JsValue) -> Result<(), JsValue> {
+        let settings: crate::proc_sim::AutopilotSettings = serde_wasm_bindgen::from_value(settings)
+            .map_err(|e| js_err("proc_sim: bad autopilot", e))?;
+        self.inner
+            .set_autopilot(settings)
+            .map_err(|e| js_err("proc_sim: autopilot", e))
+    }
+
+    /// Update the wind from a JSON `WindState`.
+    pub fn set_wind(&mut self, wind: JsValue) -> Result<(), JsValue> {
+        let wind: crate::proc_sim::WindState =
+            serde_wasm_bindgen::from_value(wind).map_err(|e| js_err("proc_sim: bad wind", e))?;
+        self.inner
+            .set_wind(wind)
+            .map_err(|e| js_err("proc_sim: wind", e))
+    }
+
+    /// ATC clearance update: altitude the grader holds the pilot to (feet
+    /// MSL), or null to clear.
+    pub fn set_assigned_altitude(&mut self, alt_ft: Option<f64>) -> Result<(), JsValue> {
+        self.inner
+            .set_assigned_altitude(alt_ft)
+            .map_err(|e| js_err("proc_sim: altitude", e))
+    }
+
+    /// Full UI snapshot as a JSON `SimSnapshot`.
+    pub fn snapshot(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.inner.snapshot())
+            .map_err(|e| js_err("proc_sim: snapshot encode", e))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -686,4 +774,38 @@ fn option_u16_to_js(val: u16) -> JsValue {
     } else {
         JsValue::from(val as f32)
     }
+}
+
+/// Convert the existing approach-path FAA contract into simulator legs.
+#[wasm_bindgen]
+pub fn proc_sim_prepare_procedure(input: JsValue) -> Result<JsValue, JsValue> {
+    let input = serde_wasm_bindgen::from_value(input)
+        .map_err(|e| js_err("proc_sim: procedure input", e))?;
+    let prepared = crate::proc_sim::cifp::prepare_procedure(input)
+        .map_err(|e| js_err("proc_sim: procedure", e))?;
+    serde_wasm_bindgen::to_value(&prepared).map_err(|e| js_err("proc_sim: procedure encode", e))
+}
+
+/// Same absolute-MSL scene placement and curvature policy as live traffic.
+#[wasm_bindgen]
+pub fn proc_sim_scene_position(
+    lat: f64,
+    lon: f64,
+    altitude_ft: f64,
+    ref_lat: f64,
+    ref_lon: f64,
+    vertical_scale: f64,
+    curvature: bool,
+) -> Vec<f64> {
+    let (x, z) = crate::coords::lat_lon_to_local(lat, lon, ref_lat, ref_lon);
+    let drop = if curvature {
+        crate::coords::earth_curvature_drop_nm(x, z, ref_lat) * crate::coords::FEET_PER_NM
+    } else {
+        0.0
+    };
+    vec![
+        x,
+        crate::coords::alt_to_y(altitude_ft - drop, vertical_scale),
+        z,
+    ]
 }

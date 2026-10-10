@@ -633,3 +633,93 @@ fn collect_history_hexes_from_payload(
     }
 }
 
+
+#[derive(Debug, uniffi::Error)]
+pub enum ProcSimError {
+    InvalidInput { message: String },
+}
+impl std::fmt::Display for ProcSimError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInput { message } => write!(f, "{message}"),
+        }
+    }
+}
+impl std::error::Error for ProcSimError {}
+
+/// Native hosts drive the same deterministic fixed-step session as the WASM worker.
+#[derive(uniffi::Object)]
+pub struct ProcSimSessionHandle {
+    inner: Mutex<crate::proc_sim::ProcSimSession>,
+}
+
+#[uniffi::export]
+impl ProcSimSessionHandle {
+    #[uniffi::constructor]
+    pub fn new(config: crate::proc_sim::SimConfig) -> Result<Arc<Self>, ProcSimError> {
+        let session = crate::proc_sim::ProcSimSession::new(config)
+            .map_err(|message| ProcSimError::InvalidInput { message })?;
+        Ok(Arc::new(Self {
+            inner: Mutex::new(session),
+        }))
+    }
+    pub fn step(&self) -> Vec<crate::proc_sim::ProcSimEvent> {
+        self.inner.lock().expect("simulator mutex poisoned").step()
+    }
+    pub fn advance(&self, delta_s: f64) -> Vec<crate::proc_sim::ProcSimEvent> {
+        self.inner
+            .lock()
+            .expect("simulator mutex poisoned")
+            .advance(delta_s)
+    }
+    pub fn snapshot(&self) -> crate::proc_sim::SimSnapshot {
+        self.inner
+            .lock()
+            .expect("simulator mutex poisoned")
+            .snapshot()
+    }
+    pub fn set_autopilot(
+        &self,
+        settings: crate::proc_sim::AutopilotSettings,
+    ) -> Result<(), ProcSimError> {
+        self.inner
+            .lock()
+            .expect("simulator mutex poisoned")
+            .set_autopilot(settings)
+            .map_err(|message| ProcSimError::InvalidInput { message })
+    }
+    pub fn set_wind(&self, wind: crate::proc_sim::WindState) -> Result<(), ProcSimError> {
+        self.inner
+            .lock()
+            .expect("simulator mutex poisoned")
+            .set_wind(wind)
+            .map_err(|message| ProcSimError::InvalidInput { message })
+    }
+    pub fn set_assigned_altitude(&self, altitude_ft: Option<f64>) -> Result<(), ProcSimError> {
+        self.inner
+            .lock()
+            .expect("simulator mutex poisoned")
+            .set_assigned_altitude(altitude_ft)
+            .map_err(|message| ProcSimError::InvalidInput { message })
+    }
+}
+
+#[uniffi::export]
+pub fn proc_sim_config_from_procedure(
+    legs: Vec<approach_path::ApproachPathLeg>,
+    waypoints: Vec<approach_path::ApproachWaypoint>,
+    mag_var: f64,
+    altitude_ft: f64,
+    speed_kts: f64,
+) -> Result<crate::proc_sim::SimConfig, ProcSimError> {
+    crate::proc_sim::cifp::procedure_config(
+        crate::proc_sim::cifp::ProcedureInput {
+            legs,
+            waypoints,
+            mag_var,
+        },
+        altitude_ft,
+        speed_kts,
+    )
+    .map_err(|message| ProcSimError::InvalidInput { message })
+}

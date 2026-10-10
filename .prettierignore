@@ -13,3 +13,7 @@ fixtures/server-wasm
 public/approach_viz_core.js
 test-results
 public/service-worker.js
+
+target
+services/runtime-rs/target
+ios/ApproachViz/RustBridge/Generated

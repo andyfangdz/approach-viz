@@ -1,0 +1,85 @@
+{
+  "source": "FAA CIFP cycle 261001, KTEB R06-Y final segment",
+  "legs": [
+    {
+      "sequence": 10,
+      "waypointId": "KTEB_VINGS",
+      "waypointName": "VINGS",
+      "pathTerminator": "IF",
+      "altitude": 2000,
+      "altitudeConstraint": "at",
+      "isFinalApproachFix": false,
+      "isInitialFix": false,
+      "isFinalFix": false,
+      "isMissedApproach": false
+    },
+    {
+      "sequence": 11,
+      "waypointId": "KTEB_LEESY",
+      "waypointName": "LEESY",
+      "pathTerminator": "TF",
+      "altitude": 1700,
+      "altitudeConstraint": "at",
+      "isFinalApproachFix": false,
+      "isInitialFix": false,
+      "isFinalFix": false,
+      "isMissedApproach": false
+    },
+    {
+      "sequence": 12,
+      "waypointId": "KTEB_DANDY",
+      "waypointName": "DANDY",
+      "pathTerminator": "TF",
+      "altitude": 1300,
+      "altitudeConstraint": "at",
+      "isFinalApproachFix": false,
+      "isInitialFix": false,
+      "isFinalFix": false,
+      "isMissedApproach": false
+    },
+    {
+      "sequence": 20,
+      "waypointId": "KTEB_TORBY",
+      "waypointName": "TORBY",
+      "pathTerminator": "TF",
+      "altitude": 1300,
+      "altitudeConstraint": "at",
+      "isFinalApproachFix": true,
+      "isInitialFix": false,
+      "isFinalFix": false,
+      "isMissedApproach": false,
+      "verticalAngleDeg": 3
+    }
+  ],
+  "waypoints": [
+    {
+      "id": "KTEB_VINGS",
+      "name": "VINGS",
+      "lat": 40.71021944444445,
+      "lon": -74.27025277777777,
+      "type": "terminal"
+    },
+    {
+      "id": "KTEB_LEESY",
+      "name": "LEESY",
+      "lat": 40.745469444444446,
+      "lon": -74.21875833333334,
+      "type": "terminal"
+    },
+    {
+      "id": "KTEB_DANDY",
+      "name": "DANDY",
+      "lat": 40.780030555555555,
+      "lon": -74.16818888888889,
+      "type": "terminal"
+    },
+    {
+      "id": "KTEB_TORBY",
+      "name": "TORBY",
+      "lat": 40.803330555555554,
+      "lon": -74.13404722222222,
+      "type": "terminal"
+    }
+  ],
+  "magVar": -12
+}

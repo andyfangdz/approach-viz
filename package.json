@@ -17,7 +17,7 @@
     "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts app/scene/approach-path/geometry-rust.test.ts app/scene/terrain/terrarium.test.ts app/scene/scene-offload.test.ts",
     "test:layers": "node --import tsx --test app/app-client/__tests__/layers-url.test.ts app/scene/obstacle-shapes.test.ts lib/obstacles/plate-significance.test.ts app/app-client/__tests__/options-state.test.ts",
     "test:mrms": "node --import tsx --test app/scene/nexrad/nexrad.test.ts",
-    "test:workers": "node --import tsx --test app/scene/shared/comlinked-worker-client.test.ts",
+    "test:workers": "node --import tsx --test app/scene/shared/comlinked-worker-client.test.ts app/proc-sim/fixed-step-clock.test.ts app/proc-sim/simulator-wasm.test.ts",
     "test:integration:runtime": "node --import tsx --test services/runtime-rs/runtime.integration.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

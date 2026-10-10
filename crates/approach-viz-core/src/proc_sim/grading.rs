@@ -88,7 +88,11 @@ impl Grader {
                 "Off Assigned Altitude",
                 MistakeSeverity::Caution,
             ),
-            off_course: Latch::new("course_deviation", "Course Deviation", MistakeSeverity::Caution),
+            off_course: Latch::new(
+                "course_deviation",
+                "Course Deviation",
+                MistakeSeverity::Caution,
+            ),
             wrong_alt_bug: Latch::new(
                 "altitude_not_set_correctly",
                 "Altitude Not Set Correctly",
@@ -162,9 +166,7 @@ impl Grader {
 
         // 4. Below segment minimums: immediate, fires once per session.
         if let Some(min_alt) = input.leg_min_alt_ft {
-            if !self.below_minimums_fired
-                && input.alt_ft < min_alt - t.below_minimums_margin_ft
-            {
+            if !self.below_minimums_fired && input.alt_ft < min_alt - t.below_minimums_margin_ft {
                 self.below_minimums_fired = true;
                 out.push(Mistake {
                     kind: "below_minimums".into(),
@@ -224,7 +226,11 @@ mod tests {
         assert_eq!(m[0].kind, "below_minimums");
         assert_eq!(m[0].severity, MistakeSeverity::Warning);
         // Does not refire.
-        assert!(g.update(&input(1700.0, 2.0), 1.0).iter().all(|m| m.kind != "below_minimums"));
+        assert!(
+            g.update(&input(1700.0, 2.0), 1.0)
+                .iter()
+                .all(|m| m.kind != "below_minimums")
+        );
     }
 
     #[test]

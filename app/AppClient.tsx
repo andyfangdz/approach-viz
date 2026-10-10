@@ -23,6 +23,8 @@ import {
   MIN_TRAFFIC_HISTORY_MINUTES,
   MAX_TRAFFIC_HISTORY_MINUTES
 } from '@/app/app-client/constants';
+import { SimulatorPanel } from '@/app/proc-sim/SimulatorPanel';
+import type { SimUpdate } from '@/app/proc-sim/types';
 import { SceneCanvas } from '@/app/app-client/SceneCanvas';
 import { usePersistedOptions } from '@/app/app-client/hooks/use-persisted-options';
 import { useSceneSelection } from '@/app/app-client/hooks/use-scene-selection';
@@ -222,6 +224,7 @@ export function AppClient({
   const nexradShowEchoTops = options.layers.echotops;
   const nexradShowSurfaceMosaic = options.layers.mosaic;
 
+  const [simUpdate, setSimUpdate] = useState<SimUpdate | null>(null);
   const airport = sceneData.airport;
   const menuPortalTarget = globalThis.document === undefined ? undefined : document.body;
   const currentApproach = useMemo(() => sceneApproachToRuntimeApproach(sceneData), [sceneData]);
@@ -416,6 +419,22 @@ export function AppClient({
       />
 
       <main className="main-content" style={mainContentStyle}>
+        {airport && currentApproach && (
+          <SimulatorPanel
+            key={`${airport.id}:${currentApproach.procedureId}`}
+            approach={currentApproach}
+            waypoints={waypoints}
+            magVar={airport.magVar}
+            frame={{
+              refLat: airport.lat,
+              refLon: airport.lon,
+              verticalScale: options.verticalScale,
+              curvature: surface.surfaceMode === 'satellite' || surface.surfaceMode === '3dmap'
+            }}
+            onUpdate={setSimUpdate}
+          />
+        )}
+
         {(selection.loading || selection.isPending) && (
           <div className="loading">Loading approach data...</div>
         )}
@@ -424,6 +443,7 @@ export function AppClient({
           <div className="loading">No airport data available</div>
         ) : (
           <SceneCanvas
+            simUpdate={simUpdate}
             airport={airport}
             sceneData={sceneData}
             contextApproach={contextApproach}

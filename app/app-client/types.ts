@@ -147,6 +147,7 @@ export interface HeaderControlsProps {
 }
 
 export interface SceneCanvasProps {
+  simUpdate?: import('@/app/proc-sim/types').SimUpdate | null;
   airport: NonNullable<SceneData['airport']>;
   sceneData: SceneData;
   contextApproach: Approach | null;

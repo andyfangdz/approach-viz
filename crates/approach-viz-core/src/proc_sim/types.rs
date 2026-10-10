@@ -234,7 +234,7 @@ pub struct SimSnapshot {
     pub sim_time_s: f64,
     pub state: AircraftState,
     pub autopilot: AutopilotSettings,
-    pub active_leg_index: Option<usize>,
+    pub active_leg_index: Option<u64>,
     pub active_leg_fix: Option<String>,
     /// Cross-track error on the active leg, NM. Positive = right of course.
     pub xtk_nm: Option<f64>,

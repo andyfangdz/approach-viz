@@ -131,15 +131,14 @@ impl Autopilot {
             }
             VerticalMode::VerticalSpeed => {
                 cmd.vertical_active = true;
-                let mut target = self.settings.vs_bug_fpm.clamp(
-                    -self.perf.max_vs_fpm,
-                    self.perf.max_vs_fpm,
-                );
+                let mut target = self
+                    .settings
+                    .vs_bug_fpm
+                    .clamp(-self.perf.max_vs_fpm, self.perf.max_vs_fpm);
                 let err = self.settings.alt_bug_ft - alt_ft;
                 // Moving away from the bug (VS and error disagree in sign):
                 // hold the bug VS, no capture attempt.
-                let moving_away =
-                    (target > 0.0 && err < 0.0) || (target < 0.0 && err > 0.0);
+                let moving_away = (target > 0.0 && err < 0.0) || (target < 0.0 && err > 0.0);
                 if !moving_away {
                     if err.abs() < 5.0 {
                         // At the bug: level off.
@@ -157,10 +156,8 @@ impl Autopilot {
                 if let Some(dots) = nav.gs_dots {
                     cmd.vertical_active = true;
                     // 1 dot ~ 700 fpm correction at approach speeds; clamp.
-                    cmd.target_vs_fpm = (dots * 700.0).clamp(
-                        -self.perf.max_vs_fpm,
-                        self.perf.max_vs_fpm,
-                    );
+                    cmd.target_vs_fpm =
+                        (dots * 700.0).clamp(-self.perf.max_vs_fpm, self.perf.max_vs_fpm);
                 }
             }
         }
@@ -207,7 +204,11 @@ mod tests {
         let mut ap = Autopilot::new(settings(), AircraftPerformance::default());
         // 2 deg from the bug: bank should be small.
         let cmd = ap.update(88.0, 110.0, 115.0, 3000.0, 0.0, &no_nav(), 0.1);
-        assert!(cmd.target_bank_deg.abs() < 5.0, "bank={}", cmd.target_bank_deg);
+        assert!(
+            cmd.target_bank_deg.abs() < 5.0,
+            "bank={}",
+            cmd.target_bank_deg
+        );
     }
 
     #[test]

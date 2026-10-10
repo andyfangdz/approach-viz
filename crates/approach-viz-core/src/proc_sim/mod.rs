@@ -20,6 +20,7 @@
 // - [`session`] — the orchestrator: [`ProcSimSession`].
 
 pub mod autopilot;
+pub mod cifp;
 pub mod grading;
 pub mod kinematics;
 pub mod procedure;
@@ -28,7 +29,6 @@ pub mod types;
 
 pub use session::ProcSimSession;
 pub use types::{
-    AircraftPerformance, AircraftState, AutopilotSettings, GradingThresholds, LateralMode,
-    Mistake, MistakeSeverity, ProcedureLeg, ProcSimEvent, SimConfig, SimSnapshot, VerticalMode,
-    WindState,
+    AircraftPerformance, AircraftState, AutopilotSettings, GradingThresholds, LateralMode, Mistake,
+    MistakeSeverity, ProcSimEvent, ProcedureLeg, SimConfig, SimSnapshot, VerticalMode, WindState,
 };
