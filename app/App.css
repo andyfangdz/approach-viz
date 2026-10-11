@@ -1195,3 +1195,15 @@ a:focus-visible,
     width: calc(100vw - 20px);
   }
 }
+
+.training-link {
+  position: absolute;
+  top: calc(12px + var(--controls-overlay-offset, 0px));
+  left: 12px;
+  z-index: 12;
+  padding: 10px 16px;
+  background: var(--bg-secondary);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}

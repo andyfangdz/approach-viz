@@ -1,3 +1,4 @@
+import { ScenarioEngine, vectorLesson } from './scenario';
 import { FixedStepClock } from './fixed-step-clock';
 import * as Comlink from 'comlink';
 import { ensureWasm } from '@/app/scene/shared/wasm-loader';
@@ -17,6 +18,8 @@ import type {
 const DT = 0.1;
 export class SimWorkerApi {
   private sim: ProcSim | null = null;
+  private scenario: ScenarioEngine | null = null;
+  private scenarioSteps = 0;
   private previousRead: SimSnapshot | null = null;
   private airspeedTrendKts: number | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -44,6 +47,12 @@ export class SimWorkerApi {
     );
     this.sim?.free();
     this.sim = next;
+    // SAFETY: the shared WASM snapshot follows SimSnapshot.
+    const initial = next.snapshot() as SimSnapshot;
+    this.scenarioSteps = 0;
+    this.scenario = new ScenarioEngine(vectorLesson(initial));
+    this.scenario.advance(initial);
+    next.set_assigned_altitude(this.scenario.assignedAltitudeFt);
     this.previousRead = null;
     this.airspeedTrendKts = null;
     this.failure = null;
@@ -68,6 +77,14 @@ export class SimWorkerApi {
     for (let index = 0; index < steps; index++) {
       // SAFETY: ProcSim.step serializes the Rust ProcSimEvent contract.
       const events = this.sim.step() as ProcSimEvent[];
+      this.scenarioSteps++;
+      if (this.scenarioSteps === 10 || events.includes('procedureComplete')) {
+        this.scenarioSteps = 0;
+        // SAFETY: the shared WASM snapshot follows SimSnapshot.
+        const snapshot = this.sim.snapshot() as SimSnapshot;
+        this.scenario?.advance(snapshot);
+        if (this.scenario) this.sim.set_assigned_altitude(this.scenario.assignedAltitudeFt);
+      }
       if (events.includes('procedureComplete')) {
         this.complete = true;
         this.paused = true;
@@ -97,19 +114,14 @@ export class SimWorkerApi {
       input.wind.directionFromDegTrue,
       input.wind.speedKts
     ];
-    if (
-      !values.every(Number.isFinite) ||
-      (input.assignedAltitude !== null && !Number.isFinite(input.assignedAltitude))
-    )
-      throw new Error('Controls must contain finite numbers.');
+    if (!values.every(Number.isFinite)) throw new Error('Controls must contain finite numbers.');
     if (
       input.autopilot.spdBugKts < 40 ||
       input.autopilot.spdBugKts > 250 ||
       input.autopilot.altBugFt < 0 ||
       Math.abs(input.autopilot.vsBugFpm) > 2000 ||
       input.wind.speedKts < 0 ||
-      input.wind.speedKts > 150 ||
-      (input.assignedAltitude !== null && input.assignedAltitude < 0)
+      input.wind.speedKts > 150
     )
       throw new Error('Controls exceed the trainer limits.');
     if (input.autopilot.vertical === 'GlideSlope') throw new Error('GS guidance is not available.');
@@ -117,7 +129,13 @@ export class SimWorkerApi {
     if (!this.sim) throw new Error('Start a simulation first.');
     this.sim.set_autopilot(input.autopilot);
     this.sim.set_wind(input.wind);
-    this.sim.set_assigned_altitude(input.assignedAltitude ?? undefined);
+  }
+
+  acknowledge(id: string): void {
+    this.tick();
+    if (!this.sim || !this.scenario) throw new Error('No training session.');
+    // SAFETY: the shared WASM snapshot follows SimSnapshot.
+    this.scenario.acknowledge(id, this.sim.snapshot() as SimSnapshot);
   }
 
   read(frame: SceneFrame): Uint8Array {
@@ -125,6 +143,15 @@ export class SimWorkerApi {
     if (!this.sim) throw new Error('No simulation session.');
     // SAFETY: the WASM class serializes the shared Rust snapshot contract.
     const snapshot = this.sim.snapshot() as SimSnapshot;
+    if (!this.scenario) throw new Error('No training scenario.');
+    const training = this.scenario.state();
+    const approachClearedAtS = this.scenario.approachClearedAtS;
+    snapshot.mistakes = [
+      ...snapshot.mistakes.filter(
+        (mistake) => mistake.kind !== 'course_deviation' || mistake.simTimeS >= approachClearedAtS
+      ),
+      ...training.mistakes
+    ].sort((a, b) => a.simTimeS - b.simTimeS);
     const position = proc_sim_scene_position(
       snapshot.state.latDeg,
       snapshot.state.lonDeg,
@@ -140,6 +167,7 @@ export class SimWorkerApi {
         ((snapshot.state.iasKts - this.previousRead.state.iasKts) / elapsed) * 6;
     this.previousRead = snapshot;
     const update: SimUpdate = {
+      training,
       airspeedTrendKts: this.airspeedTrendKts,
       snapshot,
       position: [position[0], position[1], position[2]],

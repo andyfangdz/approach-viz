@@ -90,9 +90,9 @@ export interface SimUpdate {
   airspeedTrendKts: number | null;
   paused: boolean;
   speed: number;
+  training: import('./scenario').TrainingState;
 }
 export interface SimControls {
   autopilot: AutopilotSettings;
   wind: WindState;
-  assignedAltitude: number | null;
 }

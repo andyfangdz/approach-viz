@@ -12,6 +12,9 @@ export class SimWorkerClient extends ComlinkedWorkerClient<SimWorkerApi> {
   start(input: SimStart) {
     return this.withTimeout(() => this.proxy.start(input));
   }
+  acknowledge(id: string) {
+    return this.withTimeout(() => this.proxy.acknowledge(id));
+  }
   suspend() {
     return this.withTimeout(() => this.proxy.suspend());
   }
