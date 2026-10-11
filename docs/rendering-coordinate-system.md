@@ -20,7 +20,8 @@
 
 ## Procedure simulator marker
 
-The simulator's dedicated worker projects its snapshot through shared Rust
+The separate `/training` route does not mount a 3D aircraft marker. The reusable
+simulator worker/marker adapter still projects snapshots through shared Rust
 `proc_sim_scene_position`. The yellow aircraft uses the live-traffic coordinate
 contract: east/-north NM, absolute feet MSL converted to scene Y, vertical
 exaggeration, and curvature compensation on tiled surfaces. Heading is true and

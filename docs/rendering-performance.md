@@ -71,8 +71,11 @@ failed HDR request surfaces an error rather than repeatedly spawning workers.
 
 ## Procedure simulator instruments
 
-The PFD and HSI are DOM/SVG panels updated by the simulator worker's sequential
-250 ms snapshot reads. They share the marker's snapshot and introduce no animation
-loop or in-scene HTML. The worker measures IAS trend using simulation time;
-Rust owns active-course, TO/FROM, and active/armed autopilot guidance. Marker
-updates remain React props on the demand canvas. See [procedure simulator](procedure-simulator.md).
+The PFD and HSI are DOM/SVG panels on the separate `/training` route, updated
+by sequential 250 ms worker snapshot reads. Training mounts no WebGL canvas,
+scene/HDR resources, or in-scene HTML and introduces no animation loop. The
+worker measures IAS trend using simulation time; Rust owns active-course,
+TO/FROM, and active/armed autopilot guidance. Scenario checks run on a 1-Hz
+simulation-time cadence in the same worker, independently of UI polling. The
+reusable aircraft-marker adapter remains available but is no longer mounted
+in the visualization. See [procedure simulator](procedure-simulator.md).

@@ -1,54 +1,92 @@
-# Client-side procedure simulator
+# ATC procedure training
 
-The web simulator flies a trainer through autopilot bugs and modes. Flight
-computation, sequencing, and grading run in `approach-viz-core::proc_sim`, shared
-with WASM and UniFFI. There is no simulation service or network flight state.
-FAA data comes from the same generated SQLite database used by the scene.
+Training lives at `/training`, separately from the 3D visualization. The
+visualization links to it rather than embedding a cockpit. There is no scene,
+terrain/HDR load, simulation service, or network flight state on this route.
+The original PFD/HSI, autopilot controls, Comlink worker, and Rust flight model
+are reused. [Hands-on review and REA evidence](procedure-training-review.md)
+explain the change.
 
-## Web controls and setup
+## Briefing, flight, and debrief
 
-Select an airport and approach with the existing header, then expand **Procedure
-simulator**. Choose the final segment or a named transition and load the procedure.
-The aircraft starts paused at the first sourced fix, heading along the first
-outgoing course. Start altitude and airspeed are explicit training choices
-(default 3,000 ft MSL and 110 KIAS), not published procedure values. Initial wind
-is calm; the assigned altitude initially equals the selected start altitude.
+The first lesson is **Vectors to the RNAV 6 Y course**, using the current
+SQLite database's KTEB/R06-Y final segment, VINGS → LEESY → DANDY → TORBY.
+Missing required procedure data fails explicitly; unsupported geometry fails
+through the shared Rust converter. No historical procedure is substituted.
 
-Edit heading, altitude, vertical speed, speed, lateral/vertical modes, wind, or
-assigned altitude and press **Apply autopilot and clearance**. Directions are
-true degrees throughout this panel; ALT and assigned-altitude inputs are feet
-MSL. Clear assigned altitude to disable clearance grading. Playback offers
-0.5×, 1×, 1.5×, 2×, and 3×, pause, reset, and end-session controls.
+This is a synthetic **lateral** exercise at 3,000 ft MSL and 110 KIAS in calm
+wind. It is not a published vertical profile or an approach clearance, and it
+ends at the last available fix, not a runway or simulated landing. The briefing
+states the objectives, grading, supported legs, and these limits before flight.
 
-The cockpit places a PFD and HSI beside the autopilot controls on wide screens,
-with stacked controls/displays on narrow screens. The PFD has a sky/ground
-attitude display, pitch ladder, bank pointer, IAS and MSL altitude tapes with
-applied bugs, a vertical-speed scale, magnetic heading strip, and an active/armed
-mode annunciator. Pitch is explicitly flight-path angle, calculated as
-`atan2(vs_fpm, tas_kts * 6076.12 / 60)`; the core does not model aircraft pitch
-or angle of attack. The six-second IAS trend uses successive worker reads in
-simulation time (unavailable until time advances); the altitude trend is six
-seconds of current VS. Trend/bug graphics peg at the tape edges outside range.
+Start training flight initializes a paused session. Acknowledge the first
+instruction, then Run. Controls are autopilot bugs/modes only; no yoke.
+Heading controls and ATC instructions are magnetic; the adapter converts
+heading bugs to true degrees for Rust using sourced airport variation.
+Instrument bugs and annunciators show applied worker state, not draft inputs.
+Edits take effect with **Apply autopilot**. GS remains disabled.
 
-The HSI rotates its compass by magnetic heading (`true - east-positive variation`),
-shows the applied magnetic HDG bug and active leg's inbound magnetic course,
-a ±1 NM CDI, TO/FROM flag, active fix, distance, and signed cross-track error.
-Positive XTK means right of course; the CDI moves left in the course frame to
-command a return. The course is sourced from the active Rust procedure leg,
-not the autopilot's intercept heading or the unused manual course bug. TO/FROM
-compares bearing to the active fix against inbound course; completed procedures
-remove course/CDI/flag guidance rather than retain a stale needle.
+The controller's script issues:
 
-Rust snapshots own mode engagement: HDG/ALT/VS engage immediately; NAV/LOC
-engage when course guidance exists, otherwise display armed. GS without guidance
-is armed in the shared API and remains disabled in the web controls. VS arms ALT
-capture only while its commanded direction approaches the altitude bug. The
-existing control law tapers VS on capture and retains VS as the selected/active
-mode; it does not invent an ALT mode transition or radio capture state.
-Snapshot mistakes retain severity, title, details, and solution, including
-findings that latch between UI polls. The debrief announces updates politely to
-assistive technology. Controls remain drafts until applied; annunciators and
-instrument bugs always show the applied snapshot.
+| Simulation time | Instruction                                                                                          |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
+| 0 s             | Maintain 3,000 ft, the initial magnetic course heading (rounded to a whole degree), and 110 KIAS.    |
+| 45 s            | Turn right 20° from the initial heading; maintain 3,000 ft.                                          |
+| 90 s            | Select NAV to intercept/track the sourced RNAV course; maintain 3,000 ft and 110 KIAS through TORBY. |
+
+Each instruction owns an independent **15-s simulation-time acknowledgement
+deadline** (lesson policy, not a measured reference-trainer threshold). The current transmission is prominent above the instruments; the
+Acknowledge action sits below autopilot controls. Previous messages and replies
+remain in the controller log. Acknowledge does not apply/change autopilot
+settings, and applying autopilot does not acknowledge ATC. A late reply is
+accepted but never erases a timeout finding. Pause freezes deadlines; playback
+supports 0.5×, 1×, 1.5×, 2× and 3×. Hiding the document pauses the flight and
+returning requires Run.
+
+The worker owns the `ScenarioEngine` in `app/proc-sim/scenario.ts`, advancing it
+on a deterministic 1-Hz simulation-time cadence, plus acknowledgement and
+completion boundaries. UI polling cannot drive or evade its deadlines. Pilot
+controls have **no assigned-altitude field**. The engine sends its clearance
+altitude to Rust; Rust retains its 5-s latched **Altitude Not Set Correctly**
+(expected ALT bug within 1 ft) and **Off Assigned Altitude** (over 200 ft)
+findings with the clearance value in their details/fix. Acknowledgement and
+compliance are independent.
+
+Scenario policy also checks selected HDG/NAV mode and heading bug after a 20-s
+setup allowance, actual heading within 10° after 35 s, and the 110-KIAS speed
+bug after 20 s. These findings latch once per instruction. Compliance is
+observed after 10 s with correct mode, bugs, aircraft heading and altitude;
+any subsequent graded bust still prevents a pass. Rust course-deviation
+findings raised before the NAV instruction are excluded from the lesson feed:
+a heading vector is not a clearance to track the course. Rust still owns all
+kinematics, navigation geometry, sequencing, and altitude/course computation.
+
+Completion automatically stops the worker and opens the debrief. **End flight
+and debrief** pauses/reads the worker before disposing it and retains the last
+confirmed snapshot. Worker failures are visible and retain the last confirmed
+flight for review. Debrief includes completion status, controller/reply log,
+compliance outcomes, latched findings with title/details/solution, and a score.
+
+A pass requires reaching the final fix, all three timely replies, observed
+compliance with all three instructions, and zero findings. Score starts at
+100, subtracts 10 per finding, 5 per missing timely reply or compliance, and
+20 for an incomplete flight, bounded at zero. A numeric score alone never
+passes an incomplete flight. Review briefing and try again starts a fresh
+worker, clears the log/findings, and restores 0 s / 1× / 3,000 ft / 110 KIAS.
+Debriefs remain in memory until retry/navigation; persistence and replay are
+not implemented.
+
+## Flight instruments
+
+The cockpit uses the existing DOM/SVG PFD and HSI, alongside the autopilot on
+wide screens and stacked on narrow screens. PFD attitude is flight-path angle,
+`atan2(vs_fpm, tas_kts * 6076.12 / 60)`, not modeled aircraft pitch/angle of
+attack. IAS and altitude tapes show applied bugs and six-second trends; the
+worker measures IAS trend in simulation time. HSI shows magnetic heading,
+applied heading bug, sourced active-leg course, ±1 NM CDI, TO/FROM, active fix,
+distance, and signed XTK (positive means right of course). Completed legs
+remove stale course guidance. Rust snapshots own active/armed mode indications;
+LOC is a tighter course gain, not a modeled radio signal, and GS has no guidance.
 
 ## FAA conversion and limits
 
@@ -77,32 +115,22 @@ restrictions. The converter retains those bounds for future grading.
 Historical selections remain training fixtures and receive no current FAA
 minimums, vertical profiles, or live plate matches from this integration.
 
-## Worker and rendering contract
+## Worker contract
 
 Each session has a dedicated Comlink worker owning one WASM `ProcSim`. The
-worker ticks at 50 ms and accumulates elapsed time into fixed 0.1 s Rust steps.
-Fractional time survives timer jitter, speed changes, and pauses. Delayed timer
-callbacks consume at most 0.25 s of wall time, bounding catch-up after throttling.
-A hidden document pauses playback; returning requires an explicit Run action.
-The worker stops on Rust's `procedureComplete` event and keeps a completed
-session paused even if a playback request arrives at completion. Full snapshots
-are serialized only for UI reads, rather than on each scheduler tick.
-DOM/SVG flight instruments render from the same React snapshot as the scene marker;
-there is no separate instrument clock or canvas overlay. UI polling is sequential at 250 ms, with no overlapping reads and a 10 s worker
-request deadline. Errors are visible; there is no main-thread simulation fallback.
-Reset/end/unmount terminate the worker and release the session; a changed
-airport/procedure mounts a fresh panel. Old async results are discarded.
-Polling is keyed to the worker instance, including rapid resets. A failed read
-terminates the session and clears its instruments and scene marker. Playback
-controls wait for worker confirmation before accepting another change, so Run
-cannot reuse an old speed while a speed change is still pending.
+50-ms scheduler accumulates fixed 0.1-s Rust steps, preserving fractional time
+through jitter, pauses and speed changes. Delayed callbacks consume at most
+0.25 s wall time. Scenario snapshots are serialized every ten Rust steps;
+UI reads remain sequential at 250 ms with a 10-s request deadline. There is
+no main-thread flight-computation fallback. Completion stops playback and
+worker disposal releases WASM/session memory. Unmount, retry and failed reads
+also terminate the worker; stale async results are discarded.
 
-Snapshots and marker positions are JSON encoded into a transferred `Uint8Array`.
-Projection is computed in the worker through Rust coordinate helpers. The yellow
-marker uses east/-north axes, absolute MSL altitude with vertical exaggeration,
-and the same Earth-curvature policy as live traffic for tiled surfaces. React
-position/heading props invalidate the demand canvas; no animation frame loop or
-imperative mesh mutation is introduced.
+Full updates, including controller state and merged findings, are JSON encoded
+into a transferred `Uint8Array`. Shared Rust projection and the reusable marker
+adapter remain available, but `/training` does not mount a WebGL canvas or
+aircraft marker. All training displays consume the same worker snapshot; there
+is no independent animation clock.
 
 ## Binding surfaces
 
@@ -125,108 +153,27 @@ method drops each call's partial step. The web worker instead calls `step`.
 
 ## Validation
 
-- `cargo test -p approach-viz-core`: converter, input validation, autopilot,
-  kinematics, sequencing, and grading regressions.
-- `cargo check -p approach-viz-core --features ios`: UniFFI type checking.
-- `npm run build:wasm`: regenerate the committed browser package and public copy.
-- `npm run typecheck`, `npm run lint`, `npm test`: application checks, scheduler
-  timing tests, and actual shipped-WASM tests. The simulator tests use real
-  KTEB RNAV 06 Y fixes from FAA cycle 261001 under `fixtures/proc-sim/`.
-- Browser check with `agent-browser`: load KTEB/R06-Y, command a heading turn,
-  VS descent, and NAV intercept; inspect instruments/debrief; test pause/reset,
-  procedure changes, and unsupported-leg errors; capture the panel.
-  Use the route `/KTEB/R06-Y`; airport/procedure query parameters do not select
-  a procedure. On software WebGL, disabling unrelated airspace, traffic,
-  weather, and guide layers reduces smoke-test rendering load:
-  `/KTEB/R06-Y?surface=terrain&layers=-airspace,-adsb,-probsevere,-guides`.
-- `npm run build:ios` requires macOS/full Xcode. On Linux, compile the UniFFI
-  library and generate Swift into `.tmp/` to verify the exported metadata;
-  the Apple XCFramework and app still require validation on an Xcode host.
+- `cargo test -p approach-viz-core`: shared flight/converter/grading regressions.
+- `npm run typecheck`, `npm run lint`, `npm test`: application checks, scheduler,
+  actual shipped-WASM tests and scenario regressions. The scenario suite tests
+  exact acknowledgement boundaries, late/duplicate replies, paused time,
+  independent deadlines, script validation, clearance-owned altitude, lateral
+  compliance/recovery, and a complete real-WASM 100/100 flight. Fixtures use
+  KTEB/R06-Y FAA cycle 261001; the page uses the current database.
+- `npm run build:wasm`: rebuild the committed browser package/public copy with
+  Binaryen >=117. This rework leaves Rust and its rebuilt artifacts unchanged.
+- `npm run test:smoke:training`: run agent-browser against a running web server;
+  fly the full scripted scenario with a late reply and wrong ALT bug, recover,
+  intercept, complete, inspect retained debrief, retry and end early. Captures
+  JSON readouts and screenshots under `.tmp/training-smoke/`. Set
+  `AGENT_BROWSER_BIN`, `AGENT_BROWSER_SESSION`, `TRAINING_SMOKE_URL`, or
+  `TRAINING_SMOKE_OUTPUT` to override the CLI/session/server/output. For hosts
+  with short command lifetimes, run `TRAINING_SMOKE_STAGE=prepare` then
+  `TRAINING_SMOKE_STAGE=finish` in the same browser session; prepare pauses
+  at the NAV intercept and finish resumes that same flight. The script
+  uses native input setters with input/change events because the CLI's numeric
+  fill can append text. It asserts there is no canvas or editable assignment.
 
-The 2026-10-10 web follow-up passed all 165 core Rust tests, type checking,
-lint, npm tests, and the Binaryen 117 WASM rebuild (identical committed artifact).
-The shipped-WASM regression asserts LEESY → DANDY → TORBY sequencing and exactly
-one completion event. Simulator Rust formatting passes; repository-wide
-`cargo fmt --check` still reports pre-existing formatting outside the simulator.
-The latest browser flight at 3× playback commanded 048° → 078° while holding
-3,000 ft, descended to a displayed 2,723 ft at −500 fpm, then selected NAV/ALT
-and wind from 270° at 10 kt. NAV turned to 004° and reduced XTK from 0.83 to
-0.63 NM; both clearance findings remained in the debrief. Pause held 90.8 s,
-reset restored 0.0 s/1×/3,000 ft/zero findings, and end-session removed the
-instruments. Simulator alerts stayed empty. Panel and terrain/aircraft captures
-are in `.tmp/proc-sim-final-panel.png` and `.tmp/proc-sim-final-scene.png`.
-Development navigation also emitted scene label-worker termination messages;
-the simulator controls and final scene remained usable.
-
-Future work includes sourced glidepath guidance, arcs/holds/missed procedures,
-maximum/at-fix restriction grading, replay/event logging, persisted scenarios,
-and native simulator UI. Autopilot gain changes require measured comparison;
-this integration retains the existing gains.
-
-The PFD/HSI follow-up passed core tests (166), the UniFFI feature check,
-type checking, lint, the complete npm suite, and the Binaryen 117 browser WASM
-rebuild. Shipped-WASM regressions cover course/TO guidance, HDG/VS/NAV engagement,
-ALT capture arming, and removal of navigation guidance at completion.
-The `agent-browser` flight used KTEB/R06-Y at 3×: a 108° true heading command
-produced 17.8° right bank; a −500 fpm descent displayed −2.2° flight-path pitch
-and falling altitude; NAV/ALT then commanded a −25° left intercept with the
-HSI retaining the 060° magnetic inbound course. XTK decreased from 4.30 to
-3.85 NM. Pause held 204.2 s; reset restored 0.0 s, 1×, 3,000 ft, 110 KIAS,
-level attitude, centered CDI, and zero findings. The 390 px layout stacked the
-instruments within the panel. Simulator alerts stayed empty. This browser host
-could not fetch the external HDR, so the smoke used a temporary local mirror of
-the same downloaded HDR; the mirror and URL override were removed afterward.
-Screenshots and readouts are under `.tmp/proc-instruments-*` (initial, turn,
-descent, NAV/intercept, pause, and reset). Repository-wide format checking still
-reports pre-existing drift outside the simulator; changed simulator Rust files
-are formatted.
-
-### Completion verification after the VM restart (2026-10-11)
-
-At the `133e8cf` checkpoint, the existing speed control, pause/reset/end-session
-controls, and retained mistake feed were complete; no simulator implementation
-changes were needed. All five required commands passed: 166 core Rust tests,
-TypeScript checking, lint, all 193 npm tests, and the browser WASM rebuild with
-Binaryen 117. The rebuilt WASM matched the committed artifacts. Simulator Rust
-formatting passed with edition 2024; the repository-wide formatting drift above
-remains outside this feature.
-
-A scripted `agent-browser` flight loaded the real KTEB/R06-Y final segment at
-3,000 ft MSL and 110 KIAS, in calm wind. It asserted the rendered SVG readouts,
-applied mode annunciators, and debrief text, and captured these stages:
-
-| Stage                       | Observed PFD/HSI response                                                                  |
-| --------------------------- | ------------------------------------------------------------------------------------------ |
-| Initial                     | Level attitude, 3,000 ft, 110 KIAS, 060° magnetic heading/course, centered CDI             |
-| HDG 108° true               | 17.8° right bank, 092° magnetic heading, 120° magnetic bug, 060° course retained           |
-| VS −500 fpm toward 2,000 ft | 2,634 ft, −500 fpm, −2.4° flight-path pitch, VS active and ALT armed                       |
-| NAV/ALT toward 2,600 ft     | −25.0° left bank, NAV/ALT active, 060° inbound course retained                             |
-| NAV recovery                | XTK reduced from 1.50 to 0.29 NM; active fix sequenced to DANDY; CDI returned within range |
-| Pause                       | All captured instrument/debrief readouts held at 144.6 s                                   |
-| Reset                       | 0.0 s, 1×, 3,000 ft, 110 KIAS, level attitude, centered CDI, zero findings                 |
-
-All five playback speeds were accepted while paused without advancing time.
-The altitude-bug, assigned-altitude, and course-deviation findings remained
-unchanged after recovery and pause. End session removed the instruments.
-Simulator alerts stayed empty. Screenshots and JSON readouts are local,
-uncommitted evidence in `.tmp/proc-sim-completion/`: `initial`, `turn`, `descent`,
-`nav`, `nav-rejoin`, and `reset`; `flight.mjs` and `flight.log` contain the driver
-and assertion results.
-
-The VM's bundled Chromium blocked localhost; a cached standard Chrome was used.
-The old development cache returned route 404s, so validation used a fresh
-webpack development cache. Browser HDR fetching failed even though the shell
-proxy downloaded the source asset successfully. The smoke temporarily served
-those exact HDR bytes locally; the mirror and source URL override were removed
-afterward. The CLI's numeric `fill` appended text, so the driver used the native
-input value setter plus a bubbling input event and asserted the resulting value
-before applying controls.
-
-After the web checks passed, `cargo check -p approach-viz-core --features ios`,
-the Linux iOS-feature library build, and Swift binding generation passed. The
-generated API includes `ProcSimSessionHandle`, payload events, optional
-`UInt64` leg indices, and the PFD/HSI guidance and mode fields. Generated files
-remain under `.tmp/proc-sim-completion/swift/`. `npm run build:ios` stopped at
-the missing active Apple developer directory on Linux; Apple XCFramework/app
-validation still requires an Xcode host. The generator also reported that
-`swift-format` was unavailable; this did not prevent metadata generation.
+Arcs, holds, reversals, missed approaches, sourced glidepath, published at-fix
+restriction grading, additional curated lessons, persistent debriefs/replay,
+and native training UI remain outside this lesson.
