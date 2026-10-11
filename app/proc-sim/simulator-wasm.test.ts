@@ -45,6 +45,11 @@ test('HDG turn, VS descent, NAV intercept, and findings cross the actual WASM bo
   const sim = ProcSim.from_procedure(fixture, 3000, 110);
   try {
     const initial = snapshot(sim);
+    assert.equal(initial.lateralActive, 'Heading');
+    assert.equal(initial.verticalActive, 'AltitudeHold');
+    assert.ok(initial.lateralArmed == null);
+    assert.ok(initial.courseDegTrue != null);
+    assert.equal(initial.courseTo, true);
     const ap: AutopilotSettings = {
       ...initial.autopilot,
       hdgBugDeg: (initial.state.hdgDegTrue + 30) % 360
@@ -59,6 +64,8 @@ test('HDG turn, VS descent, NAV intercept, and findings cross the actual WASM bo
     const descent = snapshot(sim);
     assert.ok(descent.state.altFtMsl < 2770 && descent.state.altFtMsl > 2740);
     assert.ok(Math.abs(descent.state.vsFpm + 500) < 1);
+    assert.equal(descent.verticalActive, 'VerticalSpeed');
+    assert.equal(descent.verticalArmed, 'AltitudeHold');
     assert.ok(descent.mistakes.some((mistake) => mistake.kind === 'off_assigned_altitude'));
     sim.set_assigned_altitude(undefined);
     sim.set_wind({ directionFromDegTrue: 270, speedKts: 10 });
@@ -71,6 +78,7 @@ test('HDG turn, VS descent, NAV intercept, and findings cross the actual WASM bo
     advance(sim, 15);
     const nav = snapshot(sim);
     assert.equal(nav.autopilot.lateral, 'Nav');
+    assert.equal(nav.lateralActive, 'Nav');
     assert.ok(nav.cdi != null && Number.isFinite(nav.cdi));
     assert.ok(nav.state.hdgDegTrue < descent.state.hdgDegTrue - 10);
     assert.equal(nav.activeLegFix, 'LEESY');
@@ -113,6 +121,11 @@ test('NAV sequences real fixes and stops at the final available CIFP fix', () =>
     );
     const complete = snapshot(sim);
     assert.equal(complete.activeLegIndex, undefined);
+    assert.ok(complete.courseDegTrue == null);
+    assert.ok(complete.courseTo == null);
+    assert.ok(complete.cdi == null);
+    assert.ok(complete.lateralActive == null);
+    assert.equal(complete.lateralArmed, 'Nav');
     const time = complete.simTimeS;
     advance(sim, 1);
     assert.equal(snapshot(sim).simTimeS, time);

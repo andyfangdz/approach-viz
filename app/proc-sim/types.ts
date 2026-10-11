@@ -46,6 +46,12 @@ export interface SimSnapshot {
   xtkNm?: number | null;
   distToFixNm?: number | null;
   cdi?: number | null;
+  courseDegTrue?: number | null;
+  courseTo?: boolean | null;
+  lateralActive?: AutopilotSettings['lateral'] | null;
+  lateralArmed?: AutopilotSettings['lateral'] | null;
+  verticalActive?: AutopilotSettings['vertical'] | null;
+  verticalArmed?: AutopilotSettings['vertical'] | null;
   mistakes: Mistake[];
 }
 export interface ProcedureLeg {
@@ -81,6 +87,7 @@ export interface SceneFrame {
 export interface SimUpdate {
   snapshot: SimSnapshot;
   position: [number, number, number];
+  airspeedTrendKts: number | null;
   paused: boolean;
   speed: number;
 }

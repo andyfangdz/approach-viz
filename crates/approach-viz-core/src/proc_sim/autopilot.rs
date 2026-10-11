@@ -67,7 +67,7 @@ impl Autopilot {
 
     /// Compute this step's command from current state and guidance.
     pub fn update(
-        &mut self,
+        &self,
         hdg_deg: f64,
         _ias_kts: f64,
         tas_kts: f64,
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn hdg_mode_banks_right_for_right_turn() {
-        let mut ap = Autopilot::new(settings(), AircraftPerformance::default());
+        let ap = Autopilot::new(settings(), AircraftPerformance::default());
         let cmd = ap.update(0.0, 110.0, 115.0, 3000.0, 0.0, &no_nav(), 0.1);
         assert!(cmd.lateral_active);
         assert!(cmd.target_bank_deg > 10.0, "bank={}", cmd.target_bank_deg);
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn hdg_mode_rolls_out_approaching_bug() {
-        let mut ap = Autopilot::new(settings(), AircraftPerformance::default());
+        let ap = Autopilot::new(settings(), AircraftPerformance::default());
         // 2 deg from the bug: bank should be small.
         let cmd = ap.update(88.0, 110.0, 115.0, 3000.0, 0.0, &no_nav(), 0.1);
         assert!(
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn vs_mode_tracks_bug_and_captures() {
-        let mut ap = Autopilot::new(settings(), AircraftPerformance::default());
+        let ap = Autopilot::new(settings(), AircraftPerformance::default());
         // Far from bug: full VS.
         let cmd = ap.update(90.0, 110.0, 115.0, 4000.0, -500.0, &no_nav(), 0.1);
         assert!((cmd.target_vs_fpm + 500.0).abs() < 1e-6);
@@ -229,7 +229,7 @@ mod tests {
     fn alt_hold_corrects_gently() {
         let mut s = settings();
         s.vertical = VerticalMode::AltitudeHold;
-        let mut ap = Autopilot::new(s, AircraftPerformance::default());
+        let ap = Autopilot::new(s, AircraftPerformance::default());
         let cmd = ap.update(90.0, 110.0, 115.0, 3100.0, 0.0, &no_nav(), 0.1);
         assert!(cmd.target_vs_fpm < 0.0 && cmd.target_vs_fpm >= -1000.0);
     }

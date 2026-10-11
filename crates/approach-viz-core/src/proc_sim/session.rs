@@ -11,7 +11,8 @@ use crate::proc_sim::grading::{Grader, GraderInput};
 use crate::proc_sim::kinematics::{step_position, tas_from_ias, wind_triangle};
 use crate::proc_sim::procedure::ProcedureTracker;
 use crate::proc_sim::types::{
-    AircraftState, AutopilotSettings, Mistake, ProcSimEvent, SimConfig, SimSnapshot, WindState,
+    AircraftState, AutopilotSettings, LateralMode, Mistake, ProcSimEvent, SimConfig, SimSnapshot,
+    VerticalMode, WindState,
 };
 
 /// Roll rate toward the AP's bank target, degrees per second.
@@ -144,6 +145,27 @@ impl ProcSimSession {
                 self.procedure.cdi(self.state.lat_deg, self.state.lon_deg),
             )
         };
+        let settings = self.ap.settings();
+        let command = self.ap.update(
+            self.state.hdg_deg_true,
+            self.state.ias_kts,
+            self.state.tas_kts,
+            self.state.alt_ft_msl,
+            self.state.vs_fpm,
+            &self.nav_guidance(),
+            self.dt_s,
+        );
+        let course = self.procedure.active_leg().map(|leg| leg.course_deg_true);
+        let course_to = course
+            .zip(
+                self.procedure
+                    .bearing_to_fix_deg(self.state.lat_deg, self.state.lon_deg),
+            )
+            .map(|(course, bearing)| {
+                crate::proc_sim::kinematics::angle_diff_deg(course, bearing).abs() < 90.0
+            });
+        let altitude_capture = settings.vertical == VerticalMode::VerticalSpeed
+            && (settings.alt_bug_ft - self.state.alt_ft_msl) * settings.vs_bug_fpm > 0.0;
         SimSnapshot {
             sim_time_s: self.sim_time_s,
             state: self.state,
@@ -153,6 +175,18 @@ impl ProcSimSession {
             xtk_nm: xtk,
             dist_to_fix_nm: dist,
             cdi,
+            course_deg_true: course,
+            course_to,
+            lateral_active: command.lateral_active.then_some(settings.lateral),
+            lateral_armed: (!command.lateral_active && settings.lateral != LateralMode::Off)
+                .then_some(settings.lateral),
+            vertical_active: command.vertical_active.then_some(settings.vertical),
+            vertical_armed: if altitude_capture {
+                Some(VerticalMode::AltitudeHold)
+            } else {
+                (!command.vertical_active && settings.vertical != VerticalMode::Off)
+                    .then_some(settings.vertical)
+            },
             mistakes: self.mistakes.clone(),
         }
     }
@@ -417,6 +451,51 @@ mod tests {
             grading: GradingThresholds::default(),
             dt_s: 0.1,
         }
+    }
+
+    #[test]
+    fn instrument_flags_and_modes_follow_available_guidance() {
+        let inbound = ProcSimSession::new(test_config()).unwrap().snapshot();
+        assert_eq!(inbound.course_deg_true, Some(90.0));
+        assert_eq!(inbound.course_to, Some(true));
+        assert_eq!(inbound.lateral_active, Some(LateralMode::Nav));
+        assert_eq!(inbound.lateral_armed, None);
+
+        let mut config = test_config();
+        config.initial_state.lon_deg = -80.8;
+        let outbound = ProcSimSession::new(config).unwrap().snapshot();
+        assert_eq!(outbound.course_to, Some(false));
+
+        let mut config = test_config();
+        config.legs.clear();
+        config.initial_autopilot.vertical = VerticalMode::GlideSlope;
+        let unavailable = ProcSimSession::new(config).unwrap().snapshot();
+        assert_eq!(unavailable.course_deg_true, None);
+        assert_eq!(unavailable.course_to, None);
+        assert_eq!(unavailable.lateral_active, None);
+        assert_eq!(unavailable.lateral_armed, Some(LateralMode::Nav));
+        assert_eq!(unavailable.vertical_active, None);
+        assert_eq!(unavailable.vertical_armed, Some(VerticalMode::GlideSlope));
+
+        let mut config = test_config();
+        config.initial_autopilot.vertical = VerticalMode::VerticalSpeed;
+        config.initial_autopilot.alt_bug_ft = 2000.0;
+        config.initial_autopilot.vs_bug_fpm = -500.0;
+        assert_eq!(
+            ProcSimSession::new(config.clone())
+                .unwrap()
+                .snapshot()
+                .vertical_armed,
+            Some(VerticalMode::AltitudeHold)
+        );
+        config.initial_autopilot.vs_bug_fpm = 500.0;
+        assert_eq!(
+            ProcSimSession::new(config)
+                .unwrap()
+                .snapshot()
+                .vertical_armed,
+            None
+        );
     }
 
     #[test]

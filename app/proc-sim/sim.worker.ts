@@ -17,6 +17,8 @@ import type {
 const DT = 0.1;
 export class SimWorkerApi {
   private sim: ProcSim | null = null;
+  private previousRead: SimSnapshot | null = null;
+  private airspeedTrendKts: number | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private clock = new FixedStepClock(performance.now(), DT);
   private paused = true;
@@ -42,6 +44,8 @@ export class SimWorkerApi {
     );
     this.sim?.free();
     this.sim = next;
+    this.previousRead = null;
+    this.airspeedTrendKts = null;
     this.failure = null;
     this.paused = true;
     this.speed = 1;
@@ -130,7 +134,13 @@ export class SimWorkerApi {
       frame.verticalScale,
       frame.curvature
     );
+    const elapsed = this.previousRead ? snapshot.simTimeS - this.previousRead.simTimeS : 0;
+    if (this.previousRead && elapsed > 0)
+      this.airspeedTrendKts =
+        ((snapshot.state.iasKts - this.previousRead.state.iasKts) / elapsed) * 6;
+    this.previousRead = snapshot;
     const update: SimUpdate = {
+      airspeedTrendKts: this.airspeedTrendKts,
       snapshot,
       position: [position[0], position[1], position[2]],
       paused: this.paused,

@@ -242,5 +242,13 @@ pub struct SimSnapshot {
     pub dist_to_fix_nm: Option<f64>,
     /// CDI deflection, -1..1 (None when not tracking a course).
     pub cdi: Option<f64>,
+    /// Active leg inbound course, not the intercept steering command.
+    pub course_deg_true: Option<f64>,
+    /// True when bearing to the fix is within 90 degrees of inbound course.
+    pub course_to: Option<bool>,
+    pub lateral_active: Option<LateralMode>,
+    pub lateral_armed: Option<LateralMode>,
+    pub vertical_active: Option<VerticalMode>,
+    pub vertical_armed: Option<VerticalMode>,
     pub mistakes: Vec<Mistake>,
 }
