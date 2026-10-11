@@ -6,7 +6,7 @@ import type { DecodedHdr, HdrWorkerApi } from './hdr.worker';
 
 /** drei's `night` preset (`<Environment preset="night">`), decoded in a worker. */
 const NIGHT_HDR_URL =
-  'https://raw.githack.com/pmndrs/drei-assets/456060a26bbeb8fdf79326f224b6d99b8bcce736/hdri/dikhololo_night_1k.hdr';
+  'https://cdn.jsdelivr.net/gh/pmndrs/drei-assets@456060a26bbeb8fdf79326f224b6d99b8bcce736/hdri/dikhololo_night_1k.hdr';
 const HDR_TIMEOUT_MS = 30_000;
 
 class HdrWorkerClient extends ComlinkedWorkerClient<HdrWorkerApi> {
@@ -45,11 +45,9 @@ function loadNightEnvironment(): Promise<THREE.DataTexture> {
     } finally {
       client.dispose();
     }
-  })().catch((error) => {
-    // Let a remount retry instead of caching the failure.
-    nightEnvironment = null;
-    throw error;
-  });
+  })();
+  // Keep rejections stable too: resetting a promise used by Suspense here
+  // creates an endless worker/retry loop instead of surfacing the load error.
   return nightEnvironment;
 }
 

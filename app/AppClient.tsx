@@ -416,6 +416,10 @@ export function AppClient({
       />
 
       <main className="main-content" style={mainContentStyle}>
+        <a className="training-link" href="/training">
+          Procedure training →
+        </a>
+
         {(selection.loading || selection.isPending) && (
           <div className="loading">Loading approach data...</div>
         )}

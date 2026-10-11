@@ -6,6 +6,7 @@ import type {
   MapControls as MapControlsImpl,
   OrbitControls as OrbitControlsImpl
 } from 'three-stdlib';
+import { SimAircraftMarker } from '@/app/proc-sim/AircraftMarker';
 import { AirportMarker } from '@/app/scene/approach-path/AirportMarker';
 import { COLORS } from '@/app/scene/approach-path/constants';
 import { AirspaceVolumes } from '@/app/scene/AirspaceVolumes';
@@ -345,6 +346,7 @@ function AdaptiveDprController({ retinaRendering }: { retinaRendering: boolean }
 }
 
 export const SceneCanvas = memo(function SceneCanvas({
+  simUpdate,
   airport,
   sceneData,
   contextApproach,
@@ -453,6 +455,7 @@ export const SceneCanvas = memo(function SceneCanvas({
         <directionalLight position={DIRECTIONAL_LIGHT_POSITION} intensity={0.8} />
         <SceneEnvironment />
         <AsyncShaderCompiler />
+        {simUpdate && <SimAircraftMarker update={simUpdate} />}
 
         {showTerrainSurface && (
           <TerrainWireframe

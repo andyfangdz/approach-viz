@@ -17,7 +17,7 @@
     "test:geometry": "node --import tsx --test app/scene/approach-path/geometry.test.ts app/scene/approach-path/geometry-rust.test.ts app/scene/terrain/terrarium.test.ts app/scene/scene-offload.test.ts",
     "test:layers": "node --import tsx --test app/app-client/__tests__/layers-url.test.ts app/scene/obstacle-shapes.test.ts lib/obstacles/plate-significance.test.ts app/app-client/__tests__/options-state.test.ts",
     "test:mrms": "node --import tsx --test app/scene/nexrad/nexrad.test.ts",
-    "test:workers": "node --import tsx --test app/scene/shared/comlinked-worker-client.test.ts",
+    "test:workers": "node --import tsx --test app/scene/shared/comlinked-worker-client.test.ts app/proc-sim/fixed-step-clock.test.ts app/proc-sim/simulator-wasm.test.ts app/proc-sim/scenario.test.ts",
     "test:integration:runtime": "node --import tsx --test services/runtime-rs/runtime.integration.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -36,6 +36,7 @@
     "start": "next start",
     "build:wasm": "PATH=$HOME/.cargo/bin:$PATH wasm-pack build crates/approach-viz-core --target web --out-dir ../../packages/approach-viz-core-wasm -- --features wasm && cp packages/approach-viz-core-wasm/approach_viz_core_bg.wasm public/approach_viz_core_bg.wasm && cp packages/approach-viz-core-wasm/approach_viz_core.js public/approach_viz_core.js",
     "build:wasm:server": "PATH=$HOME/.cargo/bin:$PATH CARGO_PROFILE_RELEASE_DEBUG=0 wasm-pack build crates/approach-viz-server-wasm --target web --no-pack --out-dir ../../packages/approach-viz-server-wasm && rm -f packages/approach-viz-server-wasm/.gitignore",
+    "test:smoke:training": "node --import tsx scripts/training-smoke/run.ts",
     "test:smoke:volume": "node --import tsx scripts/volume-smoke/run.ts",
     "codegen:flatbuffers": "bash scripts/install-flatc.sh && tools/flatc --rust -o crates/approach-viz-core/src/generated/ schemas/*.fbs"
   },

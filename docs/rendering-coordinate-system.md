@@ -17,3 +17,13 @@
 - Camera controls enforce defensive zoom bounds (non-zero minimum and capped maximum camera-target distance) and safe polar-angle limits to avoid degenerate orbit states under aggressive wheel zoom input.
 - A bottom-right floating `Recenter View` control resets camera position/target, remounts the active controls instance, and refreshes control saved state so users can recover from a transient stuck-control condition.
 - On mobile (`<=900px`), floating legend/options/recenter controls use an elevated safe-area-aware bottom offset (`env(safe-area-inset-bottom) + 68px`) to avoid iOS browser chrome overlap.
+
+## Procedure simulator marker
+
+The separate `/training` route does not mount a 3D aircraft marker. The reusable
+simulator worker/marker adapter still projects snapshots through shared Rust
+`proc_sim_scene_position`. The yellow aircraft uses the live-traffic coordinate
+contract: east/-north NM, absolute feet MSL converted to scene Y, vertical
+exaggeration, and curvature compensation on tiled surfaces. Heading is true and
+applied through React mesh props, which schedule demand-canvas rendering. See
+[procedure simulator](procedure-simulator.md) for supported FAA legs and controls.

@@ -61,3 +61,21 @@
 - The chart worker decodes each tile to raw RGBA on an `OffscreenCanvas` and sends batches of eight (or whatever arrived within 40 ms). The main thread uploads a batch into consecutive `DataArrayTexture` layers with one `copyTextureToTexture`, instead of one `ImageBitmap` upload per tile that the browser converts on the main thread.
 - Tile-array textures allocate GPU storage without a CPU-side zero buffer (`source.dataReady = false` makes the first upload a bare `texStorage3D`).
 - In 3D-map mode the worker composites the whole range (plus the TAC overlay) on an `OffscreenCanvas`, drawn south-up, and returns one `ImageBitmap`; the main thread only uploads it.
+
+The night HDR environment uses jsDelivr with the existing drei-assets commit
+pinned in its URL. This serves the same upstream HDR bytes while avoiding the
+raw.githack endpoint that returned HTTP 403 during simulator browser validation.
+Decode remains in the HDR worker.
+The Suspense resource caches rejected promises as well as successful loads so a
+failed HDR request surfaces an error rather than repeatedly spawning workers.
+
+## Procedure simulator instruments
+
+The PFD and HSI are DOM/SVG panels on the separate `/training` route, updated
+by sequential 250 ms worker snapshot reads. Training mounts no WebGL canvas,
+scene/HDR resources, or in-scene HTML and introduces no animation loop. The
+worker measures IAS trend using simulation time; Rust owns active-course,
+TO/FROM, and active/armed autopilot guidance. Scenario checks run on a 1-Hz
+simulation-time cadence in the same worker, independently of UI polling. The
+reusable aircraft-marker adapter remains available but is no longer mounted
+in the visualization. See [procedure simulator](procedure-simulator.md).

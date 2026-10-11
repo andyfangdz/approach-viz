@@ -1,6 +1,128 @@
 /* @ts-self-types="./approach_viz_core.d.ts" */
 
 /**
+ * Client-side instrument procedure simulator.
+ *
+ * The host creates one `ProcSim` per session, drives it with `step()` at a
+ * fixed timestep, and reads `snapshot()` for rendering. All flight logic
+ * runs in Rust/WASM; no network involved.
+ */
+export class ProcSim {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(ProcSim.prototype);
+        obj.__wbg_ptr = ptr;
+        ProcSimFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ProcSimFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_procsim_free(ptr, 0);
+    }
+    /**
+     * Advance by `delta_s` wall seconds, quantized to the fixed timestep.
+     * Returns the accumulated events as a JS array.
+     * @param {number} delta_s
+     * @returns {any}
+     */
+    advance(delta_s) {
+        const ret = wasm.procsim_advance(this.__wbg_ptr, delta_s);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Start a trainer using real FAA approach-path legs and user-selected altitude/speed.
+     * @param {any} input
+     * @param {number} altitude_ft
+     * @param {number} speed_kts
+     * @returns {ProcSim}
+     */
+    static from_procedure(input, altitude_ft, speed_kts) {
+        const ret = wasm.procsim_from_procedure(input, altitude_ft, speed_kts);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ProcSim.__wrap(ret[0]);
+    }
+    /**
+     * Create a session from a JSON `SimConfig` (camelCase, per core types).
+     * @param {any} config
+     */
+    constructor(config) {
+        const ret = wasm.procsim_new(config);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        ProcSimFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * ATC clearance update: altitude the grader holds the pilot to (feet
+     * MSL), or null to clear.
+     * @param {number | null} [alt_ft]
+     */
+    set_assigned_altitude(alt_ft) {
+        const ret = wasm.procsim_set_assigned_altitude(this.__wbg_ptr, !isLikeNone(alt_ft), isLikeNone(alt_ft) ? 0 : alt_ft);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Update autopilot modes and bugs from a JSON `AutopilotSettings`.
+     * @param {any} settings
+     */
+    set_autopilot(settings) {
+        const ret = wasm.procsim_set_autopilot(this.__wbg_ptr, settings);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Update the wind from a JSON `WindState`.
+     * @param {any} wind
+     */
+    set_wind(wind) {
+        const ret = wasm.procsim_set_wind(this.__wbg_ptr, wind);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Full UI snapshot as a JSON `SimSnapshot`.
+     * @returns {any}
+     */
+    snapshot() {
+        const ret = wasm.procsim_snapshot(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Advance one fixed timestep. Returns the step's events as a JS array
+     * (waypoint sequencing, new mistakes, procedure completion).
+     * @returns {any}
+     */
+    step() {
+        const ret = wasm.procsim_step(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+}
+if (Symbol.dispose) ProcSim.prototype[Symbol.dispose] = ProcSim.prototype.free;
+
+/**
  * Stateful traffic merge state held in WASM memory.
  *
  * JS creates one instance and calls methods on it. The inner `TrafficState`
@@ -269,6 +391,37 @@ export function decode_and_prepare_mrms(data, min_dbz_tenths, phase_mode, declut
     return takeFromExternrefTable0(ret[0]);
 }
 
+/**
+ * Convert the existing approach-path FAA contract into simulator legs.
+ * @param {any} input
+ * @returns {any}
+ */
+export function proc_sim_prepare_procedure(input) {
+    const ret = wasm.proc_sim_prepare_procedure(input);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Same absolute-MSL scene placement and curvature policy as live traffic.
+ * @param {number} lat
+ * @param {number} lon
+ * @param {number} altitude_ft
+ * @param {number} ref_lat
+ * @param {number} ref_lon
+ * @param {number} vertical_scale
+ * @param {boolean} curvature
+ * @returns {Float64Array}
+ */
+export function proc_sim_scene_position(lat, lon, altitude_ft, ref_lat, ref_lon, vertical_scale, curvature) {
+    const ret = wasm.proc_sim_scene_position(lat, lon, altitude_ft, ref_lat, ref_lon, vertical_scale, curvature);
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
+}
+
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -312,6 +465,10 @@ function __wbg_get_imports() {
             const ret = typeof(val) === 'object' && val !== null;
             return ret;
         },
+        __wbg___wbindgen_is_string_7debe47dc1e045c2: function(arg0) {
+            const ret = typeof(arg0) === 'string';
+            return ret;
+        },
         __wbg___wbindgen_is_undefined_c18285b9fc34cb7d: function(arg0) {
             const ret = arg0 === undefined;
             return ret;
@@ -345,10 +502,18 @@ function __wbg_get_imports() {
             const ret = arg0.done;
             return ret;
         },
+        __wbg_entries_28d32ba4cd93f5fc: function(arg0) {
+            const ret = Object.entries(arg0);
+            return ret;
+        },
         __wbg_get_4920fefd3451364b: function() { return handleError(function (arg0, arg1) {
             const ret = Reflect.get(arg0, arg1);
             return ret;
         }, arguments); },
+        __wbg_get_f09c3a16f8848381: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
         __wbg_get_unchecked_3d0f4b91c8eca4f0: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
             return ret;
@@ -472,6 +637,11 @@ function __wbg_get_imports() {
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;
         },
+        __wbindgen_cast_0000000000000003: function(arg0) {
+            // Cast intrinsic for `U64 -> Externref`.
+            const ret = BigInt.asUintN(64, arg0);
+            return ret;
+        },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
             const offset = table.grow(4);
@@ -488,6 +658,9 @@ function __wbg_get_imports() {
     };
 }
 
+const ProcSimFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_procsim_free(ptr >>> 0, 1));
 const WasmTrafficStateFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmtrafficstate_free(ptr >>> 0, 1));
@@ -566,6 +739,11 @@ function debugString(val) {
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 
 function getArrayI16FromWasm0(ptr, len) {

@@ -13,6 +13,8 @@ export default tseslint.config(
       'public/service-worker.js',
       'public/approach_viz_core.js',
       'services/runtime-rs/target/**',
+      'target/**',
+      'ios/ApproachViz/RustBridge/Generated/**',
       'packages/approach-viz-core-wasm/**',
       'packages/approach-viz-server-wasm/**'
     ]

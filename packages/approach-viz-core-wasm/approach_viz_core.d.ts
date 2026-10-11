@@ -2,6 +2,53 @@
 /* eslint-disable */
 
 /**
+ * Client-side instrument procedure simulator.
+ *
+ * The host creates one `ProcSim` per session, drives it with `step()` at a
+ * fixed timestep, and reads `snapshot()` for rendering. All flight logic
+ * runs in Rust/WASM; no network involved.
+ */
+export class ProcSim {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Advance by `delta_s` wall seconds, quantized to the fixed timestep.
+     * Returns the accumulated events as a JS array.
+     */
+    advance(delta_s: number): any;
+    /**
+     * Start a trainer using real FAA approach-path legs and user-selected altitude/speed.
+     */
+    static from_procedure(input: any, altitude_ft: number, speed_kts: number): ProcSim;
+    /**
+     * Create a session from a JSON `SimConfig` (camelCase, per core types).
+     */
+    constructor(config: any);
+    /**
+     * ATC clearance update: altitude the grader holds the pilot to (feet
+     * MSL), or null to clear.
+     */
+    set_assigned_altitude(alt_ft?: number | null): void;
+    /**
+     * Update autopilot modes and bugs from a JSON `AutopilotSettings`.
+     */
+    set_autopilot(settings: any): void;
+    /**
+     * Update the wind from a JSON `WindState`.
+     */
+    set_wind(wind: any): void;
+    /**
+     * Full UI snapshot as a JSON `SimSnapshot`.
+     */
+    snapshot(): any;
+    /**
+     * Advance one fixed timestep. Returns the step's events as a JS array
+     * (waypoint sequencing, new mistakes, procedure completion).
+     */
+    step(): any;
+}
+
+/**
  * Stateful traffic merge state held in WASM memory.
  *
  * JS creates one instance and calls methods on it. The inner `TrafficState`
@@ -96,10 +143,21 @@ export function decode_and_prepare_echo_top(data: Uint8Array, apply_earth_curvat
  */
 export function decode_and_prepare_mrms(data: Uint8Array, min_dbz_tenths: number, phase_mode: number, declutter_mode: number, apply_earth_curvature: boolean, ref_lat: number, include_cross_section: boolean, slice_axis_x: number, slice_axis_z: number, slice_perp_x: number, slice_perp_z: number, normalized_range: number, half_width_nm: number, include_composite: boolean, mosaic_product: number): any;
 
+/**
+ * Convert the existing approach-path FAA contract into simulator legs.
+ */
+export function proc_sim_prepare_procedure(input: any): any;
+
+/**
+ * Same absolute-MSL scene placement and curvature policy as live traffic.
+ */
+export function proc_sim_scene_position(lat: number, lon: number, altitude_ft: number, ref_lat: number, ref_lon: number, vertical_scale: number, curvature: boolean): Float64Array;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_procsim_free: (a: number, b: number) => void;
     readonly __wbg_wasmtrafficstate_free: (a: number, b: number) => void;
     readonly approach_path_build_geometry: (a: any) => [number, number, number];
     readonly approach_path_build_hold_points: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
@@ -109,6 +167,16 @@ export interface InitOutput {
     readonly approach_path_resolve_hold_leg_length_nm: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly decode_and_prepare_echo_top: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly decode_and_prepare_mrms: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
+    readonly proc_sim_prepare_procedure: (a: any) => [number, number, number];
+    readonly proc_sim_scene_position: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+    readonly procsim_advance: (a: number, b: number) => [number, number, number];
+    readonly procsim_from_procedure: (a: any, b: number, c: number) => [number, number, number];
+    readonly procsim_new: (a: any) => [number, number, number];
+    readonly procsim_set_assigned_altitude: (a: number, b: number, c: number) => [number, number];
+    readonly procsim_set_autopilot: (a: number, b: any) => [number, number];
+    readonly procsim_set_wind: (a: number, b: any) => [number, number];
+    readonly procsim_snapshot: (a: number) => [number, number, number];
+    readonly procsim_step: (a: number) => [number, number, number];
     readonly wasmtrafficstate_build_render_tracks: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly wasmtrafficstate_merge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly wasmtrafficstate_new: () => number;
@@ -121,6 +189,7 @@ export interface InitOutput {
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __externref_table_dealloc: (a: number) => void;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 
