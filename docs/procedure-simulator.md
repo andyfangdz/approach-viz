@@ -20,11 +20,35 @@ true degrees throughout this panel; ALT and assigned-altitude inputs are feet
 MSL. Clear assigned altitude to disable clearance grading. Playback offers
 0.5×, 1×, 1.5×, 2×, and 3×, pause, reset, and end-session controls.
 
-Instruments display heading, MSL altitude, vertical speed, IAS, ground speed,
-active fix, distance, and a ±1 NM CDI. Positive cross-track error means the
-aircraft is right of course. Snapshot mistakes retain severity, title, details,
-and solution, including findings that latch between UI polls. Mode readouts show
-the applied snapshot; the controls are drafts until applied.
+The cockpit places a PFD and HSI beside the autopilot controls on wide screens,
+with stacked controls/displays on narrow screens. The PFD has a sky/ground
+attitude display, pitch ladder, bank pointer, IAS and MSL altitude tapes with
+applied bugs, a vertical-speed scale, magnetic heading strip, and an active/armed
+mode annunciator. Pitch is explicitly flight-path angle, calculated as
+`atan2(vs_fpm, tas_kts * 6076.12 / 60)`; the core does not model aircraft pitch
+or angle of attack. The six-second IAS trend uses successive worker reads in
+simulation time (unavailable until time advances); the altitude trend is six
+seconds of current VS. Trend/bug graphics peg at the tape edges outside range.
+
+The HSI rotates its compass by magnetic heading (`true - east-positive variation`),
+shows the applied magnetic HDG bug and active leg's inbound magnetic course,
+a ±1 NM CDI, TO/FROM flag, active fix, distance, and signed cross-track error.
+Positive XTK means right of course; the CDI moves left in the course frame to
+command a return. The course is sourced from the active Rust procedure leg,
+not the autopilot's intercept heading or the unused manual course bug. TO/FROM
+compares bearing to the active fix against inbound course; completed procedures
+remove course/CDI/flag guidance rather than retain a stale needle.
+
+Rust snapshots own mode engagement: HDG/ALT/VS engage immediately; NAV/LOC
+engage when course guidance exists, otherwise display armed. GS without guidance
+is armed in the shared API and remains disabled in the web controls. VS arms ALT
+capture only while its commanded direction approaches the altitude bug. The
+existing control law tapers VS on capture and retains VS as the selected/active
+mode; it does not invent an ALT mode transition or radio capture state.
+Snapshot mistakes retain severity, title, details, and solution, including
+findings that latch between UI polls. The debrief announces updates politely to
+assistive technology. Controls remain drafts until applied; annunciators and
+instrument bugs always show the applied snapshot.
 
 ## FAA conversion and limits
 
@@ -63,7 +87,8 @@ A hidden document pauses playback; returning requires an explicit Run action.
 The worker stops on Rust's `procedureComplete` event and keeps a completed
 session paused even if a playback request arrives at completion. Full snapshots
 are serialized only for UI reads, rather than on each scheduler tick.
-UI polling is sequential at 250 ms, with no overlapping reads and a 10 s worker
+DOM/SVG flight instruments render from the same React snapshot as the scene marker;
+there is no separate instrument clock or canvas overlay. UI polling is sequential at 250 ms, with no overlapping reads and a 10 s worker
 request deadline. Errors are visible; there is no main-thread simulation fallback.
 Reset/end/unmount terminate the worker and release the session; a changed
 airport/procedure mounts a fresh panel. Old async results are discarded.
@@ -137,3 +162,21 @@ Future work includes sourced glidepath guidance, arcs/holds/missed procedures,
 maximum/at-fix restriction grading, replay/event logging, persisted scenarios,
 and native simulator UI. Autopilot gain changes require measured comparison;
 this integration retains the existing gains.
+
+The PFD/HSI follow-up passed core tests (166), the UniFFI feature check,
+type checking, lint, the complete npm suite, and the Binaryen 117 browser WASM
+rebuild. Shipped-WASM regressions cover course/TO guidance, HDG/VS/NAV engagement,
+ALT capture arming, and removal of navigation guidance at completion.
+The `agent-browser` flight used KTEB/R06-Y at 3×: a 108° true heading command
+produced 17.8° right bank; a −500 fpm descent displayed −2.2° flight-path pitch
+and falling altitude; NAV/ALT then commanded a −25° left intercept with the
+HSI retaining the 060° magnetic inbound course. XTK decreased from 4.30 to
+3.85 NM. Pause held 204.2 s; reset restored 0.0 s, 1×, 3,000 ft, 110 KIAS,
+level attitude, centered CDI, and zero findings. The 390 px layout stacked the
+instruments within the panel. Simulator alerts stayed empty. This browser host
+could not fetch the external HDR, so the smoke used a temporary local mirror of
+the same downloaded HDR; the mirror and URL override were removed afterward.
+Screenshots and readouts are under `.tmp/proc-instruments-*` (initial, turn,
+descent, NAV/intercept, pause, and reset). Repository-wide format checking still
+reports pre-existing drift outside the simulator; changed simulator Rust files
+are formatted.

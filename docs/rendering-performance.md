@@ -68,3 +68,11 @@ raw.githack endpoint that returned HTTP 403 during simulator browser validation.
 Decode remains in the HDR worker.
 The Suspense resource caches rejected promises as well as successful loads so a
 failed HDR request surfaces an error rather than repeatedly spawning workers.
+
+## Procedure simulator instruments
+
+The PFD and HSI are DOM/SVG panels updated by the simulator worker's sequential
+250 ms snapshot reads. They share the marker's snapshot and introduce no animation
+loop or in-scene HTML. The worker measures IAS trend using simulation time;
+Rust owns active-course, TO/FROM, and active/armed autopilot guidance. Marker
+updates remain React props on the demand canvas. See [procedure simulator](procedure-simulator.md).

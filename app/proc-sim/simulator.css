@@ -30,9 +30,12 @@
   opacity: 0.5;
   cursor: default;
 }
+.sim-cockpit-open {
+  width: min(1180px, calc(100vw - 24px));
+}
 .sim-toggle {
   flex-shrink: 0;
-  width: 100%;
+  width: min(390px, 100%);
   text-align: left;
 }
 .sim-body {
@@ -88,4 +91,91 @@
   border-left: 3px solid #ffcf40;
   padding-left: 8px;
   margin: 12px 0;
+}
+
+.sim-cockpit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  gap: 16px;
+  align-items: start;
+}
+.sim-flight-displays {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.sim-display {
+  background: #080d17;
+  border: 1px solid #47556d;
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.sim-display svg {
+  width: 100%;
+  display: block;
+  overflow: hidden;
+}
+.sim-display svg text {
+  fill: #edf2ff;
+  font-family: monospace;
+}
+.sim-pfd-row {
+  display: grid;
+  grid-template-columns: 90fr 240fr 90fr 60fr;
+}
+.sim-fma {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+}
+.sim-fma span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sim-fma b {
+  color: #86efac;
+  font-size: 15px;
+}
+.sim-fma .sim-armed {
+  color: #edf2ff;
+}
+.sim-hsi-readout {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sim-hsi-readout b {
+  color: #e879f9;
+}
+.sim-display-note {
+  color: #b4c0d5;
+  font-size: 11px;
+  margin-bottom: 0;
+}
+.sim-autopilot h3 {
+  margin-top: 0;
+}
+.sim-body > form .sim-grid {
+  max-width: 420px;
+}
+@media (max-width: 1000px) {
+  .sim-cockpit {
+    grid-template-columns: 1fr;
+  }
+  .sim-autopilot {
+    max-width: 500px;
+  }
+}
+@media (max-width: 600px) {
+  .sim-flight-displays {
+    grid-template-columns: 1fr;
+  }
+  .sim-hsi {
+    max-width: 340px;
+  }
 }

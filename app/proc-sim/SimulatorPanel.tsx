@@ -3,6 +3,7 @@ import type { Approach, Waypoint } from '@/lib/cifp/parser';
 import { SimWorkerClient } from './worker-client';
 import type { AutopilotSettings, SceneFrame, SimControls, SimUpdate } from './types';
 import './simulator.css';
+import { PFD, HSI } from './FlightInstruments';
 
 function NumericInput({
   label,
@@ -218,7 +219,10 @@ export function SimulatorPanel({
   }
   const snapshot = update?.snapshot;
   return (
-    <aside className="simulator" aria-label="Procedure simulator">
+    <aside
+      className={`simulator${open && snapshot ? ' sim-cockpit-open' : ''}`}
+      aria-label="Procedure simulator"
+    >
       <button className="sim-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
         Procedure simulator {open ? '▾' : '▸'}
       </button>
@@ -313,173 +317,147 @@ export function SimulatorPanel({
                 </button>
                 <span>{snapshot.simTimeS.toFixed(1)} s</span>
               </div>
-              <div className="sim-instruments" aria-label="Flight instruments">
-                <output>
-                  HDG {String(Math.round(snapshot.state.hdgDegTrue) % 360).padStart(3, '0')}° T
-                </output>
-                <output>ALT {snapshot.state.altFtMsl.toFixed(0)} ft MSL</output>
-                <output>VS {snapshot.state.vsFpm.toFixed(0)} fpm</output>
-                <output>
-                  IAS {snapshot.state.iasKts.toFixed(0)} kt · GS {snapshot.state.gsKts.toFixed(0)}{' '}
-                  kt
-                </output>
-              </div>
-              <p>
-                Active: {snapshot.activeLegFix ?? 'Procedure complete'} ·{' '}
-                {snapshot.distToFixNm == null ? '—' : `${snapshot.distToFixNm.toFixed(2)} NM`}
-              </p>
-              <label>
-                CDI needle toward course (±1 NM)
-                <svg
-                  role="img"
-                  aria-label={snapshot.cdi == null ? 'CDI unavailable' : 'CDI needle'}
-                  viewBox="0 0 240 36"
-                  className="sim-cdi"
-                >
-                  <path d="M12 18H228" stroke="#7c8ca7" />
-                  {[12, 66, 120, 174, 228].map((x) => (
-                    <path key={x} d={`M${x} 10V26`} stroke="#7c8ca7" />
-                  ))}
-                  {snapshot.cdi != null && (
-                    <path
-                      d={`M${120 - snapshot.cdi * 108} 4V32`}
-                      stroke="#ffcf40"
-                      strokeWidth="3"
-                    />
-                  )}
-                </svg>
-                <output>
-                  {snapshot.xtkNm == null
-                    ? '—'
-                    : `${snapshot.xtkNm.toFixed(2)} NM XTK (positive = right)`}
-                </output>
-              </label>
-              <p className="sim-note">
-                Active AP: {snapshot.autopilot.lateral} / {snapshot.autopilot.vertical}. Edit bugs
-                and modes, then apply.
-              </p>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void apply();
-                }}
-              >
-                <div className="sim-grid">
-                  <label>
-                    Lateral mode
-                    <select
-                      aria-label="Lateral mode"
-                      value={controls.autopilot.lateral}
-                      onChange={(event) => {
-                        // SAFETY: the options below are exactly the AutopilotSettings lateral variants.
-                        const lateral = event.target.value as AutopilotSettings['lateral'];
-                        setControls({ ...controls, autopilot: { ...controls.autopilot, lateral } });
-                      }}
-                    >
-                      <option value="Heading">HDG</option>
-                      <option value="Nav">NAV</option>
-                      <option value="Localizer">LOC (course trainer)</option>
-                    </select>
-                  </label>
-                  <label>
-                    Vertical mode
-                    <select
-                      aria-label="Vertical mode"
-                      value={controls.autopilot.vertical}
-                      onChange={(event) => {
-                        // SAFETY: the options below are exactly the AutopilotSettings vertical variants.
-                        const vertical = event.target.value as AutopilotSettings['vertical'];
-                        setControls({
-                          ...controls,
-                          autopilot: { ...controls.autopilot, vertical }
-                        });
-                      }}
-                    >
-                      <option value="AltitudeHold">ALT</option>
-                      <option value="VerticalSpeed">VS</option>
-                      <option value="GlideSlope" disabled>
-                        GS arm (unavailable)
-                      </option>
-                    </select>
-                  </label>
-                  <NumericInput
-                    label="HDG bug (° true)"
-                    step="any"
-                    value={controls.autopilot.hdgBugDeg}
-                    min={0}
-                    max={360}
-                    onChange={(value) => bug('hdgBugDeg', value)}
-                  />
-                  <NumericInput
-                    label="ALT bug (ft MSL)"
-                    value={controls.autopilot.altBugFt}
-                    min={0}
-                    max={20000}
-                    step={100}
-                    onChange={(value) => bug('altBugFt', value)}
-                  />
-                  <NumericInput
-                    label="VS bug (fpm)"
-                    value={controls.autopilot.vsBugFpm}
-                    min={-2000}
-                    max={2000}
-                    step={100}
-                    onChange={(value) => bug('vsBugFpm', value)}
-                  />
-                  <NumericInput
-                    label="Speed bug (KIAS)"
-                    value={controls.autopilot.spdBugKts}
-                    min={40}
-                    max={250}
-                    onChange={(value) => bug('spdBugKts', value)}
-                  />
-                  <NumericInput
-                    label="Wind from (° true)"
-                    step="any"
-                    value={controls.wind.directionFromDegTrue}
-                    min={0}
-                    max={360}
-                    onChange={(value) =>
-                      setControls({
-                        ...controls,
-                        wind: { ...controls.wind, directionFromDegTrue: value }
-                      })
-                    }
-                  />
-                  <NumericInput
-                    label="Wind speed (kt)"
-                    value={controls.wind.speedKts}
-                    min={0}
-                    max={150}
-                    onChange={(value) =>
-                      setControls({ ...controls, wind: { ...controls.wind, speedKts: value } })
-                    }
-                  />
+              <div className="sim-cockpit">
+                <div className="sim-flight-displays">
+                  <PFD update={update} />
+                  <HSI snapshot={snapshot} />
                 </div>
-                <label>
-                  Assigned altitude (ft MSL; blank = none)
-                  <input
-                    aria-label="Assigned altitude"
-                    type="number"
-                    min={0}
-                    max={20000}
-                    step={100}
-                    value={controls.assignedAltitude ?? ''}
-                    onChange={(event) => {
-                      if (event.target.value === '' || Number.isFinite(event.target.valueAsNumber))
-                        setControls({
-                          ...controls,
-                          assignedAltitude:
-                            event.target.value === '' ? null : event.target.valueAsNumber
-                        });
+                <div className="sim-autopilot">
+                  <h3>Autopilot and clearance</h3>
+                  <p className="sim-note">
+                    Controls are drafts until applied. Bugs use TRUE degrees; instruments show
+                    magnetic.
+                  </p>
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void apply();
                     }}
-                  />
-                </label>
-                <button disabled={busy} type="submit">
-                  Apply autopilot and clearance
-                </button>
-              </form>
-              <div aria-label="Mistake feed">
+                  >
+                    <div className="sim-grid">
+                      <label>
+                        Lateral mode
+                        <select
+                          aria-label="Lateral mode"
+                          value={controls.autopilot.lateral}
+                          onChange={(event) => {
+                            // SAFETY: the options below are exactly the AutopilotSettings lateral variants.
+                            const lateral = event.target.value as AutopilotSettings['lateral'];
+                            setControls({
+                              ...controls,
+                              autopilot: { ...controls.autopilot, lateral }
+                            });
+                          }}
+                        >
+                          <option value="Heading">HDG</option>
+                          <option value="Nav">NAV</option>
+                          <option value="Localizer">LOC (course trainer)</option>
+                        </select>
+                      </label>
+                      <label>
+                        Vertical mode
+                        <select
+                          aria-label="Vertical mode"
+                          value={controls.autopilot.vertical}
+                          onChange={(event) => {
+                            // SAFETY: the options below are exactly the AutopilotSettings vertical variants.
+                            const vertical = event.target.value as AutopilotSettings['vertical'];
+                            setControls({
+                              ...controls,
+                              autopilot: { ...controls.autopilot, vertical }
+                            });
+                          }}
+                        >
+                          <option value="AltitudeHold">ALT</option>
+                          <option value="VerticalSpeed">VS</option>
+                          <option value="GlideSlope" disabled>
+                            GS arm (unavailable)
+                          </option>
+                        </select>
+                      </label>
+                      <NumericInput
+                        label="HDG bug (° true)"
+                        step="any"
+                        value={controls.autopilot.hdgBugDeg}
+                        min={0}
+                        max={360}
+                        onChange={(value) => bug('hdgBugDeg', value)}
+                      />
+                      <NumericInput
+                        label="ALT bug (ft MSL)"
+                        value={controls.autopilot.altBugFt}
+                        min={0}
+                        max={20000}
+                        step={100}
+                        onChange={(value) => bug('altBugFt', value)}
+                      />
+                      <NumericInput
+                        label="VS bug (fpm)"
+                        value={controls.autopilot.vsBugFpm}
+                        min={-2000}
+                        max={2000}
+                        step={100}
+                        onChange={(value) => bug('vsBugFpm', value)}
+                      />
+                      <NumericInput
+                        label="Speed bug (KIAS)"
+                        value={controls.autopilot.spdBugKts}
+                        min={40}
+                        max={250}
+                        onChange={(value) => bug('spdBugKts', value)}
+                      />
+                      <NumericInput
+                        label="Wind from (° true)"
+                        step="any"
+                        value={controls.wind.directionFromDegTrue}
+                        min={0}
+                        max={360}
+                        onChange={(value) =>
+                          setControls({
+                            ...controls,
+                            wind: { ...controls.wind, directionFromDegTrue: value }
+                          })
+                        }
+                      />
+                      <NumericInput
+                        label="Wind speed (kt)"
+                        value={controls.wind.speedKts}
+                        min={0}
+                        max={150}
+                        onChange={(value) =>
+                          setControls({ ...controls, wind: { ...controls.wind, speedKts: value } })
+                        }
+                      />
+                    </div>
+                    <label>
+                      Assigned altitude (ft MSL; blank = none)
+                      <input
+                        aria-label="Assigned altitude"
+                        type="number"
+                        min={0}
+                        max={20000}
+                        step={100}
+                        value={controls.assignedAltitude ?? ''}
+                        onChange={(event) => {
+                          if (
+                            event.target.value === '' ||
+                            Number.isFinite(event.target.valueAsNumber)
+                          )
+                            setControls({
+                              ...controls,
+                              assignedAltitude:
+                                event.target.value === '' ? null : event.target.valueAsNumber
+                            });
+                        }}
+                      />
+                    </label>
+                    <button disabled={busy} type="submit">
+                      Apply autopilot and clearance
+                    </button>
+                  </form>
+                </div>
+              </div>
+              <div aria-label="Mistake feed" aria-live="polite">
                 <h3>Debrief · {snapshot.mistakes.length} findings</h3>
                 {snapshot.mistakes.map((mistake, index) => (
                   <article key={`${mistake.kind}:${mistake.simTimeS}:${index}`}>
