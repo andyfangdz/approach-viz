@@ -180,3 +180,53 @@ Screenshots and readouts are under `.tmp/proc-instruments-*` (initial, turn,
 descent, NAV/intercept, pause, and reset). Repository-wide format checking still
 reports pre-existing drift outside the simulator; changed simulator Rust files
 are formatted.
+
+### Completion verification after the VM restart (2026-10-11)
+
+At the `133e8cf` checkpoint, the existing speed control, pause/reset/end-session
+controls, and retained mistake feed were complete; no simulator implementation
+changes were needed. All five required commands passed: 166 core Rust tests,
+TypeScript checking, lint, all 193 npm tests, and the browser WASM rebuild with
+Binaryen 117. The rebuilt WASM matched the committed artifacts. Simulator Rust
+formatting passed with edition 2024; the repository-wide formatting drift above
+remains outside this feature.
+
+A scripted `agent-browser` flight loaded the real KTEB/R06-Y final segment at
+3,000 ft MSL and 110 KIAS, in calm wind. It asserted the rendered SVG readouts,
+applied mode annunciators, and debrief text, and captured these stages:
+
+| Stage                       | Observed PFD/HSI response                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------ |
+| Initial                     | Level attitude, 3,000 ft, 110 KIAS, 060° magnetic heading/course, centered CDI             |
+| HDG 108° true               | 17.8° right bank, 092° magnetic heading, 120° magnetic bug, 060° course retained           |
+| VS −500 fpm toward 2,000 ft | 2,634 ft, −500 fpm, −2.4° flight-path pitch, VS active and ALT armed                       |
+| NAV/ALT toward 2,600 ft     | −25.0° left bank, NAV/ALT active, 060° inbound course retained                             |
+| NAV recovery                | XTK reduced from 1.50 to 0.29 NM; active fix sequenced to DANDY; CDI returned within range |
+| Pause                       | All captured instrument/debrief readouts held at 144.6 s                                   |
+| Reset                       | 0.0 s, 1×, 3,000 ft, 110 KIAS, level attitude, centered CDI, zero findings                 |
+
+All five playback speeds were accepted while paused without advancing time.
+The altitude-bug, assigned-altitude, and course-deviation findings remained
+unchanged after recovery and pause. End session removed the instruments.
+Simulator alerts stayed empty. Screenshots and JSON readouts are local,
+uncommitted evidence in `.tmp/proc-sim-completion/`: `initial`, `turn`, `descent`,
+`nav`, `nav-rejoin`, and `reset`; `flight.mjs` and `flight.log` contain the driver
+and assertion results.
+
+The VM's bundled Chromium blocked localhost; a cached standard Chrome was used.
+The old development cache returned route 404s, so validation used a fresh
+webpack development cache. Browser HDR fetching failed even though the shell
+proxy downloaded the source asset successfully. The smoke temporarily served
+those exact HDR bytes locally; the mirror and source URL override were removed
+afterward. The CLI's numeric `fill` appended text, so the driver used the native
+input value setter plus a bubbling input event and asserted the resulting value
+before applying controls.
+
+After the web checks passed, `cargo check -p approach-viz-core --features ios`,
+the Linux iOS-feature library build, and Swift binding generation passed. The
+generated API includes `ProcSimSessionHandle`, payload events, optional
+`UInt64` leg indices, and the PFD/HSI guidance and mode fields. Generated files
+remain under `.tmp/proc-sim-completion/swift/`. `npm run build:ios` stopped at
+the missing active Apple developer directory on Linux; Apple XCFramework/app
+validation still requires an Xcode host. The generator also reported that
+`swift-format` was unavailable; this did not prevent metadata generation.

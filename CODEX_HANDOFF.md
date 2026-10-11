@@ -1,5 +1,34 @@
 # Codex handoff: finish the client-side procedure simulator
 
+## Completion after the VM restart — 2026-10-11
+
+The feature-complete web mission is finished at the `133e8cf` implementation
+checkpoint. Speed control, pause/reset/end-session, and the retained mistake
+feed needed no further implementation changes. All required checks passed:
+166 core Rust tests, type checking, lint, 193 npm tests, and the Binaryen 117
+browser WASM rebuild (identical committed artifacts).
+
+The scripted `agent-browser` flight asserted a 17.8° right-bank HDG turn,
+a −500 fpm descent to 2,634 ft with −2.4° flight-path pitch, and a −25° NAV
+intercept. NAV reduced XTK from 1.50 to 0.29 NM and sequenced to DANDY while
+retaining the 060° magnetic inbound course. All five speed options, three
+retained debrief findings, pause, reset, and end-session passed. Screenshots,
+JSON readouts, and the assertion driver are under `.tmp/proc-sim-completion/`.
+See `docs/procedure-simulator.md` for the measurements and browser-host caveats.
+Temporary HDR serving and its source URL override were removed.
+
+Secondary native validation passed the iOS-feature check, Linux library build,
+and Swift metadata generation, including the session handle, payload events,
+optional `UInt64` leg index, and PFD/HSI guidance/mode fields. `build:ios` cannot
+build the Apple bridge on this Linux VM: no active Apple developer directory.
+Generated Swift remains in `.tmp/proc-sim-completion/swift/`; an Xcode host is
+still needed for XCFramework/app validation. Repository-wide Rust formatting
+has the pre-existing drift described below; simulator files pass edition-2024
+format checking.
+
+The original mission below is retained for context. Do not merge PR #85 or
+push to `master`.
+
 ## Mission
 
 Finish and iterate on the client-side procedure simulator for ApproachViz.
