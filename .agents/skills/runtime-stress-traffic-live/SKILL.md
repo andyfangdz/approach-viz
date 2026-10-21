@@ -13,7 +13,7 @@ Run a repeatable high-concurrency stress test for `GET /v1/traffic/adsbx` agains
 
 - `repo_root`: repository path containing this skill
 - Optional:
-  - `base_url` (default `https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1`)
+  - `base_url` (default `https://approach-runtime.andyfang.app`)
   - `requests` (default `1200`)
   - `concurrency` (default `40`)
   - traffic query knobs (`lat/lon/radiusNm/limit/historyMinutes`)

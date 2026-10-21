@@ -10,7 +10,7 @@ import {
   type JsonValue
 } from '../../lib/parse-like';
 
-const DEFAULT_RUNTIME_BASE_URL = 'https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1';
+const DEFAULT_RUNTIME_BASE_URL = 'https://approach-runtime.andyfang.app';
 const DEFAULT_TRAFFIC_LAT = 40.6413; // KJFK area
 const DEFAULT_TRAFFIC_LON = -73.7781;
 const DEFAULT_TRAFFIC_RADIUS_NM = 180;
