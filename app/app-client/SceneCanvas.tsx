@@ -21,6 +21,10 @@ import { LiveTrafficOverlay, type SceneAirport } from '@/app/scene/LiveTrafficOv
 import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
 import { ObstacleOverlay } from '@/app/scene/ObstacleOverlay';
 import { ProbSevereOverlay } from '@/app/scene/ProbSevereOverlay';
+import { altToY } from '@/app/scene/approach-path/coordinates';
+import { SCOPE_COLORS } from '@/app/scene/tracon/scope-colors';
+import { TraconScope } from '@/app/scene/tracon/TraconScope';
+import { TraconScopeCamera } from '@/app/scene/tracon/TraconScopeCamera';
 import {
   CAMERA_POSITION,
   DIRECTIONAL_LIGHT_POSITION,
@@ -377,6 +381,8 @@ export const SceneCanvas = memo(function SceneCanvas({
   surfaceErrorMessage,
   recenterNonce,
   cameraControlMode,
+  viewMode,
+  traconDimension,
   retinaRendering,
   missedApproachStartAltitudeFeet,
   minimumsLabel,
@@ -417,10 +423,15 @@ export const SceneCanvas = memo(function SceneCanvas({
     return list;
   }, [airport, sceneData.elevationAirports]);
   const hasApproachPlate = Boolean(sceneData.approachPlate);
-  const isTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dmap';
-  const showFlatPlateSurface = plateOverlayEnabled && hasApproachPlate && !isTiledSurface;
-  const showTerrainSurface = surfaceMode === 'terrain' && !showFlatPlateSurface;
-  const showChartMapSurface = surfaceMode === 'map';
+  // The TRACON scope replaces the ground surface with its own backdrop.
+  const isTracon = viewMode === 'tracon';
+  const isTracon2d = isTracon && traconDimension === '2d';
+  const traconFloorY = altToY(airport.elevation, verticalScale);
+  const isTiledSurface = !isTracon && (surfaceMode === 'satellite' || surfaceMode === '3dmap');
+  const showFlatPlateSurface =
+    !isTracon && plateOverlayEnabled && hasApproachPlate && !isTiledSurface;
+  const showTerrainSurface = !isTracon && surfaceMode === 'terrain' && !showFlatPlateSurface;
+  const showChartMapSurface = !isTracon && surfaceMode === 'map';
   const showTiledSurface = isTiledSurface;
   const chartOverlay = useMemo(
     () => (surfaceMode === '3dmap' ? { chartType, radiusNm: terrainRadiusNm } : null),
@@ -442,17 +453,26 @@ export const SceneCanvas = memo(function SceneCanvas({
         powerPreference: 'high-performance'
       }}
     >
-      <color attach="background" args={['#0a0a14']} />
+      <color attach="background" args={[isTracon ? SCOPE_COLORS.background : '#0a0a14']} />
 
       <Suspense fallback={<LoadingFallback />}>
         <AdaptiveDprController retinaRendering={retinaRendering} />
         <PointerRecoveryGuard controlsRef={controlsRef} />
-        <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />
+        {!isTracon2d && <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />}
         <CameraStabilityGuard controlsRef={controlsRef} />
         <ambientLight intensity={0.4} />
         <directionalLight position={DIRECTIONAL_LIGHT_POSITION} intensity={0.8} />
         <SceneEnvironment />
         <AsyncShaderCompiler />
+
+        {isTracon && (
+          <TraconScope
+            airport={airport}
+            runways={sceneData.runways}
+            rangeNm={terrainRadiusNm}
+            verticalScale={verticalScale}
+          />
+        )}
 
         {showTerrainSurface && (
           <TerrainWireframe
@@ -565,6 +585,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             refLon={airport.lon}
             verticalScale={verticalScale}
             airportElevationFeet={airport.elevation}
+            presentation={isTracon ? 'outline' : 'volume'}
           />
         )}
 
@@ -595,6 +616,8 @@ export const SceneCanvas = memo(function SceneCanvas({
               showDepartedTrafficTrails={showDepartedTrafficTrails}
               historyMinutes={trafficHistoryMinutes}
               applyEarthCurvatureCompensation={isTiledSurface}
+              presentation={isTracon ? 'scope' : 'scene'}
+              showAltitudeStalks={isTracon && !isTracon2d}
               onDebugChange={onTrafficDebugChange}
             />
           </SceneErrorBoundary>
@@ -635,7 +658,15 @@ export const SceneCanvas = memo(function SceneCanvas({
             applyEarthCurvatureCompensation={isTiledSurface}
           />
         )}
-        {cameraControlMode === 'orbit' && (
+        {isTracon2d && (
+          <TraconScopeCamera
+            key={`tracon-${recenterNonce}-${terrainRadiusNm}`}
+            rangeNm={terrainRadiusNm}
+            floorY={traconFloorY}
+            controlsRef={handleMapControlsRef}
+          />
+        )}
+        {!isTracon2d && cameraControlMode === 'orbit' && (
           <OrbitControls
             key={`orbit-${recenterNonce}`}
             ref={handleOrbitControlsRef}
@@ -648,7 +679,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             target={ORBIT_TARGET}
           />
         )}
-        {cameraControlMode === 'map' && (
+        {!isTracon2d && cameraControlMode === 'map' && (
           <MapControls
             key={`map-${recenterNonce}`}
             ref={handleMapControlsRef}
@@ -661,7 +692,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             target={ORBIT_TARGET}
           />
         )}
-        {cameraControlMode === 'arcball' && (
+        {!isTracon2d && cameraControlMode === 'arcball' && (
           <ArcballControls
             key={`arcball-${recenterNonce}`}
             ref={handleArcballControlsRef}

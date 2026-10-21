@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { serializeLayersParam } from '@/app/app-client-utils';
+import { serializeLayersParam, serializeViewParam } from '@/app/app-client-utils';
 import {
   DEFAULT_NEXRAD_DECLUTTER_MODE,
   DEFAULT_NEXRAD_PHASE_MODE,
@@ -17,7 +17,9 @@ import type {
   NexradPhaseMode,
   NexradSurfaceMosaicDrape,
   NexradSurfaceMosaicProduct,
-  SurfaceMode
+  SurfaceMode,
+  TraconDimension,
+  ViewMode
 } from '@/app/app-client/types';
 
 interface UseUrlSyncParams {
@@ -34,6 +36,8 @@ interface UseUrlSyncParams {
   nexradDeclutterMode: NexradDeclutterMode;
   trafficHistoryMinutes: number;
   showTrafficCallsigns: boolean;
+  viewMode: ViewMode;
+  traconDimension: TraconDimension;
 }
 
 /**
@@ -54,7 +58,9 @@ export function useUrlSync({
   nexradSurfaceMosaicProduct,
   nexradDeclutterMode,
   trafficHistoryMinutes,
-  showTrafficCallsigns
+  showTrafficCallsigns,
+  viewMode,
+  traconDimension
 }: UseUrlSyncParams) {
   useEffect(() => {
     if (globalThis.window === undefined || !selectedAirport || !enabled) return;
@@ -108,6 +114,12 @@ export function useUrlSync({
     } else {
       params.delete('callsigns');
     }
+    const viewSerialized = serializeViewParam(viewMode, traconDimension);
+    if (viewSerialized) {
+      params.set('view', viewSerialized);
+    } else {
+      params.delete('view');
+    }
     const nextSearch = params.toString();
     const nextUrl = `${nextPath}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
@@ -134,6 +146,8 @@ export function useUrlSync({
     nexradSurfaceMosaicProduct,
     nexradDeclutterMode,
     trafficHistoryMinutes,
-    showTrafficCallsigns
+    showTrafficCallsigns,
+    viewMode,
+    traconDimension
   ]);
 }

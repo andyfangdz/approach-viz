@@ -7,6 +7,8 @@ import {
   DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE,
   DEFAULT_NEXRAD_SURFACE_MOSAIC_PRODUCT,
   DEFAULT_CAMERA_CONTROL_MODE,
+  DEFAULT_TRACON_DIMENSION,
+  DEFAULT_VIEW_MODE,
   DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
   MIN_NEXRAD_CROSS_SECTION_RANGE_NM,
@@ -32,7 +34,9 @@ import type {
   NexradDeclutterMode,
   NexradPhaseMode,
   NexradSurfaceMosaicDrape,
-  NexradSurfaceMosaicProduct
+  NexradSurfaceMosaicProduct,
+  TraconDimension,
+  ViewMode
 } from '@/app/app-client/types';
 import { isMemberOf, isString } from '@/lib/parse-like';
 import type { JsonValue } from '@/lib/parse-like';
@@ -150,4 +154,18 @@ export function normalizeNexradCrossSectionRangeNm(rangeNm: number): number {
       DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM
     )
   );
+}
+
+export const VIEW_MODES = ['scene', 'tracon'] as const satisfies readonly ViewMode[];
+
+export function normalizeViewMode(mode: JsonValue): ViewMode {
+  return isString(mode) && isMemberOf(mode, VIEW_MODES) ? mode : DEFAULT_VIEW_MODE;
+}
+
+export const TRACON_DIMENSIONS = ['2d', '3d'] as const satisfies readonly TraconDimension[];
+
+export function normalizeTraconDimension(dimension: JsonValue): TraconDimension {
+  return isString(dimension) && isMemberOf(dimension, TRACON_DIMENSIONS)
+    ? dimension
+    : DEFAULT_TRACON_DIMENSION;
 }

@@ -116,5 +116,6 @@ The native MVP intentionally does not yet implement:
 - chart/satellite surfaces
 - approach plates
 - full web feature parity for labels, materials, camera choreography, and every procedure edge case
+- the web TRACON radar view (scope backdrop, data blocks, 2D/3D toggle)
 
 Those remain follow-on work in the iOS rewrite.

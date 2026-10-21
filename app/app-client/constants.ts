@@ -26,6 +26,8 @@ export const DEFAULT_NEXRAD_PHASE_MODE = 'surface';
 export const DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE: NexradSurfaceMosaicDrape = 'terrain';
 export const DEFAULT_NEXRAD_SURFACE_MOSAIC_PRODUCT: NexradSurfaceMosaicProduct = 'composite';
 export const DEFAULT_CAMERA_CONTROL_MODE = 'orbit';
+export const DEFAULT_VIEW_MODE = 'scene';
+export const DEFAULT_TRACON_DIMENSION = '2d';
 export {
   MIN_OBSTACLE_RADIUS_NM,
   MAX_OBSTACLE_RADIUS_NM,

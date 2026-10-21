@@ -2,7 +2,13 @@ import type { StylesConfig } from 'react-select';
 import type { Approach, Waypoint } from '@/lib/cifp/parser';
 import type { MinimumsValueSummary, SceneData } from '@/lib/types';
 import { DEFAULT_LAYER_STATE, LAYER_IDS } from '@/app/app-client/constants';
-import type { ChartType, LayerState, SurfaceMode } from '@/app/app-client/types';
+import type {
+  ChartType,
+  LayerState,
+  SurfaceMode,
+  TraconDimension,
+  ViewMode
+} from '@/app/app-client/types';
 import { isMemberOf } from '@/lib/parse-like';
 
 export { DEFAULT_LAYER_STATE };
@@ -253,4 +259,26 @@ export function readShowCallsignsFromSearch(search: string): boolean | null {
   if (value === '1') return true;
   if (value === '0') return false;
   return null;
+}
+
+export interface ViewUrlState {
+  viewMode: ViewMode;
+  traconDimension: TraconDimension | null;
+}
+
+/** `view=tracon-2d` / `view=tracon-3d` select the TRACON scope; `view=scene`
+ *  (or no `view`) the approach scene. */
+export function readViewFromSearch(search: string): ViewUrlState | null {
+  const value = new URLSearchParams(search).get('view');
+  if (value === 'scene') return { viewMode: 'scene', traconDimension: null };
+  if (value === 'tracon-2d') return { viewMode: 'tracon', traconDimension: '2d' };
+  if (value === 'tracon-3d') return { viewMode: 'tracon', traconDimension: '3d' };
+  return null;
+}
+
+export function serializeViewParam(
+  viewMode: ViewMode,
+  traconDimension: TraconDimension
+): string | null {
+  return viewMode === 'tracon' ? `tracon-${traconDimension}` : null;
 }

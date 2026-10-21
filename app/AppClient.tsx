@@ -203,7 +203,9 @@ export function AppClient({
     nexradSurfaceMosaicProduct: options.nexradSurfaceMosaicProduct,
     nexradDeclutterMode: options.nexradDeclutterMode,
     trafficHistoryMinutes: options.trafficHistoryMinutes,
-    showTrafficCallsigns: options.showTrafficCallsigns
+    showTrafficCallsigns: options.showTrafficCallsigns,
+    viewMode: options.viewMode,
+    traconDimension: options.traconDimension
   });
 
   // Runs after the hooks' mount effects (declaration order), so URL params
@@ -315,16 +317,19 @@ export function AppClient({
     options.useParsedMissedClimbGradient && hasParsedMissedClimbRequirement
       ? sceneData.missedApproachClimbRequirement
       : null;
-  const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' | 'map' =
-    surface.plateOverlayEnabled && hasApproachPlate
+  const isTracon = options.viewMode === 'tracon';
+  const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' | 'map' | 'tracon' = isTracon
+    ? 'tracon'
+    : surface.plateOverlayEnabled && hasApproachPlate
       ? 'plate'
       : surface.surfaceMode === 'satellite' || surface.surfaceMode === '3dmap'
         ? 'satellite'
         : surface.surfaceMode === 'map'
           ? 'map'
           : 'terrain';
-  const surfaceLegendLabel =
-    surface.plateOverlayEnabled && hasApproachPlate
+  const surfaceLegendLabel = isTracon
+    ? `TRACON Scope (${options.traconDimension.toUpperCase()})`
+    : surface.plateOverlayEnabled && hasApproachPlate
       ? `FAA Plate + ${SURFACE_LEGEND_LABELS[surface.surfaceMode]}`
       : SURFACE_LEGEND_LABELS[surface.surfaceMode];
 
@@ -411,6 +416,8 @@ export function AppClient({
         hasApproachPlate={hasApproachPlate}
         chartType={surface.chartType}
         onChartTypeSelected={handleChartTypeSelected}
+        viewMode={options.viewMode}
+        onViewModeSelected={(mode) => options.updateOption('viewMode', mode)}
         menuPortalTarget={menuPortalTarget}
         onControlsHeightChange={setControlsOverlayHeight}
       />
@@ -456,6 +463,8 @@ export function AppClient({
             surfaceErrorMessage={surface.surfaceErrorMessage}
             recenterNonce={recenterNonce}
             cameraControlMode={options.cameraControlMode}
+            viewMode={options.viewMode}
+            traconDimension={options.traconDimension}
             retinaRendering={options.retinaRendering}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
@@ -481,6 +490,22 @@ export function AppClient({
           <div className="mrms-loading-indicator" role="status" aria-live="polite">
             <span className="mrms-loading-spinner" aria-hidden="true" />
             <span>Loading MRMS...</span>
+          </div>
+        )}
+
+        {isTracon && (
+          <div className="tracon-dimension-toggle" role="group" aria-label="TRACON view">
+            {(['2d', '3d'] as const).map((dimension) => (
+              <button
+                key={dimension}
+                type="button"
+                className={`tracon-dimension-button ${options.traconDimension === dimension ? 'active' : ''}`}
+                aria-pressed={options.traconDimension === dimension}
+                onClick={() => options.updateOption('traconDimension', dimension)}
+              >
+                {dimension.toUpperCase()}
+              </button>
+            ))}
           </div>
         )}
 
@@ -528,6 +553,7 @@ export function AppClient({
           plateOverlayEnabled={surface.plateOverlayEnabled}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
+          viewMode={options.viewMode}
         />
 
         <LayersPanel

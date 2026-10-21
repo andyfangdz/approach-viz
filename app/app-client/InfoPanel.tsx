@@ -10,7 +10,8 @@ export function InfoPanel({
   hasApproachPlate,
   plateOverlayEnabled,
   sceneData,
-  selectedApproachSource
+  selectedApproachSource,
+  viewMode
 }: InfoPanelProps) {
   if (legendCollapsed) {
     return (
@@ -121,7 +122,13 @@ export function InfoPanel({
           <span>D</span>
         </div>
       </div>
-      {plateOverlayEnabled && !hasApproachPlate && (
+      {viewMode === 'tracon' && (
+        <div className="legend-note">
+          Data block: callsign, then altitude (hundreds of ft) and ground speed (tens of kt). Lines
+          ahead of targets show one minute of flight; range rings every 5 NM; bearings true.
+        </div>
+      )}
+      {viewMode === 'scene' && plateOverlayEnabled && !hasApproachPlate && (
         <div className="legend-note">No FAA plate matched this approach.</div>
       )}
       {selectedApproachSource === 'historical' && (

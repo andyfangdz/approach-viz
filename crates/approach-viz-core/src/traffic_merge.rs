@@ -266,6 +266,9 @@ pub struct RenderTrack {
     pub callsign_label: Option<String>,
     pub is_on_ground: bool,
     pub heading_deg: f64,
+    /// Reported (barometric) altitude; `None` when the feed omitted it.
+    pub altitude_feet: Option<f64>,
+    pub ground_speed_kt: Option<f64>,
     pub marker_position: [f32; 3],
     pub trail_points: Vec<[f32; 3]>,
 }
@@ -400,6 +403,8 @@ fn hash_render_tracks(render_tracks: &[RenderTrack]) -> u64 {
         hash = fnv_hash_str(hash, track.callsign_label.as_deref().unwrap_or(""));
         hash = fnv_hash_u32(hash, if track.is_on_ground { 1 } else { 0 });
         hash = fnv_hash_f32(hash, track.heading_deg as f32);
+        hash = fnv_hash_f32(hash, track.altitude_feet.map_or(f32::NAN, |v| v as f32));
+        hash = fnv_hash_f32(hash, track.ground_speed_kt.map_or(f32::NAN, |v| v as f32));
         hash = fnv_hash_f32(hash, track.marker_position[0]);
         hash = fnv_hash_f32(hash, track.marker_position[1]);
         hash = fnv_hash_f32(hash, track.marker_position[2]);
@@ -676,6 +681,8 @@ impl TrafficState {
                 callsign_label: normalize_callsign(&track.flight),
                 is_on_ground: track.is_on_ground,
                 heading_deg: normalize_heading(track.track_deg),
+                altitude_feet: track.altitude_feet.filter(|v| v.is_finite()),
+                ground_speed_kt: track.ground_speed_kt.filter(|v| v.is_finite()),
                 marker_position,
                 trail_points,
             });
@@ -1234,6 +1241,9 @@ mod tests {
             (rt.heading_deg - 90.0).abs() < 1e-6,
             "heading should be 90.0"
         );
+        // The scope data block reads the latest reported altitude and speed.
+        assert_eq!(rt.altitude_feet, Some(5100.0));
+        assert_eq!(rt.ground_speed_kt, Some(250.0));
     }
 
     // -----------------------------------------------------------------------

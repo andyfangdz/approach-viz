@@ -23,6 +23,8 @@ export function HeaderControls({
   hasApproachPlate,
   chartType,
   onChartTypeSelected,
+  viewMode,
+  onViewModeSelected,
   menuPortalTarget,
   onControlsHeightChange
 }: HeaderControlsProps) {
@@ -197,40 +199,64 @@ export function HeaderControls({
           </div>
 
           <div className="control-group">
-            <label>Surface</label>
-            <div className="surface-toggle" role="group" aria-label="Surface mode">
+            <label>View</label>
+            <div className="surface-toggle" role="group" aria-label="View mode">
               <button
                 type="button"
-                className={`surface-toggle-button ${surfaceMode === 'terrain' ? 'active' : ''}`}
-                onClick={() => onSurfaceModeSelected('terrain')}
+                className={`surface-toggle-button ${viewMode === 'scene' ? 'active' : ''}`}
+                aria-pressed={viewMode === 'scene'}
+                onClick={() => onViewModeSelected('scene')}
               >
-                Terrain
+                Approach
               </button>
               <button
                 type="button"
-                className={`surface-toggle-button ${surfaceMode === 'satellite' ? 'active' : ''}`}
-                onClick={() => onSurfaceModeSelected('satellite')}
+                className={`surface-toggle-button ${viewMode === 'tracon' ? 'active' : ''}`}
+                aria-pressed={viewMode === 'tracon'}
+                onClick={() => onViewModeSelected('tracon')}
               >
-                Satellite
-              </button>
-              <button
-                type="button"
-                className={`surface-toggle-button ${surfaceMode === 'map' ? 'active' : ''}`}
-                onClick={() => onSurfaceModeSelected('map')}
-              >
-                Map
-              </button>
-              <button
-                type="button"
-                className={`surface-toggle-button ${surfaceMode === '3dmap' ? 'active' : ''}`}
-                onClick={() => onSurfaceModeSelected('3dmap')}
-              >
-                3D Map
+                TRACON
               </button>
             </div>
           </div>
 
-          {(surfaceMode === 'map' || surfaceMode === '3dmap') && (
+          {viewMode === 'scene' && (
+            <div className="control-group">
+              <label>Surface</label>
+              <div className="surface-toggle" role="group" aria-label="Surface mode">
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${surfaceMode === 'terrain' ? 'active' : ''}`}
+                  onClick={() => onSurfaceModeSelected('terrain')}
+                >
+                  Terrain
+                </button>
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${surfaceMode === 'satellite' ? 'active' : ''}`}
+                  onClick={() => onSurfaceModeSelected('satellite')}
+                >
+                  Satellite
+                </button>
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${surfaceMode === 'map' ? 'active' : ''}`}
+                  onClick={() => onSurfaceModeSelected('map')}
+                >
+                  Map
+                </button>
+                <button
+                  type="button"
+                  className={`surface-toggle-button ${surfaceMode === '3dmap' ? 'active' : ''}`}
+                  onClick={() => onSurfaceModeSelected('3dmap')}
+                >
+                  3D Map
+                </button>
+              </div>
+            </div>
+          )}
+
+          {viewMode === 'scene' && (surfaceMode === 'map' || surfaceMode === '3dmap') && (
             <div className="control-group">
               <label>Chart</label>
               <div className="surface-toggle" role="group" aria-label="Chart type">
@@ -266,7 +292,7 @@ export function HeaderControls({
             </div>
           )}
 
-          {hasApproachPlate && (
+          {viewMode === 'scene' && hasApproachPlate && (
             <div className="control-group">
               <label className="plate-overlay-label">
                 <input

@@ -16,6 +16,11 @@ export type NexradSurfaceMosaicDrape = 'flat' | 'terrain';
  *  maximum (composite reflectivity) or the lowest echo (base reflectivity). */
 export type NexradSurfaceMosaicProduct = 'composite' | 'base';
 export type CameraControlMode = 'orbit' | 'arcball' | 'map';
+/** `scene`: the approach visualization. `tracon`: a radar-scope presentation
+ *  of the same airport, airspace, and traffic data. */
+export type ViewMode = 'scene' | 'tracon';
+/** TRACON scope projection: top-down orthographic scope, or perspective 3D. */
+export type TraconDimension = '2d' | '3d';
 
 export interface NexradTimingDebugState {
   pollCycleMs: number | null;
@@ -142,6 +147,8 @@ export interface HeaderControlsProps {
   hasApproachPlate: boolean;
   chartType: ChartType;
   onChartTypeSelected: (chart: ChartType) => void;
+  viewMode: ViewMode;
+  onViewModeSelected: (mode: ViewMode) => void;
   menuPortalTarget?: HTMLElement;
   onControlsHeightChange?: (height: number) => void;
 }
@@ -179,6 +186,8 @@ export interface SceneCanvasProps {
   surfaceErrorMessage: string;
   recenterNonce: number;
   cameraControlMode: CameraControlMode;
+  viewMode: ViewMode;
+  traconDimension: TraconDimension;
   retinaRendering: boolean;
   missedApproachStartAltitudeFeet?: number;
   minimumsLabel?: string;
@@ -193,7 +202,7 @@ export interface SceneCanvasProps {
 export interface InfoPanelProps {
   legendCollapsed: boolean;
   onToggleLegend: () => void;
-  surfaceLegendClass: 'terrain' | 'plate' | 'satellite' | 'map';
+  surfaceLegendClass: 'terrain' | 'plate' | 'satellite' | 'map' | 'tracon';
   surfaceLegendLabel: string;
   surfaceMode: SurfaceMode;
   layers: LayerState;
@@ -201,6 +210,7 @@ export interface InfoPanelProps {
   plateOverlayEnabled: boolean;
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
+  viewMode: ViewMode;
 }
 
 export interface OptionsPanelProps {

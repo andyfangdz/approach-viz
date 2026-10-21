@@ -41,3 +41,23 @@ test('invalid values cannot replace defaults, and numeric settings are clamped',
   assert.equal(options.hideGroundTraffic, DEFAULT_OPTIONS.hideGroundTraffic);
   assert.throws(() => restoreOptions('{broken', ''), SyntaxError);
 });
+
+test('view mode restores from storage and the view URL param overrides it', () => {
+  const stored = JSON.stringify({ viewMode: 'tracon', traconDimension: '3d' });
+  const restored = restoreOptions(stored, '');
+  assert.equal(restored.viewMode, 'tracon');
+  assert.equal(restored.traconDimension, '3d');
+
+  const fromUrl = restoreOptions(stored, '?view=tracon-2d');
+  assert.equal(fromUrl.viewMode, 'tracon');
+  assert.equal(fromUrl.traconDimension, '2d');
+
+  const sceneFromUrl = restoreOptions(stored, '?view=scene');
+  assert.equal(sceneFromUrl.viewMode, 'scene');
+  assert.equal(sceneFromUrl.traconDimension, '3d');
+
+  const invalid = restoreOptions(JSON.stringify({ viewMode: 'radar', traconDimension: 4 }), '');
+  assert.equal(invalid.viewMode, DEFAULT_OPTIONS.viewMode);
+  assert.equal(invalid.traconDimension, DEFAULT_OPTIONS.traconDimension);
+  assert.equal(restoreOptions(null, '?view=bogus').viewMode, DEFAULT_OPTIONS.viewMode);
+});

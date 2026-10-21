@@ -23,11 +23,15 @@ export interface SceneLabel {
 }
 
 /**
- * `screen`: a fixed CSS-pixel size, like `<Html center>`.
+ * `screen`: a fixed CSS-pixel size, like `<Html center>`. `offsetPx` shifts
+ * every label by CSS px (x right, y up) and `align: 'start'` puts the label's
+ * left edge, instead of its center, on the shifted anchor.
  * `world`: a camera-facing sprite whose CSS pixel spans `distanceFactor / 400`
  * scene units, like `<Html transform sprite distanceFactor>`.
  */
-export type LabelSizing = { mode: 'screen' } | { mode: 'world'; distanceFactor: number };
+export type LabelSizing =
+  | { mode: 'screen'; offsetPx?: readonly [number, number]; align?: 'center' | 'start' }
+  | { mode: 'world'; distanceFactor: number };
 
 interface LabelAtlas {
   keys: Map<string, number>;
@@ -42,6 +46,8 @@ const VERTEX_SHADER = /* glsl */ `
   uniform vec2 uViewportPx;
   uniform float uPixelRatio;
   uniform float uWorldPerPx;
+  uniform vec2 uOffsetPx;
+  uniform float uAlignStart;
   out vec2 vUv;
 
   void main() {
@@ -67,9 +73,11 @@ const VERTEX_SHADER = /* glsl */ `
     // Snap the quad's corner to the device-pixel grid so texels land on
     // pixels instead of straddling them, which would blur small text.
     vec2 devicePx = uViewportPx * uPixelRatio;
-    vec2 cornerPx = (clip.xy / clip.w * 0.5 + 0.5) * devicePx - labelSize * uPixelRatio * 0.5;
+    vec2 shiftPx = (uOffsetPx + vec2(uAlignStart * labelSize.x * 0.5, 0.0)) * uPixelRatio;
+    vec2 cornerPx =
+      (clip.xy / clip.w * 0.5 + 0.5) * devicePx + shiftPx - labelSize * uPixelRatio * 0.5;
     vec2 snapPx = floor(cornerPx + 0.5) - cornerPx;
-    clip.xy += (corner * labelSize * uPixelRatio + snapPx) * 2.0 / devicePx * clip.w;
+    clip.xy += (corner * labelSize * uPixelRatio + shiftPx + snapPx) * 2.0 / devicePx * clip.w;
     gl_Position = clip;
   }
 `;
@@ -192,6 +200,9 @@ export function SceneLabels({
   atlasRef.current = atlas;
   const requestIdRef = useRef(0);
   const worldPerPx = sizing.mode === 'world' ? sizing.distanceFactor / 400 : 0;
+  const offsetXPx = sizing.mode === 'screen' ? (sizing.offsetPx?.[0] ?? 0) : 0;
+  const offsetYPx = sizing.mode === 'screen' ? (sizing.offsetPx?.[1] ?? 0) : 0;
+  const alignStart = sizing.mode === 'screen' && sizing.align === 'start' ? 1 : 0;
   const sizingMode = sizing.mode;
   const pixelRatio = useMemo(() => rasterPixelRatio(sizingMode), [sizingMode]);
 
@@ -249,7 +260,9 @@ export function SceneLabels({
           uAtlas: { value: null },
           uViewportPx: { value: new THREE.Vector2(1, 1) },
           uPixelRatio: { value: 1 },
-          uWorldPerPx: { value: 0 }
+          uWorldPerPx: { value: 0 },
+          uOffsetPx: { value: new THREE.Vector2(0, 0) },
+          uAlignStart: { value: 0 }
         },
         vertexShader: VERTEX_SHADER,
         fragmentShader: FRAGMENT_SHADER,
@@ -280,6 +293,8 @@ export function SceneLabels({
     );
     material.uniforms.uPixelRatio.value = canvasPixelRatio;
     material.uniforms.uWorldPerPx.value = worldPerPx;
+    material.uniforms.uOffsetPx.value.set(offsetXPx, offsetYPx);
+    material.uniforms.uAlignStart.value = alignStart;
 
     let count = 0;
     if (atlas) {
@@ -319,6 +334,9 @@ export function SceneLabels({
     viewport,
     canvasPixelRatio,
     worldPerPx,
+    offsetXPx,
+    offsetYPx,
+    alignStart,
     invalidate
   ]);
 

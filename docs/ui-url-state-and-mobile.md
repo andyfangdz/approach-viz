@@ -14,7 +14,8 @@ User-interface layout, URL-driven state, options panel, mobile adaptations, and 
 - MRMS declutter mode is a query parameter: `?declutter=low`. Default (`all`) is omitted from URL. Values: `all`, `low`, `mid`, `high`.
 - ADS-B traffic history duration is a query parameter: `?historyMin=10`. Default (`3`) is omitted from URL. Values: integer 1–30.
 - ADS-B callsign label visibility is a query parameter: `?callsigns=1`. Default (`0` / off) is omitted from URL. Values: `0`, `1`.
-- `?phaseMode`, `?declutter`, `?historyMin`, and `?callsigns` all override localStorage on page load (same precedence as `?layers=`).
+- The TRACON radar view is a query parameter: `?view=tracon-2d` or `?view=tracon-3d`; the approach scene (default) omits it (`?view=scene` is accepted). See [TRACON scope](rendering-tracon-scope.md).
+- `?phaseMode`, `?declutter`, `?historyMin`, `?callsigns`, and `?view` all override localStorage on page load (same precedence as `?layers=`).
 
 ## Layers Panel
 
@@ -72,6 +73,7 @@ All options-panel and layer values are held in one `OptionsState` object and per
 - Historical fallback options append `historical/decommissioned, training only` plus their source cycle to the approach label. The always-visible FAA disclaimer becomes a historical/decommissioned training-procedure warning, and the legend repeats that warning while stating that current FAA minimums and live plate metadata are not applied. When present, the fallback's own preserved historical plate remains available for training draping.
 - Search query state is owned by `HeaderControls` (not `AppClient`) to keep high-frequency keystrokes local to the header and avoid scene re-renders.
 - Selector-collapse toggle uses chevron icon states (up/down) with accessible show/hide labels.
+- The `View` group switches between `Approach` (the approach scene) and `TRACON` (the radar scope). Surface, chart, and plate controls apply only to the approach scene and are hidden in TRACON view. In TRACON view a floating `2D | 3D` switch sits top-center (bottom-center on mobile, between the FAB columns).
 - Expanded selector controls render as an overlay panel (absolute-positioned beneath the header row), so opening selectors does not push/reflow the scene canvas.
 
 ## Camera and Scene Controls

@@ -177,3 +177,31 @@ export function labelStyleKey(style: LabelStyle): string {
     box
   ].join('|');
 }
+
+const SCOPE_MONO = "'JetBrains Mono', 'SF Mono', monospace";
+const SCOPE_GLOW: LabelTextShadow[] = [{ color: 'rgba(0, 0, 0, 0.9)', blurPx: 3 }];
+
+/** TRACON scope full data block line. */
+export const DATA_BLOCK_LABEL_STYLE: LabelStyle = {
+  fontFamily: SCOPE_MONO,
+  fontSizePx: 11,
+  fontWeight: 600,
+  color: '#4dff7c',
+  lineHeight: 1.05,
+  textShadows: SCOPE_GLOW
+};
+
+/** TRACON scope ground-target data block line. */
+export const GROUND_DATA_BLOCK_LABEL_STYLE: LabelStyle = {
+  ...DATA_BLOCK_LABEL_STYLE,
+  color: '#3aa85a'
+};
+
+/** TRACON compass-rose bearing. */
+export const SCOPE_ROSE_LABEL_STYLE: LabelStyle = {
+  fontFamily: SCOPE_MONO,
+  fontSizePx: 10,
+  fontWeight: 500,
+  color: '#8a9ba1',
+  textShadows: SCOPE_GLOW
+};

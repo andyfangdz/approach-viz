@@ -24,12 +24,21 @@ export interface TrafficRenderBuffers {
   activeTrackIndices: Uint32Array;
   markerMatrices: Float32Array;
   headingSegments: Float32Array;
+  /** TRACON scope presentation (see `buildTrafficScopeBuffers`). */
+  airborneTargetPositions: Float32Array;
+  groundTargetPositions: Float32Array;
+  dataBlockIdents: string[];
+  dataBlockFields: string[];
+  historyDots: Float32Array;
+  predictedTrackSegments: Float32Array;
+  altitudeStalkSegments: Float32Array;
 }
 
 const EMPTY_FLOAT32_ARRAY = new Float32Array(0);
 const EMPTY_UINT32_ARRAY = new Uint32Array(0);
 const EMPTY_UINT8_ARRAY = new Uint8Array(0);
 const EMPTY_CALLSIGN_LABELS: (string | null)[] = [];
+const EMPTY_STRINGS: string[] = [];
 
 export const EMPTY_TRAFFIC_RENDER_BUFFERS: TrafficRenderBuffers = {
   renderedTrackCount: 0,
@@ -39,7 +48,14 @@ export const EMPTY_TRAFFIC_RENDER_BUFFERS: TrafficRenderBuffers = {
   trailSegments: EMPTY_FLOAT32_ARRAY,
   activeTrackIndices: EMPTY_UINT32_ARRAY,
   markerMatrices: EMPTY_FLOAT32_ARRAY,
-  headingSegments: EMPTY_FLOAT32_ARRAY
+  headingSegments: EMPTY_FLOAT32_ARRAY,
+  airborneTargetPositions: EMPTY_FLOAT32_ARRAY,
+  groundTargetPositions: EMPTY_FLOAT32_ARRAY,
+  dataBlockIdents: EMPTY_STRINGS,
+  dataBlockFields: EMPTY_STRINGS,
+  historyDots: EMPTY_FLOAT32_ARRAY,
+  predictedTrackSegments: EMPTY_FLOAT32_ARRAY,
+  altitudeStalkSegments: EMPTY_FLOAT32_ARRAY
 };
 
 export interface TrafficProcessResult {
@@ -112,7 +128,14 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
         trailSegments: result.trailSegments,
         activeTrackIndices: result.activeTrackIndices,
         markerMatrices: result.markerMatrices,
-        headingSegments: result.headingSegments
+        headingSegments: result.headingSegments,
+        airborneTargetPositions: result.airborneTargetPositions,
+        groundTargetPositions: result.groundTargetPositions,
+        dataBlockIdents: result.dataBlockIdents,
+        dataBlockFields: result.dataBlockFields,
+        historyDots: result.historyDots,
+        predictedTrackSegments: result.predictedTrackSegments,
+        altitudeStalkSegments: result.altitudeStalkSegments
       },
       trackCount: result.trackCount,
       historyPointCount: result.historyPointCount,

@@ -463,6 +463,7 @@ impl WasmTrafficState {
     ///
     /// Returns a flat JS object with parallel typed arrays (SoA layout):
     /// `{ trackCount, markerPositions: Float32Array, headingDeg: Float32Array,
+    ///    altitudeFeet: Float32Array, groundSpeedKt: Float32Array (NaN when unreported),
     ///    flags: Uint8Array, trailPointsFlat: Float32Array, trailOffsets: Uint32Array,
     ///    trailCounts: Uint32Array, hexes: string[], callsignLabels: (string|null)[],
     ///    hash: number }`
@@ -505,6 +506,8 @@ impl WasmTrafficState {
         // Build SoA parallel arrays
         let mut marker_positions = Vec::with_capacity(track_count * 3);
         let mut heading_deg = Vec::with_capacity(track_count);
+        let mut altitude_feet = Vec::with_capacity(track_count);
+        let mut ground_speed_kt = Vec::with_capacity(track_count);
         let mut flags = Vec::with_capacity(track_count);
         let mut trail_offsets: Vec<u32> = Vec::with_capacity(track_count);
         let mut trail_counts: Vec<u32> = Vec::with_capacity(track_count);
@@ -518,6 +521,8 @@ impl WasmTrafficState {
             marker_positions.push(rt.marker_position[1]);
             marker_positions.push(rt.marker_position[2]);
             heading_deg.push(rt.heading_deg as f32);
+            altitude_feet.push(rt.altitude_feet.map_or(f32::NAN, |v| v as f32));
+            ground_speed_kt.push(rt.ground_speed_kt.map_or(f32::NAN, |v| v as f32));
             flags.push(
                 (if rt.is_currently_present { 1u8 } else { 0 })
                     | (if rt.is_on_ground { 2u8 } else { 0 }),
@@ -546,6 +551,8 @@ impl WasmTrafficState {
         set_prop(&obj, "trackCount", &JsValue::from(track_count as u32))?;
         set_prop(&obj, "markerPositions", &js_sys::Float32Array::from(&marker_positions[..]).into())?;
         set_prop(&obj, "headingDeg", &js_sys::Float32Array::from(&heading_deg[..]).into())?;
+        set_prop(&obj, "altitudeFeet", &js_sys::Float32Array::from(&altitude_feet[..]).into())?;
+        set_prop(&obj, "groundSpeedKt", &js_sys::Float32Array::from(&ground_speed_kt[..]).into())?;
         set_prop(&obj, "flags", &js_sys::Uint8Array::from(&flags[..]).into())?;
         set_prop(&obj, "trailPointsFlat", &js_sys::Float32Array::from(&trail_points_flat[..]).into())?;
         set_prop(&obj, "trailOffsets", &js_sys::Uint32Array::from(&trail_offsets[..]).into())?;

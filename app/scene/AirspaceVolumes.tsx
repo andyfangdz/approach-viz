@@ -20,6 +20,8 @@ interface AirspaceVolumesProps {
   refLon: number;
   verticalScale: number;
   airportElevationFeet: number;
+  /** `outline`: sector edges only, as on a radar video map. */
+  presentation?: 'volume' | 'outline';
 }
 
 interface AirspaceMesh {
@@ -53,7 +55,8 @@ export const AirspaceVolumes = memo(function AirspaceVolumes({
   refLat,
   refLon,
   verticalScale,
-  airportElevationFeet
+  airportElevationFeet,
+  presentation = 'volume'
 }: AirspaceVolumesProps) {
   // Sectors are built in the scene-geometry worker for one set of inputs and
   // drawn only while those inputs are current: after an airport change the
@@ -116,17 +119,23 @@ export const AirspaceVolumes = memo(function AirspaceVolumes({
       {meshes.map((mesh) =>
         mesh ? (
           <group key={mesh.key}>
-            <mesh geometry={mesh.geometry}>
-              <meshStandardMaterial
+            {presentation === 'volume' && (
+              <mesh geometry={mesh.geometry}>
+                <meshStandardMaterial
+                  color={mesh.color}
+                  transparent
+                  opacity={0.15}
+                  side={THREE.DoubleSide}
+                  depthWrite={false}
+                />
+              </mesh>
+            )}
+            <lineSegments geometry={mesh.edgesGeometry}>
+              <lineBasicMaterial
                 color={mesh.color}
                 transparent
-                opacity={0.15}
-                side={THREE.DoubleSide}
-                depthWrite={false}
+                opacity={presentation === 'volume' ? 0.4 : 0.55}
               />
-            </mesh>
-            <lineSegments geometry={mesh.edgesGeometry}>
-              <lineBasicMaterial color={mesh.color} transparent opacity={0.4} />
             </lineSegments>
           </group>
         ) : null

@@ -13,6 +13,7 @@ import {
 import { WorkerClientError } from './shared/worker-errors';
 import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
 import { CALLSIGN_LABEL_STYLE } from './labels/label-styles';
+import { TraconTargets } from './tracon/TraconTargets';
 import type { SceneAirport } from './traffic/traffic-worker-client';
 export type { SceneAirport } from './traffic/traffic-worker-client';
 
@@ -69,6 +70,10 @@ interface LiveTrafficOverlayProps {
   showDepartedTrafficTrails?: boolean;
   historyMinutes: number;
   applyEarthCurvatureCompensation?: boolean;
+  /** `scope`: TRACON targets, history dots, and data blocks instead of 3D markers. */
+  presentation?: 'scene' | 'scope';
+  /** Scope presentation only: drop lines from airborne targets to the floor. */
+  showAltitudeStalks?: boolean;
   radiusNm?: number;
   limit?: number;
   onDebugChange?: (debug: TrafficDebugState) => void;
@@ -92,6 +97,8 @@ export function LiveTrafficOverlay({
   showDepartedTrafficTrails = true,
   historyMinutes,
   applyEarthCurvatureCompensation = false,
+  presentation = 'scene',
+  showAltitudeStalks = false,
   radiusNm = DEFAULT_RADIUS_NM,
   limit = DEFAULT_LIMIT,
   onDebugChange
@@ -631,7 +638,7 @@ export function LiveTrafficOverlay({
   }, [renderBuffers]);
 
   const callsignLabels = useMemo<SceneLabel[]>(() => {
-    if (!showCallsignLabels) return [];
+    if (!showCallsignLabels || presentation !== 'scene') return [];
     const { activeTrackIndices, markerPositions, flags } = renderBuffers;
     const labels: SceneLabel[] = [];
     for (const trackIndex of activeTrackIndices) {
@@ -651,7 +658,7 @@ export function LiveTrafficOverlay({
       });
     }
     return labels;
-  }, [renderBuffers, showCallsignLabels, hideGroundCallsignLabels]);
+  }, [renderBuffers, showCallsignLabels, hideGroundCallsignLabels, presentation]);
 
   useEffect(
     () => () => {
@@ -752,9 +759,17 @@ export function LiveTrafficOverlay({
     patchTimings({ markerUploadMs: roundMs(performance.now() - uploadStartedAt) });
   }, [renderBuffers, limit, patchTimings, invalidate]);
 
+  const isScope = presentation === 'scope';
   return (
     <group>
-      {trailLinesGeometry && (
+      {isScope && (
+        <TraconTargets
+          renderBuffers={renderBuffers}
+          hideGroundDataBlocks={hideGroundCallsignLabels}
+          showAltitudeStalks={showAltitudeStalks}
+        />
+      )}
+      {!isScope && trailLinesGeometry && (
         <lineSegments
           geometry={trailLinesGeometry}
           material={trailLineMaterial}
@@ -762,7 +777,7 @@ export function LiveTrafficOverlay({
           renderOrder={82}
         />
       )}
-      {headingLinesGeometry && (
+      {!isScope && headingLinesGeometry && (
         <lineSegments
           geometry={headingLinesGeometry}
           material={headingLineMaterial}
@@ -775,6 +790,7 @@ export function LiveTrafficOverlay({
         ref={markerMeshRef}
         args={[markerGeometry, markerMaterial, Math.max(1, limit)]}
         frustumCulled={false}
+        visible={!isScope}
       />
     </group>
   );
