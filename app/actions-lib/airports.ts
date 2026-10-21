@@ -94,13 +94,21 @@ export function loadRunwayMap(airportIds: string[]): Map<string, RunwayPoint[]> 
 }
 
 export function loadAirspaceForAirport(airport: Airport): AirspaceFeature[] {
-  const latRadius = AIRSPACE_RADIUS_NM / 60;
-  const lonRadius =
-    AIRSPACE_RADIUS_NM / (60 * Math.max(0.2, Math.cos((airport.lat * Math.PI) / 180)));
-  const minLat = airport.lat - latRadius;
-  const maxLat = airport.lat + latRadius;
-  const minLon = airport.lon - lonRadius;
-  const maxLon = airport.lon + lonRadius;
+  return loadAirspaceWithinNm(airport.lat, airport.lon, AIRSPACE_RADIUS_NM);
+}
+
+/** Class B/C/D sectors with any vertex within `radiusNm` of the point. */
+export function loadAirspaceWithinNm(
+  centerLat: number,
+  centerLon: number,
+  radiusNm: number
+): AirspaceFeature[] {
+  const latRadius = radiusNm / 60;
+  const lonRadius = radiusNm / (60 * Math.max(0.2, Math.cos((centerLat * Math.PI) / 180)));
+  const minLat = centerLat - latRadius;
+  const maxLat = centerLat + latRadius;
+  const minLon = centerLon - lonRadius;
+  const maxLon = centerLon + lonRadius;
 
   // SAFETY: build-db writes airspace rows matching AirspaceRow.
   const rows = stmts().selectAirspace.all(minLat, maxLat, minLon, maxLon) as AirspaceRow[];
@@ -118,8 +126,8 @@ export function loadAirspaceForAirport(airport: Airport): AirspaceFeature[] {
     .filter((feature) => {
       for (const ring of feature.coordinates) {
         for (const [lon, lat] of ring) {
-          const dist = latLonDistanceNm(airport.lat, airport.lon, lat, lon);
-          if (dist <= AIRSPACE_RADIUS_NM) {
+          const dist = latLonDistanceNm(centerLat, centerLon, lat, lon);
+          if (dist <= radiusNm) {
             return true;
           }
         }

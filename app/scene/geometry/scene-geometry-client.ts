@@ -8,6 +8,7 @@ import type {
   ElevationRasterStatus,
   GroundHeightfieldResult,
   SceneGeometryWorkerApi,
+  ShorelineParams,
   TerrainMeshParams
 } from './scene-geometry.worker';
 
@@ -56,6 +57,10 @@ class SceneGeometryWorkerClient extends ComlinkedWorkerClient<SceneGeometryWorke
     return this.withTimeout(() =>
       this.proxy.buildAirspace(features, refLat, refLon, airportElevationFeet)
     );
+  }
+
+  buildShoreline(params: ShorelineParams) {
+    return this.withTimeout(() => this.proxy.buildShoreline(params));
   }
 }
 
@@ -125,4 +130,8 @@ export function buildAirspaceBuffersWithWorker(
   return withClient('Airspace geometry worker', (client) =>
     client.buildAirspace(features, refLat, refLon, airportElevationFeet)
   );
+}
+
+export function buildShorelineWithWorker(params: ShorelineParams): Promise<Float32Array | null> {
+  return withClient('Shoreline worker', (client) => client.buildShoreline(params));
 }

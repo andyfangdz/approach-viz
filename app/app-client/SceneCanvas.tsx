@@ -1,3 +1,4 @@
+import type { AirspaceFeature } from '@/lib/types';
 import { Suspense, memo, useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { ArcballControls, Html, MapControls, OrbitControls } from '@react-three/drei';
@@ -21,6 +22,10 @@ import { LiveTrafficOverlay, type SceneAirport } from '@/app/scene/LiveTrafficOv
 import { NexradVolumeOverlay } from '@/app/scene/NexradVolumeOverlay';
 import { ObstacleOverlay } from '@/app/scene/ObstacleOverlay';
 import { ProbSevereOverlay } from '@/app/scene/ProbSevereOverlay';
+import { altToY } from '@/app/scene/approach-path/coordinates';
+import { SCOPE_COLORS } from '@/app/scene/tracon/scope-colors';
+import { TraconScope } from '@/app/scene/tracon/TraconScope';
+import { TraconPerspectiveFraming, TraconScopeCamera } from '@/app/scene/tracon/TraconScopeCamera';
 import {
   CAMERA_POSITION,
   DIRECTIONAL_LIGHT_POSITION,
@@ -59,6 +64,17 @@ function asThreePointerControls(controls: RecenterControlsApi | null): ThreePoin
   return controls as ThreePointerControls;
 }
 
+/** The traffic query's radius ceiling. */
+const TRACON_TRAFFIC_MAX_RADIUS_NM = 220;
+/** A facility-wide scope holds far more aircraft than one airport's area. */
+const TRACON_TRAFFIC_LIMIT = 600;
+/**
+ * Video map and range ring coverage, as a multiple of the facility range:
+ * the display reaches past the range toward its corners and when panned.
+ */
+const TRACON_MAP_RANGE_FACTOR = 2;
+const TRACON_MAX_MAP_RADIUS_NM = 240;
+const NO_AIRSPACE: AirspaceFeature[] = [];
 const MIN_CAMERA_DISTANCE = 0.35;
 const MAX_CAMERA_DISTANCE = 250;
 const ORBIT_MIN_POLAR_ANGLE = 0.01;
@@ -377,6 +393,12 @@ export const SceneCanvas = memo(function SceneCanvas({
   surfaceErrorMessage,
   recenterNonce,
   cameraControlMode,
+  viewMode,
+  traconDimension,
+  traconScene,
+  traconScopeSettings,
+  onTraconScopeRangeChange,
+  onShorelineStatusChange,
   retinaRendering,
   missedApproachStartAltitudeFeet,
   minimumsLabel,
@@ -407,7 +429,35 @@ export const SceneCanvas = memo(function SceneCanvas({
   const handleArcballControlsRef = useCallback((controls: ArcballControlsImpl | null) => {
     controlsRef.current = controls;
   }, []);
+  // The TRACON view is centered on the facility rather than the selected
+  // airport, and replaces the ground surface with its scope backdrop.
+  const isTracon = viewMode === 'tracon';
+  const isTracon2d = isTracon && traconDimension === '2d';
+  const tracon = isTracon ? traconScene : null;
+  const traconPrimary = tracon?.airports[0]?.airport ?? null;
+  // Facility-framed layers wait for the facility; airport-framed ones are hidden.
+  const frameReady = !isTracon || traconPrimary !== null;
+  const frameLat = tracon?.centerLat ?? airport.lat;
+  const frameLon = tracon?.centerLon ?? airport.lon;
+  const floorElevationFeet = traconPrimary?.elevation ?? airport.elevation;
+  const traconMapRadiusNm = Math.min(
+    TRACON_MAX_MAP_RADIUS_NM,
+    (tracon?.rangeNm ?? terrainRadiusNm) * TRACON_MAP_RANGE_FACTOR
+  );
+  const traconRingMaxRadiusNm = traconMapRadiusNm;
+  const traconFloorY = altToY(floorElevationFeet, verticalScale);
+  const scopeWeather = useMemo(
+    () => ({ levels: traconScopeSettings.wxLevels, floorY: traconFloorY }),
+    [traconScopeSettings.wxLevels, traconFloorY]
+  );
   const sceneAirports = useMemo<SceneAirport[]>(() => {
+    if (tracon) {
+      return tracon.airports.map(({ airport: member }) => ({
+        lat: member.lat,
+        lon: member.lon,
+        elevation: member.elevation
+      }));
+    }
     const list: SceneAirport[] = [
       { lat: airport.lat, lon: airport.lon, elevation: airport.elevation }
     ];
@@ -415,12 +465,14 @@ export const SceneCanvas = memo(function SceneCanvas({
       list.push({ lat: ea.lat, lon: ea.lon, elevation: ea.elevation });
     }
     return list;
-  }, [airport, sceneData.elevationAirports]);
+  }, [tracon, airport, sceneData.elevationAirports]);
+  const airspaceFeatures = tracon ? tracon.airspace : sceneData.airspace;
   const hasApproachPlate = Boolean(sceneData.approachPlate);
-  const isTiledSurface = surfaceMode === 'satellite' || surfaceMode === '3dmap';
-  const showFlatPlateSurface = plateOverlayEnabled && hasApproachPlate && !isTiledSurface;
-  const showTerrainSurface = surfaceMode === 'terrain' && !showFlatPlateSurface;
-  const showChartMapSurface = surfaceMode === 'map';
+  const isTiledSurface = !isTracon && (surfaceMode === 'satellite' || surfaceMode === '3dmap');
+  const showFlatPlateSurface =
+    !isTracon && plateOverlayEnabled && hasApproachPlate && !isTiledSurface;
+  const showTerrainSurface = !isTracon && surfaceMode === 'terrain' && !showFlatPlateSurface;
+  const showChartMapSurface = !isTracon && surfaceMode === 'map';
   const showTiledSurface = isTiledSurface;
   const chartOverlay = useMemo(
     () => (surfaceMode === '3dmap' ? { chartType, radiusNm: terrainRadiusNm } : null),
@@ -442,17 +494,41 @@ export const SceneCanvas = memo(function SceneCanvas({
         powerPreference: 'high-performance'
       }}
     >
-      <color attach="background" args={['#0a0a14']} />
+      <color attach="background" args={[isTracon ? SCOPE_COLORS.background : '#0a0a14']} />
 
       <Suspense fallback={<LoadingFallback />}>
         <AdaptiveDprController retinaRendering={retinaRendering} />
         <PointerRecoveryGuard controlsRef={controlsRef} />
-        <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />
+        {!isTracon && <RecenterCamera recenterNonce={recenterNonce} controlsRef={controlsRef} />}
+        {isTracon && !isTracon2d && tracon && (
+          <TraconPerspectiveFraming
+            key={`tracon-3d-${tracon.facilityId}-${recenterNonce}`}
+            rangeNm={tracon.rangeNm}
+            floorY={traconFloorY}
+            controlsRef={controlsRef}
+          />
+        )}
         <CameraStabilityGuard controlsRef={controlsRef} />
         <ambientLight intensity={0.4} />
         <directionalLight position={DIRECTIONAL_LIGHT_POSITION} intensity={0.8} />
         <SceneEnvironment />
         <AsyncShaderCompiler />
+
+        {tracon && traconPrimary && (
+          <TraconScope
+            centerLat={tracon.centerLat}
+            centerLon={tracon.centerLon}
+            videoMapData={tracon.videoMap}
+            airspace={airspaceVisible ? tracon.airspace : NO_AIRSPACE}
+            floorY={traconFloorY}
+            ringSpacingNm={traconScopeSettings.ringSpacingNm}
+            ringMaxRadiusNm={traconRingMaxRadiusNm}
+            shorelineRadiusNm={traconMapRadiusNm}
+            maps={traconScopeSettings.maps}
+            showAirspaceMaps={isTracon2d}
+            onShorelineStatusChange={onShorelineStatusChange}
+          />
+        )}
 
         {showTerrainSurface && (
           <TerrainWireframe
@@ -517,34 +593,37 @@ export const SceneCanvas = memo(function SceneCanvas({
           </SceneErrorBoundary>
         )}
 
-        <AirportMarker
-          airport={airport}
-          runways={sceneData.runways}
-          verticalScale={verticalScale}
-          refLat={airport.lat}
-          refLon={airport.lon}
-          runwayColor={COLORS.runway}
-          airportLabelColor={COLORS.runway}
-          showRunwayLabels
-          applyEarthCurvatureCompensation={isTiledSurface}
-        />
-
-        {sceneData.nearbyAirports.map(({ airport: nearbyAirport, runways: nearbyRunways }) => (
+        {!isTracon && (
           <AirportMarker
-            key={`nearby-${nearbyAirport.id}`}
-            airport={nearbyAirport}
-            runways={nearbyRunways}
+            airport={airport}
+            runways={sceneData.runways}
             verticalScale={verticalScale}
             refLat={airport.lat}
             refLon={airport.lon}
-            runwayColor={COLORS.nearbyRunway}
-            airportLabelColor={COLORS.nearbyAirport}
-            showRunwayLabels={false}
+            runwayColor={COLORS.runway}
+            airportLabelColor={COLORS.runway}
+            showRunwayLabels
             applyEarthCurvatureCompensation={isTiledSurface}
           />
-        ))}
+        )}
 
-        {approachVisible && contextApproach && (
+        {!isTracon &&
+          sceneData.nearbyAirports.map(({ airport: nearbyAirport, runways: nearbyRunways }) => (
+            <AirportMarker
+              key={`nearby-${nearbyAirport.id}`}
+              airport={nearbyAirport}
+              runways={nearbyRunways}
+              verticalScale={verticalScale}
+              refLat={airport.lat}
+              refLon={airport.lon}
+              runwayColor={COLORS.nearbyRunway}
+              airportLabelColor={COLORS.nearbyAirport}
+              showRunwayLabels={false}
+              applyEarthCurvatureCompensation={isTiledSurface}
+            />
+          ))}
+
+        {!isTracon && approachVisible && contextApproach && (
           <ApproachPath
             key={`${airport.id}:${contextApproach.procedureId}`}
             approach={contextApproach}
@@ -558,17 +637,18 @@ export const SceneCanvas = memo(function SceneCanvas({
           />
         )}
 
-        {airspaceVisible && sceneData.airspace.length > 0 && (
+        {frameReady && airspaceVisible && !isTracon2d && airspaceFeatures.length > 0 && (
           <AirspaceVolumes
-            features={sceneData.airspace}
-            refLat={airport.lat}
-            refLon={airport.lon}
+            features={airspaceFeatures}
+            refLat={frameLat}
+            refLon={frameLon}
             verticalScale={verticalScale}
-            airportElevationFeet={airport.elevation}
+            airportElevationFeet={floorElevationFeet}
+            presentation={isTracon ? 'outline' : 'volume'}
           />
         )}
 
-        {obstaclesVisible && (
+        {!isTracon && obstaclesVisible && (
           <ObstacleOverlay
             airportId={airport.id}
             refLat={airport.lat}
@@ -582,11 +662,14 @@ export const SceneCanvas = memo(function SceneCanvas({
           />
         )}
 
-        {liveTrafficEnabled && (
-          <SceneErrorBoundary resetKey={`traffic:${airport.id}`} fallback={null}>
+        {frameReady && liveTrafficEnabled && (
+          <SceneErrorBoundary
+            resetKey={`traffic:${tracon?.facilityId ?? airport.id}`}
+            fallback={null}
+          >
             <LiveTrafficOverlay
-              refLat={airport.lat}
-              refLon={airport.lon}
+              refLat={frameLat}
+              refLon={frameLon}
               sceneAirports={sceneAirports}
               verticalScale={verticalScale}
               hideGroundTargets={hideGroundTraffic}
@@ -595,47 +678,88 @@ export const SceneCanvas = memo(function SceneCanvas({
               showDepartedTrafficTrails={showDepartedTrafficTrails}
               historyMinutes={trafficHistoryMinutes}
               applyEarthCurvatureCompensation={isTiledSurface}
+              presentation={isTracon ? 'scope' : 'scene'}
+              showAltitudeStalks={isTracon && !isTracon2d}
+              scopeHistoryDotCount={traconScopeSettings.historyDotCount}
+              scopePredictedTrackMinutes={
+                traconScopeSettings.ptlAll ? traconScopeSettings.ptlMinutes : 0
+              }
+              scopeAltitudeFilterHighFeet={traconScopeSettings.altitudeFilterHighFeet}
+              radiusNm={
+                tracon ? Math.min(traconMapRadiusNm, TRACON_TRAFFIC_MAX_RADIUS_NM) : undefined
+              }
+              limit={tracon ? TRACON_TRAFFIC_LIMIT : undefined}
               onDebugChange={onTrafficDebugChange}
             />
           </SceneErrorBoundary>
         )}
 
-        {(nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) && (
+        {frameReady && isTracon2d && scopeWeather.levels.some(Boolean) && (
           <NexradVolumeOverlay
-            refLat={airport.lat}
-            refLon={airport.lon}
+            refLat={frameLat}
+            refLon={frameLon}
             verticalScale={verticalScale}
             minDbz={nexradMinDbz}
-            enabled={nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic}
-            showVolume={nexradVolumeEnabled}
-            opacity={nexradOpacity}
-            declutterMode={nexradDeclutterMode}
-            phaseMode={nexradPhaseMode}
-            showEchoTops={nexradShowEchoTops}
-            showSurfaceMosaic={nexradShowSurfaceMosaic}
-            surfaceMosaicDrape={nexradSurfaceMosaicDrape}
-            surfaceMosaicProduct={nexradSurfaceMosaicProduct}
-            surfaceElevationFeet={airport.elevation}
-            showAltitudeGuides={nexradShowAltitudeGuides}
-            showCrossSection={nexradCrossSectionEnabled}
-            crossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
-            crossSectionRangeNm={nexradCrossSectionRangeNm}
-            applyEarthCurvatureCompensation={isTiledSurface}
-            groundOcclusion={isTiledSurface ? 'terrain' : 'none'}
+            enabled
+            showVolume={false}
+            showEchoTops={false}
+            showSurfaceMosaic
+            surfaceMosaicDrape="flat"
+            surfaceMosaicProduct="composite"
+            surfaceElevationFeet={floorElevationFeet}
+            showAltitudeGuides={false}
+            scopeWeather={scopeWeather}
             onDebugChange={onNexradDebugChange}
           />
         )}
 
-        {probSevereEnabled && (
+        {frameReady &&
+          !isTracon2d &&
+          (nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) && (
+            <NexradVolumeOverlay
+              refLat={frameLat}
+              refLon={frameLon}
+              verticalScale={verticalScale}
+              minDbz={nexradMinDbz}
+              enabled={nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic}
+              showVolume={nexradVolumeEnabled}
+              opacity={nexradOpacity}
+              declutterMode={nexradDeclutterMode}
+              phaseMode={nexradPhaseMode}
+              showEchoTops={nexradShowEchoTops}
+              showSurfaceMosaic={nexradShowSurfaceMosaic}
+              surfaceMosaicDrape={nexradSurfaceMosaicDrape}
+              surfaceMosaicProduct={nexradSurfaceMosaicProduct}
+              surfaceElevationFeet={floorElevationFeet}
+              showAltitudeGuides={nexradShowAltitudeGuides}
+              showCrossSection={nexradCrossSectionEnabled}
+              crossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
+              crossSectionRangeNm={nexradCrossSectionRangeNm}
+              applyEarthCurvatureCompensation={isTiledSurface}
+              groundOcclusion={isTiledSurface ? 'terrain' : 'none'}
+              onDebugChange={onNexradDebugChange}
+            />
+          )}
+
+        {frameReady && probSevereEnabled && (
           <ProbSevereOverlay
-            refLat={airport.lat}
-            refLon={airport.lon}
+            refLat={frameLat}
+            refLon={frameLon}
             verticalScale={verticalScale}
             enabled={probSevereEnabled}
             applyEarthCurvatureCompensation={isTiledSurface}
           />
         )}
-        {cameraControlMode === 'orbit' && (
+        {isTracon2d && (
+          <TraconScopeCamera
+            key={`tracon-${tracon?.facilityId ?? ''}-${recenterNonce}`}
+            rangeNm={traconScopeSettings.rangeNm}
+            floorY={traconFloorY}
+            controlsRef={handleMapControlsRef}
+            onRangeChange={onTraconScopeRangeChange}
+          />
+        )}
+        {!isTracon2d && cameraControlMode === 'orbit' && (
           <OrbitControls
             key={`orbit-${recenterNonce}`}
             ref={handleOrbitControlsRef}
@@ -648,7 +772,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             target={ORBIT_TARGET}
           />
         )}
-        {cameraControlMode === 'map' && (
+        {!isTracon2d && cameraControlMode === 'map' && (
           <MapControls
             key={`map-${recenterNonce}`}
             ref={handleMapControlsRef}
@@ -661,7 +785,7 @@ export const SceneCanvas = memo(function SceneCanvas({
             target={ORBIT_TARGET}
           />
         )}
-        {cameraControlMode === 'arcball' && (
+        {!isTracon2d && cameraControlMode === 'arcball' && (
           <ArcballControls
             key={`arcball-${recenterNonce}`}
             ref={handleArcballControlsRef}

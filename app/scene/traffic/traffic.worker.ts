@@ -1,7 +1,12 @@
 import * as Comlink from 'comlink';
 import { ensureWasm } from '../shared/wasm-loader';
 import { WasmTrafficState } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
-import { buildTrafficDrawBuffers } from './traffic-draw-buffers';
+import { altToY } from '../approach-path/coordinates';
+import {
+  buildTrafficDrawBuffers,
+  buildTrafficScopeBuffers,
+  type TrafficScopeOptions
+} from './traffic-draw-buffers';
 
 export interface SceneAirport {
   lat: number;
@@ -19,6 +24,7 @@ export interface TrafficProcessOptions {
   verticalScale: number;
   applyEarthCurvatureCompensation: boolean;
   sceneAirports: SceneAirport[];
+  scope: TrafficScopeOptions;
 }
 
 export interface TrafficWorkerResult {
@@ -33,6 +39,15 @@ export interface TrafficWorkerResult {
   activeTrackIndices: Uint32Array;
   markerMatrices: Float32Array;
   headingSegments: Float32Array;
+  targetPositions: Float32Array;
+  targetHexes: string[];
+  targetAltitudeFeet: Float32Array;
+  targetAssociated: Uint8Array;
+  dataBlockIdents: string[];
+  dataBlockFields: string[];
+  historyDots: Float32Array;
+  predictedTrackSegments: Float32Array;
+  altitudeStalkSegments: Float32Array;
   trackedHexes: string[];
   returnedHistoryHexes: string[];
   workerProcessingMs: number;
@@ -122,6 +137,8 @@ interface WasmSoA {
   trackCount: number;
   markerPositions: Float32Array;
   headingDeg: Float32Array;
+  altitudeFeet: Float32Array;
+  groundSpeedKt: Float32Array;
   flags: Uint8Array;
   trailPointsFlat: Float32Array;
   trailOffsets: Uint32Array;
@@ -137,6 +154,8 @@ function unpackWasmSoA(wasmResult: WasmSoA): WasmSoA {
     trackCount: wasmResult.trackCount,
     markerPositions: wasmResult.markerPositions,
     headingDeg: wasmResult.headingDeg,
+    altitudeFeet: wasmResult.altitudeFeet,
+    groundSpeedKt: wasmResult.groundSpeedKt,
     flags: wasmResult.flags,
     trailPointsFlat: wasmResult.trailPointsFlat,
     trailOffsets: wasmResult.trailOffsets,
@@ -234,6 +253,9 @@ export class TrafficWorkerApi {
     const soa = unpackWasmSoA(wasmRenderResult);
     const historyPointCount = Math.floor(soa.trailPointsFlat.length / 3);
     const draw = buildTrafficDrawBuffers(soa);
+    // Altitude stalks drop to the reference airport's field elevation.
+    const floorY = altToY(options.sceneAirports[0]?.elevation ?? 0, options.verticalScale);
+    const scope = buildTrafficScopeBuffers(soa, floorY, options.scope);
     const workerProcessingMs = roundMs(performance.now() - startedAt);
 
     const result: TrafficWorkerResult = {
@@ -248,6 +270,15 @@ export class TrafficWorkerApi {
       activeTrackIndices: draw.activeTrackIndices,
       markerMatrices: draw.markerMatrices,
       headingSegments: draw.headingSegments,
+      targetPositions: scope.targetPositions,
+      targetHexes: scope.targetHexes,
+      targetAltitudeFeet: scope.targetAltitudeFeet,
+      targetAssociated: scope.targetAssociated,
+      dataBlockIdents: scope.dataBlockIdents,
+      dataBlockFields: scope.dataBlockFields,
+      historyDots: scope.historyDots,
+      predictedTrackSegments: scope.predictedTrackSegments,
+      altitudeStalkSegments: scope.altitudeStalkSegments,
       trackedHexes,
       returnedHistoryHexes,
       workerProcessingMs,
@@ -262,7 +293,13 @@ export class TrafficWorkerApi {
       draw.trailSegments.buffer as ArrayBuffer,
       draw.activeTrackIndices.buffer as ArrayBuffer,
       draw.markerMatrices.buffer as ArrayBuffer,
-      draw.headingSegments.buffer as ArrayBuffer
+      draw.headingSegments.buffer as ArrayBuffer,
+      scope.targetPositions.buffer as ArrayBuffer,
+      scope.targetAltitudeFeet.buffer as ArrayBuffer,
+      scope.targetAssociated.buffer as ArrayBuffer,
+      scope.historyDots.buffer as ArrayBuffer,
+      scope.predictedTrackSegments.buffer as ArrayBuffer,
+      scope.altitudeStalkSegments.buffer as ArrayBuffer
     ];
 
     return Comlink.transfer(result, transferList);

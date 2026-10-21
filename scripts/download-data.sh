@@ -9,8 +9,9 @@ CIFP_DIR="$DATA_DIR/cifp"
 AIRSPACE_DIR="$DATA_DIR/airspace"
 APPROACH_DB_DIR="$DATA_DIR/approach-db"
 OBSTACLE_DIR="$DATA_DIR/obstacles"
+MVA_DIR="$DATA_DIR/mva"
 
-mkdir -p "$CIFP_DIR" "$AIRSPACE_DIR" "$APPROACH_DB_DIR" "$OBSTACLE_DIR"
+mkdir -p "$CIFP_DIR" "$AIRSPACE_DIR" "$APPROACH_DB_DIR" "$OBSTACLE_DIR" "$MVA_DIR"
 
 # ── Step 1: Download approach-db (source of truth for cycle) ─────────────────
 echo "Fetching FAA instrument approach database release..."
@@ -141,5 +142,31 @@ if [ "$DOF_LINE_COUNT" -lt 100000 ]; then
 fi
 mv "$DOF_STAGE_DIR/DOF.DAT" "$OBSTACLE_DIR/DOF.DAT"
 echo "✅ Digital Obstacle File downloaded ($DOF_LINE_COUNT lines, $(head -1 "$OBSTACLE_DIR/DOF.DAT" | tr -s ' ' | sed 's/^ *//'))"
+
+# ── Step 5: Download FAA MVA charts for the TRACON facility presets ─────────
+# AIXM 5.1 Minimum Vectoring Altitude charts, one per facility preset in
+# lib/tracon-facilities.ts (the single list of charts). Charts are revised
+# individually, not on the CIFP cycle, so the current file is always taken.
+MVA_BASE_URL="https://aeronav.faa.gov/MVA_Charts/aixm"
+MVA_CHART_IDS="$(node --import tsx -e '
+  import("./lib/tracon-facilities.ts").then(({ TRACON_FACILITIES }) => {
+    process.stdout.write(TRACON_FACILITIES.map((facility) => facility.mvaChartId).join(" "));
+  });
+')"
+if [ -z "$MVA_CHART_IDS" ]; then
+  echo "❌ Could not list MVA charts from lib/tracon-facilities.ts"
+  exit 1
+fi
+for chart in $MVA_CHART_IDS; do
+  echo "Fetching MVA chart $chart..."
+  curl -fsSL "$MVA_BASE_URL/$chart.xml" -o "$MVA_DIR/$chart.xml.tmp"
+  if ! grep -q "AIXMBasicMessage" "$MVA_DIR/$chart.xml.tmp" || ! grep -q "posList" "$MVA_DIR/$chart.xml.tmp"; then
+    echo "❌ MVA chart $chart is not an AIXM airspace message"
+    rm -f "$MVA_DIR/$chart.xml.tmp"
+    exit 1
+  fi
+  mv "$MVA_DIR/$chart.xml.tmp" "$MVA_DIR/$chart.xml"
+done
+echo "✅ MVA charts downloaded ($(echo "$MVA_CHART_IDS" | wc -w | tr -d ' ') charts)"
 
 echo "🎉 All data downloaded successfully (CIFP: $CIFP_CYCLE, d-TPP: $DTPP_CYCLE)"

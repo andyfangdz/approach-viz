@@ -81,8 +81,19 @@ export function AsyncShaderCompiler() {
         const pendingVariants = pending.get(material) ?? new Set<string>();
         pendingVariants.add(variant);
         pending.set(material, pendingVariants);
-        const settle = () => {
+        // A material disposed mid-compile (React StrictMode runs effect
+        // cleanups once in development) loses its program, and three's
+        // readiness poll then throws instead of resolving. Forget the
+        // attempt so the next frame compiles it again.
+        const onDispose = () => {
+          material.removeEventListener('dispose', onDispose);
           pendingVariants.delete(variant);
+          invalidate();
+        };
+        material.addEventListener('dispose', onDispose);
+        const settle = () => {
+          material.removeEventListener('dispose', onDispose);
+          if (!pendingVariants.delete(variant)) return;
           const compiledVariants = compiled.get(material) ?? new Set<string>();
           compiledVariants.add(variant);
           compiled.set(material, compiledVariants);

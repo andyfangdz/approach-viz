@@ -6,6 +6,7 @@ import {
   readSurfaceMosaicProductFromSearch,
   readShowCallsignsFromSearch,
   readTrafficHistoryMinutesFromSearch,
+  readViewFromSearch,
   DEFAULT_LAYER_STATE
 } from '@/app/app-client-utils';
 import {
@@ -20,6 +21,8 @@ import {
   DEFAULT_NEXRAD_SURFACE_MOSAIC_DRAPE,
   DEFAULT_NEXRAD_SURFACE_MOSAIC_PRODUCT,
   DEFAULT_CAMERA_CONTROL_MODE,
+  DEFAULT_TRACON_DIMENSION,
+  DEFAULT_VIEW_MODE,
   DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
   DEFAULT_OBSTACLE_RADIUS_NM,
@@ -49,7 +52,10 @@ import {
   normalizeNexradSurfaceMosaicProduct,
   normalizeObstacleMinAglFeet,
   normalizeObstacleRadiusNm,
-  normalizeTerrainRadiusNm
+  normalizeTerrainRadiusNm,
+  normalizeTraconDimension,
+  normalizeTraconFacilityId,
+  normalizeViewMode
 } from '@/app/app-client/option-normalizers';
 import type {
   CameraControlMode,
@@ -57,7 +63,9 @@ import type {
   NexradDeclutterMode,
   NexradPhaseMode,
   NexradSurfaceMosaicDrape,
-  NexradSurfaceMosaicProduct
+  NexradSurfaceMosaicProduct,
+  TraconDimension,
+  ViewMode
 } from '@/app/app-client/types';
 
 export interface OptionsState {
@@ -77,6 +85,10 @@ export interface OptionsState {
   nexradSurfaceMosaicDrape: NexradSurfaceMosaicDrape;
   nexradSurfaceMosaicProduct: NexradSurfaceMosaicProduct;
   cameraControlMode: CameraControlMode;
+  viewMode: ViewMode;
+  traconDimension: TraconDimension;
+  /** Preset TRACON facility, or `''` to follow the selected airport. */
+  traconFacilityId: string;
   nexradCrossSectionHeadingDeg: number;
   nexradCrossSectionRangeNm: number;
   retinaRendering: boolean;
@@ -104,6 +116,9 @@ export const DEFAULT_OPTIONS: OptionsState = {
   nexradSurfaceMosaicProduct: DEFAULT_NEXRAD_SURFACE_MOSAIC_PRODUCT,
   nexradPhaseMode: DEFAULT_NEXRAD_PHASE_MODE,
   cameraControlMode: DEFAULT_CAMERA_CONTROL_MODE,
+  viewMode: DEFAULT_VIEW_MODE,
+  traconDimension: DEFAULT_TRACON_DIMENSION,
+  traconFacilityId: '',
   nexradCrossSectionHeadingDeg: DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   nexradCrossSectionRangeNm: DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
   retinaRendering: false,
@@ -173,6 +188,15 @@ export function restoreOptions(raw: string | null, search: string): OptionsState
       }
       if (isString(parsed.cameraControlMode)) {
         options.cameraControlMode = normalizeCameraControlMode(parsed.cameraControlMode);
+      }
+      if (isString(parsed.viewMode)) {
+        options.viewMode = normalizeViewMode(parsed.viewMode);
+      }
+      if (isString(parsed.traconDimension)) {
+        options.traconDimension = normalizeTraconDimension(parsed.traconDimension);
+      }
+      if (isString(parsed.traconFacilityId)) {
+        options.traconFacilityId = normalizeTraconFacilityId(parsed.traconFacilityId);
       }
       if (isFiniteNumber(parsed.nexradCrossSectionHeadingDeg)) {
         options.nexradCrossSectionHeadingDeg = normalizeNexradCrossSectionHeadingDeg(
@@ -248,6 +272,15 @@ export function restoreOptions(raw: string | null, search: string): OptionsState
   const callsignsFromUrl = readShowCallsignsFromSearch(search);
   if (callsignsFromUrl != null) {
     options.showTrafficCallsigns = callsignsFromUrl;
+  }
+
+  const viewFromUrl = readViewFromSearch(search);
+  if (viewFromUrl) {
+    options.viewMode = viewFromUrl.viewMode;
+    if (viewFromUrl.traconDimension) options.traconDimension = viewFromUrl.traconDimension;
+    if (viewFromUrl.traconFacilityId) {
+      options.traconFacilityId = normalizeTraconFacilityId(viewFromUrl.traconFacilityId);
+    }
   }
 
   return options;

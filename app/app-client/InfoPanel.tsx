@@ -10,7 +10,9 @@ export function InfoPanel({
   hasApproachPlate,
   plateOverlayEnabled,
   sceneData,
-  selectedApproachSource
+  selectedApproachSource,
+  viewMode,
+  traconScene
 }: InfoPanelProps) {
   if (legendCollapsed) {
     return (
@@ -121,7 +123,27 @@ export function InfoPanel({
           <span>D</span>
         </div>
       </div>
-      {plateOverlayEnabled && !hasApproachPlate && (
+      {viewMode === 'tracon' && (
+        <div className="legend-note">
+          {traconScene && (
+            <>
+              <strong>
+                {traconScene.facilityId} {traconScene.facilityName}
+              </strong>{' '}
+              ({traconScene.rangeNm} NM): {traconScene.airports.map((a) => a.airport.id).join(' ')}.
+              Coverage is centered on these airports; official TRACON boundaries are not in the FAA
+              data this app uses.{' '}
+            </>
+          )}
+          STARS symbology: blue target with <code>*</code> (no track owner in ADS-B data), blue
+          history dots, and a one-line data block of altitude (hundreds of ft) and ground speed
+          (tens of kt), or altitude only without a flight ID. Click a target for its callsign; ALT
+          FIL hides data blocks above that altitude. Video maps (MAPS) are drawn from FAA data:
+          shoreline, runways, approach finals and fixes, navaids, STAR routes, Class B/C/D, the
+          facility MVA chart, and special use airspace; bearings are true.
+        </div>
+      )}
+      {viewMode === 'scene' && plateOverlayEnabled && !hasApproachPlate && (
         <div className="legend-note">No FAA plate matched this approach.</div>
       )}
       {selectedApproachSource === 'historical' && (

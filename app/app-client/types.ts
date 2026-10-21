@@ -1,7 +1,7 @@
 import type { Approach } from '@/lib/cifp/parser';
 import type { Waypoint } from '@/lib/cifp/parser';
 import type { SelectOption } from '@/app/app-client-utils';
-import type { SceneData } from '@/lib/types';
+import type { SceneData, TraconSceneData } from '@/lib/types';
 import type { ChartDebugState } from '@/app/scene/ChartMapSurface';
 import type { ObstacleStats } from '@/app/scene/ObstacleOverlay';
 
@@ -16,6 +16,53 @@ export type NexradSurfaceMosaicDrape = 'flat' | 'terrain';
  *  maximum (composite reflectivity) or the lowest echo (base reflectivity). */
 export type NexradSurfaceMosaicProduct = 'composite' | 'base';
 export type CameraControlMode = 'orbit' | 'arcball' | 'map';
+/** `scene`: the approach visualization. `tracon`: a radar-scope presentation
+ *  of the same airport, airspace, and traffic data. */
+export type ViewMode = 'scene' | 'tracon';
+/** TRACON scope projection: top-down orthographic scope, or perspective 3D. */
+export type TraconDimension = '2d' | '3d';
+
+/** STARS video maps the TRACON scope can show (DCB MAPS buttons). */
+export interface ScopeMapVisibility {
+  /** GEO: sea-level shoreline. */
+  shoreline: boolean;
+  runways: boolean;
+  /** Approach final segments with FAF ticks. */
+  finals: boolean;
+  /** Approach fixes (IAF, IF, FAF). */
+  fixes: boolean;
+  /** VORs and NDBs. */
+  navaids: boolean;
+  /** STAR routes and their fixes. */
+  arrivals: boolean;
+  classB: boolean;
+  classCD: boolean;
+  /** Minimum vectoring altitude sectors. */
+  mva: boolean;
+  /** Special use airspace. */
+  specialUse: boolean;
+}
+
+export type ShorelineStatus = 'loading' | 'ready' | 'unavailable';
+
+/** STARS display-control-bar settings for the TRACON scope (not persisted). */
+export interface TraconScopeSettings {
+  /** RANGE: NM from the display center to the nearer edge (2D). */
+  rangeNm: number;
+  /** RR: range ring spacing; 0 hides the rings. */
+  ringSpacingNm: number;
+  maps: ScopeMapVisibility;
+  /** WX1-WX6 selections. */
+  wxLevels: readonly boolean[];
+  /** HISTORY: dots per target. */
+  historyDotCount: number;
+  /** PTL LNTH in minutes. */
+  ptlMinutes: number;
+  /** PTL ALL: draw predicted track lines on every track. */
+  ptlAll: boolean;
+  /** Altitude filter upper limit (feet); tracks above it have no data block. */
+  altitudeFilterHighFeet: number;
+}
 
 export interface NexradTimingDebugState {
   pollCycleMs: number | null;
@@ -142,6 +189,10 @@ export interface HeaderControlsProps {
   hasApproachPlate: boolean;
   chartType: ChartType;
   onChartTypeSelected: (chart: ChartType) => void;
+  viewMode: ViewMode;
+  onViewModeSelected: (mode: ViewMode) => void;
+  traconFacilityId: string;
+  onTraconFacilitySelected: (facilityId: string) => void;
   menuPortalTarget?: HTMLElement;
   onControlsHeightChange?: (height: number) => void;
 }
@@ -179,6 +230,13 @@ export interface SceneCanvasProps {
   surfaceErrorMessage: string;
   recenterNonce: number;
   cameraControlMode: CameraControlMode;
+  viewMode: ViewMode;
+  traconDimension: TraconDimension;
+  /** The TRACON facility scope; null while loading or outside the TRACON view. */
+  traconScene: TraconSceneData | null;
+  traconScopeSettings: TraconScopeSettings;
+  onTraconScopeRangeChange: (rangeNm: number) => void;
+  onShorelineStatusChange?: (status: ShorelineStatus) => void;
   retinaRendering: boolean;
   missedApproachStartAltitudeFeet?: number;
   minimumsLabel?: string;
@@ -193,7 +251,7 @@ export interface SceneCanvasProps {
 export interface InfoPanelProps {
   legendCollapsed: boolean;
   onToggleLegend: () => void;
-  surfaceLegendClass: 'terrain' | 'plate' | 'satellite' | 'map';
+  surfaceLegendClass: 'terrain' | 'plate' | 'satellite' | 'map' | 'tracon';
   surfaceLegendLabel: string;
   surfaceMode: SurfaceMode;
   layers: LayerState;
@@ -201,6 +259,8 @@ export interface InfoPanelProps {
   plateOverlayEnabled: boolean;
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
+  viewMode: ViewMode;
+  traconScene: TraconSceneData | null;
 }
 
 export interface OptionsPanelProps {

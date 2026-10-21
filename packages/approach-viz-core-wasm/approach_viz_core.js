@@ -24,6 +24,7 @@ export class WasmTrafficState {
      *
      * Returns a flat JS object with parallel typed arrays (SoA layout):
      * `{ trackCount, markerPositions: Float32Array, headingDeg: Float32Array,
+     *    altitudeFeet: Float32Array, groundSpeedKt: Float32Array (NaN when unreported),
      *    flags: Uint8Array, trailPointsFlat: Float32Array, trailOffsets: Uint32Array,
      *    trailCounts: Uint32Array, hexes: string[], callsignLabels: (string|null)[],
      *    hash: number }`

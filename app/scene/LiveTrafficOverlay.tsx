@@ -13,11 +13,15 @@ import {
 import { WorkerClientError } from './shared/worker-errors';
 import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
 import { CALLSIGN_LABEL_STYLE } from './labels/label-styles';
+import { TraconTargets } from './tracon/TraconTargets';
+import type { TrafficScopeOptions } from './traffic/traffic-draw-buffers';
 import type { SceneAirport } from './traffic/traffic-worker-client';
 export type { SceneAirport } from './traffic/traffic-worker-client';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
+/** STARS HISTORY default. */
+const DEFAULT_SCOPE_HISTORY_DOTS = 5;
 /** Callsign height above its marker, in scene units. */
 const CALLSIGN_LABEL_LIFT_NM = 0.3;
 const CALLSIGN_LABEL_SIZING = { mode: 'world', distanceFactor: 14 } as const;
@@ -69,6 +73,16 @@ interface LiveTrafficOverlayProps {
   showDepartedTrafficTrails?: boolean;
   historyMinutes: number;
   applyEarthCurvatureCompensation?: boolean;
+  /** `scope`: TRACON targets, history dots, and data blocks instead of 3D markers. */
+  presentation?: 'scene' | 'scope';
+  /** Scope presentation only: drop lines from airborne targets to the floor. */
+  showAltitudeStalks?: boolean;
+  /** Scope presentation only: STARS HISTORY dots per target. */
+  scopeHistoryDotCount?: number;
+  /** Scope presentation only: predicted track line minutes; 0 hides them. */
+  scopePredictedTrackMinutes?: number;
+  /** Scope altitude filter upper limit (feet). */
+  scopeAltitudeFilterHighFeet?: number;
   radiusNm?: number;
   limit?: number;
   onDebugChange?: (debug: TrafficDebugState) => void;
@@ -92,11 +106,26 @@ export function LiveTrafficOverlay({
   showDepartedTrafficTrails = true,
   historyMinutes,
   applyEarthCurvatureCompensation = false,
+  presentation = 'scene',
+  showAltitudeStalks = false,
+  scopeHistoryDotCount = DEFAULT_SCOPE_HISTORY_DOTS,
+  scopePredictedTrackMinutes = 0,
+  scopeAltitudeFilterHighFeet = Number.POSITIVE_INFINITY,
   radiusNm = DEFAULT_RADIUS_NM,
   limit = DEFAULT_LIMIT,
   onDebugChange
 }: LiveTrafficOverlayProps) {
   const normalizedHistoryMinutes = normalizeHistoryMinutes(historyMinutes);
+  const scopeOptions = useMemo<TrafficScopeOptions>(
+    () => ({
+      historyDotCount: scopeHistoryDotCount,
+      predictedTrackMinutes: scopePredictedTrackMinutes
+    }),
+    [scopeHistoryDotCount, scopePredictedTrackMinutes]
+  );
+  // Polls read the latest scope settings without restarting; changes recompute below.
+  const scopeOptionsRef = useRef(scopeOptions);
+  scopeOptionsRef.current = scopeOptions;
   const invalidate = useThree((state) => state.invalidate);
   const markerMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const markerGeometry = useMemo(() => new THREE.SphereGeometry(0.055, 10, 10), []);
@@ -374,7 +403,8 @@ export function LiveTrafficOverlay({
             refLon,
             verticalScale,
             applyEarthCurvatureCompensation,
-            sceneAirports
+            sceneAirports,
+            scope: scopeOptionsRef.current
           }
         );
         processMs = roundMs(performance.now() - processStartedAt);
@@ -455,7 +485,8 @@ export function LiveTrafficOverlay({
               refLon,
               verticalScale,
               applyEarthCurvatureCompensation,
-              sceneAirports
+              sceneAirports,
+              scope: scopeOptionsRef.current
             });
             pruneMs = roundMs(performance.now() - pruneStartedAt);
             if (!cancelled) {
@@ -543,7 +574,8 @@ export function LiveTrafficOverlay({
           refLon,
           verticalScale,
           applyEarthCurvatureCompensation,
-          sceneAirports
+          sceneAirports,
+          scope: scopeOptions
         })
         .then((result) => {
           if (cancelled || trafficWorkerRef.current !== recomputeWorker) return;
@@ -576,6 +608,7 @@ export function LiveTrafficOverlay({
     verticalScale,
     applyEarthCurvatureCompensation,
     sceneAirports,
+    scopeOptions,
     applyWorkerResult,
     patchTimings
   ]);
@@ -631,7 +664,7 @@ export function LiveTrafficOverlay({
   }, [renderBuffers]);
 
   const callsignLabels = useMemo<SceneLabel[]>(() => {
-    if (!showCallsignLabels) return [];
+    if (!showCallsignLabels || presentation !== 'scene') return [];
     const { activeTrackIndices, markerPositions, flags } = renderBuffers;
     const labels: SceneLabel[] = [];
     for (const trackIndex of activeTrackIndices) {
@@ -651,7 +684,7 @@ export function LiveTrafficOverlay({
       });
     }
     return labels;
-  }, [renderBuffers, showCallsignLabels, hideGroundCallsignLabels]);
+  }, [renderBuffers, showCallsignLabels, hideGroundCallsignLabels, presentation]);
 
   useEffect(
     () => () => {
@@ -752,9 +785,17 @@ export function LiveTrafficOverlay({
     patchTimings({ markerUploadMs: roundMs(performance.now() - uploadStartedAt) });
   }, [renderBuffers, limit, patchTimings, invalidate]);
 
+  const isScope = presentation === 'scope';
   return (
     <group>
-      {trailLinesGeometry && (
+      {isScope && (
+        <TraconTargets
+          renderBuffers={renderBuffers}
+          showAltitudeStalks={showAltitudeStalks}
+          altitudeFilterHighFeet={scopeAltitudeFilterHighFeet}
+        />
+      )}
+      {!isScope && trailLinesGeometry && (
         <lineSegments
           geometry={trailLinesGeometry}
           material={trailLineMaterial}
@@ -762,7 +803,7 @@ export function LiveTrafficOverlay({
           renderOrder={82}
         />
       )}
-      {headingLinesGeometry && (
+      {!isScope && headingLinesGeometry && (
         <lineSegments
           geometry={headingLinesGeometry}
           material={headingLineMaterial}
@@ -775,6 +816,7 @@ export function LiveTrafficOverlay({
         ref={markerMeshRef}
         args={[markerGeometry, markerMaterial, Math.max(1, limit)]}
         frustumCulled={false}
+        visible={!isScope}
       />
     </group>
   );

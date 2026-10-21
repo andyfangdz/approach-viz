@@ -1,7 +1,7 @@
 'use client';
 
 import type { CSSProperties } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Approach } from '@/lib/cifp/parser';
 import { pickDefaultApproachForAirport } from '@/app/default-selections';
 import {
@@ -28,7 +28,16 @@ import { usePersistedOptions } from '@/app/app-client/hooks/use-persisted-option
 import { useSceneSelection } from '@/app/app-client/hooks/use-scene-selection';
 import { useServiceWorkerDebug } from '@/app/app-client/hooks/use-service-worker-debug';
 import { useSurfaceState } from '@/app/app-client/hooks/use-surface-state';
+import { useTraconScene } from '@/app/app-client/hooks/use-tracon-scene';
 import { useUrlSync } from '@/app/app-client/hooks/use-url-sync';
+import { EdgeCompassRose } from '@/app/app-client/tracon/EdgeCompassRose';
+import { StarsDcb, STARS_DCB_HEIGHT_PX } from '@/app/app-client/tracon/StarsDcb';
+import { StarsSsa } from '@/app/app-client/tracon/StarsSsa';
+import {
+  availableWxLevels,
+  clampRange,
+  defaultScopeSettings
+} from '@/app/app-client/tracon/scope-settings';
 import {
   clampValue,
   normalizeNexradCrossSectionHeadingDeg,
@@ -43,13 +52,16 @@ import {
 import type {
   ChartType,
   NexradDebugState,
+  ShorelineStatus,
   SurfaceMode,
+  TraconScopeSettings,
   TrafficDebugState
 } from '@/app/app-client/types';
 import { CHART_DEBUG_INITIAL, type ChartDebugState } from '@/app/scene/ChartMapSurface';
 import { isPresentFiniteNumber } from '@/lib/parse-like';
 import type { ObstacleStats } from '@/app/scene/ObstacleOverlay';
 import type { AirportOption, SceneData } from '@/lib/types';
+import { DEFAULT_TRACON_FACILITY_ID, findTraconFacilityForAirport } from '@/lib/tracon-facilities';
 
 interface AppClientProps {
   initialAirportOptions: AirportOption[];
@@ -155,6 +167,7 @@ const SURFACE_LEGEND_LABELS = {
 
 interface MainContentStyle extends CSSProperties {
   '--controls-overlay-offset': string;
+  '--stars-dcb-top': string;
 }
 
 export function AppClient({
@@ -188,6 +201,31 @@ export function AppClient({
     isDefaultRoute
   });
   const { sceneData, selectedAirport, selectedApproach } = selection;
+  const isTracon = options.viewMode === 'tracon';
+  // An explicit facility choice wins; otherwise follow the selected airport.
+  const traconFacilityId =
+    options.traconFacilityId ||
+    findTraconFacilityForAirport(selectedAirport)?.id ||
+    DEFAULT_TRACON_FACILITY_ID;
+  const { traconScene, traconError, traconLoading } = useTraconScene(traconFacilityId, isTracon);
+  const isTracon2d = isTracon && options.traconDimension === '2d';
+  // STARS DCB settings live for the session; a new facility starts from its range.
+  const [scopeSettings, setScopeSettings] = useState(() => defaultScopeSettings(60));
+  const [scopeSettingsFacility, setScopeSettingsFacility] = useState<string | null>(null);
+  if (traconScene && traconScene.facilityId !== scopeSettingsFacility) {
+    setScopeSettingsFacility(traconScene.facilityId);
+    setScopeSettings((current) => ({ ...current, rangeNm: clampRange(traconScene.rangeNm) }));
+  }
+  const [shorelineStatus, setShorelineStatus] = useState<ShorelineStatus>('loading');
+  const patchScopeSettings = useCallback(
+    (patch: Partial<TraconScopeSettings>) =>
+      setScopeSettings((current) => ({ ...current, ...patch })),
+    []
+  );
+  const handleScopeRangeChange = useCallback(
+    (rangeNm: number) => patchScopeSettings({ rangeNm: clampRange(rangeNm) }),
+    [patchScopeSettings]
+  );
   const { serviceWorkerDebug } = useServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
 
   useUrlSync({
@@ -203,7 +241,10 @@ export function AppClient({
     nexradSurfaceMosaicProduct: options.nexradSurfaceMosaicProduct,
     nexradDeclutterMode: options.nexradDeclutterMode,
     trafficHistoryMinutes: options.trafficHistoryMinutes,
-    showTrafficCallsigns: options.showTrafficCallsigns
+    showTrafficCallsigns: options.showTrafficCallsigns,
+    viewMode: options.viewMode,
+    traconDimension: options.traconDimension,
+    traconFacilityId
   });
 
   // Runs after the hooks' mount effects (declaration order), so URL params
@@ -285,9 +326,14 @@ export function AppClient({
   );
 
   const hasApproachPlate = Boolean(sceneData.approachPlate);
-  const activeErrorMessage = selection.errorMessage || surface.surfaceErrorMessage;
+  const activeErrorMessage =
+    (isTracon ? traconError : null) || selection.errorMessage || surface.surfaceErrorMessage;
+  const scopeWeatherOn = isTracon2d && scopeSettings.wxLevels.some(Boolean);
   const showMrmsLoadingIndicator =
-    (nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) && nexradDebug.loading;
+    (isTracon2d
+      ? scopeWeatherOn
+      : nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) &&
+    nexradDebug.loading;
   const missedApproachStartAltitudeFeet =
     sceneData.minimumsSummary?.da?.altitude ??
     sceneData.minimumsSummary?.mda?.altitude ??
@@ -315,16 +361,18 @@ export function AppClient({
     options.useParsedMissedClimbGradient && hasParsedMissedClimbRequirement
       ? sceneData.missedApproachClimbRequirement
       : null;
-  const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' | 'map' =
-    surface.plateOverlayEnabled && hasApproachPlate
+  const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' | 'map' | 'tracon' = isTracon
+    ? 'tracon'
+    : surface.plateOverlayEnabled && hasApproachPlate
       ? 'plate'
       : surface.surfaceMode === 'satellite' || surface.surfaceMode === '3dmap'
         ? 'satellite'
         : surface.surfaceMode === 'map'
           ? 'map'
           : 'terrain';
-  const surfaceLegendLabel =
-    surface.plateOverlayEnabled && hasApproachPlate
+  const surfaceLegendLabel = isTracon
+    ? `${traconScene?.facilityId ?? traconFacilityId} Scope (${options.traconDimension.toUpperCase()})`
+    : surface.plateOverlayEnabled && hasApproachPlate
       ? `FAA Plate + ${SURFACE_LEGEND_LABELS[surface.surfaceMode]}`
       : SURFACE_LEGEND_LABELS[surface.surfaceMode];
 
@@ -379,7 +427,9 @@ export function AppClient({
   }, [nexradVolumeEnabled, updateOption]);
 
   const mainContentStyle: MainContentStyle = {
-    '--controls-overlay-offset': `${controlsOverlayHeight}px`
+    // In the TRACON view the DCB takes the top row; floating controls sit below it.
+    '--controls-overlay-offset': `${controlsOverlayHeight + (isTracon ? STARS_DCB_HEIGHT_PX : 0)}px`,
+    '--stars-dcb-top': `${controlsOverlayHeight}px`
   };
 
   return (
@@ -411,14 +461,21 @@ export function AppClient({
         hasApproachPlate={hasApproachPlate}
         chartType={surface.chartType}
         onChartTypeSelected={handleChartTypeSelected}
+        viewMode={options.viewMode}
+        onViewModeSelected={(mode) => options.updateOption('viewMode', mode)}
+        traconFacilityId={traconFacilityId}
+        onTraconFacilitySelected={(facilityId) =>
+          options.updateOption('traconFacilityId', facilityId)
+        }
         menuPortalTarget={menuPortalTarget}
         onControlsHeightChange={setControlsOverlayHeight}
       />
 
       <main className="main-content" style={mainContentStyle}>
-        {(selection.loading || selection.isPending) && (
+        {(selection.loading || selection.isPending) && !isTracon && (
           <div className="loading">Loading approach data...</div>
         )}
+        {traconLoading && <div className="loading">Loading {traconFacilityId}...</div>}
 
         {!airport ? (
           <div className="loading">No airport data available</div>
@@ -456,6 +513,12 @@ export function AppClient({
             surfaceErrorMessage={surface.surfaceErrorMessage}
             recenterNonce={recenterNonce}
             cameraControlMode={options.cameraControlMode}
+            viewMode={options.viewMode}
+            traconDimension={options.traconDimension}
+            traconScene={traconScene}
+            traconScopeSettings={scopeSettings}
+            onTraconScopeRangeChange={handleScopeRangeChange}
+            onShorelineStatusChange={setShorelineStatus}
             retinaRendering={options.retinaRendering}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
@@ -484,10 +547,35 @@ export function AppClient({
           </div>
         )}
 
+        {isTracon2d && <EdgeCompassRose insetTopPx={controlsOverlayHeight + STARS_DCB_HEIGHT_PX} />}
+        {isTracon && (
+          <StarsDcb
+            settings={scopeSettings}
+            onSettingsChange={patchScopeSettings}
+            dimension={options.traconDimension}
+            onDimensionChange={(dimension) => options.updateOption('traconDimension', dimension)}
+            shorelineStatus={shorelineStatus}
+            wxAvailableLevels={availableWxLevels(nexradDebug.surfaceMosaicMaxDbz)}
+            airspaceLayerVisible={options.layers.airspace}
+          />
+        )}
+        {isTracon && (
+          <StarsSsa
+            settings={scopeSettings}
+            wxAvailableLevels={availableWxLevels(nexradDebug.surfaceMosaicMaxDbz)}
+            showWeather={isTracon2d}
+            trackCount={options.layers.adsb ? trafficDebug.renderedTrackCount : null}
+            trafficError={options.layers.adsb ? trafficDebug.error : null}
+          />
+        )}
+
         <button
           type="button"
           className="recenter-fab"
-          onClick={() => setRecenterNonce((current) => current + 1)}
+          onClick={() => {
+            setRecenterNonce((current) => current + 1);
+            if (traconScene) handleScopeRangeChange(traconScene.rangeNm);
+          }}
           title="Recenter view"
           aria-label="Recenter view"
         >
@@ -528,6 +616,8 @@ export function AppClient({
           plateOverlayEnabled={surface.plateOverlayEnabled}
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
+          viewMode={options.viewMode}
+          traconScene={traconScene}
         />
 
         <LayersPanel

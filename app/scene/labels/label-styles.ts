@@ -177,3 +177,48 @@ export function labelStyleKey(style: LabelStyle): string {
     box
   ].join('|');
 }
+
+const SCOPE_MONO = "'JetBrains Mono', 'SF Mono', monospace";
+/** Tight black edge, like the outline STARS draws under its characters. */
+const SCOPE_OUTLINE: LabelTextShadow[] = [{ color: 'rgba(0, 0, 0, 1)', blurPx: 2 }];
+
+/** STARS data block line (unowned tracks are green). */
+export const DATA_BLOCK_LABEL_STYLE: LabelStyle = {
+  fontFamily: SCOPE_MONO,
+  fontSizePx: 12,
+  fontWeight: 500,
+  color: '#00ff00',
+  lineHeight: 1.05,
+  textShadows: SCOPE_OUTLINE
+};
+
+/**
+ * STARS partial and limited data blocks: their own (LDB) brightness, set
+ * below full data blocks so the callsign lines of selected tracks stand out.
+ */
+export const SHORT_DATA_BLOCK_LABEL_STYLE: LabelStyle = {
+  ...DATA_BLOCK_LABEL_STYLE,
+  color: '#00b400'
+};
+
+/** STARS position symbol drawn on the target (`*`: no track owner). */
+export const POSITION_SYMBOL_LABEL_STYLE: LabelStyle = {
+  fontFamily: SCOPE_MONO,
+  fontSizePx: 13,
+  fontWeight: 700,
+  color: '#00ff00',
+  lineHeight: 1,
+  textShadows: SCOPE_OUTLINE
+};
+
+/** STARS video map text (fix and navaid names, MVA altitudes, SUA designators). */
+export function scopeMapLabelStyle(color: string): LabelStyle {
+  return {
+    fontFamily: SCOPE_MONO,
+    fontSizePx: 10,
+    fontWeight: 500,
+    color,
+    lineHeight: 1,
+    textShadows: SCOPE_OUTLINE
+  };
+}

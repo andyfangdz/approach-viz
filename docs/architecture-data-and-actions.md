@@ -3,7 +3,7 @@
 ## Data Backbone
 
 - Server-side data is backed by `data/approach-viz.sqlite`.
-- An SQLite R-tree spatial index (`airport_rtree` + `airport_rtree_map` tables) is built at `build-db` time and accelerates nearby-airport queries during scene-data assembly. A second R-tree (`airspace_rtree`) indexes airspace bounding boxes for efficient overlap queries, and a third (`obstacle_rtree`) indexes published-obstacle points (FAA Digital Obstacle File) for the obstacles scene query.
+- An SQLite R-tree spatial index (`airport_rtree` + `airport_rtree_map` tables) is built at `build-db` time and accelerates nearby-airport queries during scene-data assembly. A second R-tree (`airspace_rtree`) indexes airspace bounding boxes for efficient overlap queries, a third (`obstacle_rtree`) indexes published-obstacle points (FAA Digital Obstacle File) for the obstacles scene query, and a fourth (`restrictive_airspace_rtree`) indexes special use airspace for the TRACON video maps.
 - The airport spatial index also provides `elevationAirports` covering the full 80 NM traffic radius, used to place ADS-B targets without reported altitude at their nearest airport's field elevation.
 - Current FAA CIFP is the normal build/runtime geometry source of truth. `build-db` conditionally adds the versioned `KSBS / R32-Z` (FAA cycle `260806`) and `KCRQ / R24-X` (FAA cycle `251225`) historical fixtures only when current CIFP no longer contains each exact procedure ID. A live/current row therefore always takes precedence.
 - The `approaches` table carries `source` (`cifp` or `historical`) and `source_cycle`. Historical rows also carry approach-specific preserved waypoint JSON so later FAA waypoint changes cannot alter the captured training geometry.

@@ -2,6 +2,8 @@
 // render SoA so the main thread only copies finished buffers into GPU
 // attributes. Kept free of `three` and the DOM for unit tests.
 
+import { formatDataBlock } from '../tracon/data-block';
+
 export const TRAFFIC_FLAG_IS_CURRENTLY_PRESENT = 0x01;
 export const TRAFFIC_FLAG_IS_ON_GROUND = 0x02;
 /** Scene units from an aircraft marker to the tip of its heading tick. */
@@ -89,4 +91,148 @@ export function buildTrafficDrawBuffers(soa: TrafficRenderSoA): TrafficDrawBuffe
   }
 
   return { trailSegments, activeTrackIndices, markerMatrices, headingSegments };
+}
+
+/** STARS HISTORY control range; the default is 5. */
+export const SCOPE_MAX_HISTORY_DOTS = 10;
+/**
+ * Minimum ground spacing between consecutive history dots: about one radar
+ * update (4.6 s) at a typical 250 kt approach-control speed.
+ */
+export const SCOPE_HISTORY_DOT_SPACING_NM = 0.3;
+
+/** Display settings the worker needs to build scope buffers. */
+export interface TrafficScopeOptions {
+  /** History dots per target, 0 to `SCOPE_MAX_HISTORY_DOTS`. */
+  historyDotCount: number;
+  /** Predicted track line length in minutes of flight; 0 draws none. */
+  predictedTrackMinutes: number;
+}
+
+export interface TrafficScopeSoA extends TrafficRenderSoA {
+  altitudeFeet: Float32Array;
+  groundSpeedKt: Float32Array;
+  hexes: string[];
+  callsignLabels: (string | null)[];
+}
+
+/** TRACON-scope presentation of the present airborne tracks, in one order. */
+export interface TrafficScopeBuffers {
+  /** `x, y, z` per present airborne track. */
+  targetPositions: Float32Array;
+  /** ICAO hex per target, the key for forcing a full data block. */
+  targetHexes: string[];
+  /** Reported altitude per target (NaN when unreported), for the altitude filter. */
+  targetAltitudeFeet: Float32Array;
+  /** 1 when the target broadcasts a flight ID (treated as associated). */
+  targetAssociated: Uint8Array;
+  /** Data block line 1 (identity) per target. */
+  dataBlockIdents: string[];
+  /** Data block line 2 (altitude/speed) per target. */
+  dataBlockFields: string[];
+  /** `x, y, z, age` per history dot; age 0 is the newest dot of its track. */
+  historyDots: Float32Array;
+  /** Predicted track line segments (6 floats) for targets with speed. */
+  predictedTrackSegments: Float32Array;
+  /** Target-to-floor segments (6 floats). */
+  altitudeStalkSegments: Float32Array;
+}
+
+/**
+ * Builds the scope presentation for present airborne tracks (STARS altitude
+ * filtering leaves surface traffic to the tower's surface display): history
+ * dots resampled from the trail at a minimum ground spacing (newest first), a
+ * predicted track line from heading and ground speed, an altitude stalk down
+ * to `floorY`, and the two full data block lines. Which data block each
+ * target shows is chosen on the main thread from the altitude and
+ * association columns, so selecting a target or moving the altitude filter
+ * needs no worker round trip.
+ */
+export function buildTrafficScopeBuffers(
+  soa: TrafficScopeSoA,
+  floorY: number,
+  options: TrafficScopeOptions
+): TrafficScopeBuffers {
+  const { trackCount, markerPositions, headingDeg, flags, trailPointsFlat } = soa;
+  const { trailOffsets, trailCounts, altitudeFeet, groundSpeedKt } = soa;
+  const historyDotCount = Math.max(
+    0,
+    Math.min(SCOPE_MAX_HISTORY_DOTS, Math.round(options.historyDotCount))
+  );
+  const predictedTrackMinutes = Math.max(0, options.predictedTrackMinutes);
+  const targetPositions: number[] = [];
+  const targetHexes: string[] = [];
+  const targetAltitudeFeet: number[] = [];
+  const targetAssociated: number[] = [];
+  const dataBlockIdents: string[] = [];
+  const dataBlockFields: string[] = [];
+  const historyDots: number[] = [];
+  const predictedTrackSegments: number[] = [];
+  const altitudeStalkSegments: number[] = [];
+  const spacingSq = SCOPE_HISTORY_DOT_SPACING_NM * SCOPE_HISTORY_DOT_SPACING_NM;
+
+  for (let track = 0; track < trackCount; track += 1) {
+    if ((flags[track] & TRAFFIC_FLAG_IS_CURRENTLY_PRESENT) === 0) continue;
+    if ((flags[track] & TRAFFIC_FLAG_IS_ON_GROUND) !== 0) continue;
+    const x = markerPositions[track * 3];
+    const y = markerPositions[track * 3 + 1];
+    const z = markerPositions[track * 3 + 2];
+    const [ident, fields] = formatDataBlock(
+      soa.callsignLabels[track],
+      soa.hexes[track] ?? '',
+      altitudeFeet[track],
+      groundSpeedKt[track]
+    );
+    targetPositions.push(x, y, z);
+    targetHexes.push(soa.hexes[track] ?? '');
+    targetAltitudeFeet.push(altitudeFeet[track]);
+    targetAssociated.push(soa.callsignLabels[track]?.trim() ? 1 : 0);
+    dataBlockIdents.push(ident);
+    dataBlockFields.push(fields);
+
+    let lastX = x;
+    let lastZ = z;
+    let dots = 0;
+    const trailOffset = trailOffsets[track];
+    for (let point = trailCounts[track] - 1; point >= 0; point -= 1) {
+      if (dots >= historyDotCount) break;
+      const base = (trailOffset + point) * 3;
+      const px = trailPointsFlat[base];
+      const pz = trailPointsFlat[base + 2];
+      const dx = px - lastX;
+      const dz = pz - lastZ;
+      if (dx * dx + dz * dz < spacingSq) continue;
+      historyDots.push(px, trailPointsFlat[base + 1], pz, dots);
+      dots += 1;
+      lastX = px;
+      lastZ = pz;
+    }
+
+    altitudeStalkSegments.push(x, y, z, x, floorY, z);
+    const speed = groundSpeedKt[track];
+    if (predictedTrackMinutes > 0 && Number.isFinite(speed) && speed > 0) {
+      const lengthNm = (speed / 60) * predictedTrackMinutes;
+      const headingRad = (headingDeg[track] * Math.PI) / 180;
+      predictedTrackSegments.push(
+        x,
+        y,
+        z,
+        x + Math.sin(headingRad) * lengthNm,
+        y,
+        z - Math.cos(headingRad) * lengthNm
+      );
+    }
+  }
+
+  return {
+    targetPositions: new Float32Array(targetPositions),
+    targetHexes,
+    targetAltitudeFeet: new Float32Array(targetAltitudeFeet),
+    targetAssociated: new Uint8Array(targetAssociated),
+    dataBlockIdents,
+    dataBlockFields,
+    historyDots: new Float32Array(historyDots),
+    predictedTrackSegments: new Float32Array(predictedTrackSegments),
+    altitudeStalkSegments: new Float32Array(altitudeStalkSegments)
+  };
 }
