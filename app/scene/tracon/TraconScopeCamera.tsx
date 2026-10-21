@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import { useThree } from '@react-three/fiber';
 import { MapControls, OrthographicCamera } from '@react-three/drei';
 import type { MapControls as MapControlsImpl } from 'three-stdlib';
@@ -58,4 +58,49 @@ export function TraconScopeCamera({
       />
     </>
   );
+}
+
+/** 3D framing: camera south of and above the center, distance scaled to the range. */
+const PERSPECTIVE_HEIGHT_PER_RANGE = 0.55;
+const PERSPECTIVE_SOUTH_PER_RANGE = 0.75;
+
+interface FramedControls {
+  target: { set: (x: number, y: number, z: number) => void };
+  update: () => void;
+}
+
+/**
+ * Frames the whole facility in the perspective (3D) TRACON view when
+ * mounted; remount it (key on facility and recenter nonce) to re-frame.
+ */
+export function TraconPerspectiveFraming({
+  rangeNm,
+  floorY,
+  controlsRef
+}: {
+  rangeNm: number;
+  floorY: number;
+  controlsRef: RefObject<FramedControls | null>;
+}) {
+  const camera = useThree((state) => state.camera);
+  const invalidate = useThree((state) => state.invalidate);
+  // Frame once per mount; later vertical-scale changes keep the user's view.
+  const [framing] = useState({ rangeNm, floorY });
+  useEffect(() => {
+    const { rangeNm, floorY } = framing;
+    camera.position.set(
+      0,
+      floorY + rangeNm * PERSPECTIVE_HEIGHT_PER_RANGE,
+      rangeNm * PERSPECTIVE_SOUTH_PER_RANGE
+    );
+    camera.up.set(0, 1, 0);
+    camera.lookAt(0, floorY, 0);
+    const controls = controlsRef.current;
+    if (controls) {
+      controls.target.set(0, floorY, 0);
+      controls.update();
+    }
+    invalidate();
+  }, [camera, controlsRef, framing, invalidate]);
+  return null;
 }

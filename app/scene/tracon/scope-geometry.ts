@@ -1,10 +1,14 @@
-// TRACON scope backdrop geometry in the local NM frame (x east, z south):
-// range rings, a compass rose, and extended runway centerlines. Kept free of
+// TRACON scope backdrop geometry in the local NM frame (x east, z south),
+// centered on the facility: range rings, a compass rose, and extended runway
+// centerlines for every member airport. Kept free of
 // `three` and the DOM for unit tests.
 
 import { reciprocalRunwayId, type LocalRunwayThreshold } from '../approach-path/runway-geometry';
 
-export const RANGE_RING_SPACING_NM = 5;
+/** Ring spacing on scopes up to `FINE_RING_MAX_RANGE_NM`; 10 NM beyond. */
+export const FINE_RANGE_RING_SPACING_NM = 5;
+const FINE_RING_MAX_RANGE_NM = 40;
+const COARSE_RANGE_RING_SPACING_NM = 10;
 const RING_SEGMENTS = 180;
 const ROSE_MINOR_TICK_DEG = 5;
 const ROSE_MAJOR_TICK_DEG = 10;
@@ -12,7 +16,10 @@ const ROSE_LABEL_DEG = 30;
 const ROSE_MINOR_TICK_NM = 0.6;
 const ROSE_MAJOR_TICK_NM = 1.2;
 const ROSE_LABEL_OFFSET_NM = 2.2;
+/** Extended centerline length for the facility's primary airport. */
 export const EXTENDED_CENTERLINE_NM = 15;
+/** Extended centerline length for the other member airports. */
+export const SECONDARY_CENTERLINE_NM = 6;
 const CENTERLINE_TICK_SPACING_NM = 1;
 const CENTERLINE_MINOR_TICK_NM = 0.15;
 const CENTERLINE_MAJOR_TICK_NM = 0.35;
@@ -34,11 +41,18 @@ export interface ScopeBackdrop {
   centerlineSegments: Float32Array;
 }
 
-/** Ring radii every `RANGE_RING_SPACING_NM` out to `rangeNm` (inclusive). */
+export function rangeRingSpacingNm(rangeNm: number): number {
+  return rangeNm <= FINE_RING_MAX_RANGE_NM
+    ? FINE_RANGE_RING_SPACING_NM
+    : COARSE_RANGE_RING_SPACING_NM;
+}
+
+/** Ring radii every `rangeRingSpacingNm(rangeNm)` out to `rangeNm` (inclusive). */
 export function rangeRingRadii(rangeNm: number): number[] {
   const radii: number[] = [];
   if (!Number.isFinite(rangeNm)) return radii;
-  for (let r = RANGE_RING_SPACING_NM; r <= rangeNm + 1e-9; r += RANGE_RING_SPACING_NM) {
+  const spacing = rangeRingSpacingNm(rangeNm);
+  for (let r = spacing; r <= rangeNm + 1e-9; r += spacing) {
     radii.push(r);
   }
   return radii;
@@ -131,18 +145,37 @@ export function buildExtendedCenterlines(
   return new Float32Array(out);
 }
 
+/**
+ * `runwaysByAirport` lists each member airport's thresholds in the scope
+ * frame, primary airport first (it gets the longer centerlines).
+ */
 export function buildScopeBackdrop(
   rangeNm: number,
-  runways: LocalRunwayThreshold[],
+  runwaysByAirport: LocalRunwayThreshold[][],
   y: number
 ): ScopeBackdrop {
   const radii = rangeRingRadii(rangeNm);
   const outer = radii.length > 0 ? radii[radii.length - 1] : rangeNm;
   const rose = buildRose(outer, y);
+  const centerlines = runwaysByAirport.map((runways, index) =>
+    buildExtendedCenterlines(
+      runways,
+      y,
+      index === 0 ? EXTENDED_CENTERLINE_NM : SECONDARY_CENTERLINE_NM
+    )
+  );
+  const centerlineSegments = new Float32Array(
+    centerlines.reduce((total, segments) => total + segments.length, 0)
+  );
+  let offset = 0;
+  for (const segments of centerlines) {
+    centerlineSegments.set(segments, offset);
+    offset += segments.length;
+  }
   return {
     ringSegments: new Float32Array(buildRings(radii, y)),
     roseSegments: new Float32Array(rose.segments),
     roseLabels: rose.labels,
-    centerlineSegments: buildExtendedCenterlines(runways, y)
+    centerlineSegments
   };
 }

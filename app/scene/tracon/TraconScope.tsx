@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import type { Airport, RunwayThreshold } from '@/lib/cifp/parser';
+import type { TraconAirport } from '@/lib/types';
 import { altToY, latLonToLocal } from '../approach-path/coordinates';
 import { SceneLabels, type SceneLabel } from '../labels/SceneLabels';
 import { SCOPE_ROSE_LABEL_STYLE } from '../labels/label-styles';
@@ -18,30 +18,36 @@ function segmentsGeometry(segments: Float32Array): THREE.BufferGeometry {
 }
 
 /**
- * TRACON scope backdrop centered on the selected airport: range rings every
- * 5 NM out to `rangeNm`, a compass rose (true bearings) on the outer ring,
- * and extended runway centerlines with mile ticks, all on the field-elevation
- * plane.
+ * TRACON scope backdrop centered on the facility: range rings out to
+ * `rangeNm`, a compass rose (true bearings) on the outer ring, and extended
+ * runway centerlines with mile ticks for every member airport, all on the
+ * floor plane (the primary airport's field elevation).
  */
 export function TraconScope({
-  airport,
-  runways,
+  centerLat,
+  centerLon,
+  airports,
+  floorElevationFeet,
   rangeNm,
   verticalScale
 }: {
-  airport: Airport;
-  runways: RunwayThreshold[];
+  centerLat: number;
+  centerLon: number;
+  airports: TraconAirport[];
+  floorElevationFeet: number;
   rangeNm: number;
   verticalScale: number;
 }) {
-  const floorY = altToY(airport.elevation, verticalScale) + BACKDROP_OFFSET_NM;
+  const floorY = altToY(floorElevationFeet, verticalScale) + BACKDROP_OFFSET_NM;
   const backdrop = useMemo(() => {
-    const localRunways = runways.map((runway) => ({
-      id: runway.id,
-      ...latLonToLocal(runway.lat, runway.lon, airport.lat, airport.lon)
-    }));
-    return buildScopeBackdrop(rangeNm, localRunways, floorY);
-  }, [runways, airport.lat, airport.lon, rangeNm, floorY]);
+    const runwaysByAirport = airports.map(({ runways }) =>
+      runways.map((runway) => ({
+        id: runway.id,
+        ...latLonToLocal(runway.lat, runway.lon, centerLat, centerLon)
+      }))
+    );
+    return buildScopeBackdrop(rangeNm, runwaysByAirport, floorY);
+  }, [airports, centerLat, centerLon, rangeNm, floorY]);
 
   const geometries = useMemo(
     () => ({

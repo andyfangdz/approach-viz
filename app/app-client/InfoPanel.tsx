@@ -11,7 +11,8 @@ export function InfoPanel({
   plateOverlayEnabled,
   sceneData,
   selectedApproachSource,
-  viewMode
+  viewMode,
+  traconScene
 }: InfoPanelProps) {
   if (legendCollapsed) {
     return (
@@ -124,8 +125,18 @@ export function InfoPanel({
       </div>
       {viewMode === 'tracon' && (
         <div className="legend-note">
+          {traconScene && (
+            <>
+              <strong>
+                {traconScene.facilityId} {traconScene.facilityName}
+              </strong>{' '}
+              ({traconScene.rangeNm} NM): {traconScene.airports.map((a) => a.airport.id).join(' ')}.
+              Coverage is centered on these airports; official TRACON boundaries are not in the FAA
+              data this app uses.{' '}
+            </>
+          )}
           Data block: callsign, then altitude (hundreds of ft) and ground speed (tens of kt). Lines
-          ahead of targets show one minute of flight; range rings every 5 NM; bearings true.
+          ahead of targets show one minute of flight; bearings are true.
         </div>
       )}
       {viewMode === 'scene' && plateOverlayEnabled && !hasApproachPlate && (

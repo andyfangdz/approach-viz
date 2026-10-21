@@ -39,6 +39,7 @@ import type {
   ViewMode
 } from '@/app/app-client/types';
 import { isMemberOf, isString } from '@/lib/parse-like';
+import { findTraconFacility } from '@/lib/tracon-facilities';
 import type { JsonValue } from '@/lib/parse-like';
 
 export function clampValue(value: number, min: number, max: number, fallback = min): number {
@@ -168,4 +169,9 @@ export function normalizeTraconDimension(dimension: JsonValue): TraconDimension 
   return isString(dimension) && isMemberOf(dimension, TRACON_DIMENSIONS)
     ? dimension
     : DEFAULT_TRACON_DIMENSION;
+}
+
+/** A preset facility ID, or `''` to follow the selected airport. */
+export function normalizeTraconFacilityId(id: JsonValue): string {
+  return isString(id) ? (findTraconFacility(id)?.id ?? '') : '';
 }

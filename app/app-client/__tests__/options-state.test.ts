@@ -61,3 +61,15 @@ test('view mode restores from storage and the view URL param overrides it', () =
   assert.equal(invalid.traconDimension, DEFAULT_OPTIONS.traconDimension);
   assert.equal(restoreOptions(null, '?view=bogus').viewMode, DEFAULT_OPTIONS.viewMode);
 });
+
+test('TRACON facility restores, follows the URL, and rejects unknown IDs', () => {
+  assert.equal(DEFAULT_OPTIONS.traconFacilityId, '');
+  const stored = JSON.stringify({ traconFacilityId: 'SCT' });
+  assert.equal(restoreOptions(stored, '').traconFacilityId, 'SCT');
+  assert.equal(restoreOptions(stored, '?view=tracon-2d&tracon=n90').traconFacilityId, 'N90');
+  assert.equal(restoreOptions(stored, '?view=tracon-2d&tracon=XYZ').traconFacilityId, '');
+  assert.equal(
+    restoreOptions(JSON.stringify({ traconFacilityId: 'nope' }), '').traconFacilityId,
+    ''
+  );
+});

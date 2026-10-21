@@ -1,8 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import Select from 'react-select';
-import { selectStyles } from '@/app/app-client-utils';
+import { createSelectStyles, selectStyles } from '@/app/app-client-utils';
 import { filterOptionsWithWorker } from '@/app/app-client/filter-worker-client';
+import { TRACON_FACILITIES } from '@/lib/tracon-facilities';
 import type { HeaderControlsProps } from './types';
+
+interface TraconOption {
+  value: string;
+  label: string;
+}
+
+const TRACON_OPTIONS: TraconOption[] = TRACON_FACILITIES.map((facility) => ({
+  value: facility.id,
+  label: `${facility.id} - ${facility.name}`
+}));
+const traconSelectStyles = createSelectStyles<TraconOption>();
 
 export function HeaderControls({
   selectorsCollapsed,
@@ -25,6 +37,8 @@ export function HeaderControls({
   onChartTypeSelected,
   viewMode,
   onViewModeSelected,
+  traconFacilityId,
+  onTraconFacilitySelected,
   menuPortalTarget,
   onControlsHeightChange
 }: HeaderControlsProps) {
@@ -130,73 +144,106 @@ export function HeaderControls({
 
       {!selectorsCollapsed && (
         <div className="controls" ref={controlsRef}>
-          <div className="control-group">
-            <label>Airport (Type to search)</label>
-            <div className="library-select">
-              <Select
-                instanceId="airport-select"
-                inputId="airport-select-input"
-                isClearable={false}
-                isSearchable
-                options={filteredAirportOptions}
-                value={selectedAirportOption}
-                styles={selectStyles}
-                filterOption={null}
-                placeholder={airportOptionsLoading ? 'Loading airports...' : 'Search airport...'}
-                noOptionsMessage={() => 'No airports found'}
-                isDisabled={airportOptionsLoading || effectiveAirportOptionsLength === 0}
-                maxMenuHeight={260}
-                menuPortalTarget={menuPortalTarget}
-                menuPosition="fixed"
-                inputValue={airportQuery}
-                onInputChange={(value, meta) => {
-                  if (meta.action === 'input-change') setAirportQuery(value);
-                  if (meta.action === 'menu-close') setAirportQuery('');
-                }}
-                onChange={(nextOption) => {
-                  const nextAirportId = nextOption?.value;
-                  if (!nextAirportId || nextAirportId === selectedAirportOption?.value) return;
-                  setAirportQuery('');
-                  onAirportSelected(nextAirportId);
-                }}
-              />
+          {viewMode === 'tracon' && (
+            <div className="control-group">
+              <label>TRACON Facility</label>
+              <div className="library-select">
+                <Select
+                  instanceId="tracon-select"
+                  inputId="tracon-select-input"
+                  isClearable={false}
+                  isSearchable
+                  options={TRACON_OPTIONS}
+                  value={TRACON_OPTIONS.find((option) => option.value === traconFacilityId) ?? null}
+                  styles={traconSelectStyles}
+                  placeholder="Select facility..."
+                  maxMenuHeight={260}
+                  menuPortalTarget={menuPortalTarget}
+                  menuPosition="fixed"
+                  onChange={(nextOption) => {
+                    if (nextOption && nextOption.value !== traconFacilityId) {
+                      onTraconFacilitySelected(nextOption.value);
+                    }
+                  }}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="control-group">
-            <label>Approach</label>
-            <div className="library-select">
-              <Select
-                instanceId="approach-select"
-                inputId="approach-select-input"
-                isClearable={false}
-                isSearchable
-                options={filteredApproachOptions}
-                value={selectedApproachOption}
-                styles={selectStyles}
-                filterOption={null}
-                placeholder={
-                  approachOptionsLength > 0 ? 'Search approach...' : 'No approaches available'
-                }
-                noOptionsMessage={() => 'No approaches found'}
-                isDisabled={approachOptionsLength === 0}
-                maxMenuHeight={260}
-                menuPortalTarget={menuPortalTarget}
-                menuPosition="fixed"
-                inputValue={approachQuery}
-                onInputChange={(value, meta) => {
-                  if (meta.action === 'input-change') setApproachQuery(value);
-                  if (meta.action === 'menu-close') setApproachQuery('');
-                }}
-                onChange={(nextOption) => {
-                  const nextApproachId = nextOption?.value;
-                  if (!nextApproachId || nextApproachId === selectedApproachOption?.value) return;
-                  setApproachQuery('');
-                  onApproachSelected(nextApproachId);
-                }}
-              />
-            </div>
-          </div>
+          {viewMode === 'scene' && (
+            <>
+              <div className="control-group">
+                <label>Airport (Type to search)</label>
+                <div className="library-select">
+                  <Select
+                    instanceId="airport-select"
+                    inputId="airport-select-input"
+                    isClearable={false}
+                    isSearchable
+                    options={filteredAirportOptions}
+                    value={selectedAirportOption}
+                    styles={selectStyles}
+                    filterOption={null}
+                    placeholder={
+                      airportOptionsLoading ? 'Loading airports...' : 'Search airport...'
+                    }
+                    noOptionsMessage={() => 'No airports found'}
+                    isDisabled={airportOptionsLoading || effectiveAirportOptionsLength === 0}
+                    maxMenuHeight={260}
+                    menuPortalTarget={menuPortalTarget}
+                    menuPosition="fixed"
+                    inputValue={airportQuery}
+                    onInputChange={(value, meta) => {
+                      if (meta.action === 'input-change') setAirportQuery(value);
+                      if (meta.action === 'menu-close') setAirportQuery('');
+                    }}
+                    onChange={(nextOption) => {
+                      const nextAirportId = nextOption?.value;
+                      if (!nextAirportId || nextAirportId === selectedAirportOption?.value) return;
+                      setAirportQuery('');
+                      onAirportSelected(nextAirportId);
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="control-group">
+                <label>Approach</label>
+                <div className="library-select">
+                  <Select
+                    instanceId="approach-select"
+                    inputId="approach-select-input"
+                    isClearable={false}
+                    isSearchable
+                    options={filteredApproachOptions}
+                    value={selectedApproachOption}
+                    styles={selectStyles}
+                    filterOption={null}
+                    placeholder={
+                      approachOptionsLength > 0 ? 'Search approach...' : 'No approaches available'
+                    }
+                    noOptionsMessage={() => 'No approaches found'}
+                    isDisabled={approachOptionsLength === 0}
+                    maxMenuHeight={260}
+                    menuPortalTarget={menuPortalTarget}
+                    menuPosition="fixed"
+                    inputValue={approachQuery}
+                    onInputChange={(value, meta) => {
+                      if (meta.action === 'input-change') setApproachQuery(value);
+                      if (meta.action === 'menu-close') setApproachQuery('');
+                    }}
+                    onChange={(nextOption) => {
+                      const nextApproachId = nextOption?.value;
+                      if (!nextApproachId || nextApproachId === selectedApproachOption?.value)
+                        return;
+                      setApproachQuery('');
+                      onApproachSelected(nextApproachId);
+                    }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           <div className="control-group">
             <label>View</label>

@@ -1,7 +1,7 @@
 import type { Approach } from '@/lib/cifp/parser';
 import type { Waypoint } from '@/lib/cifp/parser';
 import type { SelectOption } from '@/app/app-client-utils';
-import type { SceneData } from '@/lib/types';
+import type { SceneData, TraconSceneData } from '@/lib/types';
 import type { ChartDebugState } from '@/app/scene/ChartMapSurface';
 import type { ObstacleStats } from '@/app/scene/ObstacleOverlay';
 
@@ -149,6 +149,8 @@ export interface HeaderControlsProps {
   onChartTypeSelected: (chart: ChartType) => void;
   viewMode: ViewMode;
   onViewModeSelected: (mode: ViewMode) => void;
+  traconFacilityId: string;
+  onTraconFacilitySelected: (facilityId: string) => void;
   menuPortalTarget?: HTMLElement;
   onControlsHeightChange?: (height: number) => void;
 }
@@ -188,6 +190,8 @@ export interface SceneCanvasProps {
   cameraControlMode: CameraControlMode;
   viewMode: ViewMode;
   traconDimension: TraconDimension;
+  /** The TRACON facility scope; null while loading or outside the TRACON view. */
+  traconScene: TraconSceneData | null;
   retinaRendering: boolean;
   missedApproachStartAltitudeFeet?: number;
   minimumsLabel?: string;
@@ -211,6 +215,7 @@ export interface InfoPanelProps {
   sceneData: SceneData;
   selectedApproachSource?: SelectOption['source'];
   viewMode: ViewMode;
+  traconScene: TraconSceneData | null;
 }
 
 export interface OptionsPanelProps {

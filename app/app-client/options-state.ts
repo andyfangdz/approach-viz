@@ -54,6 +54,7 @@ import {
   normalizeObstacleRadiusNm,
   normalizeTerrainRadiusNm,
   normalizeTraconDimension,
+  normalizeTraconFacilityId,
   normalizeViewMode
 } from '@/app/app-client/option-normalizers';
 import type {
@@ -86,6 +87,8 @@ export interface OptionsState {
   cameraControlMode: CameraControlMode;
   viewMode: ViewMode;
   traconDimension: TraconDimension;
+  /** Preset TRACON facility, or `''` to follow the selected airport. */
+  traconFacilityId: string;
   nexradCrossSectionHeadingDeg: number;
   nexradCrossSectionRangeNm: number;
   retinaRendering: boolean;
@@ -115,6 +118,7 @@ export const DEFAULT_OPTIONS: OptionsState = {
   cameraControlMode: DEFAULT_CAMERA_CONTROL_MODE,
   viewMode: DEFAULT_VIEW_MODE,
   traconDimension: DEFAULT_TRACON_DIMENSION,
+  traconFacilityId: '',
   nexradCrossSectionHeadingDeg: DEFAULT_NEXRAD_CROSS_SECTION_HEADING_DEG,
   nexradCrossSectionRangeNm: DEFAULT_NEXRAD_CROSS_SECTION_RANGE_NM,
   retinaRendering: false,
@@ -190,6 +194,9 @@ export function restoreOptions(raw: string | null, search: string): OptionsState
       }
       if (isString(parsed.traconDimension)) {
         options.traconDimension = normalizeTraconDimension(parsed.traconDimension);
+      }
+      if (isString(parsed.traconFacilityId)) {
+        options.traconFacilityId = normalizeTraconFacilityId(parsed.traconFacilityId);
       }
       if (isFiniteNumber(parsed.nexradCrossSectionHeadingDeg)) {
         options.nexradCrossSectionHeadingDeg = normalizeNexradCrossSectionHeadingDeg(
@@ -271,6 +278,9 @@ export function restoreOptions(raw: string | null, search: string): OptionsState
   if (viewFromUrl) {
     options.viewMode = viewFromUrl.viewMode;
     if (viewFromUrl.traconDimension) options.traconDimension = viewFromUrl.traconDimension;
+    if (viewFromUrl.traconFacilityId) {
+      options.traconFacilityId = normalizeTraconFacilityId(viewFromUrl.traconFacilityId);
+    }
   }
 
   return options;

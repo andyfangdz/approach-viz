@@ -28,6 +28,7 @@ import { usePersistedOptions } from '@/app/app-client/hooks/use-persisted-option
 import { useSceneSelection } from '@/app/app-client/hooks/use-scene-selection';
 import { useServiceWorkerDebug } from '@/app/app-client/hooks/use-service-worker-debug';
 import { useSurfaceState } from '@/app/app-client/hooks/use-surface-state';
+import { useTraconScene } from '@/app/app-client/hooks/use-tracon-scene';
 import { useUrlSync } from '@/app/app-client/hooks/use-url-sync';
 import {
   clampValue,
@@ -50,6 +51,7 @@ import { CHART_DEBUG_INITIAL, type ChartDebugState } from '@/app/scene/ChartMapS
 import { isPresentFiniteNumber } from '@/lib/parse-like';
 import type { ObstacleStats } from '@/app/scene/ObstacleOverlay';
 import type { AirportOption, SceneData } from '@/lib/types';
+import { DEFAULT_TRACON_FACILITY_ID, findTraconFacilityForAirport } from '@/lib/tracon-facilities';
 
 interface AppClientProps {
   initialAirportOptions: AirportOption[];
@@ -188,6 +190,13 @@ export function AppClient({
     isDefaultRoute
   });
   const { sceneData, selectedAirport, selectedApproach } = selection;
+  const isTracon = options.viewMode === 'tracon';
+  // An explicit facility choice wins; otherwise follow the selected airport.
+  const traconFacilityId =
+    options.traconFacilityId ||
+    findTraconFacilityForAirport(selectedAirport)?.id ||
+    DEFAULT_TRACON_FACILITY_ID;
+  const { traconScene, traconError, traconLoading } = useTraconScene(traconFacilityId, isTracon);
   const { serviceWorkerDebug } = useServiceWorkerDebug(sceneData.cycleInfo?.dtppCycle);
 
   useUrlSync({
@@ -205,7 +214,8 @@ export function AppClient({
     trafficHistoryMinutes: options.trafficHistoryMinutes,
     showTrafficCallsigns: options.showTrafficCallsigns,
     viewMode: options.viewMode,
-    traconDimension: options.traconDimension
+    traconDimension: options.traconDimension,
+    traconFacilityId
   });
 
   // Runs after the hooks' mount effects (declaration order), so URL params
@@ -287,7 +297,8 @@ export function AppClient({
   );
 
   const hasApproachPlate = Boolean(sceneData.approachPlate);
-  const activeErrorMessage = selection.errorMessage || surface.surfaceErrorMessage;
+  const activeErrorMessage =
+    (isTracon ? traconError : null) || selection.errorMessage || surface.surfaceErrorMessage;
   const showMrmsLoadingIndicator =
     (nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) && nexradDebug.loading;
   const missedApproachStartAltitudeFeet =
@@ -317,7 +328,6 @@ export function AppClient({
     options.useParsedMissedClimbGradient && hasParsedMissedClimbRequirement
       ? sceneData.missedApproachClimbRequirement
       : null;
-  const isTracon = options.viewMode === 'tracon';
   const surfaceLegendClass: 'plate' | 'satellite' | 'terrain' | 'map' | 'tracon' = isTracon
     ? 'tracon'
     : surface.plateOverlayEnabled && hasApproachPlate
@@ -328,7 +338,7 @@ export function AppClient({
           ? 'map'
           : 'terrain';
   const surfaceLegendLabel = isTracon
-    ? `TRACON Scope (${options.traconDimension.toUpperCase()})`
+    ? `${traconScene?.facilityId ?? traconFacilityId} Scope (${options.traconDimension.toUpperCase()})`
     : surface.plateOverlayEnabled && hasApproachPlate
       ? `FAA Plate + ${SURFACE_LEGEND_LABELS[surface.surfaceMode]}`
       : SURFACE_LEGEND_LABELS[surface.surfaceMode];
@@ -418,14 +428,19 @@ export function AppClient({
         onChartTypeSelected={handleChartTypeSelected}
         viewMode={options.viewMode}
         onViewModeSelected={(mode) => options.updateOption('viewMode', mode)}
+        traconFacilityId={traconFacilityId}
+        onTraconFacilitySelected={(facilityId) =>
+          options.updateOption('traconFacilityId', facilityId)
+        }
         menuPortalTarget={menuPortalTarget}
         onControlsHeightChange={setControlsOverlayHeight}
       />
 
       <main className="main-content" style={mainContentStyle}>
-        {(selection.loading || selection.isPending) && (
+        {(selection.loading || selection.isPending) && !isTracon && (
           <div className="loading">Loading approach data...</div>
         )}
+        {traconLoading && <div className="loading">Loading {traconFacilityId}...</div>}
 
         {!airport ? (
           <div className="loading">No airport data available</div>
@@ -465,6 +480,7 @@ export function AppClient({
             cameraControlMode={options.cameraControlMode}
             viewMode={options.viewMode}
             traconDimension={options.traconDimension}
+            traconScene={traconScene}
             retinaRendering={options.retinaRendering}
             missedApproachStartAltitudeFeet={missedApproachStartAltitudeFeet}
             minimumsLabel={minimumsLabel}
@@ -554,6 +570,7 @@ export function AppClient({
           sceneData={sceneData}
           selectedApproachSource={selectedApproachOption?.source}
           viewMode={options.viewMode}
+          traconScene={traconScene}
         />
 
         <LayersPanel

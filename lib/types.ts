@@ -112,6 +112,23 @@ export interface SceneData {
   missedApproachClimbRequirement: MissedApproachClimbRequirement | null;
 }
 
+export interface TraconAirport {
+  airport: Airport;
+  runways: RunwayThreshold[];
+}
+
+/** Everything the TRACON scope draws for one facility, centered on it. */
+export interface TraconSceneData {
+  facilityId: string;
+  facilityName: string;
+  centerLat: number;
+  centerLon: number;
+  rangeNm: number;
+  /** Member airports in facility order; the first sets the scope floor. */
+  airports: TraconAirport[];
+  airspace: AirspaceFeature[];
+}
+
 /** Resolved once by build-db; consumed by both web and native clients. */
 export interface ApproachReference {
   minimumsSummary: SceneData['minimumsSummary'];

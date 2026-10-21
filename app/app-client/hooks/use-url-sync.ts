@@ -38,6 +38,8 @@ interface UseUrlSyncParams {
   showTrafficCallsigns: boolean;
   viewMode: ViewMode;
   traconDimension: TraconDimension;
+  /** Facility the TRACON view shows (resolved, not `''`). */
+  traconFacilityId: string;
 }
 
 /**
@@ -60,7 +62,8 @@ export function useUrlSync({
   trafficHistoryMinutes,
   showTrafficCallsigns,
   viewMode,
-  traconDimension
+  traconDimension,
+  traconFacilityId
 }: UseUrlSyncParams) {
   useEffect(() => {
     if (globalThis.window === undefined || !selectedAirport || !enabled) return;
@@ -117,8 +120,10 @@ export function useUrlSync({
     const viewSerialized = serializeViewParam(viewMode, traconDimension);
     if (viewSerialized) {
       params.set('view', viewSerialized);
+      params.set('tracon', traconFacilityId);
     } else {
       params.delete('view');
+      params.delete('tracon');
     }
     const nextSearch = params.toString();
     const nextUrl = `${nextPath}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
@@ -148,6 +153,7 @@ export function useUrlSync({
     trafficHistoryMinutes,
     showTrafficCallsigns,
     viewMode,
-    traconDimension
+    traconDimension,
+    traconFacilityId
   ]);
 }

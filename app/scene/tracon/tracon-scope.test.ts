@@ -5,7 +5,8 @@ import {
   buildExtendedCenterlines,
   buildScopeBackdrop,
   EXTENDED_CENTERLINE_NM,
-  rangeRingRadii
+  rangeRingRadii,
+  SECONDARY_CENTERLINE_NM
 } from './scope-geometry';
 import {
   buildTrafficScopeBuffers,
@@ -26,14 +27,15 @@ test('formatDataBlock uses STARS altitude hundreds and ground speed tens', () =>
   assert.deepEqual(formatDataBlock('HI', 'abc', 150_000, 2000, false), ['HI', '999 99']);
 });
 
-test('range rings step every 5 NM out to the range, inclusive', () => {
+test('range rings step 5 NM on small scopes and 10 NM on facility-wide ones', () => {
   assert.deepEqual(rangeRingRadii(20), [5, 10, 15, 20]);
   assert.deepEqual(rangeRingRadii(22), [5, 10, 15, 20]);
+  assert.deepEqual(rangeRingRadii(60), [10, 20, 30, 40, 50, 60]);
   assert.deepEqual(rangeRingRadii(Number.NaN), []);
 });
 
 test('scope backdrop lays rings and the compass rose on the floor plane', () => {
-  const backdrop = buildScopeBackdrop(10, [], 0.25);
+  const backdrop = buildScopeBackdrop(10, [[]], 0.25);
   for (let i = 1; i < backdrop.ringSegments.length; i += 3) {
     assert.equal(backdrop.ringSegments[i], 0.25);
   }
@@ -66,6 +68,13 @@ test('extended centerlines run outward from each threshold along the approach co
   assert.equal(segmentCount, 2 * (1 + EXTENDED_CENTERLINE_NM));
   // RW36 aircraft land northbound, so its centerline extends south (+z).
   assert.deepEqual([...segments.subarray(0, 6)], [0, 0, 0.5, 0, 0, 0.5 + EXTENDED_CENTERLINE_NM]);
+
+  // Secondary airports get shorter centerlines in the facility backdrop.
+  const backdrop = buildScopeBackdrop(60, [runways, runways], 0);
+  assert.equal(
+    backdrop.centerlineSegments.length / 6,
+    segmentCount + 2 * (1 + SECONDARY_CENTERLINE_NM)
+  );
 });
 
 test('buildTrafficScopeBuffers builds data blocks, history dots, PTLs, and stalks', () => {

@@ -91,85 +91,90 @@ export function formatMinimumValue(minimum: MinimumsValueSummary | undefined): s
   return `${minimum.altitude}' (${minimum.type}${categorySuffix})`;
 }
 
-export const selectStyles: StylesConfig<SelectOption, false> = {
-  control: (base, state) => ({
-    ...base,
-    backgroundColor: '#1a1a2e',
-    borderColor: state.isFocused ? 'var(--accent)' : 'var(--border)',
-    minHeight: 36,
-    boxShadow: state.isFocused ? '0 0 0 3px var(--accent-soft)' : 'none',
-    ':hover': {
-      borderColor: 'var(--accent)'
-    }
-  }),
-  valueContainer: (base) => ({
-    ...base,
-    padding: '2px 10px'
-  }),
-  singleValue: (base) => ({
-    ...base,
-    color: '#e8e8f0',
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12
-  }),
-  placeholder: (base) => ({
-    ...base,
-    color: '#8888aa',
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12
-  }),
-  input: (base) => ({
-    ...base,
-    color: '#e8e8f0',
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12
-  }),
-  menu: (base) => ({
-    ...base,
-    backgroundColor: 'rgba(18, 18, 31, 0.98)',
-    border: '1px solid #2a2a44',
-    borderRadius: 10,
-    overflow: 'hidden'
-  }),
-  menuList: (base) => ({
-    ...base,
-    maxHeight: 260
-  }),
-  option: (base, state) => ({
-    ...base,
-    backgroundColor: state.isSelected
-      ? 'var(--accent-strong)'
-      : state.isFocused
-        ? 'var(--accent-soft)'
-        : 'transparent',
-    color: '#e8e8f0',
-    fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12,
-    cursor: 'pointer'
-  }),
-  indicatorSeparator: (base) => ({
-    ...base,
-    backgroundColor: '#2a2a44'
-  }),
-  dropdownIndicator: (base) => ({
-    ...base,
-    color: '#8888aa',
-    ':hover': {
-      color: 'var(--accent)'
-    }
-  }),
-  clearIndicator: (base) => ({
-    ...base,
-    color: '#8888aa',
-    ':hover': {
-      color: '#ff7777'
-    }
-  }),
-  menuPortal: (base) => ({
-    ...base,
-    zIndex: 280
-  })
-};
+/** Selector styles; they read no option data, so any option type can use them. */
+export function createSelectStyles<Option>(): StylesConfig<Option, false> {
+  return {
+    control: (base, state) => ({
+      ...base,
+      backgroundColor: '#1a1a2e',
+      borderColor: state.isFocused ? 'var(--accent)' : 'var(--border)',
+      minHeight: 36,
+      boxShadow: state.isFocused ? '0 0 0 3px var(--accent-soft)' : 'none',
+      ':hover': {
+        borderColor: 'var(--accent)'
+      }
+    }),
+    valueContainer: (base) => ({
+      ...base,
+      padding: '2px 10px'
+    }),
+    singleValue: (base) => ({
+      ...base,
+      color: '#e8e8f0',
+      fontFamily: "'JetBrains Mono', monospace",
+      fontSize: 12
+    }),
+    placeholder: (base) => ({
+      ...base,
+      color: '#8888aa',
+      fontFamily: "'JetBrains Mono', monospace",
+      fontSize: 12
+    }),
+    input: (base) => ({
+      ...base,
+      color: '#e8e8f0',
+      fontFamily: "'JetBrains Mono', monospace",
+      fontSize: 12
+    }),
+    menu: (base) => ({
+      ...base,
+      backgroundColor: 'rgba(18, 18, 31, 0.98)',
+      border: '1px solid #2a2a44',
+      borderRadius: 10,
+      overflow: 'hidden'
+    }),
+    menuList: (base) => ({
+      ...base,
+      maxHeight: 260
+    }),
+    option: (base, state) => ({
+      ...base,
+      backgroundColor: state.isSelected
+        ? 'var(--accent-strong)'
+        : state.isFocused
+          ? 'var(--accent-soft)'
+          : 'transparent',
+      color: '#e8e8f0',
+      fontFamily: "'JetBrains Mono', monospace",
+      fontSize: 12,
+      cursor: 'pointer'
+    }),
+    indicatorSeparator: (base) => ({
+      ...base,
+      backgroundColor: '#2a2a44'
+    }),
+    dropdownIndicator: (base) => ({
+      ...base,
+      color: '#8888aa',
+      ':hover': {
+        color: 'var(--accent)'
+      }
+    }),
+    clearIndicator: (base) => ({
+      ...base,
+      color: '#8888aa',
+      ':hover': {
+        color: '#ff7777'
+      }
+    }),
+    menuPortal: (base) => ({
+      ...base,
+      zIndex: 280
+    })
+  };
+}
+
+export const selectStyles = createSelectStyles<SelectOption>();
 
 export function sceneApproachToRuntimeApproach(scene: SceneData): Approach | null {
   const source = scene.currentApproach;
@@ -264,15 +269,19 @@ export function readShowCallsignsFromSearch(search: string): boolean | null {
 export interface ViewUrlState {
   viewMode: ViewMode;
   traconDimension: TraconDimension | null;
+  /** Raw `?tracon=` facility ID; normalized by the options restore. */
+  traconFacilityId: string | null;
 }
 
-/** `view=tracon-2d` / `view=tracon-3d` select the TRACON scope; `view=scene`
- *  (or no `view`) the approach scene. */
+/** `view=tracon-2d` / `view=tracon-3d` select the TRACON scope (facility in
+ *  `tracon=`); `view=scene` (or no `view`) the approach scene. */
 export function readViewFromSearch(search: string): ViewUrlState | null {
-  const value = new URLSearchParams(search).get('view');
-  if (value === 'scene') return { viewMode: 'scene', traconDimension: null };
-  if (value === 'tracon-2d') return { viewMode: 'tracon', traconDimension: '2d' };
-  if (value === 'tracon-3d') return { viewMode: 'tracon', traconDimension: '3d' };
+  const params = new URLSearchParams(search);
+  const value = params.get('view');
+  const traconFacilityId = params.get('tracon');
+  if (value === 'scene') return { viewMode: 'scene', traconDimension: null, traconFacilityId };
+  if (value === 'tracon-2d') return { viewMode: 'tracon', traconDimension: '2d', traconFacilityId };
+  if (value === 'tracon-3d') return { viewMode: 'tracon', traconDimension: '3d', traconFacilityId };
   return null;
 }
 
