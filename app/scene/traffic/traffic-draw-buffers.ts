@@ -116,6 +116,18 @@ export interface TrafficScopeSoA extends TrafficRenderSoA {
   callsignLabels: (string | null)[];
 }
 
+/**
+ * The tracks' render hash mixed with the scope options, as one unsigned
+ * 32-bit value: the client skips results whose hash it has already applied,
+ * and the scope buffers change with HISTORY and PTL even when the tracks do not.
+ */
+export function scopeRenderHash(trackHash: number, options: TrafficScopeOptions): number {
+  let hash = trackHash >>> 0;
+  hash = Math.imul(hash ^ Math.round(options.historyDotCount), 0x9e3779b1);
+  hash = Math.imul(hash ^ Math.round(options.predictedTrackMinutes * 100), 0x85ebca6b);
+  return (hash ^ (hash >>> 16)) >>> 0;
+}
+
 /** TRACON-scope presentation of the present airborne tracks, in one order. */
 export interface TrafficScopeBuffers {
   /** `x, y, z` per present airborne track. */

@@ -28,6 +28,7 @@ import { traceShoreline } from './shoreline';
 import {
   buildTrafficScopeBuffers,
   SCOPE_MAX_HISTORY_DOTS,
+  scopeRenderHash,
   TRAFFIC_FLAG_IS_CURRENTLY_PRESENT,
   TRAFFIC_FLAG_IS_ON_GROUND
 } from '../traffic/traffic-draw-buffers';
@@ -494,4 +495,26 @@ test('placeDataBlocks turns a leader away from a block it would overprint', () =
   assert.deepEqual(keypad(placeDataBlocks([block(100, 100, 1)])), [3]);
   // Off-screen targets keep their previous direction.
   assert.deepEqual(placeDataBlocks([{ screen: null, chars: 3, lines: 1, previous: 4 }]), [4]);
+});
+
+test('scopeRenderHash changes with HISTORY and PTL, not only with the tracks', () => {
+  const base = { historyDotCount: 5, predictedTrackMinutes: 0 };
+  const hash = scopeRenderHash(123456, base);
+  assert.equal(hash, scopeRenderHash(123456, { ...base }));
+  assert.notEqual(hash, scopeRenderHash(123457, base));
+  assert.notEqual(hash, scopeRenderHash(123456, { ...base, historyDotCount: 6 }));
+  assert.notEqual(hash, scopeRenderHash(123456, { ...base, predictedTrackMinutes: 1 }));
+  assert.notEqual(
+    scopeRenderHash(123456, { ...base, predictedTrackMinutes: 1 }),
+    scopeRenderHash(123456, { ...base, predictedTrackMinutes: 1.5 })
+  );
+  assert.ok(Number.isInteger(hash) && hash >= 0 && hash <= 0xffffffff);
+});
+
+test('placeDataBlocks keeps text off targets that have no data block', () => {
+  const block = { screen: [100, 100] as const, chars: 6, lines: 1 as const, previous: null };
+  // A filtered target where the default (up-right) block would go.
+  const [direction] = placeDataBlocks([block], [[130, 81]]);
+  assert.notEqual(LEADER_DIRECTIONS[direction].keypad, 9);
+  assert.deepEqual(placeDataBlocks([block]), [0]);
 });

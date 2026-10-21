@@ -164,14 +164,19 @@ export interface DataBlockToPlace {
  * keep blocks apart: in the given order, each block takes its previous
  * direction if that is still clear, else the first clear direction, else
  * the one overlapping least. Clear means not over another target symbol or
- * a block already placed. Returns indexes into `LEADER_DIRECTIONS`.
+ * a block already placed. `otherTargets` are on-screen targets without a
+ * data block, kept clear too. Returns indexes into `LEADER_DIRECTIONS`.
  */
-export function placeDataBlocks(blocks: readonly DataBlockToPlace[]): number[] {
+export function placeDataBlocks(
+  blocks: readonly DataBlockToPlace[],
+  otherTargets: readonly (readonly [number, number])[] = []
+): number[] {
   const grid = new BoxGrid();
   const targets = blocks.map((block) =>
     block.screen ? symbolBox(block.screen[0], block.screen[1], TARGET_SYMBOL_PX) : null
   );
   for (const target of targets) if (target) grid.insert(target);
+  for (const [x, y] of otherTargets) grid.insert(symbolBox(x, y, TARGET_SYMBOL_PX));
   return blocks.map((block, index) => {
     const own = targets[index];
     if (!block.screen || !own) return block.previous ?? 0;
