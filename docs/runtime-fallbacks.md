@@ -1,13 +1,13 @@
 # Runtime Fallbacks (Weather Scan Packs in R2, Direct Traffic)
 
-The runtime host (OCI) is the only process that ingests MRMS weather and ADS-B traffic. These two fallbacks keep the web app's weather and traffic working while that host is down. Both run in the existing Vercel route handlers; the only new service is an R2 bucket.
+The runtime host (Windows Dev Kit, running Ubuntu ARM64) is the only process that ingests MRMS weather and ADS-B traffic. These two fallbacks keep the web app's weather and traffic working while that host is down. Both run in the existing Vercel route handlers; the only additional service is an R2 bucket. See [runtime hosting](runtime-hosting.md) for the current host, deployment, and rollback.
 
 - **Weather:** after each scan, the runtime also publishes an immutable **scan pack** to Cloudflare R2. The weather route answers from the newest pack and falls back to the runtime (or the other way round when the pack is stale). A weather scan minutes old is still useful, so a stored copy is a real fallback.
 - **Traffic:** stored positions go stale in seconds, so storage cannot help. When the runtime fails, the traffic route instead fetches ADS-B Exchange itself for just the requested area and returns current aircraft, without history.
 
 ```mermaid
 flowchart LR
-  RT["runtime-rs (OCI)<br/>ingest"] -- "scan pack + latest.json<br/>(S3 API)" --> R2[("R2 bucket")]
+  RT["runtime-rs (Dev Kit)<br/>ingest"] -- "scan pack + latest.json<br/>(S3 API)" --> R2[("R2 bucket")]
   subgraph vercel["Vercel route handlers"]
     W["/api/weather/nexrad*<br/>runtime-proxy.ts"]
     T["/api/traffic/adsbx"]
@@ -58,7 +58,7 @@ Publishing failures are logged. The next scan retries, and serving from the runt
 
 Configure publishing with all four of `RUNTIME_R2_ENDPOINT` (`https://<account-id>.r2.cloudflarestorage.com`), `RUNTIME_R2_BUCKET`, `RUNTIME_R2_ACCESS_KEY_ID`, and `RUNTIME_R2_SECRET_ACCESS_KEY`, or with none of them. A partial set fails startup. `RUNTIME_R2_PREFIX` defaults to `mrms`.
 
-On the OCI host these variables go in `/etc/approach-viz-runtime/r2-publish.env` (owner root, mode 0600). The deploy script's unit loads that file with `EnvironmentFile=-`, so the secret is never in the world-readable unit or the deploy environment.
+On the runtime host these variables go in `/etc/approach-viz-runtime/r2-publish.env` (owner root, mode 0600). AWS SQS credentials are separate in `/etc/approach-viz-runtime/aws.env`, also root/0600. The deploy script's unit loads those files with `EnvironmentFile=-`, so secrets are never in the world-readable unit or the deploy environment.
 
 ### Weather route
 
@@ -115,7 +115,7 @@ These figures use measured sizes and published Vercel/Cloudflare prices (iad1); 
 - **R2 storage:** 5 packs × 22 MB ≈ 110 MB, inside the 10 GB free tier.
 - **R2 writes:** 3 Class A operations per scan (pack, manifest, list), about 65k a month against 1M free. Deletes are free.
 - **R2 reads:** the manifest once per 5 s per function instance, the header once per pack per instance, and up to one read per tile row per uncached volume request (echo tops: one). The first 10M a month are free. R2 has no egress fees.
-- **Upload from OCI:** 22 MB × 720 scans/day ≈ 0.5 TB/month, inside OCI's 10 TB/month of free egress.
+- **Runtime upload:** the reference 22 MB × 720 scans/day is about 0.5 TB/month. After the Dev Kit move this uses the home connection, not OCI's egress allowance; MRMS downloads add separate downstream traffic.
 - **Traffic fallback:** a few ms of CPU per request, and only during runtime outages.
 
 ## Validation

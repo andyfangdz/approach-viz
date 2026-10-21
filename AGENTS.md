@@ -7,7 +7,7 @@
 - Web: Next.js 16 App Router, React Compiler, TypeScript, react-three-fiber, Three.js.
 - Native: shared iOS/macOS SwiftUI shell, MetalKit renderer, TCA, GRDB, Nuke, Async Algorithms, Swift Collections, SwiftUI Introspect.
 - Compute: Cargo workspace containing `approach-viz-core`, `approach-viz-runtime`, `approach-viz-server-wasm`, and `uniffi-bindgen-swift`. Core is shared through WASM and UniFFI.
-- Data/operations: SQLite, FAA CIFP/D-TPP/DOF, MRMS SNS/SQS, ADSB Exchange, OCI runtime, Cloudflare R2 (weather scan packs), Datadog.
+- Data/operations: SQLite, FAA CIFP/D-TPP/DOF, MRMS SNS/SQS, ADSB Exchange, Ubuntu ARM64 runtime on Windows Dev Kit, Cloudflare Tunnel/R2 (weather scan packs), Datadog instrumentation.
 
 ## Maintenance and Engineering Rules
 
@@ -79,7 +79,7 @@ Native builds require full Xcode and XcodeGen. Scripts cache bridge/spec fingerp
 
 ## Operational Skills
 
-Use the matching `.agents/skills/` runbook for runtime deployment, live validation, ingestion profiling, route profiling, and traffic stress testing. Runtime deployment requires an explicit host and reuses its existing SQS configuration; the deploy script backs up the binary and rolls back on failed health checks.
+Use the matching `.agents/skills/` runbook for runtime deployment, live validation, ingestion profiling, route profiling, and traffic stress testing. Production is `windows-dev-kit` (SSH user `andy`, port 2222), served at `https://approach-runtime.andyfang.app` by its dedicated Cloudflare Tunnel. Runtime deployment requires an explicit host and reuses its existing SQS configuration; `scripts/runtime/deploy_oci.sh` keeps its historical filename, discovers the remote user/group/home, loads host-only AWS/R2 env files, backs up the binary, and rolls back on failed health checks. Cloudflare is the default ingress mode; Funnel changes require explicit `RUNTIME_DEPLOY_EXPOSURE=tailscale-funnel`. See [runtime hosting and rollback](docs/runtime-hosting.md). The old OCI runtime is disabled; do not redeploy it or consume its retained queue concurrently.
 
 For approach-path rendering changes, use `approach-plate-visual-check` to compare computed geometry against the official geo-referenced FAA plate. Its dump helper uses the same shared composition export as the clients.
 
@@ -88,7 +88,7 @@ SNS/SQS provisioning and audits use `python3 scripts/mrms/setup_sns_sqs.py`; `--
 ## Documentation Index
 
 - Architecture: [overview](docs/architecture-overview.md), [data/actions](docs/architecture-data-and-actions.md), [client/scene](docs/architecture-client-and-scene.md), [worker protocols](docs/worker-transport-protocols.md).
-- Weather: [Rust pipeline](docs/mrms-rust-pipeline.md), [runtime fallbacks (R2 packs, direct traffic)](docs/runtime-fallbacks.md), [phase methodology](docs/mrms-phase-methodology.md), [volume rendering](docs/rendering-weather-volume.md), [storm cells](docs/rendering-storm-cells.md).
+- Weather: [Rust pipeline](docs/mrms-rust-pipeline.md), [runtime hosting and rollback](docs/runtime-hosting.md), [runtime fallbacks (R2 packs, direct traffic)](docs/runtime-fallbacks.md), [phase methodology](docs/mrms-phase-methodology.md), [volume rendering](docs/rendering-weather-volume.md), [storm cells](docs/rendering-storm-cells.md).
 - Geometry/rendering: [coordinates](docs/rendering-coordinate-system.md), [approaches](docs/rendering-approach-geometry.md), [native](docs/rendering-ios-native-mvp.md), [surfaces](docs/rendering-surface-modes.md), [obstacles](docs/rendering-obstacles.md), [performance](docs/rendering-performance.md).
 - Product/validation: [sources](docs/data-sources.md), [UI/URL/mobile](docs/ui-url-state-and-mobile.md), [validation](docs/validation.md).
 - Decision rationale and deferred alternatives: `.agents/notes/`; these are not another source of current behavior.

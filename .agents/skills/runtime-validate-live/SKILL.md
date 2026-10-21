@@ -12,7 +12,7 @@ Run live endpoint checks for runtime service behavior and summarize pass/fail si
 ## Inputs
 
 - `repo_root`: repository path (run from this directory)
-- `base_url`: runtime upstream URL (default `https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1`)
+- `base_url`: runtime upstream URL (default `https://approach-runtime.andyfang.app`)
 - Optional coordinate overrides via environment:
   - `RUNTIME_INTEGRATION_TRAFFIC_LAT`, `RUNTIME_INTEGRATION_TRAFFIC_LON`, `RUNTIME_INTEGRATION_TRAFFIC_RADIUS_NM`
   - `RUNTIME_INTEGRATION_MRMS_LAT`, `RUNTIME_INTEGRATION_MRMS_LON`, `RUNTIME_INTEGRATION_MRMS_MIN_DBZ`, `RUNTIME_INTEGRATION_MRMS_MAX_RANGE_NM`

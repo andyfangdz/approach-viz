@@ -7,7 +7,7 @@ Usage:
   stress_runtime_traffic.sh [options]
 
 Options:
-  --base-url <url>          Runtime base URL (default: https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1)
+  --base-url <url>          Runtime base URL (default: https://approach-runtime.andyfang.app)
   --requests <n>            Request count for both AB and JSON sweep (default: 1200)
   --concurrency <n>         Concurrent request count (default: 40)
   --warmup <n>              Sequential warmup requests (default: 3)
@@ -26,7 +26,7 @@ Example:
 USAGE
 }
 
-base_url="${RUNTIME_STRESS_BASE_URL:-https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1}"
+base_url="${RUNTIME_STRESS_BASE_URL:-https://approach-runtime.andyfang.app}"
 requests=1200
 concurrency=40
 warmup=3
