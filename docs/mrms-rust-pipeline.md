@@ -110,11 +110,13 @@ python3 scripts/mrms/setup_sns_sqs.py
 
 Copy the printed `RUNTIME_MRMS_SQS_QUEUE_URL` value.
 
-### 2. Build + deploy service on OCI host
+### 2. Build + deploy service on the Dev Kit
+
+Production runs on the Windows Dev Kit under Ubuntu ARM64, at the unchanged `https://approach-runtime.andyfang.app` URL. The script keeps its historical `deploy_oci.sh` filename. See [runtime hosting and rollback](runtime-hosting.md).
 
 ```bash
 export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
-scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
+scripts/runtime/deploy_oci.sh windows-dev-kit
 ```
 
 Optional override for ingest parse workers (persisted in deployed systemd unit):
@@ -122,10 +124,10 @@ Optional override for ingest parse workers (persisted in deployed systemd unit):
 ```bash
 export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
 export RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY=5
-scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
+scripts/runtime/deploy_oci.sh windows-dev-kit
 ```
 
-Default behavior prefers local cross-compile (skip OCI compile by cross-compiling locally for Linux ARM64), then falls back to remote build if no local cross tool is detected and `RUNTIME_DEPLOY_BUILD_MODE` is unset. Deploy builds stamp the runtime trace `service.version` from the local Git branch/SHA/dirty state so remote builds do not require a `.git` directory in the staged source tree.
+Default behavior prefers local cross-compile for Linux ARM64, then falls back to remote build if no local cross tool is detected and `RUNTIME_DEPLOY_BUILD_MODE` is unset. The Dev Kit does not need Rust when receiving a cross-built artifact. Deploy builds stamp the runtime trace `service.version` from the local Git branch/SHA/dirty state so remote builds do not require a `.git` directory in the staged source tree.
 
 Optional explicit local cross mode:
 
@@ -134,8 +136,8 @@ export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>
 export RUNTIME_DEPLOY_BUILD_MODE=local-cross
 # Optional: RUNTIME_LOCAL_CROSS_TOOL=zigbuild|cross (default: auto-detect)
 # Optional: RUNTIME_LOCAL_CROSS_TARGET=aarch64-unknown-linux-gnu
-# Optional: RUNTIME_REMOTE_HOME=/home/<user> (default: /home/ubuntu) — remote workspace/staging/service base path
-scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
+# Optional: RUNTIME_REMOTE_HOME=/home/<user> (default: discovered over SSH)
+scripts/runtime/deploy_oci.sh windows-dev-kit
 ```
 
 Optional explicit remote mode:
@@ -143,7 +145,7 @@ Optional explicit remote mode:
 ```bash
 export RUNTIME_MRMS_SQS_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/<account>/<queue>'
 export RUNTIME_DEPLOY_BUILD_MODE=remote
-scripts/runtime/deploy_oci.sh ubuntu@<runtime-host>
+scripts/runtime/deploy_oci.sh windows-dev-kit
 ```
 
 Prerequisite for local cross mode: install either `cargo-zigbuild` (`cargo install cargo-zigbuild`) or `cross` (`cargo install cross`).
@@ -154,11 +156,12 @@ This script:
 - uploads a locked local cross-compiled `aarch64-unknown-linux-gnu` binary (`RUNTIME_DEPLOY_BUILD_MODE=local-cross`, default preference with auto-fallback) or builds `cargo build --release --locked` on host (`RUNTIME_DEPLOY_BUILD_MODE=remote`)
 - backs up any existing `/usr/local/bin/approach-viz-runtime` to `approach-viz-runtime.previous` and installs the new binary; on a failed post-restart health check it automatically rolls back to the previous binary
 - installs/enables `approach-viz-runtime.service`
-- configures Tailscale Funnel path `/runtime-v1`
+- discovers the remote user/group/home and loads root-only AWS/R2 environment files
+- preserves separately managed Cloudflare ingress and checks the public health URL; legacy Tailscale Funnel setup requires explicit `RUNTIME_DEPLOY_EXPOSURE=tailscale-funnel`
 
-### Continuous Profiling (OCI host)
+### Continuous Profiling (retained OCI setup)
 
-The OCI runtime host uses Datadog `ddprof` for continuous profiling of the Rust process via a systemd drop-in:
+The old OCI installation retains Datadog `ddprof` settings for rollback. These are not active on the Dev Kit, which has journald logging but no local Datadog agent/profiler. Do not copy the following drop-in without first provisioning that dependency:
 
 - `approach-viz-runtime.service.d/ddprof.conf`
   - resets `ExecStart` and wraps runtime as `/usr/local/bin/ddprof --preset cpu_live_heap /usr/local/bin/approach-viz-runtime`
@@ -188,13 +191,13 @@ ps -ef | grep '[d]dprof'
 Server-side proxy target:
 
 ```bash
-RUNTIME_UPSTREAM_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1
+RUNTIME_UPSTREAM_BASE_URL=https://approach-runtime.andyfang.app
 ```
 
 Optional direct browser fetch (skip Next.js proxy hop):
 
 ```bash
-NEXT_PUBLIC_MRMS_BINARY_BASE_URL=https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1
+NEXT_PUBLIC_MRMS_BINARY_BASE_URL=https://approach-runtime.andyfang.app
 ```
 
 If `NEXT_PUBLIC_MRMS_BINARY_BASE_URL` is unset, the client uses `/api/weather/nexrad`.

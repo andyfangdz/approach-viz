@@ -7,7 +7,7 @@ Usage:
   profile_runtime_routes.sh [options]
 
 Options:
-  --base-url <url>            Runtime base URL (default: https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1)
+  --base-url <url>            Runtime base URL (default: https://approach-runtime.andyfang.app)
   --iterations <n>            Measured requests per route (default: 20)
   --warmup <n>                Warmup requests per route (default: 3)
   --out-dir <path>            Output directory (default: .tmp/prof-runtime-live/<timestamp>)
@@ -27,7 +27,7 @@ Example:
 USAGE
 }
 
-base_url="${RUNTIME_PROFILE_BASE_URL:-https://oci-useast-arm-4.pigeon-justice.ts.net:8443/runtime-v1}"
+base_url="${RUNTIME_PROFILE_BASE_URL:-https://approach-runtime.andyfang.app}"
 iterations=20
 warmup=3
 out_dir=""

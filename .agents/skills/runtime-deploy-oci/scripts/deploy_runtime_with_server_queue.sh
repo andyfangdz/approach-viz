@@ -7,8 +7,8 @@ Usage:
   deploy_runtime_with_server_queue.sh [--dry-run] <ssh-host>
 
 Examples:
-  deploy_runtime_with_server_queue.sh ubuntu@100.86.128.122
-  deploy_runtime_with_server_queue.sh --dry-run ubuntu@100.86.128.122
+  deploy_runtime_with_server_queue.sh windows-dev-kit
+  deploy_runtime_with_server_queue.sh --dry-run windows-dev-kit
 USAGE
 }
 

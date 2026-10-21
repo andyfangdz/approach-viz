@@ -8,14 +8,17 @@ if [[ -z "$HOST" ]]; then
   echo "Deploy target host is required (e.g. ubuntu@<runtime-host>)." >&2
   exit 1
 fi
-IDENTITY_AGENT="${SSH_AUTH_SOCK:-}"
 QUEUE_URL="${RUNTIME_MRMS_SQS_QUEUE_URL:-${MRMS_SQS_QUEUE_URL:-}}"
 PARSE_CONCURRENCY="${RUNTIME_MRMS_INGEST_PARSE_CONCURRENCY:-${MRMS_INGEST_PARSE_CONCURRENCY:-}}"
 BUILD_MODE="${RUNTIME_DEPLOY_BUILD_MODE:-local-cross}"
 LOCAL_CROSS_TOOL="${RUNTIME_LOCAL_CROSS_TOOL:-auto}"
 LOCAL_CROSS_TARGET="${RUNTIME_LOCAL_CROSS_TARGET:-aarch64-unknown-linux-gnu}"
 LOCAL_CROSS_BINARY_PATH="${RUNTIME_LOCAL_CROSS_BINARY_PATH:-}"
-REMOTE_HOME="${RUNTIME_REMOTE_HOME:-/home/ubuntu}"
+REMOTE_USER="${RUNTIME_REMOTE_USER:-$(ssh -o BatchMode=yes "$HOST" id -un)}"
+REMOTE_GROUP="${RUNTIME_REMOTE_GROUP:-$(ssh -o BatchMode=yes "$HOST" id -gn)}"
+REMOTE_HOME="${RUNTIME_REMOTE_HOME:-$(ssh -o BatchMode=yes "$HOST" 'printf "%s" "$HOME"')}"
+DEPLOY_EXPOSURE="${RUNTIME_DEPLOY_EXPOSURE:-cloudflare}"
+PUBLIC_BASE_URL="${RUNTIME_PUBLIC_BASE_URL-https://approach-runtime.andyfang.app}"
 REMOTE_WORKSPACE_DIR="$REMOTE_HOME/services/approach-viz-runtime-workspace"
 REMOTE_STAGE_DIR="$REMOTE_HOME/services/approach-viz-runtime-workspace.tmp"
 REMOTE_SERVICE_DIR="$REMOTE_WORKSPACE_DIR/services/runtime-rs"
@@ -32,10 +35,15 @@ if [[ -n "$PARSE_CONCURRENCY" ]]; then
   fi
 fi
 
-if [[ -z "$IDENTITY_AGENT" ]]; then
-  echo "SSH_AUTH_SOCK must be set so SSH can authenticate." >&2
+if ! [[ "$REMOTE_USER" =~ ^[a-z_][a-z0-9_-]*\$?$ && "$REMOTE_GROUP" =~ ^[a-z_][a-z0-9_-]*\$?$ && "$REMOTE_HOME" =~ ^/[a-zA-Z0-9_./-]+$ ]]; then
+  echo "Unsafe remote user, group, or home directory." >&2
   exit 1
 fi
+
+case "$DEPLOY_EXPOSURE" in
+  cloudflare|tailscale-funnel) ;;
+  *) echo "RUNTIME_DEPLOY_EXPOSURE must be cloudflare or tailscale-funnel." >&2; exit 1 ;;
+esac
 
 case "$BUILD_MODE" in
   remote|local-cross) ;;
@@ -218,7 +226,7 @@ configure_and_restart_remote_service() {
   ssh "$HOST" "
 set -euo pipefail
 sudo mkdir -p /var/lib/approach-viz-runtime
-sudo chown ubuntu:ubuntu /var/lib/approach-viz-runtime
+sudo chown $REMOTE_USER:$REMOTE_GROUP /var/lib/approach-viz-runtime
 cat > /tmp/approach-viz-runtime.service <<'UNIT'
 [Unit]
 Description=Approach Viz Runtime Rust Service
@@ -227,8 +235,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
-Group=ubuntu
+User=$REMOTE_USER
+Group=$REMOTE_GROUP
 WorkingDirectory=$REMOTE_SERVICE_DIR
 Environment=RUST_LOG=info
 Environment=AWS_REGION=us-east-1
@@ -243,10 +251,15 @@ ${parse_concurrency_line}
 # the R2 secret, so it lives on the host (root, 0600), never in this
 # world-readable unit or in the deploy environment; see docs/runtime-fallbacks.md.
 EnvironmentFile=-/etc/approach-viz-runtime/r2-publish.env
+EnvironmentFile=-/etc/approach-viz-runtime/aws.env
 ExecStart=/usr/local/bin/approach-viz-runtime
 Restart=always
 RestartSec=5
 CPUQuota=200%
+MemoryHigh=14G
+MemoryMax=16G
+MemorySwapMax=4G
+UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -259,6 +272,9 @@ sudo mv /tmp/approach-viz-runtime.service /etc/systemd/system/approach-viz-runti
 sudo systemctl daemon-reload
 sudo systemctl enable approach-viz-runtime.service
 sudo systemctl restart approach-viz-runtime.service
+# Cloudflare ingress is managed separately; never recreate an old public
+# Funnel route unless explicitly requested for this deploy.
+if [[ '$DEPLOY_EXPOSURE' == 'tailscale-funnel' ]]; then
 # The funnel is persistent config and re-applying it can hang, so bound the
 # call. If it does not succeed, the deploy passes only when the existing config
 # already routes /runtime-v1 publicly; the health checks below are local.
@@ -280,6 +296,7 @@ sys.exit(0 if public_route else 1)
     echo \"Tailscale funnel for /runtime-v1 is not configured and could not be applied; the runtime is not publicly reachable.\" >&2
     exit 1
   fi
+fi
 fi
 
 ready=0
@@ -331,3 +348,8 @@ else
 fi
 
 configure_and_restart_remote_service
+
+if [[ -n "$PUBLIC_BASE_URL" ]]; then
+  curl --fail --silent --show-error --max-time 30 "${PUBLIC_BASE_URL%/}/healthz"
+  echo
+fi
