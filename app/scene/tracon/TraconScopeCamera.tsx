@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useThree } from '@react-three/fiber';
 import { MapControls, OrthographicCamera } from '@react-three/drei';
 import type { MapControls as MapControlsImpl } from 'three-stdlib';
@@ -40,26 +40,40 @@ export function TraconScopeCamera({
   const invalidate = useThree((state) => state.invalidate);
   // Initial zoom only; later range changes move the live camera below.
   const [initialZoom] = useState(() => zoomForRange(rangeNm, size.width, size.height));
+  // The range the camera is at: set when a gesture reports a new range and
+  // when a RANGE change zooms the camera.
   const reportedRangeRef = useRef(rangeNm);
+  const appliedSizeRef = useRef({ width: size.width, height: size.height });
 
   useEffect(() => {
     if (!('isOrthographicCamera' in camera)) return;
-    const currentRange = Math.min(size.width, size.height) / 2 / camera.zoom;
+    const sizeChanged =
+      appliedSizeRef.current.width !== size.width || appliedSizeRef.current.height !== size.height;
+    // A range the camera itself reported (wheel or pinch): the camera is
+    // already there, and may have moved on mid-gesture, so do not snap it.
+    if (rangeNm === reportedRangeRef.current && !sizeChanged) return;
     reportedRangeRef.current = rangeNm;
-    // A wheel zoom already reported this range; do not snap the camera to it.
-    if (Math.round(currentRange) === rangeNm) return;
+    appliedSizeRef.current = { width: size.width, height: size.height };
     camera.zoom = zoomForRange(rangeNm, size.width, size.height);
     camera.updateProjectionMatrix();
     invalidate();
   }, [camera, rangeNm, size.width, size.height, invalidate]);
 
-  const handleChange = () => {
+  // drei reconnects the controls whenever `onChange` changes identity, which
+  // mid-gesture leaves them holding released touch pointers (pinch then
+  // stops responding), so the handler is stable and reads the latest values.
+  const latestRef = useRef({ camera, size, onRangeChange });
+  useLayoutEffect(() => {
+    latestRef.current = { camera, size, onRangeChange };
+  });
+  const handleChange = useCallback(() => {
+    const { camera, size, onRangeChange } = latestRef.current;
     if (!('isOrthographicCamera' in camera)) return;
     const range = Math.round(Math.min(size.width, size.height) / 2 / camera.zoom);
     if (range === reportedRangeRef.current) return;
     reportedRangeRef.current = range;
     onRangeChange(range);
-  };
+  }, []);
 
   return (
     <>
