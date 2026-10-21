@@ -25,8 +25,7 @@ export interface TrafficRenderBuffers {
   markerMatrices: Float32Array;
   headingSegments: Float32Array;
   /** TRACON scope presentation (see `buildTrafficScopeBuffers`). */
-  airborneTargetPositions: Float32Array;
-  groundTargetPositions: Float32Array;
+  targetPositions: Float32Array;
   dataBlockIdents: string[];
   dataBlockFields: string[];
   historyDots: Float32Array;
@@ -49,8 +48,7 @@ export const EMPTY_TRAFFIC_RENDER_BUFFERS: TrafficRenderBuffers = {
   activeTrackIndices: EMPTY_UINT32_ARRAY,
   markerMatrices: EMPTY_FLOAT32_ARRAY,
   headingSegments: EMPTY_FLOAT32_ARRAY,
-  airborneTargetPositions: EMPTY_FLOAT32_ARRAY,
-  groundTargetPositions: EMPTY_FLOAT32_ARRAY,
+  targetPositions: EMPTY_FLOAT32_ARRAY,
   dataBlockIdents: EMPTY_STRINGS,
   dataBlockFields: EMPTY_STRINGS,
   historyDots: EMPTY_FLOAT32_ARRAY,
@@ -129,8 +127,7 @@ export class TrafficWorkerClient extends ComlinkedWorkerClient<TrafficWorkerApi>
         activeTrackIndices: result.activeTrackIndices,
         markerMatrices: result.markerMatrices,
         headingSegments: result.headingSegments,
-        airborneTargetPositions: result.airborneTargetPositions,
-        groundTargetPositions: result.groundTargetPositions,
+        targetPositions: result.targetPositions,
         dataBlockIdents: result.dataBlockIdents,
         dataBlockFields: result.dataBlockFields,
         historyDots: result.historyDots,

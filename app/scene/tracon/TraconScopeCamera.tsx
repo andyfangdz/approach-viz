@@ -1,7 +1,8 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useThree } from '@react-three/fiber';
 import { MapControls, OrthographicCamera } from '@react-three/drei';
 import type { MapControls as MapControlsImpl } from 'three-stdlib';
+import { MAX_SCOPE_RANGE_NM, MIN_SCOPE_RANGE_NM } from '@/app/app-client/tracon/scope-settings';
 
 /** Camera height above the floor; above any traffic or airspace ceiling at max vertical scale. */
 const SCOPE_CAMERA_HEIGHT_NM = 600;
@@ -10,39 +11,62 @@ const SCOPE_CAMERA_HEIGHT_NM = 600;
  * so the top-down view is north-up instead of degenerate.
  */
 const NORTH_UP_OFFSET_NM = 1e-4;
-/** Margin past the outer range ring (rose labels sit outside it). */
-const FIT_MARGIN_NM = 5;
-const MIN_ZOOM_FACTOR = 0.25;
-const MAX_ZOOM_FACTOR = 60;
+
+/** Pixels per NM that put `rangeNm` from the center to the nearer display edge. */
+function zoomForRange(rangeNm: number, width: number, height: number): number {
+  return Math.max(1, Math.min(width, height)) / 2 / Math.max(1e-3, rangeNm);
+}
 
 /**
  * North-up orthographic camera for the 2D TRACON scope, with pan and zoom
- * only. Fits the scope range to the canvas when mounted; remount it (key it
- * on the recenter nonce and range) to restore that framing.
+ * only. `rangeNm` is the STARS RANGE: the distance from the display center
+ * to the nearer edge. Setting it zooms the camera; zooming with the wheel or
+ * a pinch reports the new whole-NM range through `onRangeChange`. Remount it
+ * (key it on the facility and recenter nonce) to re-center.
  */
 export function TraconScopeCamera({
   rangeNm,
   floorY,
-  controlsRef
+  controlsRef,
+  onRangeChange
 }: {
   rangeNm: number;
   floorY: number;
   controlsRef: (controls: MapControlsImpl | null) => void;
+  onRangeChange: (rangeNm: number) => void;
 }) {
-  const getState = useThree((state) => state.get);
-  // Fit once per mount; resizing keeps the user's zoom.
-  const [fitZoom] = useState(() => {
-    const { width, height } = getState().size;
-    const pixels = Math.max(1, Math.min(width, height));
-    return pixels / (2 * (Math.max(1, rangeNm) + FIT_MARGIN_NM));
-  });
+  const camera = useThree((state) => state.camera);
+  const size = useThree((state) => state.size);
+  const invalidate = useThree((state) => state.invalidate);
+  // Initial zoom only; later range changes move the live camera below.
+  const [initialZoom] = useState(() => zoomForRange(rangeNm, size.width, size.height));
+  const reportedRangeRef = useRef(rangeNm);
+
+  useEffect(() => {
+    if (!('isOrthographicCamera' in camera)) return;
+    const currentRange = Math.min(size.width, size.height) / 2 / camera.zoom;
+    reportedRangeRef.current = rangeNm;
+    // A wheel zoom already reported this range; do not snap the camera to it.
+    if (Math.round(currentRange) === rangeNm) return;
+    camera.zoom = zoomForRange(rangeNm, size.width, size.height);
+    camera.updateProjectionMatrix();
+    invalidate();
+  }, [camera, rangeNm, size.width, size.height, invalidate]);
+
+  const handleChange = () => {
+    if (!('isOrthographicCamera' in camera)) return;
+    const range = Math.round(Math.min(size.width, size.height) / 2 / camera.zoom);
+    if (range === reportedRangeRef.current) return;
+    reportedRangeRef.current = range;
+    onRangeChange(range);
+  };
 
   return (
     <>
       <OrthographicCamera
         makeDefault
         position={[0, floorY + SCOPE_CAMERA_HEIGHT_NM, NORTH_UP_OFFSET_NM]}
-        zoom={fitZoom}
+        zoom={initialZoom}
         near={1}
         far={SCOPE_CAMERA_HEIGHT_NM * 3}
       />
@@ -52,9 +76,10 @@ export function TraconScopeCamera({
         enableDamping
         dampingFactor={0.08}
         screenSpacePanning={false}
-        minZoom={fitZoom * MIN_ZOOM_FACTOR}
-        maxZoom={fitZoom * MAX_ZOOM_FACTOR}
+        minZoom={zoomForRange(MAX_SCOPE_RANGE_NM, size.width, size.height)}
+        maxZoom={zoomForRange(MIN_SCOPE_RANGE_NM, size.width, size.height)}
         target={[0, floorY, 0]}
+        onChange={handleChange}
       />
     </>
   );

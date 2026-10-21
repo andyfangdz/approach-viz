@@ -42,6 +42,7 @@ import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
 import { ALTITUDE_GUIDE_LABEL_STYLE } from './labels/label-styles';
 import { WEATHER_ELEVATION_ZOOM } from './terrain/terrarium';
 import { useElevationRaster } from './terrain/use-elevation-raster';
+import { ScopeWeather } from './tracon/ScopeWeather';
 
 const MIN_INSTANCE_CAPACITY = 1;
 const CHIP_LABEL_SIZING = { mode: 'world', distanceFactor: 8 } as const;
@@ -149,6 +150,7 @@ export function NexradVolumeOverlay({
   maxRangeNm = DEFAULT_MAX_RANGE_NM,
   applyEarthCurvatureCompensation = false,
   groundOcclusion = 'none',
+  scopeWeather = null,
   onDebugChange
 }: NexradVolumeOverlayProps) {
   const invalidate = useThree((state) => state.invalidate);
@@ -871,6 +873,17 @@ export function NexradVolumeOverlay({
   const echoTopSummary18 = feetLabel(echoTopPayload?.maxTop18Feet);
   const echoTopSummary30 = feetLabel(echoTopPayload?.maxTop30Feet);
   const echoTopSummary50 = feetLabel(echoTopPayload?.maxTop50Feet);
+
+  if (scopeWeather) {
+    // Drawn in scene units: the floor plane is already vertically scaled.
+    return hasSurfaceMosaic && compositeSurface ? (
+      <ScopeWeather
+        composite={compositeSurface}
+        floorY={scopeWeather.floorY}
+        enabledLevels={scopeWeather.levels}
+      />
+    ) : null;
+  }
 
   return (
     <group scale={[1, verticalScale, 1]}>

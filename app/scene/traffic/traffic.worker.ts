@@ -2,7 +2,11 @@ import * as Comlink from 'comlink';
 import { ensureWasm } from '../shared/wasm-loader';
 import { WasmTrafficState } from '../../../packages/approach-viz-core-wasm/approach_viz_core.js';
 import { altToY } from '../approach-path/coordinates';
-import { buildTrafficDrawBuffers, buildTrafficScopeBuffers } from './traffic-draw-buffers';
+import {
+  buildTrafficDrawBuffers,
+  buildTrafficScopeBuffers,
+  type TrafficScopeOptions
+} from './traffic-draw-buffers';
 
 export interface SceneAirport {
   lat: number;
@@ -20,6 +24,7 @@ export interface TrafficProcessOptions {
   verticalScale: number;
   applyEarthCurvatureCompensation: boolean;
   sceneAirports: SceneAirport[];
+  scope: TrafficScopeOptions;
 }
 
 export interface TrafficWorkerResult {
@@ -34,8 +39,7 @@ export interface TrafficWorkerResult {
   activeTrackIndices: Uint32Array;
   markerMatrices: Float32Array;
   headingSegments: Float32Array;
-  airborneTargetPositions: Float32Array;
-  groundTargetPositions: Float32Array;
+  targetPositions: Float32Array;
   dataBlockIdents: string[];
   dataBlockFields: string[];
   historyDots: Float32Array;
@@ -248,7 +252,7 @@ export class TrafficWorkerApi {
     const draw = buildTrafficDrawBuffers(soa);
     // Altitude stalks drop to the reference airport's field elevation.
     const floorY = altToY(options.sceneAirports[0]?.elevation ?? 0, options.verticalScale);
-    const scope = buildTrafficScopeBuffers(soa, floorY);
+    const scope = buildTrafficScopeBuffers(soa, floorY, options.scope);
     const workerProcessingMs = roundMs(performance.now() - startedAt);
 
     const result: TrafficWorkerResult = {
@@ -263,8 +267,7 @@ export class TrafficWorkerApi {
       activeTrackIndices: draw.activeTrackIndices,
       markerMatrices: draw.markerMatrices,
       headingSegments: draw.headingSegments,
-      airborneTargetPositions: scope.airborneTargetPositions,
-      groundTargetPositions: scope.groundTargetPositions,
+      targetPositions: scope.targetPositions,
       dataBlockIdents: scope.dataBlockIdents,
       dataBlockFields: scope.dataBlockFields,
       historyDots: scope.historyDots,
@@ -285,8 +288,7 @@ export class TrafficWorkerApi {
       draw.activeTrackIndices.buffer as ArrayBuffer,
       draw.markerMatrices.buffer as ArrayBuffer,
       draw.headingSegments.buffer as ArrayBuffer,
-      scope.airborneTargetPositions.buffer as ArrayBuffer,
-      scope.groundTargetPositions.buffer as ArrayBuffer,
+      scope.targetPositions.buffer as ArrayBuffer,
       scope.historyDots.buffer as ArrayBuffer,
       scope.predictedTrackSegments.buffer as ArrayBuffer,
       scope.altitudeStalkSegments.buffer as ArrayBuffer

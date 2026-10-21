@@ -115,6 +115,8 @@ export interface SceneData {
 export interface TraconAirport {
   airport: Airport;
   runways: RunwayThreshold[];
+  /** Runway thresholds (`RW04R`) with a current CIFP instrument approach. */
+  instrumentRunwayIds: string[];
 }
 
 /** Everything the TRACON scope draws for one facility, centered on it. */

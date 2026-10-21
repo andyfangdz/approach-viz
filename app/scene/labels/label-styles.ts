@@ -179,29 +179,25 @@ export function labelStyleKey(style: LabelStyle): string {
 }
 
 const SCOPE_MONO = "'JetBrains Mono', 'SF Mono', monospace";
-const SCOPE_GLOW: LabelTextShadow[] = [{ color: 'rgba(0, 0, 0, 0.9)', blurPx: 3 }];
+/** Tight black edge, like the outline STARS draws under its characters. */
+const SCOPE_OUTLINE: LabelTextShadow[] = [{ color: 'rgba(0, 0, 0, 1)', blurPx: 2 }];
 
-/** TRACON scope full data block line. */
+/** STARS data block line (unowned tracks are green). */
 export const DATA_BLOCK_LABEL_STYLE: LabelStyle = {
   fontFamily: SCOPE_MONO,
-  fontSizePx: 11,
-  fontWeight: 600,
-  color: '#4dff7c',
-  lineHeight: 1.05,
-  textShadows: SCOPE_GLOW
-};
-
-/** TRACON scope ground-target data block line. */
-export const GROUND_DATA_BLOCK_LABEL_STYLE: LabelStyle = {
-  ...DATA_BLOCK_LABEL_STYLE,
-  color: '#3aa85a'
-};
-
-/** TRACON compass-rose bearing. */
-export const SCOPE_ROSE_LABEL_STYLE: LabelStyle = {
-  fontFamily: SCOPE_MONO,
-  fontSizePx: 10,
+  fontSizePx: 12,
   fontWeight: 500,
-  color: '#8a9ba1',
-  textShadows: SCOPE_GLOW
+  color: '#00ff00',
+  lineHeight: 1.05,
+  textShadows: SCOPE_OUTLINE
+};
+
+/** STARS position symbol drawn on the target (`*`: no track owner). */
+export const POSITION_SYMBOL_LABEL_STYLE: LabelStyle = {
+  fontFamily: SCOPE_MONO,
+  fontSizePx: 13,
+  fontWeight: 700,
+  color: '#00ff00',
+  lineHeight: 1,
+  textShadows: SCOPE_OUTLINE
 };

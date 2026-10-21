@@ -93,12 +93,21 @@ export function buildTrafficDrawBuffers(soa: TrafficRenderSoA): TrafficDrawBuffe
   return { trailSegments, activeTrackIndices, markerMatrices, headingSegments };
 }
 
-/** Most recent history dots drawn behind each TRACON target. */
-export const SCOPE_HISTORY_DOT_COUNT = 8;
-/** Minimum ground spacing between consecutive history dots. */
+/** STARS HISTORY control range; the default is 5. */
+export const SCOPE_MAX_HISTORY_DOTS = 10;
+/**
+ * Minimum ground spacing between consecutive history dots: about one radar
+ * update (4.6 s) at a typical 250 kt approach-control speed.
+ */
 export const SCOPE_HISTORY_DOT_SPACING_NM = 0.3;
-/** Predicted track line length, in minutes of flight at ground speed. */
-export const SCOPE_PREDICTED_TRACK_MINUTES = 1;
+
+/** Display settings the worker needs to build scope buffers. */
+export interface TrafficScopeOptions {
+  /** History dots per target, 0 to `SCOPE_MAX_HISTORY_DOTS`. */
+  historyDotCount: number;
+  /** Predicted track line length in minutes of flight; 0 draws none. */
+  predictedTrackMinutes: number;
+}
 
 export interface TrafficScopeSoA extends TrafficRenderSoA {
   altitudeFeet: Float32Array;
@@ -107,38 +116,42 @@ export interface TrafficScopeSoA extends TrafficRenderSoA {
   callsignLabels: (string | null)[];
 }
 
-/** TRACON-scope presentation of the active tracks, in active-track order. */
+/** TRACON-scope presentation of the present airborne tracks, in one order. */
 export interface TrafficScopeBuffers {
   /** `x, y, z` per present airborne track. */
-  airborneTargetPositions: Float32Array;
-  /** `x, y, z` per present ground track. */
-  groundTargetPositions: Float32Array;
-  /** Data block line 1 (identity) per active track. */
+  targetPositions: Float32Array;
+  /** Data block line 1 (identity) per target. */
   dataBlockIdents: string[];
-  /** Data block line 2 (altitude/speed) per active track. */
+  /** Data block line 2 (altitude/speed) per target. */
   dataBlockFields: string[];
-  /** `x, y, z, alpha` per history dot, newest dot brightest. */
+  /** `x, y, z, age` per history dot; age 0 is the newest dot of its track. */
   historyDots: Float32Array;
-  /** Predicted track line segments (6 floats) for airborne tracks with speed. */
+  /** Predicted track line segments (6 floats) for targets with speed. */
   predictedTrackSegments: Float32Array;
-  /** Marker-to-floor segments (6 floats) for airborne tracks. */
+  /** Target-to-floor segments (6 floats). */
   altitudeStalkSegments: Float32Array;
 }
 
 /**
- * Builds the scope presentation for currently present tracks: history dots
- * resampled from the trail at a minimum ground spacing (newest first), a
- * one-minute predicted track line from heading and ground speed, an altitude
- * stalk down to `floorY`, and the two data block lines.
+ * Builds the scope presentation for present airborne tracks (STARS altitude
+ * filtering leaves surface traffic to the tower's surface display): history
+ * dots resampled from the trail at a minimum ground spacing (newest first), a
+ * predicted track line from heading and ground speed, an altitude stalk down
+ * to `floorY`, and the two data block lines.
  */
 export function buildTrafficScopeBuffers(
   soa: TrafficScopeSoA,
-  floorY: number
+  floorY: number,
+  options: TrafficScopeOptions
 ): TrafficScopeBuffers {
   const { trackCount, markerPositions, headingDeg, flags, trailPointsFlat } = soa;
   const { trailOffsets, trailCounts, altitudeFeet, groundSpeedKt } = soa;
-  const airborneTargetPositions: number[] = [];
-  const groundTargetPositions: number[] = [];
+  const historyDotCount = Math.max(
+    0,
+    Math.min(SCOPE_MAX_HISTORY_DOTS, Math.round(options.historyDotCount))
+  );
+  const predictedTrackMinutes = Math.max(0, options.predictedTrackMinutes);
+  const targetPositions: number[] = [];
   const dataBlockIdents: string[] = [];
   const dataBlockFields: string[] = [];
   const historyDots: number[] = [];
@@ -148,7 +161,7 @@ export function buildTrafficScopeBuffers(
 
   for (let track = 0; track < trackCount; track += 1) {
     if ((flags[track] & TRAFFIC_FLAG_IS_CURRENTLY_PRESENT) === 0) continue;
-    const isOnGround = (flags[track] & TRAFFIC_FLAG_IS_ON_GROUND) !== 0;
+    if ((flags[track] & TRAFFIC_FLAG_IS_ON_GROUND) !== 0) continue;
     const x = markerPositions[track * 3];
     const y = markerPositions[track * 3 + 1];
     const z = markerPositions[track * 3 + 2];
@@ -156,10 +169,9 @@ export function buildTrafficScopeBuffers(
       soa.callsignLabels[track],
       soa.hexes[track] ?? '',
       altitudeFeet[track],
-      groundSpeedKt[track],
-      isOnGround
+      groundSpeedKt[track]
     );
-    (isOnGround ? groundTargetPositions : airborneTargetPositions).push(x, y, z);
+    targetPositions.push(x, y, z);
     dataBlockIdents.push(ident);
     dataBlockFields.push(fields);
 
@@ -168,24 +180,23 @@ export function buildTrafficScopeBuffers(
     let dots = 0;
     const trailOffset = trailOffsets[track];
     for (let point = trailCounts[track] - 1; point >= 0; point -= 1) {
-      if (dots >= SCOPE_HISTORY_DOT_COUNT) break;
+      if (dots >= historyDotCount) break;
       const base = (trailOffset + point) * 3;
       const px = trailPointsFlat[base];
       const pz = trailPointsFlat[base + 2];
       const dx = px - lastX;
       const dz = pz - lastZ;
       if (dx * dx + dz * dz < spacingSq) continue;
+      historyDots.push(px, trailPointsFlat[base + 1], pz, dots);
       dots += 1;
-      historyDots.push(px, trailPointsFlat[base + 1], pz, 1 - dots / (SCOPE_HISTORY_DOT_COUNT + 1));
       lastX = px;
       lastZ = pz;
     }
 
-    if (isOnGround) continue;
     altitudeStalkSegments.push(x, y, z, x, floorY, z);
     const speed = groundSpeedKt[track];
-    if (Number.isFinite(speed) && speed > 0) {
-      const lengthNm = (speed / 60) * SCOPE_PREDICTED_TRACK_MINUTES;
+    if (predictedTrackMinutes > 0 && Number.isFinite(speed) && speed > 0) {
+      const lengthNm = (speed / 60) * predictedTrackMinutes;
       const headingRad = (headingDeg[track] * Math.PI) / 180;
       predictedTrackSegments.push(
         x,
@@ -199,8 +210,7 @@ export function buildTrafficScopeBuffers(
   }
 
   return {
-    airborneTargetPositions: new Float32Array(airborneTargetPositions),
-    groundTargetPositions: new Float32Array(groundTargetPositions),
+    targetPositions: new Float32Array(targetPositions),
     dataBlockIdents,
     dataBlockFields,
     historyDots: new Float32Array(historyDots),

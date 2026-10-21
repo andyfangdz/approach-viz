@@ -135,8 +135,10 @@ export function InfoPanel({
               data this app uses.{' '}
             </>
           )}
-          Data block: callsign, then altitude (hundreds of ft) and ground speed (tens of kt). Lines
-          ahead of targets show one minute of flight; bearings are true.
+          STARS symbology: blue target with <code>*</code> (no track owner in ADS-B data), blue
+          history dots, green data block with callsign, then altitude (hundreds of ft) and ground
+          speed (tens of kt). The video map shows the sea-level shoreline, runways, instrument
+          finals, and airspace; bearings are true.
         </div>
       )}
       {viewMode === 'scene' && plateOverlayEnabled && !hasApproachPlate && (

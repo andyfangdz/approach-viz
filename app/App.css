@@ -313,44 +313,143 @@ textarea,
   pointer-events: none;
 }
 
-.tracon-dimension-toggle {
+/* STARS display control bar (TRACON view): one row of square buttons. */
+.stars-dcb {
   position: absolute;
-  top: calc(16px + var(--controls-overlay-offset, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  background: rgba(18, 18, 31, 0.9);
-  backdrop-filter: blur(8px);
-  box-shadow: var(--shadow-float);
-  z-index: 10;
+  top: var(--stars-dcb-top, 0px);
+  left: 0;
+  right: 0;
+  height: 54px;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  background: #000c00;
+  border-bottom: 1px solid #1c2a1c;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  z-index: 12;
+  font-family: 'JetBrains Mono', monospace;
 }
 
-.tracon-dimension-button {
+.stars-dcb::-webkit-scrollbar {
+  display: none;
+}
+
+.stars-dcb-gap {
+  flex: 0 0 6px;
+}
+
+.stars-dcb-button,
+.stars-dcb-step {
+  flex: 0 0 auto;
+  min-width: 56px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
   border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 8px 14px;
+  border-top: 1px solid #2f5a2f;
+  border-bottom: 1px solid #001400;
+  background: #002c00;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
   cursor: pointer;
   touch-action: manipulation;
-  transition:
-    background 0.2s,
-    color 0.2s;
 }
 
-.tracon-dimension-button + .tracon-dimension-button {
-  border-left: 1px solid var(--border);
+.stars-dcb-button.active {
+  background: #006400;
 }
 
-.tracon-dimension-button.active {
-  background: var(--accent-strong);
-  color: var(--text-primary);
+.stars-dcb-button.weather {
+  background: #2c5149;
+}
+
+.stars-dcb-button.weather.active {
+  background: #3e7a6c;
+}
+
+.stars-dcb .stars-dcb-button:disabled {
+  background: #2a2a2a;
+  color: #8a8a8a;
+  cursor: not-allowed;
+}
+
+.stars-dcb-spinner {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 1px;
+}
+
+.stars-dcb-spinner.armed .stars-dcb-step {
+  min-width: 34px;
+  background: #004e00;
+  color: #ffff00;
+}
+
+.stars-dcb-spinner.armed .stars-dcb-step.done {
+  min-width: 56px;
+  color: #ffffff;
+}
+
+/* STARS system status area, at the left under the DCB and the disclaimer. */
+.stars-ssa {
+  position: absolute;
+  top: calc(var(--controls-overlay-offset, 0px) + 58px);
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.15;
+  color: #00ff00;
+  text-shadow: 0 0 2px #000000;
+  pointer-events: none;
+  z-index: 9;
+  white-space: pre;
+}
+
+.stars-ssa-triangle {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 10px solid #ff0000;
+}
+
+.stars-ssa-alert {
+  color: #ff0000;
+}
+
+/* STARS compass rose along the display edges (2D scope). */
+.stars-compass-rose {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+  stroke: #8c8c8c;
+  stroke-width: 1;
+  fill: #8c8c8c;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.stars-compass-rose text {
+  stroke: none;
 }
 
 .faa-disclaimer {
@@ -1197,12 +1296,6 @@ a:focus-visible,
     left: 12px;
     top: calc(12px + var(--controls-overlay-offset, 0px));
     font-size: 10px;
-  }
-
-  /* The disclaimer spans the top of narrow screens; sit between the bottom FABs. */
-  .tracon-dimension-toggle {
-    top: auto;
-    bottom: var(--floating-control-bottom);
   }
 
   .debug-panel-fab {

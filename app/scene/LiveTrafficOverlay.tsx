@@ -14,11 +14,14 @@ import { WorkerClientError } from './shared/worker-errors';
 import { SceneLabels, type SceneLabel } from './labels/SceneLabels';
 import { CALLSIGN_LABEL_STYLE } from './labels/label-styles';
 import { TraconTargets } from './tracon/TraconTargets';
+import type { TrafficScopeOptions } from './traffic/traffic-draw-buffers';
 import type { SceneAirport } from './traffic/traffic-worker-client';
 export type { SceneAirport } from './traffic/traffic-worker-client';
 
 const DEFAULT_RADIUS_NM = 80;
 const DEFAULT_LIMIT = 250;
+/** STARS HISTORY default. */
+const DEFAULT_SCOPE_HISTORY_DOTS = 5;
 /** Callsign height above its marker, in scene units. */
 const CALLSIGN_LABEL_LIFT_NM = 0.3;
 const CALLSIGN_LABEL_SIZING = { mode: 'world', distanceFactor: 14 } as const;
@@ -74,6 +77,10 @@ interface LiveTrafficOverlayProps {
   presentation?: 'scene' | 'scope';
   /** Scope presentation only: drop lines from airborne targets to the floor. */
   showAltitudeStalks?: boolean;
+  /** Scope presentation only: STARS HISTORY dots per target. */
+  scopeHistoryDotCount?: number;
+  /** Scope presentation only: predicted track line minutes; 0 hides them. */
+  scopePredictedTrackMinutes?: number;
   radiusNm?: number;
   limit?: number;
   onDebugChange?: (debug: TrafficDebugState) => void;
@@ -99,11 +106,23 @@ export function LiveTrafficOverlay({
   applyEarthCurvatureCompensation = false,
   presentation = 'scene',
   showAltitudeStalks = false,
+  scopeHistoryDotCount = DEFAULT_SCOPE_HISTORY_DOTS,
+  scopePredictedTrackMinutes = 0,
   radiusNm = DEFAULT_RADIUS_NM,
   limit = DEFAULT_LIMIT,
   onDebugChange
 }: LiveTrafficOverlayProps) {
   const normalizedHistoryMinutes = normalizeHistoryMinutes(historyMinutes);
+  const scopeOptions = useMemo<TrafficScopeOptions>(
+    () => ({
+      historyDotCount: scopeHistoryDotCount,
+      predictedTrackMinutes: scopePredictedTrackMinutes
+    }),
+    [scopeHistoryDotCount, scopePredictedTrackMinutes]
+  );
+  // Polls read the latest scope settings without restarting; changes recompute below.
+  const scopeOptionsRef = useRef(scopeOptions);
+  scopeOptionsRef.current = scopeOptions;
   const invalidate = useThree((state) => state.invalidate);
   const markerMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const markerGeometry = useMemo(() => new THREE.SphereGeometry(0.055, 10, 10), []);
@@ -381,7 +400,8 @@ export function LiveTrafficOverlay({
             refLon,
             verticalScale,
             applyEarthCurvatureCompensation,
-            sceneAirports
+            sceneAirports,
+            scope: scopeOptionsRef.current
           }
         );
         processMs = roundMs(performance.now() - processStartedAt);
@@ -462,7 +482,8 @@ export function LiveTrafficOverlay({
               refLon,
               verticalScale,
               applyEarthCurvatureCompensation,
-              sceneAirports
+              sceneAirports,
+              scope: scopeOptionsRef.current
             });
             pruneMs = roundMs(performance.now() - pruneStartedAt);
             if (!cancelled) {
@@ -550,7 +571,8 @@ export function LiveTrafficOverlay({
           refLon,
           verticalScale,
           applyEarthCurvatureCompensation,
-          sceneAirports
+          sceneAirports,
+          scope: scopeOptions
         })
         .then((result) => {
           if (cancelled || trafficWorkerRef.current !== recomputeWorker) return;
@@ -583,6 +605,7 @@ export function LiveTrafficOverlay({
     verticalScale,
     applyEarthCurvatureCompensation,
     sceneAirports,
+    scopeOptions,
     applyWorkerResult,
     patchTimings
   ]);
@@ -763,11 +786,7 @@ export function LiveTrafficOverlay({
   return (
     <group>
       {isScope && (
-        <TraconTargets
-          renderBuffers={renderBuffers}
-          hideGroundDataBlocks={hideGroundCallsignLabels}
-          showAltitudeStalks={showAltitudeStalks}
-        />
+        <TraconTargets renderBuffers={renderBuffers} showAltitudeStalks={showAltitudeStalks} />
       )}
       {!isScope && trailLinesGeometry && (
         <lineSegments

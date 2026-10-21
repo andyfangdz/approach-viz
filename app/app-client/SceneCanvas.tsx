@@ -1,3 +1,4 @@
+import type { AirspaceFeature } from '@/lib/types';
 import { Suspense, memo, useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { ArcballControls, Html, MapControls, OrbitControls } from '@react-three/drei';
@@ -67,6 +68,13 @@ function asThreePointerControls(controls: RecenterControlsApi | null): ThreePoin
 const TRACON_TRAFFIC_MAX_RADIUS_NM = 220;
 /** A facility-wide scope holds far more aircraft than one airport's area. */
 const TRACON_TRAFFIC_LIMIT = 600;
+/**
+ * Video map and range ring coverage, as a multiple of the facility range:
+ * the display reaches past the range toward its corners and when panned.
+ */
+const TRACON_MAP_RANGE_FACTOR = 2;
+const TRACON_MAX_MAP_RADIUS_NM = 240;
+const NO_AIRSPACE: AirspaceFeature[] = [];
 const MIN_CAMERA_DISTANCE = 0.35;
 const MAX_CAMERA_DISTANCE = 250;
 const ORBIT_MIN_POLAR_ANGLE = 0.01;
@@ -388,6 +396,9 @@ export const SceneCanvas = memo(function SceneCanvas({
   viewMode,
   traconDimension,
   traconScene,
+  traconScopeSettings,
+  onTraconScopeRangeChange,
+  onShorelineStatusChange,
   retinaRendering,
   missedApproachStartAltitudeFeet,
   minimumsLabel,
@@ -429,8 +440,16 @@ export const SceneCanvas = memo(function SceneCanvas({
   const frameLat = tracon?.centerLat ?? airport.lat;
   const frameLon = tracon?.centerLon ?? airport.lon;
   const floorElevationFeet = traconPrimary?.elevation ?? airport.elevation;
-  const traconRangeNm = tracon?.rangeNm ?? terrainRadiusNm;
+  const traconMapRadiusNm = Math.min(
+    TRACON_MAX_MAP_RADIUS_NM,
+    (tracon?.rangeNm ?? terrainRadiusNm) * TRACON_MAP_RANGE_FACTOR
+  );
+  const traconRingMaxRadiusNm = traconMapRadiusNm;
   const traconFloorY = altToY(floorElevationFeet, verticalScale);
+  const scopeWeather = useMemo(
+    () => ({ levels: traconScopeSettings.wxLevels, floorY: traconFloorY }),
+    [traconScopeSettings.wxLevels, traconFloorY]
+  );
   const sceneAirports = useMemo<SceneAirport[]>(() => {
     if (tracon) {
       return tracon.airports.map(({ airport: member }) => ({
@@ -500,25 +519,16 @@ export const SceneCanvas = memo(function SceneCanvas({
             centerLat={tracon.centerLat}
             centerLon={tracon.centerLon}
             airports={tracon.airports}
-            floorElevationFeet={traconPrimary.elevation}
-            rangeNm={tracon.rangeNm}
-            verticalScale={verticalScale}
+            airspace={airspaceVisible ? tracon.airspace : NO_AIRSPACE}
+            floorY={traconFloorY}
+            ringSpacingNm={traconScopeSettings.ringSpacingNm}
+            ringMaxRadiusNm={traconRingMaxRadiusNm}
+            shorelineRadiusNm={traconMapRadiusNm}
+            maps={traconScopeSettings.maps}
+            showAirspaceMaps={isTracon2d}
+            onShorelineStatusChange={onShorelineStatusChange}
           />
         )}
-
-        {tracon?.airports.map(({ airport: member, runways: memberRunways }, index) => (
-          <AirportMarker
-            key={`tracon-${member.id}`}
-            airport={member}
-            runways={memberRunways}
-            verticalScale={verticalScale}
-            refLat={tracon.centerLat}
-            refLon={tracon.centerLon}
-            runwayColor={index === 0 ? COLORS.runway : COLORS.nearbyRunway}
-            airportLabelColor={index === 0 ? COLORS.runway : COLORS.nearbyAirport}
-            showRunwayLabels={false}
-          />
-        ))}
 
         {showTerrainSurface && (
           <TerrainWireframe
@@ -627,7 +637,7 @@ export const SceneCanvas = memo(function SceneCanvas({
           />
         )}
 
-        {frameReady && airspaceVisible && airspaceFeatures.length > 0 && (
+        {frameReady && airspaceVisible && !isTracon2d && airspaceFeatures.length > 0 && (
           <AirspaceVolumes
             features={airspaceFeatures}
             refLat={frameLat}
@@ -670,38 +680,65 @@ export const SceneCanvas = memo(function SceneCanvas({
               applyEarthCurvatureCompensation={isTiledSurface}
               presentation={isTracon ? 'scope' : 'scene'}
               showAltitudeStalks={isTracon && !isTracon2d}
-              radiusNm={tracon ? Math.min(tracon.rangeNm, TRACON_TRAFFIC_MAX_RADIUS_NM) : undefined}
+              scopeHistoryDotCount={traconScopeSettings.historyDotCount}
+              scopePredictedTrackMinutes={
+                traconScopeSettings.ptlAll ? traconScopeSettings.ptlMinutes : 0
+              }
+              radiusNm={
+                tracon ? Math.min(traconMapRadiusNm, TRACON_TRAFFIC_MAX_RADIUS_NM) : undefined
+              }
               limit={tracon ? TRACON_TRAFFIC_LIMIT : undefined}
               onDebugChange={onTrafficDebugChange}
             />
           </SceneErrorBoundary>
         )}
 
-        {frameReady && (nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) && (
+        {frameReady && isTracon2d && scopeWeather.levels.some(Boolean) && (
           <NexradVolumeOverlay
             refLat={frameLat}
             refLon={frameLon}
             verticalScale={verticalScale}
             minDbz={nexradMinDbz}
-            enabled={nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic}
-            showVolume={nexradVolumeEnabled}
-            opacity={nexradOpacity}
-            declutterMode={nexradDeclutterMode}
-            phaseMode={nexradPhaseMode}
-            showEchoTops={nexradShowEchoTops}
-            showSurfaceMosaic={nexradShowSurfaceMosaic}
-            surfaceMosaicDrape={nexradSurfaceMosaicDrape}
-            surfaceMosaicProduct={nexradSurfaceMosaicProduct}
+            enabled
+            showVolume={false}
+            showEchoTops={false}
+            showSurfaceMosaic
+            surfaceMosaicDrape="flat"
+            surfaceMosaicProduct="composite"
             surfaceElevationFeet={floorElevationFeet}
-            showAltitudeGuides={nexradShowAltitudeGuides}
-            showCrossSection={nexradCrossSectionEnabled}
-            crossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
-            crossSectionRangeNm={nexradCrossSectionRangeNm}
-            applyEarthCurvatureCompensation={isTiledSurface}
-            groundOcclusion={isTiledSurface ? 'terrain' : 'none'}
+            showAltitudeGuides={false}
+            scopeWeather={scopeWeather}
             onDebugChange={onNexradDebugChange}
           />
         )}
+
+        {frameReady &&
+          !isTracon2d &&
+          (nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic) && (
+            <NexradVolumeOverlay
+              refLat={frameLat}
+              refLon={frameLon}
+              verticalScale={verticalScale}
+              minDbz={nexradMinDbz}
+              enabled={nexradVolumeEnabled || nexradShowEchoTops || nexradShowSurfaceMosaic}
+              showVolume={nexradVolumeEnabled}
+              opacity={nexradOpacity}
+              declutterMode={nexradDeclutterMode}
+              phaseMode={nexradPhaseMode}
+              showEchoTops={nexradShowEchoTops}
+              showSurfaceMosaic={nexradShowSurfaceMosaic}
+              surfaceMosaicDrape={nexradSurfaceMosaicDrape}
+              surfaceMosaicProduct={nexradSurfaceMosaicProduct}
+              surfaceElevationFeet={floorElevationFeet}
+              showAltitudeGuides={nexradShowAltitudeGuides}
+              showCrossSection={nexradCrossSectionEnabled}
+              crossSectionHeadingDeg={nexradCrossSectionHeadingDeg}
+              crossSectionRangeNm={nexradCrossSectionRangeNm}
+              applyEarthCurvatureCompensation={isTiledSurface}
+              groundOcclusion={isTiledSurface ? 'terrain' : 'none'}
+              onDebugChange={onNexradDebugChange}
+            />
+          )}
 
         {frameReady && probSevereEnabled && (
           <ProbSevereOverlay
@@ -714,10 +751,11 @@ export const SceneCanvas = memo(function SceneCanvas({
         )}
         {isTracon2d && (
           <TraconScopeCamera
-            key={`tracon-${tracon?.facilityId ?? ''}-${recenterNonce}-${traconRangeNm}`}
-            rangeNm={traconRangeNm}
+            key={`tracon-${tracon?.facilityId ?? ''}-${recenterNonce}`}
+            rangeNm={traconScopeSettings.rangeNm}
             floorY={traconFloorY}
             controlsRef={handleMapControlsRef}
+            onRangeChange={onTraconScopeRangeChange}
           />
         )}
         {!isTracon2d && cameraControlMode === 'orbit' && (

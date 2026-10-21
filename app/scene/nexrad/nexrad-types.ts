@@ -77,6 +77,11 @@ export interface NexradVolumeOverlayProps {
    *  through (`terrain`, tiled satellite / 3D map modes) or a translucent
    *  surface the weather may overlay (`none`). */
   groundOcclusion?: NexradVolumeGroundOcclusion;
+  /**
+   * TRACON 2D scope: draw the composite grid as STARS weather levels on the
+   * floor plane in place of the ground mosaic; `levels[i]` is WX(i+1).
+   */
+  scopeWeather?: { levels: readonly boolean[]; floorY: number } | null;
   onDebugChange?: (debug: NexradDebugState) => void;
 }
 
@@ -311,6 +316,8 @@ export interface NexradCompositeSurface {
   cellSizeZNm: number;
   /** Non-premultiplied sRGB RGBA texels, `width * height * 4` bytes. */
   rgba: Uint8Array;
+  /** STARS weather level (0-6) per cell, for the TRACON scope. */
+  wxLevels: Uint8Array;
   filledCellCount: number;
   maxDbz: number;
 }

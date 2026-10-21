@@ -22,6 +22,34 @@ export type ViewMode = 'scene' | 'tracon';
 /** TRACON scope projection: top-down orthographic scope, or perspective 3D. */
 export type TraconDimension = '2d' | '3d';
 
+/** STARS video maps the TRACON scope can show. */
+export interface ScopeMapVisibility {
+  shoreline: boolean;
+  runways: boolean;
+  finals: boolean;
+  classB: boolean;
+  classCD: boolean;
+}
+
+export type ShorelineStatus = 'loading' | 'ready' | 'unavailable';
+
+/** STARS display-control-bar settings for the TRACON scope (not persisted). */
+export interface TraconScopeSettings {
+  /** RANGE: NM from the display center to the nearer edge (2D). */
+  rangeNm: number;
+  /** RR: range ring spacing; 0 hides the rings. */
+  ringSpacingNm: number;
+  maps: ScopeMapVisibility;
+  /** WX1-WX6 selections. */
+  wxLevels: readonly boolean[];
+  /** HISTORY: dots per target. */
+  historyDotCount: number;
+  /** PTL LNTH in minutes. */
+  ptlMinutes: number;
+  /** PTL ALL: draw predicted track lines on every track. */
+  ptlAll: boolean;
+}
+
 export interface NexradTimingDebugState {
   pollCycleMs: number | null;
   volumeFetchMs: number | null;
@@ -192,6 +220,9 @@ export interface SceneCanvasProps {
   traconDimension: TraconDimension;
   /** The TRACON facility scope; null while loading or outside the TRACON view. */
   traconScene: TraconSceneData | null;
+  traconScopeSettings: TraconScopeSettings;
+  onTraconScopeRangeChange: (rangeNm: number) => void;
+  onShorelineStatusChange?: (status: ShorelineStatus) => void;
   retinaRendering: boolean;
   missedApproachStartAltitudeFeet?: number;
   minimumsLabel?: string;

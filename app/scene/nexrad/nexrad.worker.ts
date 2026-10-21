@@ -10,6 +10,7 @@ import type {
 } from './nexrad-types';
 import { MRMS_LEVEL_TAGS, EMPTY_ECHO_TOP_SOA, PHASE_MIXED, PHASE_SNOW } from './nexrad-types';
 import { buildCompositeRgba } from './nexrad-composite';
+import { buildScopeWxLevels } from '../tracon/scope-weather';
 import { ensureWasm } from '../shared/wasm-loader';
 import {
   decode_and_prepare_mrms,
@@ -199,6 +200,7 @@ function colorCompositeSurface(
       composite.width,
       composite.height
     ),
+    wxLevels: buildScopeWxLevels(composite.dbzTenths),
     filledCellCount: composite.filledCellCount,
     maxDbz: composite.maxDbzTenths / 10
   };
@@ -207,8 +209,8 @@ function colorCompositeSurface(
 /** Collect transferable ArrayBuffers from the composite mosaic (if present). */
 function compositeTransferables(composite: NexradCompositeSurface | null): ArrayBuffer[] {
   if (!composite) return [];
-  // SAFETY: Uint8Array.rgba.buffer is the ArrayBuffer backing the mosaic RGBA column.
-  return [composite.rgba.buffer as ArrayBuffer];
+  // SAFETY: both columns are Uint8Arrays allocated in this worker over their own ArrayBuffers.
+  return [composite.rgba.buffer as ArrayBuffer, composite.wxLevels.buffer as ArrayBuffer];
 }
 
 /** Structural contract of the wasm-bindgen `decode_and_prepare_echo_top` result. */

@@ -19,6 +19,7 @@ export type ScreenMarkGlyph =
 const VERTEX_SHADER = /* glsl */ `
   in vec3 markCenter;
   in float markAlpha;
+  in vec3 markColor;
   uniform vec2 uViewportPx;
   uniform float uSizePx;
   uniform float uLeader;
@@ -26,11 +27,13 @@ const VERTEX_SHADER = /* glsl */ `
   uniform vec2 uToPx;
   out vec2 vLocal;
   out float vAlpha;
+  out vec3 vColor;
 
   void main() {
     vec2 corner = position.xy;
     vLocal = corner * 2.0;
     vAlpha = markAlpha;
+    vColor = markColor;
     vec4 clip = projectionMatrix * modelViewMatrix * vec4(markCenter, 1.0);
     if (clip.w <= 0.0) {
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
@@ -51,11 +54,11 @@ const VERTEX_SHADER = /* glsl */ `
 
 const FRAGMENT_SHADER = /* glsl */ `
   precision highp float;
-  uniform vec3 uColor;
   uniform float uLeader;
   uniform float uSizePx;
   in vec2 vLocal;
   in float vAlpha;
+  in vec3 vColor;
   out vec4 fragColor;
 
   void main() {
@@ -67,7 +70,7 @@ const FRAGMENT_SHADER = /* glsl */ `
     }
     float alpha = coverage * vAlpha;
     if (alpha <= 0.0) discard;
-    fragColor = vec4(uColor, alpha);
+    fragColor = vec4(vColor, alpha);
   }
 `;
 
@@ -83,20 +86,22 @@ function nextCapacity(count: number): number {
  * Constant-pixel-size marks (target dots, history dots, leader lines) drawn
  * as instanced quads whose screen offset is applied in the vertex shader, so
  * zooming or orbiting costs the main thread nothing. Each mark reads its
- * anchor `x, y, z` from `positions`; with `stride` 4 the fourth value is the
- * mark's alpha. Pass `glyph` and `color` as stable (module-level) values.
+ * anchor `x, y, z` from `positions`. With `stride` 4 the fourth value picks
+ * the mark's color from `colors` (clamped to the last entry), as for STARS
+ * history dots that darken with age; otherwise every mark is `colors[0]`.
+ * Pass `glyph` and `colors` as stable (module-level) values.
  */
 export function ScreenMarks({
   positions,
   stride = 3,
-  color,
+  colors,
   opacity = 1,
   glyph,
   renderOrder
 }: {
   positions: Float32Array;
   stride?: 3 | 4;
-  color: string;
+  colors: readonly string[];
   opacity?: number;
   glyph: ScreenMarkGlyph;
   renderOrder: number;
@@ -113,8 +118,7 @@ export function ScreenMarks({
           uSizePx: { value: 1 },
           uLeader: { value: 0 },
           uFromPx: { value: new THREE.Vector2() },
-          uToPx: { value: new THREE.Vector2() },
-          uColor: { value: new THREE.Color() }
+          uToPx: { value: new THREE.Vector2() }
         },
         vertexShader: VERTEX_SHADER,
         fragmentShader: FRAGMENT_SHADER,
@@ -144,28 +148,44 @@ export function ScreenMarks({
     geometry.setIndex([0, 1, 2, 0, 2, 3]);
     const centerArray = new Float32Array(capacity * 3);
     const alphaArray = new Float32Array(capacity);
+    const colorArray = new Float32Array(capacity * 3);
     const centers = new THREE.InstancedBufferAttribute(centerArray, 3);
     const markAlphas = new THREE.InstancedBufferAttribute(alphaArray, 1);
+    const markColors = new THREE.InstancedBufferAttribute(colorArray, 3);
     centers.setUsage(THREE.DynamicDrawUsage);
     markAlphas.setUsage(THREE.DynamicDrawUsage);
+    markColors.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute('markCenter', centers);
     geometry.setAttribute('markAlpha', markAlphas);
+    geometry.setAttribute('markColor', markColors);
     geometry.instanceCount = 0;
-    return { geometry, centers, markAlphas, centerArray, alphaArray };
+    return { geometry, centers, markAlphas, markColors, centerArray, alphaArray, colorArray };
   }, [capacity]);
   useEffect(() => () => buffers.geometry.dispose(), [buffers]);
 
   useLayoutEffect(() => {
-    const { geometry, centers, markAlphas, centerArray, alphaArray } = buffers;
+    const { geometry, centers, markAlphas, markColors, centerArray, alphaArray, colorArray } =
+      buffers;
+    // Written straight to the framebuffer, like the label atlas: keep the
+    // CSS colors' bytes instead of converting them to linear.
+    const palette = colors.map((css) =>
+      new THREE.Color().setStyle(css, THREE.LinearSRGBColorSpace)
+    );
+    const lastShade = Math.max(0, palette.length - 1);
     for (let i = 0; i < count; i += 1) {
       const base = i * stride;
       centerArray[i * 3] = positions[base];
       centerArray[i * 3 + 1] = positions[base + 1];
       centerArray[i * 3 + 2] = positions[base + 2];
-      alphaArray[i] = (stride === 4 ? positions[base + 3] : 1) * opacity;
+      alphaArray[i] = opacity;
+      const shade = stride === 4 ? Math.min(lastShade, Math.max(0, positions[base + 3])) : 0;
+      const markColor = palette[Math.floor(shade)];
+      colorArray[i * 3] = markColor?.r ?? 1;
+      colorArray[i * 3 + 1] = markColor?.g ?? 1;
+      colorArray[i * 3 + 2] = markColor?.b ?? 1;
     }
     geometry.instanceCount = count;
-    for (const attribute of [centers, markAlphas]) {
+    for (const attribute of [centers, markAlphas, markColors]) {
       attribute.clearUpdateRanges();
       attribute.addUpdateRange(0, count * attribute.itemSize);
       attribute.needsUpdate = true;
@@ -179,11 +199,8 @@ export function ScreenMarks({
       uniforms.uFromPx.value.set(glyph.fromPx[0], glyph.fromPx[1]);
       uniforms.uToPx.value.set(glyph.toPx[0], glyph.toPx[1]);
     }
-    // Written straight to the framebuffer, like the label atlas: keep the
-    // CSS color's bytes instead of converting them to linear.
-    uniforms.uColor.value.setStyle(color, THREE.LinearSRGBColorSpace);
     invalidate();
-  }, [buffers, count, positions, stride, opacity, material, viewport, glyph, color, invalidate]);
+  }, [buffers, count, positions, stride, opacity, material, viewport, glyph, colors, invalidate]);
 
   return (
     <mesh

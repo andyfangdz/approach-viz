@@ -25,6 +25,7 @@ import {
   type TerrariumRaster,
   type TerrariumRasterParams
 } from '../terrain/terrarium';
+import { shorelineZoom, traceShoreline } from '../tracon/shoreline';
 
 /** Distinct rasters kept decoded; each weather raster is ~25 z8 tiles. */
 const RASTER_CACHE_LIMIT = 4;
@@ -40,6 +41,14 @@ export interface TerrainMeshParams {
   refLat: number;
   refLon: number;
   radiusNm: number;
+}
+
+export interface ShorelineParams {
+  refLat: number;
+  refLon: number;
+  radiusNm: number;
+  /** Height of the traced segments in scene units. */
+  y: number;
 }
 
 export interface GroundHeightfieldResult {
@@ -156,6 +165,16 @@ export class SceneGeometryWorkerApi {
     const sampler = await this.requireSampler(raster);
     const mesh = buildMosaicDrapeMesh(params, (xNm, zNm) => sampler.sampleFeet(xNm, zNm));
     return Comlink.transfer(mesh, transferList([mesh.positions, mesh.uvs, mesh.indices]));
+  }
+
+  /** Sea-level shoreline segments for the TRACON video map; `null` when every tile failed. */
+  async buildShoreline(params: ShorelineParams): Promise<Float32Array | null> {
+    const { refLat, refLon, radiusNm, y } = params;
+    const zoom = shorelineZoom(radiusNm);
+    const terrain = await this.raster({ refLat, refLon, radiusNm, zoom });
+    if (!terrain) return null;
+    const segments = traceShoreline(terrain, refLat, refLon, y, radiusNm);
+    return Comlink.transfer(segments, transferList([segments]));
   }
 
   /** Extruded sectors in request order; `null` where a sector has no volume. */
