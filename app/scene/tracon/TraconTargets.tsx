@@ -84,6 +84,8 @@ function pickTarget(
 }
 
 interface DataBlock {
+  /** Index into the target columns. */
+  target: number;
   hex: string;
   position: readonly [number, number, number];
   /** One line (partial or limited) or two (full). */
@@ -93,10 +95,12 @@ interface DataBlock {
 /**
  * Leader direction per data block at the current view, recomputed when the
  * view or the blocks change. Each block keeps its last direction while that
- * stays clear (see `placeDataBlocks`).
+ * stays clear (see `placeDataBlocks`). Every target symbol is kept clear,
+ * including targets with no data block (above the altitude filter).
  */
 function useLeaderDirections(
   blocks: readonly DataBlock[],
+  targetPositions: Float32Array,
   groupRef: RefObject<THREE.Group | null>
 ): readonly number[] {
   const [directions, setDirections] = useState<readonly number[]>([]);
@@ -126,22 +130,35 @@ function useLeaderDirections(
     last.current = { view, width: size.width, height: size.height, blocks };
 
     const point = new THREE.Vector4();
+    const toScreen = (x: number, y: number, z: number): readonly [number, number] | null => {
+      point.set(x, y, z, 1).applyMatrix4(view);
+      if (point.w <= 0) return null;
+      return [
+        ((point.x / point.w + 1) / 2) * size.width,
+        ((1 - point.y / point.w) / 2) * size.height
+      ];
+    };
+    const withBlock = new Set(blocks.map(({ target }) => target));
+    const otherTargets: (readonly [number, number])[] = [];
+    for (let i = 0; i < targetPositions.length / 3; i += 1) {
+      if (withBlock.has(i)) continue;
+      const screen = toScreen(
+        targetPositions[i * 3],
+        targetPositions[i * 3 + 1],
+        targetPositions[i * 3 + 2]
+      );
+      if (screen) otherTargets.push(screen);
+    }
     const placed = placeDataBlocks(
       blocks.map(({ hex, position, lines }) => {
-        point.set(position[0], position[1], position[2], 1).applyMatrix4(view);
-        const onScreen = point.w > 0;
         return {
-          screen: onScreen
-            ? ([
-                ((point.x / point.w + 1) / 2) * size.width,
-                ((1 - point.y / point.w) / 2) * size.height
-              ] as const)
-            : null,
+          screen: toScreen(position[0], position[1], position[2]),
           chars: Math.max(...lines.map((line) => line.length)),
           lines: lines.length === 2 ? 2 : 1,
           previous: previousByHex.current.get(hex) ?? null
         };
-      })
+      }),
+      otherTargets
     );
     const remembered = new Map<string, number>();
     blocks.forEach(({ hex }, index) => remembered.set(hex, placed[index]));
@@ -263,17 +280,17 @@ export function TraconTargets({
       const fields = renderBuffers.dataBlockFields[i];
       if (kind === 'full') {
         const lines = [renderBuffers.dataBlockIdents[i], fields];
-        fullBlocks.push({ hex: targetHexes[i], position, lines });
+        fullBlocks.push({ target: i, hex: targetHexes[i], position, lines });
       } else {
         const lines = [shortDataBlockLine(fields, kind)];
-        shortBlocks.push({ hex: targetHexes[i], position, lines });
+        shortBlocks.push({ target: i, hex: targetHexes[i], position, lines });
       }
     }
     // Selected (full) blocks claim their places first.
     return { symbols: symbolLabels, blocks: [...fullBlocks, ...shortBlocks] };
   }, [renderBuffers, fullDataBlockHexes, altitudeFilterHighFeet]);
 
-  const directions = useLeaderDirections(blocks, groupRef);
+  const directions = useLeaderDirections(blocks, renderBuffers.targetPositions, groupRef);
 
   const placedBlocks = useMemo(() => {
     const lineLabels: SceneLabel[] = [];

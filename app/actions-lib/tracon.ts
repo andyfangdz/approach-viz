@@ -36,6 +36,7 @@ export function loadTraconSceneData(facilityId: string): TraconSceneData {
   const airportRows = facility.airportIds.flatMap((id) => rowById.get(id) ?? []);
   const frame = computeFacilityFrame(airportRows);
   const runwayMap = loadRunwayMap([...facility.airportIds]);
+  const mapRadiusNm = videoMapRadiusNm(frame.rangeNm);
   return {
     facilityId: facility.id,
     facilityName: facility.name,
@@ -44,11 +45,12 @@ export function loadTraconSceneData(facilityId: string): TraconSceneData {
       airport: rowToAirport(row),
       runways: runwayMap.get(row.id) ?? []
     })),
-    airspace: loadAirspaceWithinNm(frame.centerLat, frame.centerLon, frame.rangeNm),
+    // Class B/C/D maps cover the same radius as the other video maps.
+    airspace: loadAirspaceWithinNm(frame.centerLat, frame.centerLon, mapRadiusNm),
     videoMap: loadTraconVideoMap(
       frame.centerLat,
       frame.centerLon,
-      videoMapRadiusNm(frame.rangeNm),
+      mapRadiusNm,
       facility.airportIds,
       facility.mvaChartId
     )

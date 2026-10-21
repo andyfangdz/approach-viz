@@ -5,6 +5,7 @@ import { altToY } from '../approach-path/coordinates';
 import {
   buildTrafficDrawBuffers,
   buildTrafficScopeBuffers,
+  scopeRenderHash,
   type TrafficScopeOptions
 } from './traffic-draw-buffers';
 
@@ -262,7 +263,9 @@ export class TrafficWorkerApi {
       trackCount: state.track_count,
       renderedTrackCount: soa.trackCount,
       historyPointCount,
-      renderHash: Number.isFinite(soa.hash) ? soa.hash >>> 0 : null,
+      // The scope buffers also depend on HISTORY and PTL, so a settings-only
+      // recompute must not look like an unchanged result.
+      renderHash: Number.isFinite(soa.hash) ? scopeRenderHash(soa.hash, options.scope) : null,
       markerPositions: soa.markerPositions,
       flags: soa.flags,
       callsignLabels: soa.callsignLabels,
