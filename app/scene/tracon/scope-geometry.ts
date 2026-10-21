@@ -2,34 +2,58 @@
 // centered on the facility, plus the screen-edge compass rose. Kept free of
 // `three` and the DOM for unit tests.
 
-import type { AirspaceFeature } from '@/lib/types';
+import type {
+  AirspaceFeature,
+  LonLat,
+  TraconFinalCourse,
+  TraconMapFix,
+  TraconVideoMapData
+} from '@/lib/types';
 import { latLonToLocal } from '../approach-path/coordinates';
 import { reciprocalRunwayId, type LocalRunwayThreshold } from '../approach-path/runway-geometry';
 
 /** Range ring spacings the STARS RR control offers. */
 export const RANGE_RING_SPACINGS_NM = [2, 5, 10, 20] as const;
 const RING_SEGMENTS = 180;
-/** Extended final length from each instrument runway threshold. */
-export const FINAL_COURSE_NM = 10;
-/** Cross ticks along each final, every this many NM. */
-const FINAL_TICK_SPACING_NM = 5;
-const FINAL_TICK_HALF_NM = 0.35;
+/** Half-length of the tick across a final at each final approach fix. */
+const FAF_TICK_HALF_NM = 0.5;
 
-export interface ScopeVideoMap {
-  /** Line-segment pairs (6 floats per segment) threshold to threshold. */
-  runwaySegments: Float32Array;
-  /** Extended finals from instrument runway thresholds, with cross ticks. */
-  finalSegments: Float32Array;
-  /** Class B shelf boundaries. */
-  classBSegments: Float32Array;
-  /** Class C and D boundaries. */
-  classCDSegments: Float32Array;
+/** A video map label: text centered on (or starting at) a floor point. */
+export interface ScopeMapLabel {
+  text: string;
+  position: [number, number, number];
 }
 
-export interface ScopeMapAirport {
-  runways: LocalRunwayThreshold[];
-  /** Thresholds with an instrument approach (`RW04R`). */
-  instrumentRunwayIds: readonly string[];
+/** Point symbols (`x, y, z` per point) with one label each. */
+export interface ScopeMapSymbols {
+  positions: Float32Array;
+  labels: ScopeMapLabel[];
+}
+
+/**
+ * The facility's STARS video maps, one entry per DCB map, as line-segment
+ * pairs (6 floats per segment) flat on the scope floor, plus point symbols
+ * and labels.
+ */
+export interface ScopeVideoMap {
+  /** Every airport in the map radius, threshold to threshold. */
+  runwaySegments: Float32Array;
+  /** Member airports' approach final segments, ticked at each FAF. */
+  finalSegments: Float32Array;
+  approachFixes: ScopeMapSymbols;
+  vors: ScopeMapSymbols;
+  ndbs: ScopeMapSymbols;
+  /** STAR routes to member airports, with their fixes. */
+  arrivalSegments: Float32Array;
+  arrivalFixes: ScopeMapSymbols;
+  /** MVA sector boundaries, labeled in hundreds of feet. */
+  mvaSegments: Float32Array;
+  mvaLabels: ScopeMapLabel[];
+  /** Prohibited, restricted, warning, alert areas and MOAs. */
+  specialUseSegments: Float32Array;
+  specialUseLabels: ScopeMapLabel[];
+  classBSegments: Float32Array;
+  classCDSegments: Float32Array;
 }
 
 /** Unit vector (x east, z south) pointing along a true bearing. */
@@ -72,53 +96,6 @@ export function buildRangeRings(spacingNm: number, maxRadiusNm: number, y: numbe
   return new Float32Array(out);
 }
 
-/**
- * Extended final from each instrument runway threshold outward along the
- * approach course (away from the reciprocal threshold), with a cross tick
- * every five miles. Thresholds without a reciprocal are skipped: their
- * runway direction is not known from the data.
- */
-export function buildExtendedFinals(
-  runways: LocalRunwayThreshold[],
-  instrumentRunwayIds: readonly string[],
-  y: number,
-  lengthNm = FINAL_COURSE_NM
-): number[] {
-  const byId = new Map(runways.map((runway) => [runway.id, runway]));
-  const out: number[] = [];
-  for (const id of instrumentRunwayIds) {
-    const runway = byId.get(id);
-    const reciprocalId = reciprocalRunwayId(id);
-    const opposite = reciprocalId ? byId.get(reciprocalId) : undefined;
-    if (!runway || !opposite) continue;
-    const dx = runway.x - opposite.x;
-    const dz = runway.z - opposite.z;
-    const length = Math.hypot(dx, dz);
-    if (length < 1e-6) continue;
-    const ux = dx / length;
-    const uz = dz / length;
-    pushSegment(out, runway.x, runway.z, runway.x + ux * lengthNm, runway.z + uz * lengthNm, y);
-    for (
-      let along = FINAL_TICK_SPACING_NM;
-      along <= lengthNm + 1e-9;
-      along += FINAL_TICK_SPACING_NM
-    ) {
-      const cx = runway.x + ux * along;
-      const cz = runway.z + uz * along;
-      // Perpendicular to the final in the ground plane.
-      pushSegment(
-        out,
-        cx - uz * FINAL_TICK_HALF_NM,
-        cz + ux * FINAL_TICK_HALF_NM,
-        cx + uz * FINAL_TICK_HALF_NM,
-        cz - ux * FINAL_TICK_HALF_NM,
-        y
-      );
-    }
-  }
-  return out;
-}
-
 /** Each runway once, threshold to reciprocal threshold. */
 function buildRunwayLines(runways: LocalRunwayThreshold[], y: number): number[] {
   const byId = new Map(runways.map((runway) => [runway.id, runway]));
@@ -136,62 +113,156 @@ function buildRunwayLines(runways: LocalRunwayThreshold[], y: number): number[] 
   return out;
 }
 
-/** Boundary rings of airspace polygons (`[lon, lat]` vertices). */
-function buildAirspaceLines(
-  features: AirspaceFeature[],
-  centerLat: number,
-  centerLon: number,
-  y: number
-): number[] {
-  const out: number[] = [];
-  for (const feature of features) {
-    for (const ring of feature.coordinates) {
-      for (let i = 1; i < ring.length; i += 1) {
-        const a = latLonToLocal(ring[i - 1][1], ring[i - 1][0], centerLat, centerLon);
-        const b = latLonToLocal(ring[i][1], ring[i][0], centerLat, centerLon);
-        pushSegment(out, a.x, a.z, b.x, b.z, y);
+/**
+ * Projects `[lon, lat]` vertices into the local frame around the scope
+ * center and appends each polyline's segments, dropping segments with both
+ * ends beyond `radiusNm` (enroute transitions and offshore areas run far
+ * past the scope).
+ */
+class MapProjector {
+  constructor(
+    private readonly centerLat: number,
+    private readonly centerLon: number,
+    private readonly radiusNm: number,
+    readonly y: number
+  ) {}
+
+  point(lon: number, lat: number): { x: number; z: number } {
+    return latLonToLocal(lat, lon, this.centerLat, this.centerLon);
+  }
+
+  polylines(paths: readonly (readonly LonLat[])[]): Float32Array {
+    const out: number[] = [];
+    const radiusSq = this.radiusNm * this.radiusNm;
+    for (const path of paths) {
+      let previous: { x: number; z: number } | null = null;
+      for (const [lon, lat] of path) {
+        const next = this.point(lon, lat);
+        if (
+          previous &&
+          (previous.x * previous.x + previous.z * previous.z <= radiusSq ||
+            next.x * next.x + next.z * next.z <= radiusSq)
+        ) {
+          pushSegment(out, previous.x, previous.z, next.x, next.z, this.y);
+        }
+        previous = next;
       }
     }
+    return new Float32Array(out);
   }
-  return out;
+
+  symbols(points: readonly { lat: number; lon: number; text: string }[]): ScopeMapSymbols {
+    const positions = new Float32Array(points.length * 3);
+    const labels: ScopeMapLabel[] = [];
+    points.forEach(({ lat, lon, text }, index) => {
+      const { x, z } = this.point(lon, lat);
+      positions.set([x, this.y, z], index * 3);
+      labels.push({ text, position: [x, this.y, z] });
+    });
+    return { positions, labels };
+  }
+
+  labels(points: readonly { lat: number; lon: number; text: string }[]): ScopeMapLabel[] {
+    return this.symbols(points).labels;
+  }
 }
 
 /**
- * The facility video map: every member airport's runways and instrument
- * finals, and Class B and Class C/D boundaries, flat on the scope floor.
+ * Final segments as polylines, with a tick across the course at each final
+ * approach fix (perpendicular to the leg leaving the fix toward the runway).
+ */
+function buildFinalCourses(
+  finals: readonly TraconFinalCourse[],
+  projector: MapProjector
+): Float32Array {
+  const lines = projector.polylines(finals.map((final) => final.path));
+  const ticks: number[] = [];
+  for (const final of finals) {
+    for (const [fafLon, fafLat] of final.finalApproachFixes) {
+      const index = final.path.findIndex(([lon, lat]) => lon === fafLon && lat === fafLat);
+      const next = final.path[index + 1];
+      if (index < 0 || !next) continue;
+      const a = projector.point(fafLon, fafLat);
+      const b = projector.point(next[0], next[1]);
+      const length = Math.hypot(b.x - a.x, b.z - a.z);
+      if (length < 1e-6) continue;
+      const ux = (b.x - a.x) / length;
+      const uz = (b.z - a.z) / length;
+      pushSegment(
+        ticks,
+        a.x - uz * FAF_TICK_HALF_NM,
+        a.z + ux * FAF_TICK_HALF_NM,
+        a.x + uz * FAF_TICK_HALF_NM,
+        a.z - ux * FAF_TICK_HALF_NM,
+        projector.y
+      );
+    }
+  }
+  const out = new Float32Array(lines.length + ticks.length);
+  out.set(lines);
+  out.set(ticks, lines.length);
+  return out;
+}
+
+/** MVA labels are the sector altitude in hundreds of feet, as on the FAA charts. */
+export function mvaLabelText(minimumAltitudeFt: number): string {
+  return String(Math.round(minimumAltitudeFt / 100));
+}
+
+/**
+ * The facility's video maps, flat on the scope floor in the local frame
+ * around the facility center, clipped to the video map radius.
  */
 export function buildScopeVideoMap(
-  airports: ScopeMapAirport[],
+  data: TraconVideoMapData,
   airspace: AirspaceFeature[],
   centerLat: number,
   centerLon: number,
   y: number
 ): ScopeVideoMap {
+  const projector = new MapProjector(centerLat, centerLon, data.radiusNm, y);
   const runwaySegments: number[] = [];
-  const finalSegments: number[] = [];
-  for (const { runways, instrumentRunwayIds } of airports) {
-    runwaySegments.push(...buildRunwayLines(runways, y));
-    finalSegments.push(...buildExtendedFinals(runways, instrumentRunwayIds, y));
+  for (const { runways } of data.runwayAirports) {
+    const local = runways.map((runway) => ({
+      id: runway.id,
+      ...projector.point(runway.lon, runway.lat)
+    }));
+    runwaySegments.push(...buildRunwayLines(local, y));
   }
+  const fixSymbols = (fixes: readonly TraconMapFix[]) =>
+    projector.symbols(fixes.map((fix) => ({ ...fix, text: fix.name })));
+  const navaidSymbols = (kind: 'VOR' | 'NDB') =>
+    projector.symbols(
+      data.navaids
+        .filter((navaid) => navaid.kind === kind)
+        .map((navaid) => ({ ...navaid, text: navaid.ident }))
+    );
+  const airspaceRings = (classes: readonly string[]) =>
+    projector.polylines(
+      airspace.filter((feature) => classes.includes(feature.class)).flatMap((f) => f.coordinates)
+    );
   return {
     runwaySegments: new Float32Array(runwaySegments),
-    finalSegments: new Float32Array(finalSegments),
-    classBSegments: new Float32Array(
-      buildAirspaceLines(
-        airspace.filter((feature) => feature.class === 'B'),
-        centerLat,
-        centerLon,
-        y
-      )
+    finalSegments: buildFinalCourses(data.finals, projector),
+    approachFixes: fixSymbols(data.approachFixes),
+    vors: navaidSymbols('VOR'),
+    ndbs: navaidSymbols('NDB'),
+    arrivalSegments: projector.polylines(data.arrivalPaths),
+    arrivalFixes: fixSymbols(data.arrivalFixes),
+    mvaSegments: projector.polylines(data.mva.sectors.flatMap((sector) => sector.rings)),
+    mvaLabels: projector.labels(
+      data.mva.sectors.map((sector) => ({
+        lat: sector.labelLat,
+        lon: sector.labelLon,
+        text: mvaLabelText(sector.minimumAltitudeFt)
+      }))
     ),
-    classCDSegments: new Float32Array(
-      buildAirspaceLines(
-        airspace.filter((feature) => feature.class === 'C' || feature.class === 'D'),
-        centerLat,
-        centerLon,
-        y
-      )
-    )
+    specialUseSegments: projector.polylines(data.specialUse.flatMap((area) => area.rings)),
+    specialUseLabels: projector.labels(
+      data.specialUse.map((area) => ({ lat: area.labelLat, lon: area.labelLon, text: area.name }))
+    ),
+    classBSegments: airspaceRings(['B']),
+    classCDSegments: airspaceRings(['C', 'D'])
   };
 }
 

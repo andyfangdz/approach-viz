@@ -17,8 +17,20 @@ export function defaultScopeSettings(rangeNm: number): TraconScopeSettings {
   return {
     rangeNm: clampRange(rangeNm),
     ringSpacingNm: 10,
-    // Class C/D rings clutter a facility-wide scope; they are one button away.
-    maps: { shoreline: true, runways: true, finals: true, classB: true, classCD: false },
+    // A position's primary map; arrivals, MVA, SUA, and Class C/D clutter a
+    // facility-wide scope and are one button away.
+    maps: {
+      shoreline: true,
+      runways: true,
+      finals: true,
+      fixes: true,
+      navaids: true,
+      arrivals: false,
+      classB: true,
+      classCD: false,
+      mva: false,
+      specialUse: false
+    },
     wxLevels: Array.from({ length: SCOPE_WX_LEVEL_COUNT }, () => true),
     historyDotCount: 5,
     ptlMinutes: 1,

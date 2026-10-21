@@ -137,8 +137,9 @@ export function InfoPanel({
           )}
           STARS symbology: blue target with <code>*</code> (no track owner in ADS-B data), blue
           history dots, green data block with callsign, then altitude (hundreds of ft) and ground
-          speed (tens of kt). The video map shows the sea-level shoreline, runways, instrument
-          finals, and airspace; bearings are true.
+          speed (tens of kt). Video maps (MAPS) are drawn from FAA data: shoreline, runways,
+          approach finals and fixes, navaids, STAR routes, Class B/C/D, the facility MVA chart, and
+          special use airspace; bearings are true.
         </div>
       )}
       {viewMode === 'scene' && plateOverlayEnabled && !hasApproachPlate && (

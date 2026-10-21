@@ -161,18 +161,18 @@ function parseDecimalTenthsField(line: string, range: SliceRange): number | unde
 const DMS_LAT_PATTERN = /^[NS]\d{8}$/;
 const DMS_LON_PATTERN = /^[EW]\d{9}$/;
 
-function isDmsLat(value: string): boolean {
+export function isDmsLat(value: string): boolean {
   return DMS_LAT_PATTERN.test(value);
 }
 
-function isDmsLon(value: string): boolean {
+export function isDmsLon(value: string): boolean {
   return DMS_LON_PATTERN.test(value);
 }
 
 // Parse DMS coordinates from CIFP format
 // Format: N40523081 = N40°52'30.81"
 // Throws on malformed input rather than fabricating a coordinate.
-function parseDMS(dms: string): number {
+export function parseDMS(dms: string): number {
   const hemisphere = dms[0];
   const rest = dms.slice(1);
 

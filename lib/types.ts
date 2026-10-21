@@ -115,8 +115,60 @@ export interface SceneData {
 export interface TraconAirport {
   airport: Airport;
   runways: RunwayThreshold[];
-  /** Runway thresholds (`RW04R`) with a current CIFP instrument approach. */
-  instrumentRunwayIds: string[];
+}
+
+/** `[lon, lat]`, as in airspace coordinates. */
+export type LonLat = [lon: number, lat: number];
+
+export interface TraconMapFix {
+  name: string;
+  lat: number;
+  lon: number;
+}
+
+/** A current instrument approach's final segment, from its first fix to the runway. */
+export interface TraconFinalCourse {
+  airportId: string;
+  procedureId: string;
+  path: LonLat[];
+  /** Final approach fixes on the path, ticked across the course. */
+  finalApproachFixes: LonLat[];
+}
+
+export interface TraconMvaSector {
+  minimumAltitudeFt: number;
+  /** Outer ring first, then holes. */
+  rings: LonLat[][];
+  labelLat: number;
+  labelLon: number;
+}
+
+export interface TraconSpecialUseArea {
+  /** ARINC 424 restrictive type: A alert, M MOA, P prohibited, R restricted, W warning. */
+  type: string;
+  name: string;
+  rings: LonLat[][];
+  labelLat: number;
+  labelLon: number;
+}
+
+/**
+ * Source data for the facility's STARS video maps, all from FAA data:
+ * runways of every airport in the map radius, member airports' current
+ * approach finals and fixes and STAR routes (CIFP), VOR and NDB navaids,
+ * special use airspace (CIFP), and the facility's MVA chart.
+ */
+export interface TraconVideoMapData {
+  radiusNm: number;
+  runwayAirports: Array<{ airportId: string; runways: RunwayThreshold[] }>;
+  finals: TraconFinalCourse[];
+  /** Initial, intermediate, and final approach fixes of member airports' approaches. */
+  approachFixes: TraconMapFix[];
+  navaids: Array<{ ident: string; kind: 'VOR' | 'NDB'; lat: number; lon: number }>;
+  arrivalPaths: LonLat[][];
+  arrivalFixes: TraconMapFix[];
+  mva: { chartEdition: string; sectors: TraconMvaSector[] };
+  specialUse: TraconSpecialUseArea[];
 }
 
 /** Everything the TRACON scope draws for one facility, centered on it. */
@@ -129,6 +181,7 @@ export interface TraconSceneData {
   /** Member airports in facility order; the first sets the scope floor. */
   airports: TraconAirport[];
   airspace: AirspaceFeature[];
+  videoMap: TraconVideoMapData;
 }
 
 /** Resolved once by build-db; consumed by both web and native clients. */

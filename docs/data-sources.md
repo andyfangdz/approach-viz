@@ -15,6 +15,15 @@ External data feeds and their ingestion paths.
 - Source: `drnic/faa-airspace-data` GitHub repository (`class_b`, `class_c`, `class_d` GeoJSON).
 - Downloaded at `download-data` time and loaded into SQLite for scene-data assembly.
 
+## Minimum Vectoring Altitude Charts
+
+- Source: FAA MVA charts in AIXM 5.1, `https://aeronav.faa.gov/MVA_Charts/aixm/<chart>.xml` (index at the FAA MVA/MIA charts page). The TRACON view uses each facility preset's 3 NM (`FUS3`) chart, named by `mvaChartId` in `lib/tracon-facilities.ts`.
+- Charts are revised individually rather than on the CIFP cycle; `download-data` takes the current file and validates that it is an AIXM airspace message. `build-db` parses every sector (polygon with holes, minimum altitude in feet MSL) into `mva_sectors` and records each chart's edition (e.g. `N90_MVA_FUS3_2025_v1`) in `metadata.mva_chart_editions`. A missing or malformed chart fails the build.
+
+## TRACON Video Map Records (CIFP)
+
+- `build-db` also reads VOR and NDB navaids (`navaids`), STAR routes with resolved fix positions (`star_routes`), and restrictive (special use) airspace boundaries (`restrictive_airspace` plus an R-tree) from the same CIFP file, for the TRACON video maps. See [TRACON scope](rendering-tracon-scope.md#video-map-scope-geometryts-shorelinets-traconscopetsx).
+
 ## Published Obstacles (FAA Digital Obstacle File)
 
 - Source: FAA daily Digital Obstacle File `https://aeronav.faa.gov/Obst_Data/DAILY_DOF_DAT.ZIP` (fixed-width `DOF.DAT`).

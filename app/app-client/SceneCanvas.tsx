@@ -518,7 +518,7 @@ export const SceneCanvas = memo(function SceneCanvas({
           <TraconScope
             centerLat={tracon.centerLat}
             centerLon={tracon.centerLon}
-            airports={tracon.airports}
+            videoMapData={tracon.videoMap}
             airspace={airspaceVisible ? tracon.airspace : NO_AIRSPACE}
             floorY={traconFloorY}
             ringSpacingNm={traconScopeSettings.ringSpacingNm}

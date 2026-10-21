@@ -2,14 +2,80 @@ import { useEffect, useMemo, useState } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { ScopeMapVisibility, ShorelineStatus } from '@/app/app-client/types';
-import type { AirspaceFeature, TraconAirport } from '@/lib/types';
-import { latLonToLocal } from '../approach-path/coordinates';
+import type { AirspaceFeature, TraconVideoMapData } from '@/lib/types';
 import { buildShorelineWithWorker } from '../geometry/scene-geometry-client';
-import { buildRangeRings, buildScopeVideoMap } from './scope-geometry';
+import { SceneLabels, type LabelSizing, type SceneLabel } from '../labels/SceneLabels';
+import { scopeMapLabelStyle } from '../labels/label-styles';
+import {
+  buildRangeRings,
+  buildScopeVideoMap,
+  type ScopeMapLabel,
+  type ScopeMapSymbols
+} from './scope-geometry';
 import { SCOPE_COLORS } from './scope-colors';
+import { ScreenMarks, type ScreenMarkGlyph } from './ScreenMarks';
 
 /** Sit just below the floor plane so traffic symbology draws over the map. */
 const MAP_OFFSET_NM = -0.002;
+/** Map symbols draw under the traffic marks (history dots start at 950). */
+const MAP_SYMBOL_RENDER_ORDER = 900;
+
+const FIX_GLYPH: ScreenMarkGlyph = { kind: 'triangle', sizePx: 9, strokePx: 1.1 };
+const VOR_GLYPH: ScreenMarkGlyph = { kind: 'hexagon', sizePx: 13, strokePx: 1.1 };
+const NDB_GLYPH: ScreenMarkGlyph = { kind: 'ring', sizePx: 9, strokePx: 1.1 };
+const MAP_A_COLORS = [SCOPE_COLORS.mapA] as const;
+const MAP_B_COLORS = [SCOPE_COLORS.mapB] as const;
+const MAP_A_LABEL_STYLE = scopeMapLabelStyle(SCOPE_COLORS.mapA);
+const MAP_B_LABEL_STYLE = scopeMapLabelStyle(SCOPE_COLORS.mapB);
+/** Symbol names sit to the right of the symbol. */
+const SYMBOL_LABEL_SIZING: LabelSizing = { mode: 'screen', offsetPx: [8, 0], align: 'start' };
+const AREA_LABEL_SIZING: LabelSizing = { mode: 'screen' };
+
+function sceneLabels(labels: readonly ScopeMapLabel[], style: SceneLabel['style']): SceneLabel[] {
+  return labels.map(({ text, position }) => ({ text, position, style }));
+}
+
+function MapSymbols({
+  symbols,
+  glyph,
+  colors,
+  labelStyle,
+  visible
+}: {
+  symbols: ScopeMapSymbols;
+  glyph: ScreenMarkGlyph;
+  colors: readonly string[];
+  labelStyle: SceneLabel['style'];
+  visible: boolean;
+}) {
+  const labels = useMemo(() => sceneLabels(symbols.labels, labelStyle), [symbols, labelStyle]);
+  if (!visible || symbols.labels.length === 0) return null;
+  return (
+    <>
+      <ScreenMarks
+        positions={symbols.positions}
+        colors={colors}
+        glyph={glyph}
+        renderOrder={MAP_SYMBOL_RENDER_ORDER}
+      />
+      <SceneLabels labels={labels} sizing={SYMBOL_LABEL_SIZING} />
+    </>
+  );
+}
+
+function AreaLabels({
+  labels,
+  style,
+  visible
+}: {
+  labels: readonly ScopeMapLabel[];
+  style: SceneLabel['style'];
+  visible: boolean;
+}) {
+  const sceneLabelList = useMemo(() => sceneLabels(labels, style), [labels, style]);
+  if (!visible || labels.length === 0) return null;
+  return <SceneLabels labels={sceneLabelList} sizing={AREA_LABEL_SIZING} />;
+}
 
 function segmentsGeometry(segments: Float32Array): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
@@ -37,15 +103,16 @@ function MapLines({
 }
 
 /**
- * STARS video map and range rings for a TRACON facility, flat on the floor
- * plane: sea-level shoreline (traced in the scene-geometry worker), member
- * airport runways and instrument finals, and Class B and C/D boundaries.
- * Rings are centered on the facility.
+ * STARS video maps and range rings for a TRACON facility, flat on the floor
+ * plane: sea-level shoreline (traced in the scene-geometry worker), runways
+ * of every airport in range, member airports' approach finals and fixes,
+ * navaids, STAR routes, the facility MVA chart, special use airspace, and
+ * Class B and C/D boundaries. Rings are centered on the facility.
  */
 export function TraconScope({
   centerLat,
   centerLon,
-  airports,
+  videoMapData,
   airspace,
   floorY,
   ringSpacingNm,
@@ -57,7 +124,7 @@ export function TraconScope({
 }: {
   centerLat: number;
   centerLon: number;
-  airports: TraconAirport[];
+  videoMapData: TraconVideoMapData;
   airspace: AirspaceFeature[];
   floorY: number;
   /** 0 hides the rings. */
@@ -71,16 +138,10 @@ export function TraconScope({
 }) {
   const invalidate = useThree((state) => state.invalidate);
   const y = floorY + MAP_OFFSET_NM;
-  const videoMap = useMemo(() => {
-    const mapAirports = airports.map(({ runways, instrumentRunwayIds }) => ({
-      runways: runways.map((runway) => ({
-        id: runway.id,
-        ...latLonToLocal(runway.lat, runway.lon, centerLat, centerLon)
-      })),
-      instrumentRunwayIds
-    }));
-    return buildScopeVideoMap(mapAirports, airspace, centerLat, centerLon, y);
-  }, [airports, airspace, centerLat, centerLon, y]);
+  const videoMap = useMemo(
+    () => buildScopeVideoMap(videoMapData, airspace, centerLat, centerLon, y),
+    [videoMapData, airspace, centerLat, centerLon, y]
+  );
   const rings = useMemo(
     () => buildRangeRings(ringSpacingNm, ringMaxRadiusNm, y),
     [ringSpacingNm, ringMaxRadiusNm, y]
@@ -138,6 +199,51 @@ export function TraconScope({
         visible={maps.runways}
       />
       <MapLines segments={videoMap.finalSegments} color={SCOPE_COLORS.mapA} visible={maps.finals} />
+      <MapSymbols
+        symbols={videoMap.approachFixes}
+        glyph={FIX_GLYPH}
+        colors={MAP_A_COLORS}
+        labelStyle={MAP_A_LABEL_STYLE}
+        visible={maps.fixes}
+      />
+      <MapSymbols
+        symbols={videoMap.vors}
+        glyph={VOR_GLYPH}
+        colors={MAP_A_COLORS}
+        labelStyle={MAP_A_LABEL_STYLE}
+        visible={maps.navaids}
+      />
+      <MapSymbols
+        symbols={videoMap.ndbs}
+        glyph={NDB_GLYPH}
+        colors={MAP_A_COLORS}
+        labelStyle={MAP_A_LABEL_STYLE}
+        visible={maps.navaids}
+      />
+      <MapLines
+        segments={videoMap.arrivalSegments}
+        color={SCOPE_COLORS.mapB}
+        visible={maps.arrivals}
+      />
+      <MapSymbols
+        symbols={videoMap.arrivalFixes}
+        glyph={FIX_GLYPH}
+        colors={MAP_B_COLORS}
+        labelStyle={MAP_B_LABEL_STYLE}
+        visible={maps.arrivals}
+      />
+      <MapLines segments={videoMap.mvaSegments} color={SCOPE_COLORS.mapB} visible={maps.mva} />
+      <AreaLabels labels={videoMap.mvaLabels} style={MAP_B_LABEL_STYLE} visible={maps.mva} />
+      <MapLines
+        segments={videoMap.specialUseSegments}
+        color={SCOPE_COLORS.mapB}
+        visible={maps.specialUse}
+      />
+      <AreaLabels
+        labels={videoMap.specialUseLabels}
+        style={MAP_B_LABEL_STYLE}
+        visible={maps.specialUse}
+      />
       <MapLines
         segments={videoMap.classBSegments}
         color={SCOPE_COLORS.mapB}

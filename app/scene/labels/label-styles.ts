@@ -201,3 +201,15 @@ export const POSITION_SYMBOL_LABEL_STYLE: LabelStyle = {
   lineHeight: 1,
   textShadows: SCOPE_OUTLINE
 };
+
+/** STARS video map text (fix and navaid names, MVA altitudes, SUA designators). */
+export function scopeMapLabelStyle(color: string): LabelStyle {
+  return {
+    fontFamily: SCOPE_MONO,
+    fontSizePx: 10,
+    fontWeight: 500,
+    color,
+    lineHeight: 1,
+    textShadows: SCOPE_OUTLINE
+  };
+}

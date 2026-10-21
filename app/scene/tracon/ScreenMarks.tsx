@@ -6,6 +6,8 @@ import * as THREE from 'three';
  * `dot`: a filled disc `sizePx` CSS px across, centered on each anchor.
  * `leader`: a `sizePx`-wide line from `fromPx` to `toPx` (CSS px from the
  * anchor, y up), like a STARS leader line between target and data block.
+ * `ring`, `triangle`, `hexagon`: outlined video map symbols (NDB, fix, VOR)
+ * `sizePx` across with a `strokePx` outline.
  */
 export type ScreenMarkGlyph =
   | { kind: 'dot'; sizePx: number }
@@ -14,7 +16,11 @@ export type ScreenMarkGlyph =
       sizePx: number;
       fromPx: readonly [number, number];
       toPx: readonly [number, number];
-    };
+    }
+  | { kind: 'ring' | 'triangle' | 'hexagon'; sizePx: number; strokePx: number };
+
+/** Fragment shader glyph codes. */
+const GLYPH_CODE = { dot: 0, leader: 1, ring: 2, triangle: 3, hexagon: 4 } as const;
 
 const VERTEX_SHADER = /* glsl */ `
   in vec3 markCenter;
@@ -54,19 +60,51 @@ const VERTEX_SHADER = /* glsl */ `
 
 const FRAGMENT_SHADER = /* glsl */ `
   precision highp float;
-  uniform float uLeader;
+  uniform float uGlyph;
   uniform float uSizePx;
+  uniform float uStrokePx;
   in vec2 vLocal;
   in float vAlpha;
   in vec3 vColor;
   out vec4 fragColor;
 
+  // Signed distances (negative inside), after Inigo Quilez.
+  float sdTriangle(vec2 p, float r) {
+    const float k = 1.7320508;
+    p.x = abs(p.x) - r;
+    p.y = p.y + r / k;
+    if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
+    p.x -= clamp(p.x, -2.0 * r, 0.0);
+    return -length(p) * sign(p.y);
+  }
+
+  float sdHexagon(vec2 p, float r) {
+    const vec3 k = vec3(-0.866025404, 0.5, 0.577350269);
+    p = abs(p);
+    p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
+    p -= vec2(clamp(p.x, -k.z * r, k.z * r), r);
+    return length(p) * sign(p.y);
+  }
+
   void main() {
     float coverage = 1.0;
-    if (uLeader < 0.5) {
+    if (uGlyph < 0.5) {
       // Antialias the disc edge over about one CSS pixel.
       float edge = 2.0 / max(uSizePx, 1.0);
       coverage = 1.0 - smoothstep(1.0 - edge, 1.0, length(vLocal));
+    } else if (uGlyph > 1.5) {
+      // Outlined symbol in CSS px around the anchor, inset to fit the quad.
+      vec2 p = vLocal * uSizePx * 0.5;
+      float r = uSizePx * 0.5 - uStrokePx * 0.5 - 1.0;
+      float d;
+      if (uGlyph < 2.5) {
+        d = length(p) - r;
+      } else if (uGlyph < 3.5) {
+        d = sdTriangle(p, r * 0.866025404);
+      } else {
+        d = sdHexagon(p, r * 0.866025404);
+      }
+      coverage = 1.0 - smoothstep(-0.5, 0.5, abs(d) - uStrokePx * 0.5);
     }
     float alpha = coverage * vAlpha;
     if (alpha <= 0.0) discard;
@@ -83,7 +121,8 @@ function nextCapacity(count: number): number {
 }
 
 /**
- * Constant-pixel-size marks (target dots, history dots, leader lines) drawn
+ * Constant-pixel-size marks (target dots, history dots, leader lines, video
+ * map symbols) drawn
  * as instanced quads whose screen offset is applied in the vertex shader, so
  * zooming or orbiting costs the main thread nothing. Each mark reads its
  * anchor `x, y, z` from `positions`. With `stride` 4 the fourth value picks
@@ -116,6 +155,8 @@ export function ScreenMarks({
         uniforms: {
           uViewportPx: { value: new THREE.Vector2(1, 1) },
           uSizePx: { value: 1 },
+          uStrokePx: { value: 1 },
+          uGlyph: { value: 0 },
           uLeader: { value: 0 },
           uFromPx: { value: new THREE.Vector2() },
           uToPx: { value: new THREE.Vector2() }
@@ -194,7 +235,9 @@ export function ScreenMarks({
     const uniforms = material.uniforms;
     uniforms.uViewportPx.value.set(Math.max(1, viewport.width), Math.max(1, viewport.height));
     uniforms.uSizePx.value = glyph.sizePx;
+    uniforms.uGlyph.value = GLYPH_CODE[glyph.kind];
     uniforms.uLeader.value = glyph.kind === 'leader' ? 1 : 0;
+    uniforms.uStrokePx.value = 'strokePx' in glyph ? glyph.strokePx : 1;
     if (glyph.kind === 'leader') {
       uniforms.uFromPx.value.set(glyph.fromPx[0], glyph.fromPx[1]);
       uniforms.uToPx.value.set(glyph.toPx[0], glyph.toPx[1]);

@@ -4,6 +4,10 @@ import Database from 'better-sqlite3';
 import { parseCIFP } from '../lib/cifp/parser';
 import { selectMissingHistoricalApproachFallbacks } from '../lib/cifp/historical-approaches';
 import { parseDOF } from '../lib/dof/parser';
+import { parseScopeMapRecords } from '../lib/cifp/scope-map-records';
+import { parseMvaChart } from '../lib/mva/parser';
+import { polygonLabelPoint } from '../lib/polygon-label-point';
+import { TRACON_FACILITIES } from '../lib/tracon-facilities';
 
 import { parseApproachReferenceSource } from '../lib/approach-reference-source';
 import { resolveApproachReferences } from './resolve-approach-references';
@@ -35,6 +39,7 @@ const CIFP_PATH = path.join(DATA_DIR, 'cifp', 'FAACIFP18');
 const APPROACH_DB_PATH = path.join(DATA_DIR, 'approach-db', 'approaches.json');
 const AIRSPACE_DIR = path.join(DATA_DIR, 'airspace');
 const DOF_PATH = path.join(DATA_DIR, 'obstacles', 'DOF.DAT');
+const MVA_DIR = path.join(DATA_DIR, 'mva');
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'approach-viz.sqlite');
 
@@ -213,6 +218,50 @@ function main() {
     );
 
     CREATE VIRTUAL TABLE airport_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+
+    CREATE TABLE navaids (
+      ident TEXT NOT NULL,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('VOR', 'NDB')),
+      lat REAL NOT NULL,
+      lon REAL NOT NULL
+    );
+
+    CREATE INDEX idx_navaids_lat ON navaids(lat);
+
+    CREATE TABLE star_routes (
+      airport_id TEXT NOT NULL,
+      procedure_id TEXT NOT NULL,
+      route_type TEXT NOT NULL,
+      transition_id TEXT NOT NULL,
+      paths_json TEXT NOT NULL,
+      fixes_json TEXT NOT NULL,
+      PRIMARY KEY (airport_id, procedure_id, route_type, transition_id)
+    );
+
+    CREATE TABLE restrictive_airspace (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      lower_limit TEXT NOT NULL,
+      upper_limit TEXT NOT NULL,
+      coordinates_json TEXT NOT NULL,
+      label_lat REAL NOT NULL,
+      label_lon REAL NOT NULL
+    );
+
+    CREATE VIRTUAL TABLE restrictive_airspace_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+
+    CREATE TABLE mva_sectors (
+      chart_id TEXT NOT NULL,
+      chart_edition TEXT NOT NULL,
+      minimum_altitude_ft INTEGER NOT NULL,
+      coordinates_json TEXT NOT NULL,
+      label_lat REAL NOT NULL,
+      label_lon REAL NOT NULL
+    );
+
+    CREATE INDEX idx_mva_sectors_chart ON mva_sectors(chart_id);
   `);
 
     const cifpContent = fs.readFileSync(CIFP_PATH, 'utf8');
@@ -368,6 +417,90 @@ function main() {
 
     insertAirspaceData();
 
+    // TRACON video map sources: navaids, STAR routes, and special use
+    // airspace from the CIFP, and each facility preset's FAA MVA chart.
+    const scopeMap = parseScopeMapRecords(cifpContent);
+    const mvaCharts = TRACON_FACILITIES.map(({ mvaChartId }) => {
+      const chartPath = path.join(MVA_DIR, `${mvaChartId}.xml`);
+      if (!fs.existsSync(chartPath)) {
+        throw new Error(`Missing MVA chart ${chartPath}. Run npm run download-data.`);
+      }
+      return {
+        chartId: mvaChartId,
+        chart: parseMvaChart(fs.readFileSync(chartPath, 'utf8'), mvaChartId)
+      };
+    });
+    const insertNavaid = db.prepare(
+      'INSERT INTO navaids (ident, name, kind, lat, lon) VALUES (?, ?, ?, ?, ?)'
+    );
+    const insertStarRoute = db.prepare(
+      `INSERT INTO star_routes (airport_id, procedure_id, route_type, transition_id, paths_json, fixes_json)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    const insertRestrictive = db.prepare(
+      `INSERT INTO restrictive_airspace (type, name, lower_limit, upper_limit, coordinates_json, label_lat, label_lon)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    const insertRestrictiveRtree = db.prepare(
+      'INSERT INTO restrictive_airspace_rtree (id, min_lat, max_lat, min_lon, max_lon) VALUES (?, ?, ?, ?, ?)'
+    );
+    const insertMvaSector = db.prepare(
+      `INSERT INTO mva_sectors (chart_id, chart_edition, minimum_altitude_ft, coordinates_json, label_lat, label_lon)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    const insertScopeMapData = db.transaction(() => {
+      for (const navaid of scopeMap.navaids) {
+        insertNavaid.run(navaid.ident, navaid.name, navaid.kind, navaid.lat, navaid.lon);
+      }
+      for (const route of scopeMap.stars) {
+        insertStarRoute.run(
+          route.airportId,
+          route.procedureId,
+          route.routeType,
+          route.transitionId,
+          JSON.stringify(route.paths),
+          JSON.stringify(route.fixes)
+        );
+      }
+      for (const area of scopeMap.restrictiveAirspace) {
+        // Each ring (a multiple-code part) is its own row, labeled inside itself.
+        for (const ring of area.rings) {
+          const [labelLon, labelLat] = polygonLabelPoint([ring]);
+          const info = insertRestrictive.run(
+            area.type,
+            area.name,
+            area.lowerLimit,
+            area.upperLimit,
+            JSON.stringify([ring]),
+            labelLat,
+            labelLon
+          );
+          const bounds = computeBounds([ring]);
+          insertRestrictiveRtree.run(
+            info.lastInsertRowid,
+            bounds.minLat,
+            bounds.maxLat,
+            bounds.minLon,
+            bounds.maxLon
+          );
+        }
+      }
+      for (const { chartId, chart } of mvaCharts) {
+        for (const sector of chart.sectors) {
+          const [labelLon, labelLat] = polygonLabelPoint(sector.rings);
+          insertMvaSector.run(
+            chartId,
+            chart.edition,
+            sector.minimumAltitudeFt,
+            JSON.stringify(sector.rings),
+            labelLat,
+            labelLon
+          );
+        }
+      }
+    });
+    insertScopeMapData();
+
     // Published obstacles from the FAA Digital Obstacle File. The parser throws
     // on malformed coordinates/heights; records without an AMSL height are
     // skipped by the parser (counted below) because they cannot be placed
@@ -430,6 +563,7 @@ function main() {
     insertMetadata.run('historical_approach_count', String(historicalApproachFallbacks.length));
     insertMetadata.run('dof_currency_date', parsedDof.currencyDate);
     insertMetadata.run('obstacle_count', String(obstacleCount));
+    insertMetadata.run('mva_chart_editions', mvaCharts.map(({ chart }) => chart.edition).join(','));
 
     db.close();
     fs.renameSync(buildPath, DB_PATH);
@@ -437,6 +571,10 @@ function main() {
     console.log(`✅ Airport spatial R-tree built (${airportSpatialCount} airports)`);
     console.log(
       `✅ Obstacles loaded (${obstacleCount} records, DOF currency ${parsedDof.currencyDate})`
+    );
+    console.log(
+      `✅ TRACON map data loaded (${scopeMap.navaids.length} navaids, ${scopeMap.stars.length} STAR routes, ` +
+        `${scopeMap.restrictiveAirspace.length} special use areas, ${mvaCharts.length} MVA charts)`
     );
     if (historicalApproachFallbacks.length > 0) {
       console.log(

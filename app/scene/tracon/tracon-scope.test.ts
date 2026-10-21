@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { AirspaceFeature } from '@/lib/types';
+import type { AirspaceFeature, TraconVideoMapData } from '@/lib/types';
+import { arcPoints, parseScopeMapRecords } from '@/lib/cifp/scope-map-records';
+import { parseMvaChart } from '@/lib/mva/parser';
+import { polygonLabelPoint } from '@/lib/polygon-label-point';
 import { formatDataBlock } from './data-block';
 import {
   buildEdgeCompassRose,
-  buildExtendedFinals,
   buildRangeRings,
   buildScopeVideoMap,
-  FINAL_COURSE_NM,
+  mvaLabelText,
   rangeRingRadii
 } from './scope-geometry';
 import { buildScopeWxLevels, scopeWxLevel } from './scope-weather';
@@ -48,26 +50,96 @@ test('range rings follow the RR spacing out to the map radius, flat on the floor
   near(Math.hypot(rings.at(-3)!, rings.at(-1)!), 20);
 });
 
-test('extended finals run outward from instrument runway thresholds only', () => {
-  // RW36 threshold at the south end, RW18 at the north end, 1 NM apart.
-  const runways = [
-    { id: 'RW36', x: 0, z: 0.5 },
-    { id: 'RW18', x: 0, z: -0.5 },
-    { id: 'RW09', x: 3, z: 3 }
+function emptyVideoMap(): TraconVideoMapData {
+  return {
+    radiusNm: 60,
+    runwayAirports: [],
+    finals: [],
+    approachFixes: [],
+    navaids: [],
+    arrivalPaths: [],
+    arrivalFixes: [],
+    mva: { chartEdition: 'TEST', sectors: [] },
+    specialUse: []
+  };
+}
+
+test('the video map draws runways once, approach finals with FAF ticks, and symbols', () => {
+  const data = emptyVideoMap();
+  data.runwayAirports = [
+    {
+      airportId: 'KTST',
+      runways: [
+        { id: 'RW04', lat: 40, lon: -74 },
+        { id: 'RW22', lat: 40.01, lon: -73.99 },
+        { id: 'RW13', lat: 40, lon: -73.98 }
+      ]
+    }
   ];
-  const segments = buildExtendedFinals(runways, ['RW36', 'RW09'], 0);
-  // RW09 has no reciprocal threshold, so only RW36 gets a final: the course
-  // plus a cross tick every 5 NM.
-  assert.equal(segments.length / 6, 1 + FINAL_COURSE_NM / 5);
-  // RW36 aircraft land northbound, so the final extends south (+z).
-  assert.deepEqual(segments.slice(0, 6), [0, 0, 0.5, 0, 0, 0.5 + FINAL_COURSE_NM]);
-  assert.equal(buildExtendedFinals(runways, [], 0).length, 0);
+  // Southwest final: IF, FAF, threshold, due north-east.
+  data.finals = [
+    {
+      airportId: 'KTST',
+      procedureId: 'I04',
+      path: [
+        [-74.2, 39.8],
+        [-74.1, 39.9],
+        [-74, 40]
+      ],
+      finalApproachFixes: [[-74.1, 39.9]]
+    }
+  ];
+  data.approachFixes = [{ name: 'FAFFX', lat: 39.9, lon: -74.1 }];
+  data.navaids = [
+    { ident: 'VOR', kind: 'VOR', lat: 40.2, lon: -74 },
+    { ident: 'NB', kind: 'NDB', lat: 40.1, lon: -74 }
+  ];
+  const map = buildScopeVideoMap(data, [], 40, -74, 0);
+  // RW13 has no reciprocal threshold, so one runway line.
+  assert.equal(map.runwaySegments.length, 6);
+  // Two course segments plus one FAF tick across the course.
+  assert.equal(map.finalSegments.length / 6, 3);
+  const tick = map.finalSegments.slice(12, 18);
+  const along = [
+    map.finalSegments[9] - map.finalSegments[6],
+    map.finalSegments[11] - map.finalSegments[8]
+  ];
+  const across = [tick[3] - tick[0], tick[5] - tick[2]];
+  near(along[0] * across[0] + along[1] * across[1], 0, 'the tick crosses the course');
+  assert.deepEqual(
+    map.approachFixes.labels.map((label) => label.text),
+    ['FAFFX']
+  );
+  assert.equal(map.vors.positions.length, 3);
+  assert.deepEqual(map.ndbs.labels[0].text, 'NB');
 });
 
-test('the video map draws each runway once and splits airspace by class', () => {
-  const runways = [
-    { id: 'RW04', x: 0, z: 0 },
-    { id: 'RW22', x: 1, z: -1 }
+test('the video map clips far segments and splits airspace by class', () => {
+  const data = emptyVideoMap();
+  data.radiusNm = 10;
+  // One segment near the center, one wholly beyond 10 NM.
+  data.arrivalPaths = [
+    [
+      [-74, 40],
+      [-74, 40.1],
+      [-74, 41],
+      [-74, 41.1]
+    ]
+  ];
+  data.mva.sectors = [
+    {
+      minimumAltitudeFt: 2500,
+      rings: [
+        [
+          [-74, 40],
+          [-73.9, 40],
+          [-73.9, 40.1],
+          [-74, 40]
+        ]
+      ],
+      labelLat: 40.03,
+      labelLon: -73.95
+    }
   ];
   const square = (cls: string): AirspaceFeature => ({
     type: 'CLASS',
@@ -85,17 +157,138 @@ test('the video map draws each runway once and splits airspace by class', () => 
     ]
   });
   const map = buildScopeVideoMap(
-    [{ runways, instrumentRunwayIds: ['RW22'] }],
+    data,
     [square('B'), square('C'), square('D'), square('E')],
     40,
     -74,
     0
   );
-  assert.equal(map.runwaySegments.length, 6);
-  assert.equal(map.finalSegments.length / 6, 1 + FINAL_COURSE_NM / 5);
+  // Segment 1 is inside, segment 2 reaches inside, segment 3 is beyond.
+  assert.equal(map.arrivalSegments.length / 6, 2);
+  assert.equal(map.mvaSegments.length / 6, 3);
+  assert.deepEqual(
+    map.mvaLabels.map((label) => label.text),
+    ['25']
+  );
   // Three edges per closed ring; class E is not on the map.
   assert.equal(map.classBSegments.length / 6, 3);
   assert.equal(map.classCDSegments.length / 6, 6);
+  assert.equal(mvaLabelText(1550), '16');
+});
+
+// FAACIFP18 records (cycle 2610): VOR, DME-only VOR, NDB, enroute and
+// terminal waypoints, the first legs of a STAR common route (its first fix
+// changed to CRI so the fixture stays small), and P-56A cut to three points
+// plus the P-56B circle.
+const SCOPE_MAP_CIFP = [
+  'SUSAD        CRI   K6011230VDTW N40364489W073534007    N40364490W073534000W0110000040     NARCANARSIE                      251212308',
+  'SUSAD        CSX   K3011645 DLW                    CSX N38450988W090213946W0019005561     NARCARDINAL                      251272605',
+  'SUSADB       AA    K3003650HOLW N47003259W096485466                       E0040           NARKENIE                         268621805',
+  'SUSAEAENRT   HOGGS K60    C   L N39345825W074161407                       W0122     NAR           HOGGS                    379732504',
+  'SUSAP KJFKK6CBOTON K60    R     N39245210W074271708                       W0121     NAR           BOTON                    305062506',
+  'SUSAP KJFKK6ECAMRN52ALL   010CRI  K6D 0V       IF                                             18000                        305942506',
+  'SUSAP KJFKK6ECAMRN52ALL   020BOTONK6PC0E       TF                                                                          305952506',
+  'SUSAP KJFKK6ECAMRN52ALL   030HOGGSK6EA0E       TF                                                                          305962506',
+  'SUSAURK6P56        A00100LC   G N38532000W077030200                              GND  A18000MP-56                          879611703',
+  'SUSAURK6P56        A00200L    G N38534500W077032300                                                                        879621703',
+  'SUSAURK6P56        A00300L    GEN38535000W077031700                                                                        879631703',
+  'SUSAURK6P56        B01200LC   CE                   N38551700W0770401000004       GND  A18000MP-56                          879721703'
+].join('\n');
+
+test('scope map records parse navaids, STAR routes, and special use airspace', () => {
+  const records = parseScopeMapRecords(SCOPE_MAP_CIFP);
+  assert.deepEqual(
+    records.navaids.map((navaid) => `${navaid.kind} ${navaid.ident}`),
+    ['VOR CRI', 'NDB AA']
+  );
+  assert.equal(records.stars.length, 1);
+  const [star] = records.stars;
+  assert.equal(star.procedureId, 'CAMRN5');
+  assert.deepEqual(
+    star.fixes.map((fix) => fix.name),
+    ['CRI', 'BOTON', 'HOGGS']
+  );
+  assert.equal(star.paths.length, 1);
+  assert.equal(star.paths[0].length, 3);
+  near(star.paths[0][0][1], 40 + 36 / 60 + 44.89 / 3600);
+
+  const [polygon, circle] = records.restrictiveAirspace;
+  assert.equal(polygon.name, 'P-56');
+  assert.equal(polygon.type, 'P');
+  assert.equal(polygon.upperLimit, '18000');
+  // Three published points, closed.
+  assert.equal(polygon.rings[0].length, 4);
+  // 0.4 NM circle around the arc origin.
+  const center = { lat: 38 + 55 / 60 + 17 / 3600, lon: -(77 + 4 / 60 + 1 / 3600) };
+  for (const [lon, lat] of circle.rings[0]) {
+    const dx = (lon - center.lon) * Math.cos((center.lat * Math.PI) / 180) * 60;
+    const dz = (lat - center.lat) * 60;
+    // Within the 1e-6 degree storage rounding.
+    assert.ok(Math.abs(Math.hypot(dx, dz) - 0.4) < 1e-3);
+  }
+
+  // An unresolvable STAR fix is an error, not a gap.
+  assert.throws(
+    () => parseScopeMapRecords(SCOPE_MAP_CIFP.replace('HOGGSK6EA', 'NOPESK6EA')),
+    /NOPES/
+  );
+});
+
+test('arcs sweep the requested way and meet both endpoints', () => {
+  const center = { lat: 40, lon: -74 };
+  const north = { lat: 40 + 5 / 60, lon: -74 };
+  const east = { lat: 40, lon: -74 + 5 / 60 / Math.cos((40 * Math.PI) / 180) };
+  const clockwise = arcPoints(center, north, east, true);
+  const counter = arcPoints(center, north, east, false);
+  // A quarter turn clockwise, three quarters counterclockwise.
+  assert.ok(counter.length > clockwise.length * 2);
+  // Clockwise from north toward east passes north-east of the center.
+  const mid = clockwise[Math.floor(clockwise.length / 2)];
+  assert.ok(mid[0] > center.lon && mid[1] > center.lat);
+});
+
+test('MVA charts parse AIXM sectors in feet MSL and reject other units', () => {
+  const sector = (limit: string, uom = 'FT') => `
+    <aixm:Airspace gml:id="1"><aixm:timeSlice><aixm:AirspaceTimeSlice>
+      <aixm:name>A</aixm:name>
+      <aixm:minimumLimit uom="${uom}">${limit}</aixm:minimumLimit>
+      <aixm:minimumLimitReference>MSL</aixm:minimumLimitReference>
+      <gml:exterior><gml:LinearRing>
+        <gml:posList srsName="urn:ogc:def:crs:OGC:1.3:CRS84">-74 40 -73.9 40 -73.9 40.1 -74 40</gml:posList>
+      </gml:LinearRing></gml:exterior>
+      <gml:interior><gml:LinearRing>
+        <gml:posList>-73.98 40.01 -73.95 40.01 -73.95 40.03 -73.98 40.01</gml:posList>
+      </gml:LinearRing></gml:interior>
+    </aixm:AirspaceTimeSlice></aixm:timeSlice></aixm:Airspace>`;
+  const chart = (body: string) =>
+    `<message:AIXMBasicMessage><gml:description>TST_MVA_FUS3_2026</gml:description>${body}</message:AIXMBasicMessage>`;
+  const parsed = parseMvaChart(chart(sector('2500')), 'TST');
+  assert.equal(parsed.edition, 'TST_MVA_FUS3_2026');
+  assert.equal(parsed.sectors[0].minimumAltitudeFt, 2500);
+  assert.equal(parsed.sectors[0].rings.length, 2);
+  assert.throws(() => parseMvaChart(chart(sector('762', 'M')), 'TST'), /feet MSL/);
+  assert.throws(() => parseMvaChart(chart(''), 'TST'), /no Airspace/);
+});
+
+test('polygon label points sit inside, clear of holes', () => {
+  // A square with a hole covering its center: the label goes beside the hole.
+  const outer: [number, number][] = [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+    [0, 0]
+  ];
+  const hole: [number, number][] = [
+    [0.3, 0.3],
+    [0.7, 0.3],
+    [0.7, 0.7],
+    [0.3, 0.7],
+    [0.3, 0.3]
+  ];
+  const [x, y] = polygonLabelPoint([outer, hole]);
+  assert.ok(x > 0 && x < 1 && y > 0 && y < 1);
+  assert.ok(!(x > 0.3 && x < 0.7 && y > 0.3 && y < 0.7));
 });
 
 test('the compass rose meets the display edges, clear of the top inset', () => {

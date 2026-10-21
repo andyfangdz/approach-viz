@@ -122,19 +122,31 @@ function DcbSpinner({
   );
 }
 
-const MAP_BUTTONS: Array<{ key: keyof ScopeMapVisibility; top: string; bottom: string }> = [
-  { key: 'shoreline', top: '1', bottom: 'SHORE' },
-  { key: 'runways', top: '2', bottom: 'RWYS' },
-  { key: 'finals', top: '3', bottom: 'FINALS' },
-  { key: 'classB', top: '4', bottom: 'CLASS B' },
-  { key: 'classCD', top: '5', bottom: 'CLS C/D' }
+const MAP_BUTTONS: Array<{
+  key: keyof ScopeMapVisibility;
+  top: string;
+  bottom: string;
+  /** Also on the main DCB, beside MAPS. */
+  quick: boolean;
+}> = [
+  { key: 'shoreline', top: '1', bottom: 'GEO', quick: true },
+  { key: 'runways', top: '2', bottom: 'RWYS', quick: true },
+  { key: 'finals', top: '3', bottom: 'FINALS', quick: true },
+  { key: 'fixes', top: '4', bottom: 'FIXES', quick: true },
+  { key: 'navaids', top: '5', bottom: 'NAVAIDS', quick: false },
+  { key: 'arrivals', top: '6', bottom: 'STAR RTS', quick: false },
+  { key: 'classB', top: '7', bottom: 'CLASS B', quick: true },
+  { key: 'classCD', top: '8', bottom: 'CLS C/D', quick: false },
+  { key: 'mva', top: '9', bottom: 'MVA', quick: true },
+  { key: 'specialUse', top: '10', bottom: 'SUA', quick: false }
 ];
 
 /**
  * The STARS display control bar across the top of the scope: RANGE, RR,
- * video map toggles, WX1-WX6, HISTORY, PTL length and PTL ALL, plus the
- * 2D/3D view switch. `wxAvailableLevels` marks levels present in the data
- * as AVL, as STARS does.
+ * MAPS (a submenu of every video map, with the common ones also on the main
+ * bar), WX1-WX6, HISTORY, PTL length and PTL ALL, plus the 2D/3D view
+ * switch. `wxAvailableLevels` marks levels present in the data as AVL, as
+ * STARS does.
  */
 export function StarsDcb({
   settings,
@@ -154,6 +166,7 @@ export function StarsDcb({
   airspaceLayerVisible: boolean;
 }) {
   const is2d = dimension === '2d';
+  const [mapsMenuOpen, setMapsMenuOpen] = useState(false);
   const mapDisabledReason = (key: keyof ScopeMapVisibility): string | null => {
     if (key === 'shoreline' && shorelineStatus === 'unavailable') {
       return 'Shoreline unavailable: elevation tiles failed to load';
@@ -166,6 +179,36 @@ export function StarsDcb({
     }
     return null;
   };
+
+  const mapToggle = ({ key, top, bottom }: (typeof MAP_BUTTONS)[number]) => {
+    const reason = mapDisabledReason(key);
+    return (
+      <DcbToggle
+        key={key}
+        top={top}
+        bottom={bottom}
+        active={settings.maps[key] && reason === null}
+        disabled={reason !== null}
+        title={reason ?? `Video map ${top}: ${bottom}`}
+        onClick={() => onSettingsChange({ maps: { ...settings.maps, [key]: !settings.maps[key] } })}
+      />
+    );
+  };
+
+  if (mapsMenuOpen) {
+    return (
+      <div className="stars-dcb" role="toolbar" aria-label="STARS video maps">
+        <DcbToggle
+          top="DONE"
+          active
+          title="Back to the main display controls"
+          onClick={() => setMapsMenuOpen(false)}
+        />
+        <span className="stars-dcb-gap" aria-hidden="true" />
+        {MAP_BUTTONS.map(mapToggle)}
+      </div>
+    );
+  }
 
   return (
     <div className="stars-dcb" role="toolbar" aria-label="STARS display controls">
@@ -189,22 +232,13 @@ export function StarsDcb({
         }
       />
       <span className="stars-dcb-gap" aria-hidden="true" />
-      {MAP_BUTTONS.map(({ key, top, bottom }) => {
-        const reason = mapDisabledReason(key);
-        return (
-          <DcbToggle
-            key={key}
-            top={top}
-            bottom={bottom}
-            active={settings.maps[key] && reason === null}
-            disabled={reason !== null}
-            title={reason ?? `Video map ${top}: ${bottom}`}
-            onClick={() =>
-              onSettingsChange({ maps: { ...settings.maps, [key]: !settings.maps[key] } })
-            }
-          />
-        );
-      })}
+      <DcbToggle
+        top="MAPS"
+        active={false}
+        title="All video maps"
+        onClick={() => setMapsMenuOpen(true)}
+      />
+      {MAP_BUTTONS.filter((button) => button.quick).map(mapToggle)}
       <span className="stars-dcb-gap" aria-hidden="true" />
       {settings.wxLevels.map((selected, index) => {
         const level = index + 1;

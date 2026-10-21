@@ -5,14 +5,16 @@ The TRACON radar view shows a whole terminal facility (for example N90) the way 
 ## Sources for the look
 
 - FAA JO 7210.3, 3-9-1 (national color standard for terminal displays): black background; dim gray compass rose, range rings, and maps; white owned and green unowned data blocks; blue search/fusion target symbols and history trails; white predicted track lines.
-- vNAS CRC STARS documentation: data block layout, position symbols, DCB buttons (RANGE, RR, maps, WX1–WX6, HISTORY, PTL LNTH/PTL ALL), SSA lines, and the compass rose along the display edge.
+- vNAS CRC STARS documentation: data block layout, position symbols, DCB buttons (RANGE, RR, MAPS, WX1–WX6, HISTORY, PTL LNTH/PTL ALL), SSA lines, and the compass rose along the display edge.
+- Video map content follows what facility STARS maps carry (vNAS video map features: lines, fix/VOR/NDB symbols, text, in brightness groups A and B): runways, approach finals with FAF ticks, approach and arrival fixes, navaids, MVA sectors with their altitudes, special use airspace, and Class B. Every element is drawn from FAA data, not from community map files.
 - Exact shades (history fade, weather fill and stipple, DCB buttons) follow common STARS emulations.
 
 ## Facilities (`lib/tracon-facilities.ts`)
 
 - The FAA data this app builds from has no TRACON boundary polygons, so a facility preset is its ID, name, and the major airports it serves (primary first). The presets cover N90, A90, PHL, PCT, A80, F11, MIA, C90, D21, M98, D10, I90, D01, P50, L30, SCT, NCT, and S46; each airport belongs to one facility, and every listed airport is a CIFP airport.
 - Nothing positional is stored: `computeFacilityFrame` centers the scope on the middle of the member airports' bounding box and sets the range to the farthest member plus 20 NM, rounded up to 10 NM (capped at 200 NM).
-- `loadTraconSceneDataAction(facilityId)` (`app/actions-lib/tracon.ts`) returns the members with runways and their instrument runway thresholds (runways named by a current CIFP approach; three-digit final courses and historical fixtures do not count), the frame, and the airspace within the range. An unknown facility or a member missing from the database is an error rather than a smaller scope.
+- Each preset also names its FAA MVA chart (`mvaChartId`, the 3 NM `FUS3` chart, e.g. `N90_MVA_FUS3`). `download-data` fetches those charts from `aeronav.faa.gov/MVA_Charts/aixm/`, so this list is the single owner of which charts the build needs.
+- `loadTraconSceneDataAction(facilityId)` (`app/actions-lib/tracon.ts`) returns the members with runways, the frame, the airspace within the range, and the video map sources (`app/actions-lib/tracon-video-map.ts`, below). An unknown facility, a member missing from the database, a missing MVA chart, or an approach fix missing from the waypoint table is an error rather than a smaller scope.
 - The facility is `traconFacilityId` in the persisted options and `?tracon=` in the URL. Empty means "follow the selected airport": its facility if it is a member of one, else N90.
 
 ## View State
@@ -22,7 +24,7 @@ The TRACON radar view shows a whole terminal facility (for example N90) the way 
 
 ## DCB, SSA, and Compass Rose (`app/app-client/tracon/`)
 
-- `StarsDcb` is one row across the top of the scope. Spinners (RANGE, RR, HISTORY, PTL LNTH) step with the mouse wheel, or tap to arm them and use the ▲/▼ halves. Toggles: maps 1–5 (shoreline, runways, finals, Class B, Class C/D), WX1–WX6 (marked `AVL` when the current data reaches that level), PTL ALL, and VIEW 2D/3D. Buttons that do not apply are disabled with the reason as their title (no shoreline tiles, the airspace layer off, 3D).
+- `StarsDcb` is one row across the top of the scope. Spinners (RANGE, RR, HISTORY, PTL LNTH) step with the mouse wheel, or tap to arm them and use the ▲/▼ halves. Toggles: `MAPS` (a submenu row of all ten video maps and `DONE`, as on STARS) plus the six common maps, WX1–WX6 (marked `AVL` when the current data reaches that level), PTL ALL, and VIEW 2D/3D. Buttons that do not apply are disabled with the reason as their title (no shoreline tiles, the airspace layer off, 3D).
 - Floating controls move down by the DCB height in TRACON view (`--controls-overlay-offset`); the DCB itself sits at `--stars-dcb-top`.
 - `StarsSsa`: the red-capability triangle, Zulu time, range and PTL length, available weather levels with the selected ones in parentheses, and the ADS-B feed state where STARS shows network status. Altimeters and altitude filters are left out because the app has no source for them.
 - `EdgeCompassRose` (2D only): SVG ticks every 5° (longer every 10°) and three-digit labels every 10° where each bearing from the display center meets the display edge, below the DCB. On a north-up scope it depends only on the display size, so it is redrawn on resize rather than per frame. Bearings are **true**, matching the scene's local frame.
@@ -34,12 +36,27 @@ The TRACON radar view shows a whole terminal facility (for example N90) the way 
 
 ## Video Map (`scope-geometry.ts`, `shoreline.ts`, `TraconScope.tsx`)
 
-- Flat on the floor plane (the primary airport's field elevation), centered on the facility, in map gray. Coverage (and ring coverage) is twice the facility range, at most 240 NM, so panning and the display corners stay mapped.
-- **Shoreline**: the 0 m contour of Terrarium elevation, traced by marching squares in the scene-geometry worker (`buildShoreline`) after a 3×3 smoothing pass, at z8 up to a 120 NM radius and z7 beyond. Terrarium carries ocean bathymetry below 0 m, so bays, sounds, and tidal rivers trace; inland lakes sit above sea level and do not. Cells touching a failed tile are skipped, and if every tile fails the SHORE button is disabled.
-- **Runways**: each member runway once, threshold to reciprocal threshold.
-- **Finals**: 10 NM extended finals from each instrument runway threshold that has a reciprocal, with a cross tick every 5 NM.
-- **Class B** and **Class C/D** boundaries from the facility airspace (2D; Class C/D off by default because the many Class D rings clutter a facility-wide scope). They follow the airspace layer toggle. In 3D, airspace keeps the extruded `AirspaceVolumes` outline presentation instead.
+The video maps are FAA data assembled once per facility on the server (`tracon-video-map.ts`) within `videoMapRadiusNm` (twice the facility range, at most 200 NM), projected flat on the floor plane (the primary airport's field elevation) around the facility center, and clipped there. Each map is one DCB button (`MAPS` opens all ten; the six common ones are also on the main bar). Map group A (lighter gray) is the primary map; group B (dimmer) is reference data.
+
+| #   | Button   | Content                                                                                                                                                                         | Source                                             | Default |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------- |
+| 1   | GEO      | Sea-level shoreline                                                                                                                                                             | Terrarium elevation tiles                          | on      |
+| 2   | RWYS     | Every runway (threshold to reciprocal) of every CIFP airport in the map radius, not only the members                                                                            | CIFP runway records                                | on      |
+| 3   | FINALS   | Each member airport's current straight-in approach final segment, from its first final-segment fix to the runway, with RF legs as arcs and a tick across the course at each FAF | CIFP approaches (`approaches.data_json`)           | on      |
+| 4   | FIXES    | Approach fixes controllers vector to (each transition's first fix, the IF, the FAF) as triangles with names                                                                     | CIFP approaches                                    | on      |
+| 5   | NAVAIDS  | VORs (hexagons) and NDBs, including terminal NDBs (rings), with identifiers                                                                                                     | CIFP navaid records                                | on      |
+| 6   | STAR RTS | Member airports' STAR routes (common routes, enroute and runway transitions) through their fixes, broken where a leg has no fix (vectors), with fix triangles and names         | CIFP STAR records (`star_routes`)                  | off     |
+| 7   | CLASS B  | Class B shelves                                                                                                                                                                 | FAA airspace GeoJSON                               | on      |
+| 8   | CLS C/D  | Class C and D rings                                                                                                                                                             | FAA airspace GeoJSON                               | off     |
+| 9   | MVA      | The facility's minimum vectoring altitude sectors, labeled in hundreds of feet (`25` = 2,500 ft MSL) at each sector's pole of inaccessibility                                   | FAA MVA chart, AIXM 5.1 (`mva_sectors`)            | off     |
+| 10  | SUA      | Prohibited, restricted, warning, and alert areas and MOAs, labeled with their designators                                                                                       | CIFP restrictive airspace (`restrictive_airspace`) | off     |
+
+- Data parsing happens once in `build-db`: `lib/cifp/scope-map-records.ts` reads navaids, STAR routes (fixes resolved by ident, ICAO region, and section, so a reused ident in another region never moves a route), and restrictive airspace boundaries (great-circle and rhumb edges, clockwise and counterclockwise arcs, circles); `lib/mva/parser.ts` reads the AIXM charts (CRS84 polygons with holes, minimum limit in feet MSL); `lib/polygon-label-point.ts` places MVA and SUA labels. A STAR fix that does not resolve, an unknown boundary type, or an MVA sector not in feet MSL fails the build.
+- Point symbols (triangle, hexagon, ring) are constant-size `ScreenMarks` glyphs with names as screen-space `SceneLabels` to their right; MVA and SUA labels are centered on their label points.
+- **Shoreline**: the 0 m contour of Terrarium elevation, traced by marching squares in the scene-geometry worker (`buildShoreline`) after a 3×3 smoothing pass, at z8 up to a 120 NM radius and z7 beyond. Terrarium carries ocean bathymetry below 0 m, so bays, sounds, and tidal rivers trace; inland lakes sit above sea level and do not. Cells touching a failed tile are skipped, and if every tile fails the GEO button is disabled. Its coverage follows the current range (twice it, at most 240 NM).
+- Class B and Class C/D follow the airspace layer toggle and are 2D only; in 3D, airspace keeps the extruded `AirspaceVolumes` presentation.
 - **Range rings**: centered on the facility at the RR spacing (2, 5, 10, or 20 NM, or off), dimmer than the map.
+- What real facility maps have that FAA data does not: sector and position boundaries, the facility's lateral boundary (the MVA chart's outer edge is the closest public proxy), VFR corridors and SFRAs, and hand-drawn geography such as highways. Those are not drawn.
 - The terrain/satellite/chart/plate surfaces, the approach path, and obstacles are not drawn in TRACON view.
 
 ## Weather (`scope-weather.ts`, `ScopeWeather.tsx`)
@@ -66,10 +83,10 @@ Altitude and ground speed come from the shared Rust render tracks (`RenderTrack:
 
 ## Screen-Space Drawing
 
-- `ScreenMarks` draws discs and leader lines as instanced quads offset in pixels in the vertex shader, with a per-instance color, so zooming costs the main thread nothing; it writes CSS color bytes straight to the framebuffer like the label atlas.
+- `ScreenMarks` draws discs, leader lines, and outlined map symbols (triangle, hexagon, ring; signed distance fields in the fragment shader) as instanced quads offset in pixels in the vertex shader, with a per-instance color, so zooming costs the main thread nothing; it writes CSS color bytes straight to the framebuffer like the label atlas.
 - Data blocks and position symbols use `SceneLabels` in `screen` mode with `offsetPx` and `align: 'start'`.
 - Marks, labels, and predicted track lines draw without depth testing, so the symbology is never hidden by weather or the map.
 
 ## Tests
 
-`app/scene/tracon/tracon-scope.test.ts` covers data-block formatting, rings, finals, the video map, the edge compass rose, weather levels, DCB spinner steps, shoreline tracing, and the worker scope buffers; `lib/tracon-facilities.test.ts` covers the presets and the frame computation.
+`app/scene/tracon/tracon-scope.test.ts` covers data-block formatting, rings, the video map (runways, finals with FAF ticks, symbols, clipping, MVA labels, airspace classes), CIFP navaid/STAR/SUA parsing against real records, arcs, MVA AIXM parsing, label points, the edge compass rose, weather levels, DCB spinner steps, shoreline tracing, and the worker scope buffers; `lib/tracon-facilities.test.ts` covers the presets and the frame computation.

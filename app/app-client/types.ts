@@ -22,13 +22,25 @@ export type ViewMode = 'scene' | 'tracon';
 /** TRACON scope projection: top-down orthographic scope, or perspective 3D. */
 export type TraconDimension = '2d' | '3d';
 
-/** STARS video maps the TRACON scope can show. */
+/** STARS video maps the TRACON scope can show (DCB MAPS buttons). */
 export interface ScopeMapVisibility {
+  /** GEO: sea-level shoreline. */
   shoreline: boolean;
   runways: boolean;
+  /** Approach final segments with FAF ticks. */
   finals: boolean;
+  /** Approach fixes (IAF, IF, FAF). */
+  fixes: boolean;
+  /** VORs and NDBs. */
+  navaids: boolean;
+  /** STAR routes and their fixes. */
+  arrivals: boolean;
   classB: boolean;
   classCD: boolean;
+  /** Minimum vectoring altitude sectors. */
+  mva: boolean;
+  /** Special use airspace. */
+  specialUse: boolean;
 }
 
 export type ShorelineStatus = 'loading' | 'ready' | 'unavailable';
