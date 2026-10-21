@@ -60,6 +60,8 @@ export interface TraconScopeSettings {
   ptlMinutes: number;
   /** PTL ALL: draw predicted track lines on every track. */
   ptlAll: boolean;
+  /** Altitude filter upper limit (feet); tracks above it have no data block. */
+  altitudeFilterHighFeet: number;
 }
 
 export interface NexradTimingDebugState {

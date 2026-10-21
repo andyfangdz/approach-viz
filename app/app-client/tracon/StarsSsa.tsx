@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { TraconScopeSettings } from '../types';
+import { formatAltitudeFilter } from '@/app/scene/tracon/data-block';
 
 function formatZuluTime(date: Date): string {
   const hh = String(date.getUTCHours()).padStart(2, '0');
@@ -20,10 +21,10 @@ function formatWxLine(levels: readonly boolean[], availableLevels: number): stri
 
 /**
  * STARS system status area: the red-capability triangle, Zulu time,
- * range and PTL length, and available weather levels, with the ADS-B feed
- * status where STARS shows its network status. Lines that STARS fills from
- * sources this app does not have (altimeters, altitude filters) are left
- * out rather than invented.
+ * range and PTL length, the altitude filter limits, and available weather
+ * levels, with the ADS-B feed status where STARS shows its network status.
+ * Lines that STARS fills from sources this app does not have (altimeters)
+ * are left out rather than invented.
  */
 export function StarsSsa({
   settings,
@@ -50,6 +51,9 @@ export function StarsSsa({
       <div>{formatZuluTime(now)}</div>
       <div>
         {settings.rangeNm} PTL: {settings.ptlMinutes.toFixed(1)}
+      </div>
+      <div>
+        {formatAltitudeFilter({ lowFeet: null, highFeet: settings.altitudeFilterHighFeet })}
       </div>
       {showWeather && <div>{formatWxLine(settings.wxLevels, wxAvailableLevels)}</div>}
       {trafficError ? (

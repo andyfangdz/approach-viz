@@ -12,6 +12,16 @@ export const MAX_SCOPE_RANGE_NM = 400;
 export const RING_SPACING_STEPS_NM = [0, 2, 5, 10, 20] as const;
 export const PTL_STEP_MINUTES = 0.5;
 export const MAX_PTL_MINUTES = 5;
+/**
+ * Altitude filter upper limit default and spinner range. A TRACON position
+ * sets its filters to cover its airspace (JO 7110.65 5-14-2); terminal
+ * airspace lies below Class A, so `180` keeps data blocks on terminal
+ * traffic and drops them from en-route overflights.
+ */
+export const DEFAULT_ALTITUDE_FILTER_HIGH_FEET = 18_000;
+export const ALTITUDE_FILTER_STEP_FEET = 1_000;
+export const MIN_ALTITUDE_FILTER_HIGH_FEET = 1_000;
+export const MAX_ALTITUDE_FILTER_HIGH_FEET = 99_900;
 
 export function defaultScopeSettings(rangeNm: number): TraconScopeSettings {
   return {
@@ -34,7 +44,8 @@ export function defaultScopeSettings(rangeNm: number): TraconScopeSettings {
     wxLevels: Array.from({ length: SCOPE_WX_LEVEL_COUNT }, () => true),
     historyDotCount: 5,
     ptlMinutes: 1,
-    ptlAll: false
+    ptlAll: false,
+    altitudeFilterHighFeet: DEFAULT_ALTITUDE_FILTER_HIGH_FEET
   };
 }
 
@@ -55,6 +66,11 @@ export function stepThrough(steps: readonly number[], current: number, delta: nu
 
 export function stepHistory(current: number, delta: number): number {
   return Math.max(0, Math.min(SCOPE_MAX_HISTORY_DOTS, current + Math.sign(delta)));
+}
+
+export function stepAltitudeFilter(currentFeet: number, delta: number): number {
+  const next = currentFeet + Math.sign(delta) * ALTITUDE_FILTER_STEP_FEET;
+  return Math.max(MIN_ALTITUDE_FILTER_HIGH_FEET, Math.min(MAX_ALTITUDE_FILTER_HIGH_FEET, next));
 }
 
 export function stepPtl(current: number, delta: number): number {

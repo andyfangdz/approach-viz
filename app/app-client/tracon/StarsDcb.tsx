@@ -8,6 +8,7 @@ import type {
 import {
   clampRange,
   RING_SPACING_STEPS_NM,
+  stepAltitudeFilter,
   stepHistory,
   stepPtl,
   stepThrough
@@ -280,6 +281,16 @@ export function StarsDcb({
         active={settings.ptlAll}
         title="Predicted track lines on all tracks"
         onClick={() => onSettingsChange({ ptlAll: !settings.ptlAll })}
+      />
+      <DcbSpinner
+        top="ALT FIL"
+        value={String(Math.round(settings.altitudeFilterHighFeet / 100)).padStart(3, '0')}
+        title="Altitude filter: tracks above this altitude (hundreds of feet) have no data block"
+        onStep={(delta) =>
+          onSettingsChange({
+            altitudeFilterHighFeet: stepAltitudeFilter(settings.altitudeFilterHighFeet, delta)
+          })
+        }
       />
       <span className="stars-dcb-gap" aria-hidden="true" />
       {(['2d', '3d'] as const).map((value) => (

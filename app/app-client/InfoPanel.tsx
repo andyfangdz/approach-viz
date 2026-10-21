@@ -136,10 +136,11 @@ export function InfoPanel({
             </>
           )}
           STARS symbology: blue target with <code>*</code> (no track owner in ADS-B data), blue
-          history dots, green data block with callsign, then altitude (hundreds of ft) and ground
-          speed (tens of kt). Video maps (MAPS) are drawn from FAA data: shoreline, runways,
-          approach finals and fixes, navaids, STAR routes, Class B/C/D, the facility MVA chart, and
-          special use airspace; bearings are true.
+          history dots, and a one-line data block of altitude (hundreds of ft) and ground speed
+          (tens of kt), or altitude only without a flight ID. Click a target for its callsign; ALT
+          FIL hides data blocks above that altitude. Video maps (MAPS) are drawn from FAA data:
+          shoreline, runways, approach finals and fixes, navaids, STAR routes, Class B/C/D, the
+          facility MVA chart, and special use airspace; bearings are true.
         </div>
       )}
       {viewMode === 'scene' && plateOverlayEnabled && !hasApproachPlate && (

@@ -684,6 +684,7 @@ export const SceneCanvas = memo(function SceneCanvas({
               scopePredictedTrackMinutes={
                 traconScopeSettings.ptlAll ? traconScopeSettings.ptlMinutes : 0
               }
+              scopeAltitudeFilterHighFeet={traconScopeSettings.altitudeFilterHighFeet}
               radiusNm={
                 tracon ? Math.min(traconMapRadiusNm, TRACON_TRAFFIC_MAX_RADIUS_NM) : undefined
               }

@@ -120,6 +120,12 @@ export interface TrafficScopeSoA extends TrafficRenderSoA {
 export interface TrafficScopeBuffers {
   /** `x, y, z` per present airborne track. */
   targetPositions: Float32Array;
+  /** ICAO hex per target, the key for forcing a full data block. */
+  targetHexes: string[];
+  /** Reported altitude per target (NaN when unreported), for the altitude filter. */
+  targetAltitudeFeet: Float32Array;
+  /** 1 when the target broadcasts a flight ID (treated as associated). */
+  targetAssociated: Uint8Array;
   /** Data block line 1 (identity) per target. */
   dataBlockIdents: string[];
   /** Data block line 2 (altitude/speed) per target. */
@@ -137,7 +143,10 @@ export interface TrafficScopeBuffers {
  * filtering leaves surface traffic to the tower's surface display): history
  * dots resampled from the trail at a minimum ground spacing (newest first), a
  * predicted track line from heading and ground speed, an altitude stalk down
- * to `floorY`, and the two data block lines.
+ * to `floorY`, and the two full data block lines. Which data block each
+ * target shows is chosen on the main thread from the altitude and
+ * association columns, so selecting a target or moving the altitude filter
+ * needs no worker round trip.
  */
 export function buildTrafficScopeBuffers(
   soa: TrafficScopeSoA,
@@ -152,6 +161,9 @@ export function buildTrafficScopeBuffers(
   );
   const predictedTrackMinutes = Math.max(0, options.predictedTrackMinutes);
   const targetPositions: number[] = [];
+  const targetHexes: string[] = [];
+  const targetAltitudeFeet: number[] = [];
+  const targetAssociated: number[] = [];
   const dataBlockIdents: string[] = [];
   const dataBlockFields: string[] = [];
   const historyDots: number[] = [];
@@ -172,6 +184,9 @@ export function buildTrafficScopeBuffers(
       groundSpeedKt[track]
     );
     targetPositions.push(x, y, z);
+    targetHexes.push(soa.hexes[track] ?? '');
+    targetAltitudeFeet.push(altitudeFeet[track]);
+    targetAssociated.push(soa.callsignLabels[track]?.trim() ? 1 : 0);
     dataBlockIdents.push(ident);
     dataBlockFields.push(fields);
 
@@ -211,6 +226,9 @@ export function buildTrafficScopeBuffers(
 
   return {
     targetPositions: new Float32Array(targetPositions),
+    targetHexes,
+    targetAltitudeFeet: new Float32Array(targetAltitudeFeet),
+    targetAssociated: new Uint8Array(targetAssociated),
     dataBlockIdents,
     dataBlockFields,
     historyDots: new Float32Array(historyDots),

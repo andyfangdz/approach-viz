@@ -5,7 +5,8 @@ The TRACON radar view shows a whole terminal facility (for example N90) the way 
 ## Sources for the look
 
 - FAA JO 7210.3, 3-9-1 (national color standard for terminal displays): black background; dim gray compass rose, range rings, and maps; white owned and green unowned data blocks; blue search/fusion target symbols and history trails; white predicted track lines.
-- vNAS CRC STARS documentation: data block layout, position symbols, DCB buttons (RANGE, RR, MAPS, WX1–WX6, HISTORY, PTL LNTH/PTL ALL), SSA lines, and the compass rose along the display edge.
+- vNAS CRC STARS documentation: full, partial, and limited data blocks and which tracks get each, altitude filters, leader directions, position symbols, DCB buttons (RANGE, RR, MAPS, WX1–WX6, HISTORY, PTL LNTH/PTL ALL), SSA lines, and the compass rose along the display edge.
+- FAA JO 7110.65, 5-14-2: altitude filters set to cover the position's airspace; data blocks outside them are not shown.
 - Video map content follows what facility STARS maps carry (vNAS video map features: lines, fix/VOR/NDB symbols, text, in brightness groups A and B): runways, approach finals with FAF ticks, approach and arrival fixes, navaids, MVA sectors with their altitudes, special use airspace, and Class B. Every element is drawn from FAA data, not from community map files.
 - Exact shades (history fade, weather fill and stipple, DCB buttons) follow common STARS emulations.
 
@@ -20,13 +21,13 @@ The TRACON radar view shows a whole terminal facility (for example N90) the way 
 ## View State
 
 - `viewMode` (`scene` | `tracon`) and `traconDimension` (`2d` | `3d`) live in the persisted options object and in `?view=tracon-2d` / `?view=tracon-3d` with `?tracon=<facility>` (see [UI/URL](ui-url-state-and-mobile.md)).
-- DCB settings (`TraconScopeSettings`: range, ring spacing, maps, WX levels, history, PTL) are session state in `AppClient`, not persisted. A newly loaded facility resets RANGE to its computed range; recenter does too.
+- DCB settings (`TraconScopeSettings`: range, ring spacing, maps, WX levels, history, PTL, altitude filter) are session state in `AppClient`, not persisted. A newly loaded facility resets RANGE to its computed range; recenter does too.
 
 ## DCB, SSA, and Compass Rose (`app/app-client/tracon/`)
 
-- `StarsDcb` is one row across the top of the scope. Spinners (RANGE, RR, HISTORY, PTL LNTH) step with the mouse wheel, or tap to arm them and use the ▲/▼ halves. Toggles: `MAPS` (a submenu row of all ten video maps and `DONE`, as on STARS) plus the six common maps, WX1–WX6 (marked `AVL` when the current data reaches that level), PTL ALL, and VIEW 2D/3D. Buttons that do not apply are disabled with the reason as their title (no shoreline tiles, the airspace layer off, 3D).
+- `StarsDcb` is one row across the top of the scope. Spinners (RANGE, RR, HISTORY, PTL LNTH, ALT FIL) step with the mouse wheel, or tap to arm them and use the ▲/▼ halves. Toggles: `MAPS` (a submenu row of all ten video maps and `DONE`, as on STARS) plus the six common maps, WX1–WX6 (marked `AVL` when the current data reaches that level), PTL ALL, and VIEW 2D/3D. Buttons that do not apply are disabled with the reason as their title (no shoreline tiles, the airspace layer off, 3D).
 - Floating controls move down by the DCB height in TRACON view (`--controls-overlay-offset`); the DCB itself sits at `--stars-dcb-top`.
-- `StarsSsa`: the red-capability triangle, Zulu time, range and PTL length, available weather levels with the selected ones in parentheses, and the ADS-B feed state where STARS shows network status. Altimeters and altitude filters are left out because the app has no source for them.
+- `StarsSsa`: the red-capability triangle, Zulu time, range and PTL length, the altitude filter limits (`N99 180`), available weather levels with the selected ones in parentheses, and the ADS-B feed state where STARS shows network status. Altimeters are left out because the app has no source for them.
 - `EdgeCompassRose` (2D only): SVG ticks every 5° (longer every 10°) and three-digit labels every 10° where each bearing from the display center meets the display edge, below the DCB. On a north-up scope it depends only on the display size, so it is redrawn on resize rather than per frame. Bearings are **true**, matching the scene's local frame.
 
 ## Cameras
@@ -53,6 +54,7 @@ The video maps are FAA data assembled once per facility on the server (`tracon-v
 
 - Data parsing happens once in `build-db`: `lib/cifp/scope-map-records.ts` reads navaids, STAR routes (fixes resolved by ident, ICAO region, and section, so a reused ident in another region never moves a route), and restrictive airspace boundaries (great-circle and rhumb edges, clockwise and counterclockwise arcs, circles); `lib/mva/parser.ts` reads the AIXM charts (CRS84 polygons with holes, minimum limit in feet MSL); `lib/polygon-label-point.ts` places MVA and SUA labels. A STAR fix that does not resolve, an unknown boundary type, or an MVA sector not in feet MSL fails the build.
 - Point symbols (triangle, hexagon, ring) are constant-size `ScreenMarks` glyphs with names as screen-space `SceneLabels` to their right; MVA and SUA labels are centered on their label points.
+- Map text never overprints. A real video map is drafted for one range with its text placed by hand; these maps are drawn from FAA data at any range, so `TraconScope` thins the text per view instead (`label-declutter.ts`, `declutterBoxes`): every symbol stays, and in priority order (navaids, approach fixes, STAR fixes, SUA, MVA) a name that would cover a symbol or an already placed name is left off. It is recomputed in `useFrame` only when the view or the visible maps change, and only the kept subset is passed to `SceneLabels`, which keeps its atlas.
 - **Shoreline**: the 0 m contour of Terrarium elevation, traced by marching squares in the scene-geometry worker (`buildShoreline`) after a 3×3 smoothing pass, at z8 up to a 120 NM radius and z7 beyond. Terrarium carries ocean bathymetry below 0 m, so bays, sounds, and tidal rivers trace; inland lakes sit above sea level and do not. Cells touching a failed tile are skipped, and if every tile fails the GEO button is disabled. Its coverage follows the current range (twice it, at most 240 NM).
 - Class B and Class C/D follow the airspace layer toggle and are 2D only; in 3D, airspace keeps the extruded `AirspaceVolumes` presentation.
 - **Range rings**: centered on the facility at the RR spacing (2, 5, 10, or 20 NM, or off), dimmer than the map.
@@ -72,11 +74,16 @@ The video maps are FAA data assembled once per facility on the server (`tracon-v
 
 - Only present airborne tracks: the scope's altitude filtering leaves surface traffic to the tower's surface display.
 - Fused-track target symbol: a blue disc with the position symbol on it. ADS-B carries no track ownership or flight plans, so every track is drawn as unowned (green) with `*`.
+- Per target the worker also returns its hex, altitude, and whether it broadcasts a flight ID. `TraconTargets` picks the data block on the main thread (`dataBlockKind`), so the altitude filter and selection need no worker round trip.
 - History: up to HISTORY dots (default 5, at most 10) resampled from the trail at ≥ 0.3 NM spacing, about one radar update at approach speeds; each dot carries its age, and `ScreenMarks` colors it from five blue shades.
 - Predicted track lines (white) only with PTL ALL on, PTL LNTH minutes long, from track heading and ground speed.
-- Leader line to the northeast and a two-line green data block:
-  - line 1: callsign, or the ICAO hex when the feed has none;
-  - line 2: altitude in hundreds of feet (three digits, `---` when unreported), the blank handoff column, and ground speed in tens of knots (two digits, `--` when unreported), e.g. `045 21`. The feed has no aircraft type, so line 2 does not timeshare.
+- Data blocks follow a STARS position that owns none of the traffic, which is what this app is:
+  - a track with a flight ID (standing in for an associated track) gets a one-line **partial data block**, altitude and ground speed (`045 21`);
+  - a track without one gets a **limited data block**, altitude only (`045`);
+  - both are drawn a step dimmer than full data blocks, as with the separate LDB brightness;
+  - a track above the altitude filter (ALT FIL, default `180`, lower limit `N99`) has no data block, only its target, so en-route overflights stop crowding the scope;
+  - clicking a target toggles its two-line **full data block** (as clicking a partial data block does in STARS), shown regardless of the filter: line 1 is the callsign, or the ICAO hex when the feed has none; line 2 is altitude in hundreds of feet (three digits, `---` when unreported), the blank handoff column, and ground speed in tens of knots (two digits, `--` when unreported). The feed has no aircraft type, so line 2 does not timeshare. Selections are session-only.
+- Leader direction: controllers turn leader lines (keypad 1–9) to keep blocks apart. `placeDataBlocks` does that per view: full blocks first, each block keeps its last direction while it is clear, else takes the first clear one of 9, 3, 6, 7, 1, 4 (or the least overlapping), where clear means not over another target or a placed block. It runs in `useFrame` only when the view or the blocks change, on a grid index. At ranges where dozens of targets share a few pixels (the airports at 60 NM) blocks still overlap, as on a real scope at that range.
 - 3D only: altitude stalks from targets down to the floor plane.
 
 Altitude and ground speed come from the shared Rust render tracks (`RenderTrack::altitude_feet` / `ground_speed_kt`, exposed to WASM as `altitudeFeet` / `groundSpeedKt`, `NaN` when unreported). They are part of the render hash, so a speed-only change still reaches the scope.
@@ -84,9 +91,9 @@ Altitude and ground speed come from the shared Rust render tracks (`RenderTrack:
 ## Screen-Space Drawing
 
 - `ScreenMarks` draws discs, leader lines, and outlined map symbols (triangle, hexagon, ring; signed distance fields in the fragment shader) as instanced quads offset in pixels in the vertex shader, with a per-instance color, so zooming costs the main thread nothing; it writes CSS color bytes straight to the framebuffer like the label atlas.
-- Data blocks and position symbols use `SceneLabels` in `screen` mode with `offsetPx` and `align: 'start'`.
+- Data blocks and position symbols use `SceneLabels` in `screen` mode; each data block line carries its own `placement` (offset and `start`/`end` alignment from its leader direction), an instanced attribute, so one label mesh serves every direction.
 - Marks, labels, and predicted track lines draw without depth testing, so the symbology is never hidden by weather or the map.
 
 ## Tests
 
-`app/scene/tracon/tracon-scope.test.ts` covers data-block formatting, rings, the video map (runways, finals with FAF ticks, symbols, clipping, MVA labels, airspace classes), CIFP navaid/STAR/SUA parsing against real records, arcs, MVA AIXM parsing, label points, the edge compass rose, weather levels, DCB spinner steps, shoreline tracing, and the worker scope buffers; `lib/tracon-facilities.test.ts` covers the presets and the frame computation.
+`app/scene/tracon/tracon-scope.test.ts` covers data-block formatting, kinds, and the altitude filter, map-text declutter, leader direction placement, rings, the video map (runways, finals with FAF ticks, symbols, clipping, MVA labels, airspace classes), CIFP navaid/STAR/SUA parsing against real records, arcs, MVA AIXM parsing, label points, the edge compass rose, weather levels, DCB spinner steps, shoreline tracing, and the worker scope buffers; `lib/tracon-facilities.test.ts` covers the presets and the frame computation.

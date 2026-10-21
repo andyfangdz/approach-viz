@@ -40,6 +40,9 @@ export interface TrafficWorkerResult {
   markerMatrices: Float32Array;
   headingSegments: Float32Array;
   targetPositions: Float32Array;
+  targetHexes: string[];
+  targetAltitudeFeet: Float32Array;
+  targetAssociated: Uint8Array;
   dataBlockIdents: string[];
   dataBlockFields: string[];
   historyDots: Float32Array;
@@ -268,6 +271,9 @@ export class TrafficWorkerApi {
       markerMatrices: draw.markerMatrices,
       headingSegments: draw.headingSegments,
       targetPositions: scope.targetPositions,
+      targetHexes: scope.targetHexes,
+      targetAltitudeFeet: scope.targetAltitudeFeet,
+      targetAssociated: scope.targetAssociated,
       dataBlockIdents: scope.dataBlockIdents,
       dataBlockFields: scope.dataBlockFields,
       historyDots: scope.historyDots,
@@ -289,6 +295,8 @@ export class TrafficWorkerApi {
       draw.markerMatrices.buffer as ArrayBuffer,
       draw.headingSegments.buffer as ArrayBuffer,
       scope.targetPositions.buffer as ArrayBuffer,
+      scope.targetAltitudeFeet.buffer as ArrayBuffer,
+      scope.targetAssociated.buffer as ArrayBuffer,
       scope.historyDots.buffer as ArrayBuffer,
       scope.predictedTrackSegments.buffer as ArrayBuffer,
       scope.altitudeStalkSegments.buffer as ArrayBuffer

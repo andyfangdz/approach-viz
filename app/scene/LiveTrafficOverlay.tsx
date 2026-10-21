@@ -81,6 +81,8 @@ interface LiveTrafficOverlayProps {
   scopeHistoryDotCount?: number;
   /** Scope presentation only: predicted track line minutes; 0 hides them. */
   scopePredictedTrackMinutes?: number;
+  /** Scope altitude filter upper limit (feet). */
+  scopeAltitudeFilterHighFeet?: number;
   radiusNm?: number;
   limit?: number;
   onDebugChange?: (debug: TrafficDebugState) => void;
@@ -108,6 +110,7 @@ export function LiveTrafficOverlay({
   showAltitudeStalks = false,
   scopeHistoryDotCount = DEFAULT_SCOPE_HISTORY_DOTS,
   scopePredictedTrackMinutes = 0,
+  scopeAltitudeFilterHighFeet = Number.POSITIVE_INFINITY,
   radiusNm = DEFAULT_RADIUS_NM,
   limit = DEFAULT_LIMIT,
   onDebugChange
@@ -786,7 +789,11 @@ export function LiveTrafficOverlay({
   return (
     <group>
       {isScope && (
-        <TraconTargets renderBuffers={renderBuffers} showAltitudeStalks={showAltitudeStalks} />
+        <TraconTargets
+          renderBuffers={renderBuffers}
+          showAltitudeStalks={showAltitudeStalks}
+          altitudeFilterHighFeet={scopeAltitudeFilterHighFeet}
+        />
       )}
       {!isScope && trailLinesGeometry && (
         <lineSegments

@@ -192,6 +192,15 @@ export const DATA_BLOCK_LABEL_STYLE: LabelStyle = {
   textShadows: SCOPE_OUTLINE
 };
 
+/**
+ * STARS partial and limited data blocks: their own (LDB) brightness, set
+ * below full data blocks so the callsign lines of selected tracks stand out.
+ */
+export const SHORT_DATA_BLOCK_LABEL_STYLE: LabelStyle = {
+  ...DATA_BLOCK_LABEL_STYLE,
+  color: '#00b400'
+};
+
 /** STARS position symbol drawn on the target (`*`: no track owner). */
 export const POSITION_SYMBOL_LABEL_STYLE: LabelStyle = {
   fontFamily: SCOPE_MONO,

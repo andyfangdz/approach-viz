@@ -4,7 +4,18 @@ import type { AirspaceFeature, TraconVideoMapData } from '@/lib/types';
 import { arcPoints, parseScopeMapRecords } from '@/lib/cifp/scope-map-records';
 import { parseMvaChart } from '@/lib/mva/parser';
 import { polygonLabelPoint } from '@/lib/polygon-label-point';
-import { formatDataBlock } from './data-block';
+import {
+  dataBlockKind,
+  formatAltitudeFilter,
+  formatDataBlock,
+  shortDataBlockLine
+} from './data-block';
+import {
+  declutterBoxes,
+  LEADER_DIRECTIONS,
+  placeDataBlocks,
+  symbolLabelBox
+} from './label-declutter';
 import {
   buildEdgeCompassRose,
   buildRangeRings,
@@ -25,6 +36,7 @@ import {
   availableWxLevels,
   clampRange,
   RING_SPACING_STEPS_NM,
+  stepAltitudeFilter,
   stepPtl,
   stepThrough
 } from '../../app-client/tracon/scope-settings';
@@ -398,6 +410,9 @@ test('buildTrafficScopeBuffers builds airborne data blocks, history dots, PTLs, 
   assert.deepEqual([...scope.targetPositions], [0, 1, 0]);
   assert.deepEqual(scope.dataBlockIdents, ['DAL12']);
   assert.deepEqual(scope.dataBlockFields, ['045 18']);
+  assert.deepEqual(scope.targetHexes, ['aaa111']);
+  assert.deepEqual([...scope.targetAltitudeFeet], [4500]);
+  assert.deepEqual([...scope.targetAssociated], [1]);
 
   // History dots at >= 0.3 NM spacing, newest first with age 0, capped.
   const dots = scope.historyDots;
@@ -421,4 +436,62 @@ test('buildTrafficScopeBuffers builds airborne data blocks, history dots, PTLs, 
   });
   assert.equal(quiet.predictedTrackSegments.length, 0);
   assert.equal(quiet.historyDots.length / 4, SCOPE_MAX_HISTORY_DOTS);
+});
+
+test('dataBlockKind follows STARS partial, limited, and full data blocks and the altitude filter', () => {
+  const filter = { lowFeet: null, highFeet: 18_000 };
+  assert.equal(dataBlockKind(true, 4500, false, filter), 'partial');
+  assert.equal(dataBlockKind(false, 4500, false, filter), 'limited');
+  assert.equal(dataBlockKind(true, 18_000, false, filter), 'partial');
+  assert.equal(dataBlockKind(true, 35_000, false, filter), 'none');
+  assert.equal(dataBlockKind(false, 1200, false, { lowFeet: 2000, highFeet: 18_000 }), 'none');
+  // A selected target always shows its full data block.
+  assert.equal(dataBlockKind(true, 35_000, true, filter), 'full');
+  // No reported altitude: nothing to filter on, so the block stays.
+  assert.equal(dataBlockKind(false, Number.NaN, false, filter), 'limited');
+
+  assert.equal(shortDataBlockLine('045 21', 'partial'), '045 21');
+  assert.equal(shortDataBlockLine('045 21', 'limited'), '045');
+  assert.equal(formatAltitudeFilter(filter), 'N99 180');
+  assert.equal(formatAltitudeFilter({ lowFeet: 500, highFeet: 99_900 }), '005 999');
+  assert.equal(stepAltitudeFilter(18_000, 1), 19_000);
+  assert.equal(stepAltitudeFilter(1_000, -1), 1_000);
+  assert.equal(stepAltitudeFilter(99_900, 1), 99_900);
+});
+
+test('declutterBoxes keeps labels in priority order and never overprints', () => {
+  const first = symbolLabelBox(100, 100, 'JFK', 8);
+  const overlapping = symbolLabelBox(104, 102, 'CRI', 8);
+  const clear = symbolLabelBox(100, 140, 'LGA', 8);
+  assert.deepEqual(declutterBoxes([first, overlapping, clear, null]), [true, false, true, false]);
+  // A reserved symbol box blocks a label drawn over it.
+  assert.deepEqual(declutterBoxes([first], [[110, 95, 120, 105]]), [false]);
+  // Boxes spanning grid cells still collide.
+  assert.deepEqual(
+    declutterBoxes([
+      [40, 40, 60, 60],
+      [55, 55, 100, 100]
+    ]),
+    [true, false]
+  );
+});
+
+test('placeDataBlocks turns a leader away from a block it would overprint', () => {
+  const block = (x: number, y: number, previous: number | null = null) => ({
+    screen: [x, y] as const,
+    chars: 6,
+    lines: 1 as const,
+    previous
+  });
+  const keypad = (directions: number[]) => directions.map((d) => LEADER_DIRECTIONS[d].keypad);
+  // Two targets far apart keep the default up-right leader.
+  assert.deepEqual(keypad(placeDataBlocks([block(100, 100), block(400, 400)])), [9, 9]);
+  // Stacked 8 px apart: the second block moves off the first.
+  const stacked = keypad(placeDataBlocks([block(100, 100), block(100, 108)]));
+  assert.equal(stacked[0], 9);
+  assert.notEqual(stacked[1], 9);
+  // A clear previous direction is kept instead of snapping back to 9.
+  assert.deepEqual(keypad(placeDataBlocks([block(100, 100, 1)])), [3]);
+  // Off-screen targets keep their previous direction.
+  assert.deepEqual(placeDataBlocks([{ screen: null, chars: 3, lines: 1, previous: 4 }]), [4]);
 });
